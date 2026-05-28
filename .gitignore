@@ -65,9 +65,6 @@ Thumbs.db
 *.heic
 *.HEIC
 
-# ─── Logs y errores de sesión ──────────────────────────────
-errores.txt
-
 # ─── Outputs generados por scripts de conectividad ────────
 conectividad/
 *.log
