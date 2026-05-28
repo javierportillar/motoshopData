@@ -13,6 +13,7 @@ Aplicación práctica del marco conceptual de **Big Data y Transformación Digit
 
 | Archivo | Para qué |
 |---------|---------|
+| [docs/contexto-proyecto.md](docs/contexto-proyecto.md) | **🧭 Snapshot del proyecto a hoy.** Empieza aquí si volvés al repo después de tiempo o necesitás contexto completo en 5 minutos. |
 | [PLAN.md](PLAN.md) | Fuente de verdad: arquitectura, fases, stack, KPIs, VPC/BMC. |
 | [SEGUIMIENTO.md](SEGUIMIENTO.md) | Estado vivo: checklist de la fase activa, bitácora, riesgos. |
 | [PENDIENTES.md](PENDIENTES.md) | Lo que tiene que hacer Javier entre sesiones del agente. |
