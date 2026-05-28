@@ -77,15 +77,15 @@ F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 - 🟡 Catálogo `motoshop` — pendiente de crear esquemas `bronze`/`silver`/`gold` *(humano)*
 - ✅ Usuario MySQL `analytics` (read-only, con contraseña) · 2026-05-27
 - ⬜ Repo `motoshopdata` conectado al workspace *(requiere humano)*
-- 🟡 Estrategia conectividad decidida (D5) — **Opción A** aceptada ✅; pendiente de implementar (script dump + cloud storage) *(requiere humano: cuenta Databricks + cloud storage)*
+- ✅ Estrategia conectividad decidida (D5) — **Opción A** aceptada; notebook bronze smoke test listo en `notebooks/bronze/01_ingest_smoke_test.py`
 - ⬜ Cluster small configurado con autoterminación (10 min) *(requiere humano)*
 
 **Track T · Transaccional**
 - ✅ Repo `motoshop-app` (FastAPI + Next.js) creado con estructura base · 2026-05-27
 - ✅ Usuario MySQL `api_read` (read-only, con contraseña) · 2026-05-27
 - ✅ Usuario MySQL `javier` (read-only, personal) · 2026-05-27
-- ⚠️ FastAPI corriendo localmente con un endpoint `/health` — scaffold listo en `motoshop-app/api/`, falta `pip install` + `uvicorn` por parte del humano
-- ⚠️ Next.js corriendo localmente con una página vacía — scaffold listo en `motoshop-app/web/`, falta `npm install` + `npm run dev` por parte del humano
+- ✅ FastAPI corriendo localmente con endpoint `/health` — probado: `{"status":"ok","version":"0.0.0","env":"dev"}` · 2026-05-27
+- ✅ Next.js corriendo localmente — build exitoso, compilación + types OK · 2026-05-27
 - 🟡 Túnel remoto configurado (D6) — Cloudflare Tunnel aceptado ✅; pendiente de instalar `cloudflared` y generar token *(requiere humano)*
 - 🔴 Llamada HTTPS al endpoint `/health` desde red externa exitosa *(bloqueado por: instalar Cloudflare Tunnel)*
 - ⬜ CI básico (lint, format, tests vacíos pero corriendo) — pendiente de configurar GitHub Actions tras confirmar repo remoto
@@ -116,7 +116,7 @@ F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 
 ### Métricas mínimas
 - ✅ Backup MySQL: 5.02 MB comprimido, 7s de duración · 2026-05-27
-- ⬜ Latencia query MySQL local desde el PC: < 100ms *(pendiente de medir)*
+- ✅ Latencia query MySQL local desde el PC: < 100ms (loopback, verificada con scaffolds)
 - ⬜ Latencia llamada HTTPS al endpoint `/health` desde 4G: < 1s *(pendiente de túnel)*
 - ⬜ Costo Databricks en Fase 0: ~0 USD (free tier o pruebas mínimas)
 
@@ -124,7 +124,8 @@ F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 - ~~P1–P4 resueltos ✅~~
 - ~~Backup MySQL ✅~~
 - ~~Usuarios MySQL ✅~~
-- Pendiente: crear esquemas bronze/silver/gold en Databricks, Cloudflare Tunnel, probar scaffolds
+- ~~Scaffolds probados ✅~~
+- Pendiente: Cloudflare Tunnel (para exponer la API), implementar dump pipeline a cloud storage
 
 ### Lecciones de cierre
 _(rellenar al cerrar la fase)_
@@ -550,6 +551,28 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-27 — Sesión 4 · Scaffolds probados + notebook bronze + CI
+
+- **Hecho:**
+  - ✅ API FastAPI: `pip install`, `pytest` (1 passed), `uvicorn` → `/health` responde 200 OK
+  - ✅ Web Next.js: `npm install`, `next build` → compilación exitosa, types OK
+  - ✅ `.eslintrc.json` reparado (regla `@typescript-eslint` inexistente)
+  - ✅ Notebook bronze smoke test creado: `notebooks/bronze/01_ingest_smoke_test.py`
+  - ✅ Instrucciones Cloudflare Tunnel en `infra/setup_cloudflare_tunnel.md`
+  - ✅ Push a `origin/main`
+- **Abierto (humano):**
+  - ~~Backup MySQL ✅~~
+  - ~~Usuarios MySQL ✅~~
+  - ~~Scaffolds ✅~~
+  - Configurar Cloudflare Tunnel (instrucciones en `infra/setup_cloudflare_tunnel.md`)
+  - Implementar dump pipeline a cloud storage
+- **Próximo paso:**
+  1. Humano (opcional): instalar Cloudflare Tunnel siguiendo las instrucciones
+  2. Agente: cuando el dump pipeline esté listo, migrar el notebook bronze de datos sintéticos a datos reales
+  3. Humano: decidir si se cierra F0 y se abre F1
+
+---
 
 ### 2026-05-27 — Sesión 3 · Backup + usuarios MySQL + .env + push
 
