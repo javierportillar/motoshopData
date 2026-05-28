@@ -15,6 +15,7 @@ Aplicación práctica del marco conceptual de **Big Data y Transformación Digit
 |---------|---------|
 | [PLAN.md](PLAN.md) | Fuente de verdad: arquitectura, fases, stack, KPIs, VPC/BMC. |
 | [SEGUIMIENTO.md](SEGUIMIENTO.md) | Estado vivo: checklist de la fase activa, bitácora, riesgos. |
+| [PENDIENTES.md](PENDIENTES.md) | Lo que tiene que hacer Javier entre sesiones del agente. |
 | [infollm.md](infollm.md) | Conexión a la BD y esquema general. |
 | [AGENT_PROMPT.md](AGENT_PROMPT.md) | Instrucciones del agente de IA que asiste el desarrollo. |
 | [docs/decisions/](docs/decisions/README.md) | ADRs — bitácora detallada de cada decisión arquitectural. |

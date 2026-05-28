@@ -1,6 +1,8 @@
 # Seguimiento del Proyecto MotoShop
 
 > Documento vivo de control de avance, validaciones críticas y decisiones del proyecto descrito en [PLAN.md](PLAN.md). Se actualiza al cierre de cada sesión de trabajo y obligatoriamente en cada **gate de fase**.
+>
+> Para la lista priorizada de cosas que tiene que hacer **Javier entre sesiones** ver [PENDIENTES.md](PENDIENTES.md).
 
 ---
 
