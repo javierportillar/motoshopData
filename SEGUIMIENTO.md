@@ -226,7 +226,7 @@ F0 ✅  F1 ✅  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 
 | KPI | Meta | Cómo se mide |
 |-----|------|---------------|
-| Tiempo ingesta diaria total | < 30 min | ✅ 31s y 36s en 2 corridas (manifest `duration_seconds`) — **insuficiente para "5 seguidas", pendiente F1-FIX1.C K-3** |
+| Tiempo ingesta diaria total | < 30 min | ✅ 30-37 s sostenido en 5 corridas seguidas (ver `_runs/k3_five_runs_2026-05-28.md`). |
 | Latencia `/products/{sku}/stock` p95 | < 500 ms | ⚠️ 781 ms (medición documentada; no cumple meta, pero ya no falsea el dato). |
 | Tasa éxito ingesta | 100% en 5 corridas | ✅ 5/5 corridas documentadas en `notebooks/bronze/_runs/k3_five_runs_2026-05-28.md`. |
 | Cobertura tests `auth/`+`products/` | > 70% | ✅ 79% total; módulos `auth/`, `products/`, `stock/`, `sales/` por encima del objetivo. |
@@ -236,9 +236,20 @@ F0 ✅  F1 ✅  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 | ID | Bloqueador | Mitigación / cuándo se activa |
 |----|------------|-------------------------------|
 | ~~B-F1-1~~ | ~~ADR-0011 no aceptado~~ | ✅ Resuelto 2026-05-28 (Accepted en bloque sin ajustes) |
-| B-F1-2 | `JWT_SECRET` no generado | Sprint F1-B no termina sin secret en `.env` |
-| B-F1-3 | `users.yaml` no creado por humano | Sprint F1-B demo manual no se puede correr |
-| B-F1-4 | Free Edition agota horas serverless | Diferir activación de Workflow schedule; correr manual durante el sprint |
+| ~~B-F1-2~~ | ~~`JWT_SECRET` no generado~~ | ✅ Resuelto en F1-FIX1 (validator activo + `.env` generado) |
+| ~~B-F1-3~~ | ~~`users.yaml` no creado por humano~~ | ✅ Resuelto en F1-FIX1 (existe localmente, gitignored) |
+| ~~B-F1-4~~ | ~~Free Edition agota horas serverless~~ | ✅ Mitigado: schedule en Task Scheduler Windows; uso serverless estimado <5% mensual (ver `errores.txt`) |
+
+### Lecciones de cierre F1
+
+> Aprendizajes que quedan registrados para F2 y siguientes.
+
+1. **Atestación ≠ evidencia.** Un `✅` sin archivo en `_runs/` que responda a la pregunta exacta del gate es atestación. La metodología pide evidencia versionada. Se reaprendió en F0 (smoke con 0 filas) y en F1 (V6/V7 cerrados con relleno). En F2 cada verificación crítica debe nacer con su `_runs/` desde el primer commit.
+2. **Tests que aceptan errores no son tests.** `assert resp.status_code in (200, 500)` deja la cobertura ficticia y oculta bugs. La solución estructural es `app.dependency_overrides` + `FakeRepos` para unit, `@pytest.mark.integration` para los que tocan servicios reales. Aplicar el patrón desde el primer endpoint de F2.
+3. **Separar ejecutor y revisor evita que cada uno apruebe su propio trabajo.** En F1 el ejecutor cerró su sprint dos veces sin pasar los puntos críticos; un revisor independiente lo detectó. Mantener la separación en F2 y siguientes.
+4. **Las deudas aceptadas necesitan triggers de re-evaluación explícitos**, no quedar abiertas. R1 (passwords MySQL en historial) y R2 (credenciales API en README) tienen 4 condiciones cada una que disparan rotación obligatoria. Si una se cumple, no se discute — se actúa.
+5. **Compute Free Edition no permite ML pesado.** F4 (Predictivo) probablemente necesitará migración a plan de pago o entrenamiento local + registro en MLflow remoto. Decisión a tomar a inicio de F3 con tiempo para evitar bloqueo.
+6. **Latencia `/stock` 781 ms ≠ 500 ms.** R-X2 (cache en memoria 5 min con clave SKU) se mantiene como mitigación pendiente. Activar en F2 si la PWA lo demanda al usar el endpoint en producción.
 
 ### Riesgos específicos de F1
 
@@ -630,6 +641,33 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-28 — Sesión 17 · F1 cerrada vía F1-FIX2 (revisor: GO a F2)
+
+- **Hecho (ejecutor, commit `05e6ca4`):**
+  - ✅ `notebooks/bronze/_runs/v6_pagination_2026-05-28.md` — `detfventas` 27,747 distinct == 27,747 total en 6 chunks; `detcompras` 11,623 == 11,623 en 3 chunks. Verdict OK para ambas.
+  - ✅ `notebooks/bronze/_runs/v7_drift_2026-05-28.md` — comparación entre `ingest_date_a=2026-05-28` y `ingest_date_b=2026-05-29` (fechas **distintas**, como exigía el gate); 12/12 tablas estables, sin drift.
+  - ✅ `notebooks/api/_runs/c1_stock_real_2026-05-28.md` — `MOTS1297`: API total **691.0** == SQL `SUM(valor3)` **691.0** (640 registros). Nota explícita sobre `codbod` vacío en BD actual.
+  - ✅ SEGUIMIENTO sincronizado: cabecera F0 ✅ / F1 ✅ / F2 🟡; V4 a ✅ (timing-safe); V6/V7 a ✅; C-1/C-2/C-3/C-4 a ✅ en la tabla de hallazgos; KPI K-1 marcada honestamente como ⚠️ 781ms con nota de no-cumple-meta; KPIs K-2 (79%) y K-3 (5/5) a ✅; entregables Track A/T actualizados.
+  - ✅ R2 (FG28 en README) sigue 🔴 explícito — coherente con la decisión humana de mantener como deuda extendida.
+- **Hecho (revisor, este mismo commit):**
+  - ✅ Auditoría de F1-FIX2 completada: las 3 evidencias cumplen el espíritu del gate (no son atestación).
+  - ✅ Bloqueadores B-F1-2/3/4 tachados (estaban resueltos pero seguían sin marcar).
+  - ✅ **Sección "Lecciones de cierre F1"** añadida con 6 aprendizajes para F2 y siguientes (atestación ≠ evidencia, tests vs. servicios externos, separación ejecutor/revisor, triggers de deudas, compute Free Edition para F4, mitigación R-X2 para latencia).
+- **Veredicto:** **🟢 GO a Fase 2 · Silver + PWA MVP.** F1 cerrada con dos deudas documentadas (R1, R2) + dos pasivos sin trigger inmediato (R3 idempotencia parcial, R4 Workflow Databricks postergado).
+- **Aprendido:**
+  - El sprint corto y enfocado de F1-FIX2 (3 evidencias + sync doc) demostró el patrón "captura + sincronización" como cierre limpio sin re-abrir alcance.
+  - Mantener el README con `FG28` es una **decisión consciente** con 4 triggers de re-evaluación obligatoria. F2 debe vigilar especialmente el trigger (b): si introduce roles con escritura (vía `app_pedidos_remotos` o similar antes de F5), el README se limpia ANTES de mergear.
+- **Abierto:**
+  - **R1** Passwords MySQL en historial — deuda residual (acotada a `@localhost`).
+  - **R2** Credenciales API en README — deuda extendida indefinida con 4 triggers.
+  - **R3** Idempotencia kill-y-retry — no probada; mitigación pasiva por `INSERT REPLACE WHERE`.
+  - **R4** Workflow Databricks — eliminado; orquestación en Task Scheduler.
+  - **R-X2** Latencia `/stock` 781 ms — cache en memoria pendiente, activar si la PWA lo demanda.
+- **Próximo paso:**
+  - Planificar **F2 · Silver + PWA MVP** (sketch en `docs/plan-f1-fix2.md` §4). Decisiones técnicas nuevas previstas: estrategia silver schema evolution, librería PWA, formato service worker, fetch wrapper JWT en frontend. Sesión 18 abre con el plan F2.
+
+---
 
 ### 2026-05-28 — Sesión 16 · Plan F1-FIX2 (cierre limpio con R2 deuda extendida)
 
