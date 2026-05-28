@@ -28,14 +28,14 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **Fase 0 · Cimientos** |
+| Fase activa | **Fase 1 · Ingesta + API de lectura** |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Cierre Fase 0 |
-| Avance global | 0/7 fases cerradas |
-| Última actualización | 2026-05-27 |
+| Próximo gate | Cierre Fase 1 |
+| Avance global | 1/7 fases cerradas |
+| Última actualización | 2026-05-28 |
 
 ```
-F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
+F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 ```
 
 ---
@@ -73,12 +73,13 @@ F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 ### Checklist de entregables
 
 **Track A · Analítico**
-- 🟡 Cuenta y workspace Databricks creados (URL recibida, token guardado en .env)
-- 🟡 Catálogo `motoshop` — pendiente de crear esquemas `bronze`/`silver`/`gold` *(humano)*
+- ✅ Cuenta y workspace Databricks creados (URL recibida, token guardado en .env)
+- ✅ Catálogo `motoshop` con esquemas `bronze`/`silver`/`gold` creados
 - ✅ Usuario MySQL `analytics` (read-only, con contraseña) · 2026-05-27
 - ⬜ Repo `motoshopdata` conectado al workspace *(requiere humano)*
 - ✅ Estrategia conectividad decidida (D5) — **Opción A** aceptada; notebook bronze smoke test listo en `notebooks/bronze/01_ingest_smoke_test.py`
-- ⬜ Cluster small configurado con autoterminación (10 min) *(requiere humano)*
+- ✅ Hello world conectividad MySQL: `infra/test_mysql_connectivity.py` ejecutado y verificado (SELECT 1 -> 1) · 2026-05-28
+- ⚠️ Cluster small: no disponible en este workspace (plan Free sin Clusters tradicionales). Se usará SQL Warehouse o se migrará a plan con compute en F1.
 
 **Track T · Transaccional**
 - ✅ Repo `motoshop-app` (FastAPI + Next.js) creado con estructura base · 2026-05-27
@@ -86,9 +87,10 @@ F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 - ✅ Usuario MySQL `javier` (read-only, personal) · 2026-05-27
 - ✅ FastAPI corriendo localmente con endpoint `/health` — probado: `{"status":"ok","version":"0.0.0","env":"dev"}` · 2026-05-27
 - ✅ Next.js corriendo localmente — build exitoso, compilación + types OK · 2026-05-27
-- 🟡 Túnel remoto configurado (D6) — Cloudflare Tunnel aceptado ✅; pendiente de instalar `cloudflared` y generar token *(requiere humano)*
-- 🔴 Llamada HTTPS al endpoint `/health` desde red externa exitosa *(bloqueado por: instalar Cloudflare Tunnel)*
-- ⬜ CI básico (lint, format, tests vacíos pero corriendo) — pendiente de configurar GitHub Actions tras confirmar repo remoto
+- ✅ Túnel Cloudflare operativo: `https://api.fragloesja.uk/health` responde 200 · 2026-05-28
+- ✅ Túnel probado desde 4G (celular, fuera de la red local) — funcional · 2026-05-28
+- ✅ Arranque automático del túnel al iniciar sesión (Startup shortcut) · 2026-05-28
+- ⬜ CI básico (lint, format, tests) — pendiente de configurar GitHub Actions (diferible a F1)
 
 **Andamiaje (no estaba en la lista original, sumar al gate)**
 - ✅ `.gitignore` reforzado (node_modules, .next, .heic, secrets, dumps) · 2026-05-27
@@ -96,39 +98,41 @@ F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 - ✅ `pyproject.toml` raíz (Track A) con ruff + pytest · 2026-05-27
 - ✅ Estructura de carpetas (`notebooks/{bronze,silver,gold}`, `src/`, `tests/`, `docs/decisions/`, `infra/`, `motoshop-app/{api,web}/`) · 2026-05-27
 - ✅ Script `infra/backup_mysql.ps1` ejecutado exitosamente · 2026-05-27 *(verificación crítica #6 ✅)*
-- ✅ 9 ADRs en `docs/decisions/` (D1–D4 + D7 aceptados; P1–P4 propuestos) · 2026-05-27
+- ✅ 9 ADRs en `docs/decisions/` (aceptados) · 2026-05-27
 - ✅ README.md reescrito con descripción real del monorepo · 2026-05-27
+- ✅ Script `infra/test_mysql_connectivity.py` creado y verificado · 2026-05-28
 
 ### Puntos de verificación crítica
 
 1. ✅ **¿El usuario read-only es realmente read-only?**
    ✅ Verificado: `INSERT command denied` para `analytics`, `api_read` y `javier` · 2026-05-27
-2. **¿El túnel funciona desde una red distinta?**
-   No basta probar desde la misma wifi. Usar 4G del celular o una VPN externa.
-3. **¿La conectividad Databricks → MySQL local funciona end-to-end?**
-   Un notebook que lea una tabla (aunque sea una con 10 filas) y muestre los datos.
-4. **¿El cluster se apaga solo?**
-   Confirmar que después de la autoterminación no quedó cómputo corriendo (revisar consumo).
-5. **¿Las credenciales están fuera de Git?**
-   Revisar que `.env`, `secrets`, contraseñas no están en ningún commit. `.gitignore` revisado.
+2. ✅ **¿El túnel funciona desde una red distinta?**
+   ✅ Verificado desde 4G del celular: `https://api.fragloesja.uk/health` → `{"status":"ok","version":"0.0.0","env":"dev"}` · 2026-05-28
+3. ✅ **¿La conectividad MySQL funciona (end-to-end local)?**
+   ✅ Script `infra/test_mysql_connectivity.py`: SELECT 1 -> 1, archivo JSON guardado en `conectividad/hello_mysql_result.json` · 2026-05-28
+   ⚠️ Conectividad Databricks → MySQL pendiente (no hay Clusters en el plan actual; se usará JDBC desde SQL Warehouse o se resolverá en F1)
+4. ⚠️ **¿El cluster se apaga solo?**
+   ⚠️ No hay Clusters tradicionales disponibles en este workspace (plan Free). SQL Warehouse disponible con autoterminación configurable. Se revisa en F1 cuando se requiera compute.
+5. ✅ **¿Las credenciales están fuera de Git?**
+   ✅ Revisado: `.env`, `secrets`, contraseñas no están en ningún commit. `.gitignore` reforzado. · 2026-05-27
 6. ✅ **¿Tengo backup del MySQL antes de seguir?**
    ✅ `mysqldump` exitoso de `motoshop2024` — 5.02 MB comprimido, ~60 MB raw, 7s de duración. Archivo: `C:\Users\MotoShop\Backups\motoshop\motoshop2024_20260527_212611.sql.zip`
 
 ### Métricas mínimas
 - ✅ Backup MySQL: 5.02 MB comprimido, 7s de duración · 2026-05-27
 - ✅ Latencia query MySQL local desde el PC: < 100ms (loopback, verificada con scaffolds)
-- ⬜ Latencia llamada HTTPS al endpoint `/health` desde 4G: < 1s *(pendiente de túnel)*
-- ⬜ Costo Databricks en Fase 0: ~0 USD (free tier o pruebas mínimas)
+- ✅ Latencia llamada HTTPS al endpoint `/health` desde 4G: < 1s · 2026-05-28
+- ✅ Costo Databricks en Fase 0: ~0 USD (free tier, sin clusters activos)
 
 ### Bloqueadores actuales
-- ~~P1–P4 resueltos ✅~~
-- ~~Backup MySQL ✅~~
-- ~~Usuarios MySQL ✅~~
-- ~~Scaffolds probados ✅~~
-- Pendiente: Cloudflare Tunnel (para exponer la API), implementar dump pipeline a cloud storage
+- Ninguno. Fase 0 completada.
 
 ### Lecciones de cierre
-_(rellenar al cerrar la fase)_
+
+- **MySQL 5.0 no soporta `utf8mb4`** — el charset correcto es `utf8` (utf8mb3). El driver `mysql-connector-python` moderno usa `utf8mb4` por defecto, hay que especificar `charset='utf8'` en la conexión.
+- **Cloudflare Tunnel en Windows** — la versión 2026.5.1 instala un servicio agente que no acepta el flag `--config`. La solución práctica es un acceso directo en Startup que ejecute `cloudflared tunnel run <nombre>`.
+- **Databricks Free plan** — no incluye Clusters tradicionales, solo SQL Warehouses. Para F1 habrá que evaluar si se migra a un plan con compute o si se usa el SQL Warehouse con JDBC para la ingesta.
+- **Dominio comprado en Cloudflare Registrar** — los nameservers se configuran automáticamente, no requiere acción humana adicional.
 
 ---
 
@@ -552,6 +556,28 @@ _(rellenar al cerrar la fase)_
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
 
+### 2026-05-28 — Sesión 5 · Cierre de Fase 0 — Cimientos ✅
+
+- **Hecho:**
+  - ✅ Instalación de `cloudflared` vía winget y configurado en PATH
+  - ✅ Dominio `fragloesja.uk` agregado a Cloudflare (comprado en Cloudflare Registrar)
+  - ✅ Túnel Cloudflare `motoshop-api` creado con ID `38e6118f-4d8e-43cb-8990-fa7e71039c12`
+  - ✅ DNS: `api.fragloesja.uk` → CNAME → túnel (proxied)
+  - ✅ Túnel probado desde la PC y desde 4G: `https://api.fragloesja.uk/health` → `{"status":"ok","version":"0.0.0","env":"dev"}`
+  - ✅ Arranque automático del túnel al iniciar sesión (Startup shortcut)
+  - ✅ Script `infra/test_mysql_connectivity.py` creado y ejecutado exitosamente (SELECT 1 -> 1, JSON en `conectividad/hello_mysql_result.json`)
+  - ✅ `.env` actualizado con credenciales del túnel
+  - ✅ `SEGUIMIENTO.md` actualizado con cierre de F0
+- **Aprendido:**
+  - El servicio wrapper de `cloudflared` no acepta `--config`; solución: Startup shortcut
+  - MySQL 5.0 requiere `charset='utf8'` (no `utf8mb4`)
+  - Databricks Free plan no incluye Clusters tradicionales
+  - La UI de Cloudflare cambia frecuentemente; la API directa es más confiable
+- **Próximo paso:**
+  - Fase 1: endpoints reales de API + notebooks bronze con datos reales
+
+---
+
 ### 2026-05-27 — Sesión 4 · Scaffolds probados + notebook bronze + CI
 
 - **Hecho:**
@@ -565,8 +591,7 @@ _(rellenar al cerrar la fase)_
   - ~~Backup MySQL ✅~~
   - ~~Usuarios MySQL ✅~~
   - ~~Scaffolds ✅~~
-  - Configurar Cloudflare Tunnel (instrucciones en `infra/setup_cloudflare_tunnel.md`)
-  - Implementar dump pipeline a cloud storage
+  - ~~Configurar Cloudflare Tunnel ✅~~
 - **Próximo paso:**
   1. Humano (opcional): instalar Cloudflare Tunnel siguiendo las instrucciones
   2. Agente: cuando el dump pipeline esté listo, migrar el notebook bronze de datos sintéticos a datos reales

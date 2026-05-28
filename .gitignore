@@ -64,3 +64,7 @@ Thumbs.db
 
 # ─── Logs y errores de sesión ──────────────────────────────
 errores.txt
+
+# ─── Outputs generados por scripts de conectividad ────────
+conectividad/
+*.log

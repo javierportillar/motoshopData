@@ -13,6 +13,16 @@ winget install cloudflare.cloudflared
 ```
 O descargar manualmente de: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
 
+### 1b. Agregar al PATH (solo si winget no lo dejó en el PATH)
+```powershell
+# Si al escribir cloudflared dice que no se reconoce, usa la ruta completa:
+$env:PATH += ";$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Cloudflare.cloudflared_Microsoft.Winget.Source_8wekyb3d8bbwe"
+```
+O ejecuta los comandos con la ruta completa:
+```powershell
+& "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Cloudflare.cloudflared_Microsoft.Winget.Source_8wekyb3d8bbwe\cloudflared.exe" tunnel login
+```
+
 ### 2. Autenticar
 ```powershell
 cloudflared tunnel login
