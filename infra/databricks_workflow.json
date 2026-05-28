@@ -1,12 +1,12 @@
 {
   "name": "MotoShop Bronze Ingestion",
   "schedule": {
-    "quartz_cron_expression": "0 0,12,20 * * ?",
+    "quartz_cron_expression": "0 0 2,12,20 * * ?",
     "timezone_id": "America/Bogota"
   },
   "tasks": [
     {
-      "task_key": "02_ingest_all_bronze",
+      "task_key": "02_ingest",
       "notebook_task": {
         "notebook_path": "/Repos/javierportillar/motoshopData/notebooks/bronze/02_ingest_all_bronze",
         "source": "WORKSPACE"
@@ -14,28 +14,30 @@
       "depends_on": []
     },
     {
-      "task_key": "03_validate_counts",
+      "task_key": "03_validate",
       "notebook_task": {
         "notebook_path": "/Repos/javierportillar/motoshopData/notebooks/bronze/03_validate_counts",
         "source": "WORKSPACE"
       },
-      "depends_on": [{"task_key": "02_ingest_all_bronze"}]
+      "depends_on": [{"task_key": "02_ingest"}]
     },
     {
-      "task_key": "04_check_large_tables",
+      "task_key": "04_large",
       "notebook_task": {
         "notebook_path": "/Repos/javierportillar/motoshopData/notebooks/bronze/04_check_large_tables",
         "source": "WORKSPACE"
       },
-      "depends_on": [{"task_key": "02_ingest_all_bronze"}]
+      "depends_on": [{"task_key": "02_ingest"}]
     },
     {
-      "task_key": "05_schema_drift",
+      "task_key": "05_drift",
       "notebook_task": {
         "notebook_path": "/Repos/javierportillar/motoshopData/notebooks/bronze/05_schema_drift",
         "source": "WORKSPACE"
       },
-      "depends_on": [{"task_key": "02_ingest_all_bronze"}]
+      "depends_on": [{"task_key": "02_ingest"}]
     }
+  ]
+}
   ]
 }
