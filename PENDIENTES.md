@@ -8,6 +8,94 @@
 
 ---
 
+## Sesión 2026-05-28 (16) · F1-FIX2 · Cierre limpio de F1 (3 evidencias + sync SEGUIMIENTO)
+
+### Resumen
+F1-FIX1 resolvió 11 de 13 ítems. Quedan 2 carencias menores que se cierran con este sprint. **Plan completo: [`docs/plan-f1-fix2.md`](docs/plan-f1-fix2.md)** — leer antes de actuar; tiene las plantillas exactas para pegar outputs.
+
+**Lo que NO entra (decisión humana 2026-05-28):** las credenciales `FG28` en el README **se mantienen hasta nuevo aviso**. R2 reclasificada como deuda extendida con 4 triggers de re-evaluación (ver SEGUIMIENTO §Tablero de riesgos vivos).
+
+---
+
+### Tarea 1 ⬜ · Evidencia V6 (paginación)
+
+1. Databricks → abrir `notebooks/bronze/04_check_large_tables.py`.
+2. Setear widget `ingest_date = 2026-05-28`. Run all.
+3. Pegar el output (totales, distinct, chunks, VEREDICTO) en `notebooks/bronze/_runs/v6_pagination_2026-05-28.md` siguiendo la plantilla del plan §2 Tarea 1.
+
+**Pasa si:** ambas tablas con `distinct_after_pagination == total` y `total > 0`, status OK.
+
+---
+
+### Tarea 2 ⬜ · Evidencia V7 (schema drift con 2 fechas distintas)
+
+> Lo más importante: que las 2 `ingest_date`s sean **distintas**. Si son iguales, V7 sigue 🔴.
+
+1. PC Windows:
+   ```powershell
+   cd C:\Users\MotoShop\Documents\javidevmoto
+   .\.venv-infra\Scripts\Activate.ps1
+   python infra\dump_to_cloud.py --tables-core --ingest-date 2026-05-29
+   ```
+
+2. Databricks → `notebooks/bronze/02_ingest_all_bronze.py` con `ingest_date = 2026-05-29`. Run.
+
+3. Databricks → `notebooks/bronze/05_schema_drift.py` con widgets:
+   - `ingest_date_a = 2026-05-28`
+   - `ingest_date_b = 2026-05-29`
+
+4. Pegar el output en `notebooks/bronze/_runs/v7_drift_2026-05-28.md` siguiendo la plantilla del plan §2 Tarea 2.
+
+**Pasa si:** las 12 tablas reportan `OK`, sin drift detectado. Si hay drift, documentar — no necesariamente FAIL pero requiere análisis.
+
+---
+
+### Tarea 3 ⬜ · Evidencia C-1 (stock real vs SQL directo)
+
+1. PC Windows — llamar el endpoint y guardar la respuesta.
+2. PC Windows — `SELECT codprod, COUNT(*), SUM(valor3) FROM auxinventario WHERE codprod='MOTS1297'`.
+3. Pegar ambos outputs en `notebooks/api/_runs/c1_stock_real_2026-05-28.md` siguiendo la plantilla del plan §2 Tarea 3.
+
+**Pasa si:** `API.total == SQL.SUM(valor3)` y ambos > 0.
+
+> Recomendado: repetir con 1 SKU adicional para robustecer.
+
+---
+
+### Tarea 4 ⬜ · Sincronizar SEGUIMIENTO §F1
+
+Detalle exacto en plan §2 Tarea 4. Resumen:
+
+- Cabecera global: `F0 ✅ F1 ✅ F2 🟡 ...`, Fase activa: F2.
+- V2 ⚠️ (R3), V4 ✅ (timing-safe), V6 ✅ (con `_runs/v6_pagination_*.md`), V7 ✅ (con `_runs/v7_drift_*.md`).
+- Entregables Track A/T: ajustar a estado real (stock 🔴→✅, tests ⚠️→✅, rate limit 🔴→✅; **README con credenciales sigue 🔴 con nota de R2 deuda extendida**).
+- KPIs: K-1 781ms (⚠️ no cumple, mitigación R-X2), K-2 79%, K-3 5/5.
+- Bloqueadores: "Sin bloqueadores. F1 cerrada con deuda R1+R2 documentada."
+- Sección **Lecciones de cierre F1** con los 4 puntos del plan §2 Tarea 4 punto 8.
+- Nota de **Sesión 17 · F1 cerrada via F1-FIX2** (plantilla en plan §2 Tarea 4 punto 9).
+
+---
+
+### Tarea 5 ⬜ · Commit + push
+
+```powershell
+git add notebooks/bronze/_runs/v6_pagination_2026-05-28.md notebooks/bronze/_runs/v7_drift_2026-05-28.md notebooks/api/_runs/c1_stock_real_2026-05-28.md SEGUIMIENTO.md PENDIENTES.md
+git commit -m "docs(F1-FIX2): cerrar F1 con evidencias V6/V7/C-1 y SEGUIMIENTO sincronizado"
+git push
+```
+
+**Antes del commit:** verificar `git diff --cached | grep -iE "password\s*[:=]"` para no introducir nuevos leaks (los existentes en historial son R1/R2 ya aceptados).
+
+---
+
+### Tarea 6 ⬜ · Reportar al revisor
+
+*"F1-FIX2 hecho: 3 evidencias en `_runs/`, SEGUIMIENTO actualizado, commit `<hash>`."*
+
+Revisor audita en ≤15 min y emite **GO a F2** si todo cumple.
+
+---
+
 ## Sesión 2026-05-28 (14) · F1-FIX1 · Remediación de auditoría — 🔴 NO-GO a F2
 
 ### Resumen

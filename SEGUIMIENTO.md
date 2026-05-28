@@ -582,7 +582,7 @@ _(rellenar al cerrar la fase)_
 | Riesgo | Fase activado | Estado | Impacto observado | Mitigación aplicada |
 |--------|---------------|--------|-------------------|---------------------|
 | **R1 · Passwords MySQL en historial de Git** | F0 (sesión 6, commit `20c4d5f`) | 🟡 Aceptado | Strings `123450` (password vieja) y `Sashita123` (password actual) son grepables en `git log -p` del repo público. Cualquiera con acceso al repo puede probar esas credenciales. | **Mitigaciones activas:** (1) los 3 usuarios son `@localhost`, MySQL no escucha en la WAN; (2) el túnel Cloudflare solo expone el puerto 8000 (API), nunca 3306; (3) el PC está detrás del router doméstico. **Mitigaciones NO aplicadas (decisión humana 2026-05-28):** no se rota otra vez, no se reescribe historial. **Triggers de re-evaluación:** (a) si MySQL pasa a aceptar conexiones `@%` o `@<ip>`; (b) si se expone el puerto 3306 a través de cualquier túnel; (c) si en F-F se replica a una BD cloud. Cualquiera de los 3 obliga rotación + audit de accesos previos. |
-| **R2 · Credenciales API (`FG28`) en historial de Git** | F1 (sesión 12, commit `c8886c0` introdujo el README; sesiones siguientes lo mantuvieron) | 🔴 Activo · será 🟡 Aceptado tras Paso 0 + F1-FIX1.B-3 | `FG28` (password idéntica para `admin`/`vendedor1`/`gerente1`) está en `motoshop-app/api/README.md` y la API responde en `https://api.fragloesja.uk/`. Vector de ataque: clonar repo → leer README → POST /auth/login con admin/FG28 → JWT válido → consumir todos los endpoints. | **Inmediato (F1-FIX1 Paso 0):** rotar a passwords >= 20 chars random, reiniciar API, verificar que `FG28` ya no autentica. **Estructural (F1-FIX1 B-3):** eliminar la tabla de credenciales del README; documentar dónde se obtienen (password manager). **Triggers de re-evaluación:** si se detectan accesos no reconocidos en logs de Cloudflare anteriores a la rotación, o si en F2+ se introduce rol con permisos de escritura — entonces además hace falta auditar logs históricos del túnel. |
+| **R2 · Credenciales API (`FG28`) en README y en historial de Git** | F1 (sesión 12, commit `c8886c0` introdujo el README; F1-FIX1 mantuvo el README; sesión 16 escala la deuda) | 🟡 Aceptado · **deuda extendida indefinida** por decisión humana 2026-05-28 | `FG28` (password idéntica para `admin`/`vendedor1`/`gerente1`) sigue en `motoshop-app/api/README.md` y en historial. La API responde en `https://api.fragloesja.uk/`. Vector de ataque: clonar repo → leer README → POST /auth/login con admin/FG28 → JWT válido → consumir todos los endpoints de lectura. | **Decisión humana 2026-05-28 (Sesión 16):** las credenciales se mantienen así "hasta nuevo aviso". No se rota, no se limpia el README, no se reescribe historial. **Mitigaciones que aplican:** la API es solo lectura (F1-F4); el túnel Cloudflare puede capar IPs si hace falta; el equipo conoce el riesgo. **Triggers de re-evaluación OBLIGATORIA** (cualquiera dispara rotación + limpieza + audit de logs Cloudflare): (a) la API se mueve a una red más expuesta; (b) se introduce cualquier rol con permisos de escritura (POST/PUT/PATCH/DELETE no metadata); (c) la PWA pasa a usuarios externos al equipo; (d) los logs del túnel muestran tráfico sospechoso. |
 | **R3 · Idempotencia bajo fallo parcial no probada** | F1 (sesión 11, V2 cerrada con 2 runs limpios) | 🟡 Aceptado | El patrón `INSERT REPLACE WHERE ingest_date='X'` sobreescribe la partición del día completo si la corrida termina exitosa. **No probado:** qué pasa si el dump cae a la mitad (kill, network drop, OOM) — puede dejar el Volume con un Parquet parcial o partición intermedia. | **Mitigación pasiva:** la siguiente corrida exitosa converge al estado correcto. **Trigger de re-evaluación:** si el schedule nocturno falla a mitad y al reintentar quedan conteos inconsistentes o duplicados; o si se decide bajar la frecuencia (de 3x diaria a 1x) y la ventana de inconsistencia importa. |
 | **R4 · Workflow Databricks postergado** | F1 (sesión 11, `databricks_workflow.json` JSON inválido) | 🟡 Aceptado | El JSON está corrupto sintácticamente y `create_databricks_workflow.py` nunca pudo correr. La orquestación real son scripts PowerShell + Task Scheduler de Windows. | **Mitigación:** F1-FIX1.A-4 elimina el JSON y el script (o los repara). Mientras tanto, Task Scheduler cubre. **Trigger de re-evaluación:** (a) si el PC se rompe o se mueve la compute a Databricks (F-F); (b) si la ingesta empieza a tener dependencias entre tablas que requieran DAG real. |
 
@@ -632,6 +632,23 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-28 — Sesión 16 · Plan F1-FIX2 (cierre limpio con R2 deuda extendida)
+
+- **Hecho:**
+  - 🔍 Auditoría de F1-FIX1 (commits `5ad2d4f`..`6e41971`): 11 de 13 ítems resueltos. Quedan pendientes (a) capturar 3 evidencias (V6 paginación, V7 schema drift, C-1 stock real) y (b) actualizar SEGUIMIENTO con el estado real post-FIX1.
+  - 🟡 **Decisión humana 2026-05-28:** C-5/B-3 (credenciales `FG28` en README) **no se corrige hasta nuevo aviso**. **R2 reclasificada como deuda extendida indefinida** con 4 triggers de re-evaluación obligatoria (red más expuesta / rol de escritura / usuarios externos / tráfico sospechoso).
+  - ✅ [`docs/plan-f1-fix2.md`](docs/plan-f1-fix2.md) escrito: 4 tareas (T1 evidencia V6, T2 evidencia V7 con 2 ingest_dates distintas, T3 evidencia C-1, T4 sync SEGUIMIENTO). Plantillas exactas de los `_runs/` para que el ejecutor solo pegue outputs.
+  - ✅ PENDIENTES sesión 16 con el handoff al ejecutor.
+- **Aprendido:**
+  - Una deuda aceptada conscientemente con triggers explícitos es mejor disciplina que una deuda olvidada o un fix simulado.
+  - F1-FIX2 enfocado a 4 tareas mecánicas (capturar + sincronizar) evita re-mezclar alcance.
+- **Abierto:**
+  - 4 tareas de F1-FIX2 a cargo del ejecutor (~20 min total).
+- **Próximo paso:**
+  - Ejecutor corre los 3 notebooks/comandos, pega outputs en los `_runs/`, actualiza SEGUIMIENTO con la plantilla del plan, commit + push. Revisor audita y emite GO a F2.
+
+---
 
 ### 2026-05-28 — Sesión 14 · Auditoría F1 + Plan F1-FIX1 (NO-GO a F2)
 
