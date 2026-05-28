@@ -2,41 +2,44 @@
 # Ejecuta dump_to_cloud.py --tables-core con logging.
 # Programado: 12:00 PM, 8:00 PM, 2:00 AM (hora COL)
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 
 $ProjectRoot = "C:\Users\MotoShop\Documents\javidevmoto"
 $VenvActivate = "$ProjectRoot\.venv-infra\Scripts\Activate.ps1"
 $Script = "$ProjectRoot\infra\dump_to_cloud.py"
 $LogDir = "$ProjectRoot\logs"
 
-# Crear directorio de logs si no existe
 if (!(Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
 
 $Timestamp = Get-Date -Format "yyyy-MM-dd_HHmm"
 $LogFile = "$LogDir\dump_$Timestamp.log"
 
-function Write-Log {
-    param([string]$Message)
-    $entry = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $Message"
-    Write-Host $entry
-    Add-Content -Path $LogFile -Value $entry
-}
-
-Write-Log "=== INICIO DUMP ==="
 $StartTime = Get-Date
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') === INICIO DUMP ===" | Out-File -FilePath $LogFile -Encoding utf8
 
-try {
-    & $VenvActivate
-    python $Script --tables-core 2>&1 | ForEach-Object { Write-Log $_ }
+& $VenvActivate
+$process = Start-Process -FilePath "python" -ArgumentList "$Script --tables-core" -NoNewWindow -PassThru -Wait -RedirectStandardOutput "$LogDir\dump_stdout_$Timestamp.txt" -RedirectStandardError "$LogDir\dump_stderr_$Timestamp.txt"
 
-    if ($LASTEXITCODE -ne 0) {
-        Write-Log "ERROR: dump_to_cloud.py fallo con exit code $LASTEXITCODE"
-        exit $LASTEXITCODE
-    }
+$ExitCode = $process.ExitCode
+$Duration = (Get-Date) - $StartTime
 
-    $Duration = (Get-Date) - $StartTime
-    Write-Log "=== DUMP OK === Duracion: $($Duration.TotalSeconds.ToString('F1'))s"
-} catch {
-    Write-Log "EXCEPTION: $_"
-    exit 1
+# Combinar stdout y stderr en el log
+if (Test-Path "$LogDir\dump_stdout_$Timestamp.txt") {
+    Get-Content "$LogDir\dump_stdout_$Timestamp.txt" | Out-File -FilePath $LogFile -Append -Encoding utf8
 }
+if (Test-Path "$LogDir\dump_stderr_$Timestamp.txt") {
+    Get-Content "$LogDir\dump_stderr_$Timestamp.txt" | Out-File -FilePath $LogFile -Append -Encoding utf8
+}
+
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') === DUMP FINALIZADO === ExitCode: $ExitCode Duracion: $($Duration.TotalSeconds.ToString('F1'))s" | Out-File -FilePath $LogFile -Append -Encoding utf8
+
+# Limpiar archivos temporales
+Remove-Item "$LogDir\dump_stdout_$Timestamp.txt" -Force -ErrorAction SilentlyContinue
+Remove-Item "$LogDir\dump_stderr_$Timestamp.txt" -Force -ErrorAction SilentlyContinue
+
+if ($ExitCode -ne 0) {
+    Write-Host "ERROR: dump_to_cloud.py fallo con exit code $ExitCode. Ver log: $LogFile"
+    exit $ExitCode
+}
+
+Write-Host "Dump OK - $($Duration.TotalSeconds.ToString('F1'))s - Log: $LogFile"
