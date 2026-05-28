@@ -45,7 +45,9 @@ motoshopData/
 ├── tests/                       Track A · Tests locales de transformaciones
 │
 ├── infra/                       Scripts de infraestructura
-│   └── backup_mysql.sh          Backup mysqldump (verificación crítica F0)
+│   ├── backup_mysql.sh          Backup mysqldump (bash · verificación crítica F0)
+│   ├── backup_mysql.ps1         Backup mysqldump (PowerShell · Windows)
+│   └── create_users.sql.example Plantilla de creación de usuarios MySQL read-only
 │
 └── motoshop-app/                Track T · API + PWA
     ├── api/                     FastAPI (Python)

@@ -1,0 +1,36 @@
+-- ============================================================
+-- Creación de usuarios MySQL read-only para MotoShop
+-- P1 (Opción A): self-hosted dump → analytics@localhost
+--              El script de dump corre en el PC, conecta local
+-- P3 (Opción A): API en PC local → api_read@localhost
+--
+-- INSTRUCCIONES:
+-- 1. Reemplazar 'changeme_analytics' y 'changeme_api' por
+--    contraseñas seguras (mín. 16 chars, complejas).
+-- 2. Guardar las contraseñas en el password manager.
+-- 3. Ejecutar conectado como root en el MySQL local:
+--    mysql -u root -p < infra/create_users.sql
+-- 4. Probar que INSERT/UPDATE/DELETE fallan (verificación F0 #1)
+-- ============================================================
+
+-- Usuario para el script de dump/ingesta (Track A)
+CREATE USER IF NOT EXISTS 'analytics'@'localhost'
+  IDENTIFIED BY 'changeme_analytics';
+
+GRANT SELECT ON `motoshop2024`.* TO 'analytics'@'localhost';
+-- Sin INSERT, UPDATE, DELETE, DROP, ALTER, CREATE — solo SELECT
+-- Si en el futuro se necesita acceso remoto (opción B),
+-- cambiar a 'analytics'@'%' y abrir túnel.
+
+-- Usuario para la API FastAPI (Track T)
+CREATE USER IF NOT EXISTS 'api_read'@'localhost'
+  IDENTIFIED BY 'changeme_api';
+
+GRANT SELECT ON `motoshop2024`.* TO 'api_read'@'localhost';
+-- idem: solo SELECT
+
+FLUSH PRIVILEGES;
+
+-- Verificación (opcional):
+-- SHOW GRANTS FOR 'analytics'@'localhost';
+-- SHOW GRANTS FOR 'api_read'@'localhost';

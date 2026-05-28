@@ -1,6 +1,6 @@
 # ADR-0008 · Provider de autenticación (P4)
 
-- **Estado:** **Proposed** — bloquea F1
+- **Estado:** **Accepted** — 2026-05-27
 - **Fecha:** 2026-05-27
 - **Bloquea:** F1 (auth JWT + roles)
 - **Decide:** Humano (responsable del proyecto)

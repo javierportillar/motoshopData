@@ -8,44 +8,57 @@
 
 ---
 
+## Sesión 2026-05-27 · Decisiones P1–P4 aceptadas
+
+### Resumen de esta sesión
+- ✅ P1–P4 revisados y aceptados (recomendaciones confirmadas sin cambios)
+- ✅ ADRs 0005–0008 actualizados a `Accepted`
+- ✅ Script PowerShell `infra/backup_mysql.ps1` generado (alternativa Windows)
+- ✅ SQL `infra/create_users.sql` generado con usuarios `analytics` y `api_read`
+- ➡️ Pendiente: ejecutar backup, crear usuarios, Databricks, Cloudflare Tunnel, probar scaffolds
+
+---
+
 ## Sesión 2026-05-27 · Cierre de andamiaje F0
 
-### 1. ⬜ Revisar y confirmar/ajustar P1–P4 *(bloquea F0 → F1)*
+### 1. ✅ Revisar y confirmar/ajustar P1–P4 *(bloquea F0 → F1)*
 
-Leer los 4 ADRs propuestos y responder al agente con un OK o con los ajustes que quieras. Mis recomendaciones:
-
-| # | ADR | Recomendación |
-|---|-----|----------------|
-| P1 | [0005 · Conectividad Databricks ↔ MySQL](docs/decisions/0005-databricks-mysql-connectivity.md) | **A** · self-hosted dump → cloud storage |
-| P2 | [0006 · Túnel remoto](docs/decisions/0006-remote-tunnel.md) | **A** · Cloudflare Tunnel |
-| P3 | [0007 · Hosting de la API](docs/decisions/0007-api-hosting.md) | **A** · PC local |
-| P4 | [0008 · Provider de auth](docs/decisions/0008-auth-provider.md) | **A** · login propio (JWT + bcrypt) |
-
-> *Cuando confirmes, el agente cambia el estado de los ADRs a `Accepted` y lo refleja en [SEGUIMIENTO.md](SEGUIMIENTO.md).*
+Los 4 ADRs fueron aceptados con las recomendaciones originales:
+- P1 → **A** · Self-hosted dump → cloud storage
+- P2 → **A** · Cloudflare Tunnel
+- P3 → **A** · PC local
+- P4 → **A** · Login propio (JWT + bcrypt)
 
 ---
 
 ### 2. ⬜ Ejecutar el backup del MySQL *(verificación crítica #6 de F0)*
 
-Desde el PC Windows donde corre `motoshop2024` (o desde donde tengas acceso a la BD):
+Desde PowerShell (como Administrador) en el PC donde corre `motoshop2024`:
 
-```bash
-cd /Users/javierportillarosero/Documents/personal/dataEmpresas/motoshopData
-MOTOSHOP_BACKUP_DIR=~/Backups/motoshop ./infra/backup_mysql.sh
+```powershell
+# Asegúrate de que mysqldump está en el PATH
+# o ejecuta desde: C:\Program Files (x86)\MySQL\MySQL Server 5.0\bin\
+cd C:\Users\MotoShop\Documents\javidevmoto
+.\infra\backup_mysql.ps1 -BackupDir "$env:USERPROFILE\Backups\motoshop"
 ```
 
-**Reportar al agente:** tamaño del archivo y duración (los imprime el script al final). Se anotan en [SEGUIMIENTO.md → Fase 0 → Métricas mínimas](SEGUIMIENTO.md#métricas-mínimas).
+> Si `mysqldump` no está en el PATH, usa la ruta completa:
+> ```powershell
+> $env:PATH += ";C:\Program Files (x86)\MySQL\MySQL Server 5.0\bin"
+> .\infra\backup_mysql.ps1
+> ```
 
-> *Si estás en Windows y no tienes bash, el equivalente con PowerShell se puede armar — avísale al agente y te lo escribe.*
+**Reportar al agente:** tamaño y duración (los imprime el script al final).
 
 ---
 
 ### 3. ⬜ Probar que el scaffold corre *(opcional, valida los `⚠️` de F0)*
 
 **API (FastAPI):**
-```bash
+```powershell
 cd motoshop-app/api
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 pytest
 uvicorn motoshop_api.main:app --reload --port 8000
@@ -53,10 +66,10 @@ uvicorn motoshop_api.main:app --reload --port 8000
 ```
 
 **Web (Next.js):**
-```bash
+```powershell
 cd motoshop-app/web
 npm install
-cp .env.local.example .env.local
+copy .env.local.example .env.local
 npm run dev
 # abrir http://localhost:3000
 ```
@@ -65,24 +78,32 @@ npm run dev
 
 ---
 
-### 4. ⬜ Crear usuarios MySQL read-only *(requiere P1 resuelto)*
+### 4. ⬜ Crear usuarios MySQL read-only
 
-Toca sgHermes, por eso lo haces tú. El agente te pasa los `CREATE USER` exactos en cuanto confirmes P1 (define si `analytics` se conecta vía túnel directo o solo necesitamos `api_read`).
+Con P1 = A (dump local), ambos usuarios son `@localhost`:
 
-Plan tentativo:
-- `analytics@%` — read-only para Databricks (si P1 = B) **o** no necesario (si P1 = A).
-- `api_read@localhost` — read-only para la API FastAPI.
+```sql
+-- 1. Reemplazar 'changeme_analytics' y 'changeme_api' por contraseñas seguras
+-- 2. Guardarlas en el password manager
+-- 3. Ejecutar como root:
+mysql -u root < infra\create_users.sql.example
+```
 
-Ambos con contraseña fuerte guardada en el password manager (NO en el repo).
+**Verificación crítica #1 de F0:** Probar que INSERT/UPDATE/DELETE fallan:
+```sql
+mysql -u analytics -p -e "INSERT INTO motoshop2024.productos (codprod) VALUES ('test')"
+-- debe dar: ERROR 1142 (42000): INSERT command denied...
+```
 
 ---
 
 ### 5. ⬜ Crear cuenta/workspace Databricks
 
-- Crear cuenta (Free / Community para arrancar es suficiente).
+- Crear cuenta en https://databricks.com (Free / Community tier para arrancar).
 - Crear catálogo `motoshop` en Unity Catalog con esquemas `bronze`, `silver`, `gold`.
 - Generar un Personal Access Token (PAT) y guardarlo en el password manager.
 - Pasar al agente: **host** del workspace (URL) y confirmar que el PAT está disponible (sin enviarlo por chat).
+- Después de esto, el agente podrá escribir el primer notebook bronze.
 
 ---
 

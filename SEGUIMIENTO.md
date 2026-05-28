@@ -50,9 +50,11 @@ F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 | D2 | 2026-05-27 | Frontend solo lectura en F1-F4 | Replazar sgHermes; bidireccional desde el inicio | Reduce riesgo, evita concurrencia con sgHermes. ADR: [0002](docs/decisions/0002-frontend-read-only-f1-f4.md) |
 | D3 | 2026-05-27 | PWA (Next.js) en lugar de app nativa | Web + nativa; solo móvil Flutter/RN | Una base sirve para web y móvil; instalable; menos esfuerzo. ADR: [0003](docs/decisions/0003-pwa-nextjs.md) |
 | D4 | 2026-05-27 | Tablas `app_*` en InnoDB cuando llegue F5 | BD paralela; migrar todo a MySQL 8 | Mínimo impacto en sgHermes; transacciones donde se necesitan. ADR: [0004](docs/decisions/0004-innodb-app-tables-f5.md) |
-| D5 | _pendiente (P1)_ | Conectividad PC ↔ Databricks | _ver ADR [0005](docs/decisions/0005-databricks-mysql-connectivity.md)_ | Recomendación pendiente de validación humana |
-| D6 | _pendiente (P2)_ | Túnel remoto | Cloudflare Tunnel / Tailscale / VPS | Recomendación pendiente. ADR: [0006](docs/decisions/0006-remote-tunnel.md) |
+| D5 | 2026-05-27 | Conectividad PC ↔ Databricks: self-hosted dump → cloud storage (Opción A) | Túnel directo (B); réplica gestionada (C) | Desacoplado, seguro, escalable. ADR: [0005](docs/decisions/0005-databricks-mysql-connectivity.md) |
+| D6 | 2026-05-27 | Túnel remoto: Cloudflare Tunnel (Opción A) | Tailscale (B); VPS + SSH (C) | Seguro, gratuito, sin abrir puertos. ADR: [0006](docs/decisions/0006-remote-tunnel.md) |
 | D7 | 2026-05-27 | Monorepo provisional (`motoshop-app/` dentro de `motoshopData/`) | Dos repos separados desde F0 | Equipo de una persona; revisable en F6. ADR: [0009](docs/decisions/0009-monorepo-vs-two-repos.md) |
+| D8 | 2026-05-27 | Hosting API en PC local (Opción A) | VPS | Simple, gratis, latencia mínima a BD. ADR: [0007](docs/decisions/0007-api-hosting.md) |
+| D9 | 2026-05-27 | Auth: login propio JWT + bcrypt (Opción A) | Google OAuth; Microsoft Entra | Control total, sin dependencias externas. ADR: [0008](docs/decisions/0008-auth-provider.md) |
 
 ---
 
@@ -76,7 +78,7 @@ F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 - ⬜ Esquemas `bronze`, `silver`, `gold` creados *(requiere humano)*
 - ⬜ Usuario MySQL `analytics` (read-only, con contraseña) *(requiere humano + decisión P1)*
 - ⬜ Repo `motoshopdata` conectado al workspace *(requiere humano)*
-- 🔴 Estrategia conectividad decidida (D5) y probada con un SELECT *(bloqueado por P1)*
+- 🟡 Estrategia conectividad decidida (D5) — **Opción A** aceptada ✅; pendiente de implementar (script dump + cloud storage) *(requiere humano: cuenta Databricks + cloud storage)*
 - ⬜ Cluster small configurado con autoterminación (10 min) *(requiere humano)*
 
 **Track T · Transaccional**
@@ -84,8 +86,8 @@ F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 - ⬜ Usuario MySQL `api_read` (read-only, con contraseña) *(requiere humano)*
 - ⚠️ FastAPI corriendo localmente con un endpoint `/health` — scaffold listo en `motoshop-app/api/`, falta `pip install` + `uvicorn` por parte del humano
 - ⚠️ Next.js corriendo localmente con una página vacía — scaffold listo en `motoshop-app/web/`, falta `npm install` + `npm run dev` por parte del humano
-- 🔴 Túnel remoto configurado (D6) *(bloqueado por P2)*
-- 🔴 Llamada HTTPS al endpoint `/health` desde red externa exitosa *(bloqueado por P2)*
+- 🟡 Túnel remoto configurado (D6) — Cloudflare Tunnel aceptado ✅; pendiente de instalar `cloudflared` y generar token *(requiere humano)*
+- 🔴 Llamada HTTPS al endpoint `/health` desde red externa exitosa *(bloqueado por: instalar Cloudflare Tunnel)*
 - ⬜ CI básico (lint, format, tests vacíos pero corriendo) — pendiente de configurar GitHub Actions tras confirmar repo remoto
 
 **Andamiaje (no estaba en la lista original, sumar al gate)**
@@ -118,7 +120,8 @@ F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 - Costo Databricks en Fase 0: ~0 USD (free tier o pruebas mínimas).
 
 ### Bloqueadores actuales
-_(ninguno aún)_
+- ~~P1–P4 resueltos ✅~~
+- Pendiente humano: backup MySQL, crear usuarios, cuenta Databricks, Cloudflare Tunnel, probar scaffolds
 
 ### Lecciones de cierre
 _(rellenar al cerrar la fase)_
@@ -532,10 +535,10 @@ _(rellenar al cerrar la fase)_
 
 | # | Decisión | Fase que bloquea | Quién decide | Deadline | ADR / Recomendación |
 |---|----------|-------------------|--------------|----------|----------------------|
-| P1 | Estrategia conectividad Databricks ↔ MySQL | F0 → F1 | Javier | Cierre F0 | [ADR-0005](docs/decisions/0005-databricks-mysql-connectivity.md) → recomendado: **A · self-hosted dump → cloud storage** |
-| P2 | Túnel remoto (Cloudflare Tunnel / Tailscale / VPS) | F0 → F1 | Javier | Cierre F0 | [ADR-0006](docs/decisions/0006-remote-tunnel.md) → recomendado: **A · Cloudflare Tunnel** |
-| P3 | Hosting de la API (PC vs. VPS) | F0 → F1 | Javier | Cierre F0 | [ADR-0007](docs/decisions/0007-api-hosting.md) → recomendado: **A · PC local** |
-| P4 | Provider de auth (propio vs. Google/Microsoft) | F1 | Javier | Inicio F1 | [ADR-0008](docs/decisions/0008-auth-provider.md) → recomendado: **A · login propio** |
+| ~~P1~~ | ~~Estrategia conectividad Databricks ↔ MySQL~~ | ~~F0 → F1~~ | — | ✅ Resuelta | **A · Self-hosted dump → cloud storage** |
+| ~~P2~~ | ~~Túnel remoto (Cloudflare Tunnel / Tailscale / VPS)~~ | ~~F0 → F1~~ | — | ✅ Resuelta | **A · Cloudflare Tunnel** |
+| ~~P3~~ | ~~Hosting de la API (PC vs. VPS)~~ | ~~F0 → F1~~ | — | ✅ Resuelta | **A · PC local** |
+| ~~P4~~ | ~~Provider de auth (propio vs. Google/Microsoft)~~ | ~~F1~~ | — | ✅ Resuelta | **A · Login propio** |
 | P5 | BI principal (Power BI vs. Databricks SQL vs. ambos) | F3 | Javier | Inicio F3 | _pendiente de ADR_ |
 | P6 | Confirmar si F5 (escritura) se ejecuta o se difiere | F4 → F5 | Javier | Cierre F4 | _pendiente de ADR_ |
 
@@ -544,6 +547,35 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-27 — Sesión 2 · Decisiones P1–P4 aceptadas + herramientas para humano
+
+- **Hecho:**
+  - P1–P4 revisados por Javier y aceptados (recomendaciones confirmadas):
+    - P1 → A · Self-hosted dump → cloud storage
+    - P2 → A · Cloudflare Tunnel
+    - P3 → A · PC local
+    - P4 → A · Login propio (JWT + bcrypt)
+  - ADRs 0005–0008 cambiados de `Proposed` a `Accepted` con fecha.
+  - Bitácora de decisiones actualizada con D5–D9 completos.
+  - Script PowerShell `infra/backup_mysql.ps1` generado como alternativa Windows.
+  - Comandos `CREATE USER` para `analytics` y `api_read` generados (contraseñas placeholder).
+- **Aprendido:**
+  - Javier está en Windows — los scripts bash no funcionan directamente. Se proveen alternativas PowerShell.
+  - Las 4 decisiones estaban alineadas con lo recomendado en PLAN.md, sin ajustes.
+- **Abierto (humano):**
+  - Ejecutar backup MySQL (tarea #2 de PENDIENTES.md)
+  - Crear usuarios MySQL `analytics` y `api_read` con contraseñas reales
+  - Crear cuenta/workspace Databricks + catálogo `motoshop`
+  - Instalar Cloudflare Tunnel
+  - Probar scaffolds FastAPI y Next.js (opcional)
+- **Próximo paso:**
+  1. Humano: ejecuta backup y reporta tamaño + duración.
+  2. Humano: crea usuarios MySQL.
+  3. Humano: crea cuenta Databricks.
+  4. Agente: una vez tengas Databricks, escribe el primer notebook bronze.
+
+---
 
 ### 2026-05-27 — Arranque · Andamiaje del repo (F0)
 

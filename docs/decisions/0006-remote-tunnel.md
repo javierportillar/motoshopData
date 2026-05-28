@@ -1,6 +1,6 @@
 # ADR-0006 · Túnel remoto para exponer la API (P2)
 
-- **Estado:** **Proposed** — bloquea F0 → F1
+- **Estado:** **Accepted** — 2026-05-27
 - **Fecha:** 2026-05-27
 - **Bloquea:** F0 (entregable Track T · "Llamada HTTPS desde red externa exitosa")
 - **Decide:** Humano (responsable del proyecto)

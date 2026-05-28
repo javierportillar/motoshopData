@@ -1,6 +1,6 @@
 # ADR-0007 · Hosting de la API (P3)
 
-- **Estado:** **Proposed** — bloquea F0 → F1
+- **Estado:** **Accepted** — 2026-05-27
 - **Fecha:** 2026-05-27
 - **Bloquea:** F0 (entregable Track T · "FastAPI corriendo")
 - **Decide:** Humano (responsable del proyecto)

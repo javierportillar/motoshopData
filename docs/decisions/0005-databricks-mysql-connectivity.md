@@ -1,6 +1,6 @@
 # ADR-0005 · Conectividad Databricks ↔ MySQL local (P1)
 
-- **Estado:** **Proposed** — bloquea F0 → F1
+- **Estado:** **Accepted** — 2026-05-27
 - **Fecha:** 2026-05-27
 - **Bloquea:** F0 (entregable Track A · "Estrategia conectividad decidida y probada")
 - **Decide:** Humano (responsable del proyecto)
