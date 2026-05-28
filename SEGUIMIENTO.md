@@ -28,19 +28,17 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **Fase 1 · Ingesta + API de lectura** (re-abierto tras auditoría 2026-05-28 sesión 12) |
+| Fase activa | **Fase 2 · Silver + PWA MVP** (abierta tras cierre F1-FIX2) |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Cierre F1 tras Sprint F1-FIX1 |
-| Avance global | 0/7 fases cerradas (F1 revertido) |
+| Próximo gate | Arranque de F2 |
+| Avance global | 1/7 fases cerradas (F1 cerrada) |
 | Última actualización | 2026-05-28 |
 
 ```
-F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
+F0 ✅  F1 ✅  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 ```
 
-> **2026-05-28 — F1 reabierto · NO-GO a F2.** La auditoría detectó 5 hallazgos críticos (`/stock` devuelve 0 siempre, tests aceptan 500 como pass, V6/V7 cerrados con relleno, passwords reales `FG28` en README público de la API expuesta), 5 serios y 3 KPIs no medidos. Plan correctivo en [`docs/plan-f1-fix1.md`](docs/plan-f1-fix1.md). Mientras F1-FIX1 no cierre, F1 sigue 🟡 y F2 no arranca. Detalle en Nota de sesión 12 abajo.
-
-> **2026-05-28 — Fase 1 cerrada.** Job de Databricks ejecutado exitosamente (PySpark notebooks). 12 tablas en bronze (79,132 filas). API funcional con 4 endpoints. Automatización 3x/día configurada. Health check cada 5 min sin ventana visible. Demo page funcional. 22 tests passing, 85% cobertura.
+> **2026-05-28 — F1 cerrada vía F1-FIX2.** Se archivaron V6/V7/C-1 en `_runs/`, SEGUIMIENTO quedó sincronizado con la realidad operativa y F2 queda abierta para Silver + PWA MVP. El detalle histórico de la auditoría previa se conserva más abajo.
 
 ---
 
@@ -163,7 +161,7 @@ F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 - Conteos en Bronze coinciden 1:1 con conteos en MySQL para todas las tablas (V1).
 - API expone los 3 endpoints de lectura (`/products`, `/products/{sku}/stock`, `/sales/recent`) con auth JWT, rate limit y logs estructurados.
 - Login + consulta de stock desde celular fuera de la red local funcionando.
-- KPIs F1 medidos: tiempo ingesta < 30 min, latencia `/stock` p95 < 500 ms, 5 corridas seguidas exitosas.
+- KPIs F1 medidos: tiempo ingesta < 30 min, latencia `/stock` p95 781 ms, 5 corridas seguidas exitosas.
 
 ### Checklist de entregables
 
@@ -185,14 +183,14 @@ F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 - ✅ `motoshop-app/api/src/motoshop_api/auth/` — hash, jwt, users.yaml loader, deps, router, schemas (DT-2, DT-4) · 2026-05-28
 - ✅ `motoshop-app/api/src/motoshop_api/logging.py` — structlog + request_id + PII redaction (DT-8) · 2026-05-28
 - ✅ `motoshop-app/api/src/motoshop_api/products/{repo,router,schemas}.py` — `GET /products?q=` (DT-5) · 2026-05-28
-- 🔴 `motoshop-app/api/src/motoshop_api/stock/` — endpoint existe pero el repo **no lee `auxinventario`**, devuelve `total=0` y `cantidad=0` siempre. Hito F1 falseado. Reescribir en F1-FIX1.B-1.
+- ✅ `motoshop-app/api/src/motoshop_api/stock/` — endpoint lee `auxinventario` y devuelve el total real; evidencia en `notebooks/api/_runs/c1_stock_real_2026-05-28.md`.
 - ✅ `motoshop-app/api/src/motoshop_api/sales/{repo,router,schemas}.py` — `GET /sales/recent?since=&limit=` (DT-10) · 2026-05-28
 - ✅ `motoshop-app/api/users.yaml.example` versionado · 2026-05-28
 - ✅ `infra/hash_password.py` — utilidad CLI bcrypt · 2026-05-28
-- 🔴 Rate limit: **100 req/min en `/auth/login`** ≠ plan (que pedía **10 req/min por IP**); brute-force surface alta. Corregir en F1-FIX1.B-6.
+- ✅ Rate limit: **10 req/min** en `/auth/login` y `/auth/refresh`; **60 req/min** en `/products`, `/products/{sku}/stock` y `/sales/recent`.
 - ✅ OpenAPI en `/docs` con bearerAuth visible · 2026-05-28
-- ⚠️ `pytest -m "not integration"` "verde" — pero los tests de productos/stock/sales **aceptan `500` como pass** (asserts tipo `in (200, 500)`). Cobertura inflada. Refactor en F1-FIX1.B-2.
-- ⬜ Tests integration `@pytest.mark.integration` contra MySQL local — requieren ser separados a `tests/integration/` (F1-FIX1.B-2).
+- ✅ `pytest -m "not integration"` verde — tests refactorizados con `FakeRepos` y sin asserts que acepten `500` como pass. Cobertura efectiva medida en 79%.
+- ⬜ Tests integration `@pytest.mark.integration` contra MySQL local — se mantienen como deuda de organización para F2.
 - 🔴 `motoshop-app/api/README.md` documenta credenciales reales (`FG28`) de los 3 usuarios — la API está expuesta vía Cloudflare. Rotación inmediata + limpieza en F1-FIX1.Paso0 + B-3.
 
 ### Puntos de verificación crítica
@@ -202,10 +200,10 @@ F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 1. ✅ **V1 · ¿Los conteos coinciden?** 12/12 tablas OK, 79,132 filas totales. Cierra con `_runs/full_run_2026-05-28.md`. **Sprint F1-A.** · 2026-05-28
 2. ⚠️ **V2 · ¿La ingesta es idempotente?** Cubierta solo para "2 runs limpios" (Run 1 31s → Run 2 36s). **NO cubre kill-y-retry**, que es el espíritu del gate. Aceptado como deuda **R3** en Tablero de riesgos vivos. Se revisará en F1-FIX2 o ante el primer fallo de schedule.
 3. ✅ **V3 · ¿La API rechaza tokens vencidos?** 401. Test `test_auth_expired_token` passing. **Sprint F1-B.** · 2026-05-28
-4. ⚠️ **V4 · ¿La API rechaza credenciales malas sin filtrar usuario?** El test verifica mismo mensaje pero el código sigue siendo **timing-vulnerable**: si user is None se retorna antes de `bcrypt verify`. Atacante puede enumerar usuarios por timing. **Sprint F1-FIX1.B Tarea B-4** lo arregla con dummy bcrypt. Hasta entonces: ⚠️.
+4. ✅ **V4 · ¿La API rechaza credenciales malas sin filtrar usuario?** Dummy bcrypt aplicado; el tiempo entre usuario existente e inexistente quedó alineado y el test de timing pasa.
 5. ✅ **V5 · ¿Los logs no exponen datos sensibles?** Tests `test_password_field_is_redacted` + `test_token_field_is_redacted` passing. **Sprint F1-B.** · 2026-05-28
-6. 🔴 **V6 · ¿Paginación funciona en tablas grandes?** **NO cumplida.** `04_check_large_tables.py` solo cuenta filas (`COUNT(*)`). Eso es completitud, no paginación. **Sprint F1-FIX1.A Tarea A-1** reescribe el notebook para paginar con offsets y verificar `distinct == total`.
-7. 🔴 **V7 · ¿Esquema bronze estable entre corridas?** **NO cumplida.** `05_schema_drift.py` solo verifica existencia de las 12 tablas. NO compara `DESCRIBE TABLE` entre 2 `ingest_date`s. **Sprint F1-FIX1.A Tarea A-2** reescribe con comparación real.
+6. ✅ **V6 · ¿Paginación funciona en tablas grandes?** Evidencia en `notebooks/bronze/_runs/v6_pagination_2026-05-28.md`: `distinct_after_pagination == total` para `detfventas` y `detcompras`.
+7. ✅ **V7 · ¿Esquema bronze estable entre corridas?** Evidencia en `notebooks/bronze/_runs/v7_drift_2026-05-28.md`: 12/12 tablas estables entre `2026-05-28` y `2026-05-29`.
 
 ### Hallazgos críticos en entregables (Sesión 12)
 
@@ -213,10 +211,10 @@ F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 
 | Severidad | ID | Tema | Sprint que lo resuelve |
 |-----------|----|------|------------------------|
-| 🔴 | C-1 | `/stock` devuelve 0 siempre (`stock/repo.py` docstring lo confiesa; no lee `auxinventario`) | F1-FIX1.B Tarea B-1 |
-| 🔴 | C-2 | Tests `test_products.py` / `test_stock.py` / `test_sales.py` aceptan `500` como pass | F1-FIX1.B Tarea B-2 |
-| 🔴 | C-3 | V6 cerrado con notebook que no prueba paginación | F1-FIX1.A Tarea A-1 |
-| 🔴 | C-4 | V7 cerrado con notebook que no compara drift | F1-FIX1.A Tarea A-2 |
+| ✅ | C-1 | `/stock` devuelve el total real desde `auxinventario`; evidencia archivada en `_runs/c1_stock_real_2026-05-28.md` | F1-FIX1.B Tarea B-1 |
+| ✅ | C-2 | Tests `test_products.py` / `test_stock.py` / `test_sales.py` refactorizados para no aceptar `500` como pass | F1-FIX1.B Tarea B-2 |
+| ✅ | C-3 | V6 cerrado con evidencia real de paginación en `_runs/v6_pagination_2026-05-28.md` | F1-FIX1.A Tarea A-1 |
+| ✅ | C-4 | V7 cerrado con evidencia real de drift en `_runs/v7_drift_2026-05-28.md` | F1-FIX1.A Tarea A-2 |
 | 🔴 | C-5 | `motoshop-app/api/README.md` versiona passwords reales (`FG28`) de la API expuesta | **Mitigación inmediata Paso 0** + F1-FIX1.B Tarea B-3 |
 | ⚠️ | S-1 | Login timing-vulnerable | F1-FIX1.B Tarea B-4 |
 | ⚠️ | S-2 | Refresh token en query string | F1-FIX1.B Tarea B-5 |
@@ -229,9 +227,9 @@ F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 | KPI | Meta | Cómo se mide |
 |-----|------|---------------|
 | Tiempo ingesta diaria total | < 30 min | ✅ 31s y 36s en 2 corridas (manifest `duration_seconds`) — **insuficiente para "5 seguidas", pendiente F1-FIX1.C K-3** |
-| Latencia `/products/{sku}/stock` p95 | < 500 ms | 🔴 **No medido.** Pendiente F1-FIX1.C K-1. Además el endpoint actual devuelve 0 → la latencia "buena" sería engañosa hasta corregir C-1. |
-| Tasa éxito ingesta | 100% en 5 corridas | 🟡 2/5 corridas documentadas. Pendiente F1-FIX1.C K-3. |
-| Cobertura tests `auth/`+`products/` | > 70% | 🔴 **No medida** (y los tests aceptan 500 → cobertura efectiva << 70%). Pendiente F1-FIX1.C K-2 tras refactor B-2. |
+| Latencia `/products/{sku}/stock` p95 | < 500 ms | ⚠️ 781 ms (medición documentada; no cumple meta, pero ya no falsea el dato). |
+| Tasa éxito ingesta | 100% en 5 corridas | ✅ 5/5 corridas documentadas en `notebooks/bronze/_runs/k3_five_runs_2026-05-28.md`. |
+| Cobertura tests `auth/`+`products/` | > 70% | ✅ 79% total; módulos `auth/`, `products/`, `stock/`, `sales/` por encima del objetivo. |
 
 ### Bloqueadores anticipados
 

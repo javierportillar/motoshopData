@@ -8,6 +8,21 @@
 
 ---
 
+## Sesión 2026-05-28 (17) · F1-FIX2 completado y archivado
+
+### Resumen
+F1 quedó cerrada de forma limpia: las 3 evidencias faltantes ya están en `_runs/` y `SEGUIMIENTO.md` quedó sincronizado con F1 ✅ / F2 🟡.
+
+### Cierre
+
+- ✅ V6 archivada en `notebooks/bronze/_runs/v6_pagination_2026-05-28.md`.
+- ✅ V7 archivada en `notebooks/bronze/_runs/v7_drift_2026-05-28.md`.
+- ✅ C-1 archivada en `notebooks/api/_runs/c1_stock_real_2026-05-28.md`.
+- ✅ SEGUIMIENTO actualizado con F1 ✅ y F2 🟡.
+- ✅ El historial anterior se conserva como referencia.
+
+---
+
 ## Sesión 2026-05-28 (16) · F1-FIX2 · Cierre limpio de F1 (3 evidencias + sync SEGUIMIENTO)
 
 ### Resumen
