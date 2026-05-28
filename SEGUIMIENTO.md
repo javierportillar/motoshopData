@@ -28,15 +28,17 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **Fase 1 · Ingesta + API de lectura** |
+| Fase activa | **Fase 0 · Cimientos** (en cierre estricto) |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Cierre Fase 1 |
-| Avance global | 1/7 fases cerradas |
+| Próximo gate | Cierre Fase 0 (4 acciones humanas pendientes en [PENDIENTES.md](PENDIENTES.md)) |
+| Avance global | 0/7 fases cerradas |
 | Última actualización | 2026-05-28 |
 
 ```
-F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
+F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 ```
+
+> **Nota 2026-05-28:** la auditoría de cierre detectó 2 violaciones del gate (verificación crítica #3 con smoke test sintético, y #5 con password real en `create_users.sql.example`) y 1 ⚠️ en #4 (sin clusters tradicionales en Free Edition). F0 se reabre a 🟡 hasta resolver. Agente preparó: ADR-0010 (compute), `dump_to_cloud.py`, smoke test reescrito, rotación de credenciales documentada, `setup_uc_volume.md`. Humano tiene que ejecutar 4 acciones en el PC.
 
 ---
 
@@ -55,6 +57,7 @@ F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 | D7 | 2026-05-27 | Monorepo provisional (`motoshop-app/` dentro de `motoshopData/`) | Dos repos separados desde F0 | Equipo de una persona; revisable en F6. ADR: [0009](docs/decisions/0009-monorepo-vs-two-repos.md) |
 | D8 | 2026-05-27 | Hosting API en PC local (Opción A) | VPS | Simple, gratis, latencia mínima a BD. ADR: [0007](docs/decisions/0007-api-hosting.md) |
 | D9 | 2026-05-27 | Auth: login propio JWT + bcrypt (Opción A) | Google OAuth; Microsoft Entra | Control total, sin dependencias externas. ADR: [0008](docs/decisions/0008-auth-provider.md) |
+| D10 | 2026-05-28 | Compute Databricks: extracción local + UC Volume + Serverless SQL (Opción A) | Migrar a plan con clusters (B); reemplazar Databricks por DuckDB (C) | Free Edition no tiene clusters; el camino crítico no depende de drivers JDBC en Databricks. ADR: [0010](docs/decisions/0010-compute-databricks-free.md) |
 
 ---
 
@@ -77,9 +80,11 @@ F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 - ✅ Catálogo `motoshop` con esquemas `bronze`/`silver`/`gold` creados
 - ✅ Usuario MySQL `analytics` (read-only, con contraseña) · 2026-05-27
 - ⬜ Repo `motoshopdata` conectado al workspace *(requiere humano)*
-- ✅ Estrategia conectividad decidida (D5) — **Opción A** aceptada; notebook bronze smoke test listo en `notebooks/bronze/01_ingest_smoke_test.py`
-- ✅ Hello world conectividad MySQL: `infra/test_mysql_connectivity.py` ejecutado y verificado (SELECT 1 -> 1) · 2026-05-28
-- ⚠️ Cluster small: no disponible en este workspace (plan Free sin Clusters tradicionales). Se usará SQL Warehouse o se migrará a plan con compute en F1.
+- ✅ Estrategia conectividad decidida (D5) — **Opción A** aceptada
+- ✅ Hello world conectividad MySQL local: `infra/test_mysql_connectivity.py` (SELECT 1 -> 1) · 2026-05-28
+- 🟡 Hello world Databricks ↔ MySQL end-to-end (verif. #3 real) — código listo (`infra/dump_to_cloud.py` + `notebooks/bronze/01_ingest_smoke_test.py` reescrito + `infra/setup_uc_volume.md`); pendiente ejecutar en el PC + workspace · ver [PENDIENTES.md](PENDIENTES.md) tarea 4
+- 🟡 Compute Databricks (D10 aceptado): SQL Warehouse con auto-stop 10 min — pendiente configurar · ver [PENDIENTES.md](PENDIENTES.md) tarea 3
+- ⬜ Volume `motoshop.bronze._landing` creado · ver [PENDIENTES.md](PENDIENTES.md) tarea 2
 
 **Track T · Transaccional**
 - ✅ Repo `motoshop-app` (FastAPI + Next.js) creado con estructura base · 2026-05-27
@@ -101,6 +106,13 @@ F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 - ✅ 9 ADRs en `docs/decisions/` (aceptados) · 2026-05-27
 - ✅ README.md reescrito con descripción real del monorepo · 2026-05-27
 - ✅ Script `infra/test_mysql_connectivity.py` creado y verificado · 2026-05-28
+- ✅ `infra/dump_to_cloud.py` (extractor local Parquet + uploader UC Volume) · 2026-05-28
+- ✅ `notebooks/bronze/01_ingest_smoke_test.py` reescrito para leer Parquet real del Volume · 2026-05-28
+- ✅ `infra/requirements.txt` para entorno local de los scripts de infra · 2026-05-28
+- ✅ `infra/setup_uc_volume.md` con SQL de creación del Volume · 2026-05-28
+- ✅ `infra/rotate_mysql_passwords.md` con plan de rotación · 2026-05-28
+- ✅ `infra/create_users.sql.example` sanitizado (placeholders, sin password real) · 2026-05-28
+- ✅ ADR-0010 (compute Databricks Free) aceptado · 2026-05-28
 
 ### Puntos de verificación crítica
 
@@ -108,13 +120,13 @@ F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
    ✅ Verificado: `INSERT command denied` para `analytics`, `api_read` y `javier` · 2026-05-27
 2. ✅ **¿El túnel funciona desde una red distinta?**
    ✅ Verificado desde 4G del celular: `https://api.fragloesja.uk/health` → `{"status":"ok","version":"0.0.0","env":"dev"}` · 2026-05-28
-3. ✅ **¿La conectividad MySQL funciona (end-to-end local)?**
-   ✅ Script `infra/test_mysql_connectivity.py`: SELECT 1 -> 1, archivo JSON guardado en `conectividad/hello_mysql_result.json` · 2026-05-28
-   ⚠️ Conectividad Databricks → MySQL pendiente (no hay Clusters en el plan actual; se usará JDBC desde SQL Warehouse o se resolverá en F1)
-4. ⚠️ **¿El cluster se apaga solo?**
-   ⚠️ No hay Clusters tradicionales disponibles en este workspace (plan Free). SQL Warehouse disponible con autoterminación configurable. Se revisa en F1 cuando se requiera compute.
-5. ✅ **¿Las credenciales están fuera de Git?**
-   ✅ Revisado: `.env`, `secrets`, contraseñas no están en ningún commit. `.gitignore` reforzado. · 2026-05-27
+3. 🟡 **¿La conectividad Databricks → MySQL local funciona end-to-end?**
+   ✅ Local: `infra/test_mysql_connectivity.py` (SELECT 1 -> 1) · 2026-05-28
+   🟡 End-to-end: código listo (`dump_to_cloud.py` + smoke test reescrito + setup UC Volume) — pendiente ejecutar. Tras ejecución pasa a ✅. Ver [PENDIENTES.md](PENDIENTES.md) tarea 4.
+4. 🟡 **¿El cluster se apaga solo?**
+   🟡 Free Edition sin clusters; se cumple con SQL Warehouse de auto-stop 10 min (D10). Pendiente configurar el Warehouse y capturar el setting. Ver [PENDIENTES.md](PENDIENTES.md) tarea 3.
+5. 🟡 **¿Las credenciales están fuera de Git?**
+   🟡 Tokens reales (Databricks PAT, Cloudflare) verificados ausentes del historial. **Pero** `infra/create_users.sql.example` contenía la password real `123450` y esa misma fue la usada en los 3 usuarios MySQL. Pendiente rotación de credenciales. Ver [PENDIENTES.md](PENDIENTES.md) tarea 1.
 6. ✅ **¿Tengo backup del MySQL antes de seguir?**
    ✅ `mysqldump` exitoso de `motoshop2024` — 5.02 MB comprimido, ~60 MB raw, 7s de duración. Archivo: `C:\Users\MotoShop\Backups\motoshop\motoshop2024_20260527_212611.sql.zip`
 
@@ -125,7 +137,7 @@ F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 - ✅ Costo Databricks en Fase 0: ~0 USD (free tier, sin clusters activos)
 
 ### Bloqueadores actuales
-- Ninguno. Fase 0 completada.
+- 4 acciones humanas pendientes en el PC para sellar el gate F0 (ver [PENDIENTES.md](PENDIENTES.md) sesión 2026-05-28). Sin bloqueadores externos.
 
 ### Lecciones de cierre
 
@@ -555,6 +567,29 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-28 — Sesión 6 · Auditoría F0 + cierre estricto (NO GO a F1 todavía)
+
+- **Hecho:**
+  - 🔍 Auditoría completa del estado del repo tras las 5 sesiones previas.
+  - 🔴 Detectada violación de Regla de Oro #2: `infra/create_users.sql.example` versionaba el password real `123450`. Documento de rotación creado (`infra/rotate_mysql_passwords.md`), `.sql.example` reescrito con placeholders, `.gitignore` reforzado con `*.parquet` y `_staging/`.
+  - 🔴 Detectado que el smoke test `01_ingest_smoke_test.py` usaba **datos sintéticos hardcoded** y por tanto **no cumplía** la verificación crítica #3 (Databricks ↔ MySQL end-to-end). Reescrito para leer Parquet real desde UC Volume.
+  - ✅ Escrito `infra/dump_to_cloud.py`: extractor local (mysql-connector-python → Parquet con pyarrow) que sube al UC Volume usando databricks-sdk. Soporta `--dry-run`, `--tables`, `--tables-core` (las 12 de F1), y aplica filtro `estdoc='A'` automáticamente cuando la columna existe.
+  - ✅ Escrito `infra/setup_uc_volume.md` con el SQL de creación del volume.
+  - ✅ Escrito `infra/requirements.txt` para el entorno de los scripts de infra.
+  - ✅ **ADR-0010 · Compute Databricks Free** aceptado: extracción en PC, transformaciones en serverless, SQL Warehouse con auto-stop 10 min.
+  - ✅ SEGUIMIENTO revertido: F0 a 🟡 hasta que el humano ejecute las 4 acciones en el PC.
+  - ✅ PENDIENTES.md: nuevo bloque con las 4 acciones humanas (rotar passwords, crear volume, configurar warehouse, correr el pipeline real).
+- **Aprendido:**
+  - Cerrar fases sin pasar la verificación crítica acumula deuda invisible. El gate sirve para no auto-engañarse.
+  - Free Edition de Databricks fuerza el diseño "extracción local → cloud storage" — que casualmente es el que P1 ya había elegido. Coincidencia útil.
+  - Hay que tener un `.example` paralelo a cualquier archivo de credenciales y que el `.gitignore` cubra siempre la versión sin sufijo.
+- **Abierto:**
+  - 4 acciones humanas en el PC (ver [PENDIENTES.md](PENDIENTES.md) sesión 2026-05-28). Sin ellas, F0 no cierra.
+- **Próximo paso:**
+  - Humano ejecuta las 4 tareas en el PC y reporta. Agente sella el gate y abre F1.
+
+---
 
 ### 2026-05-28 — Sesión 5 · Cierre de Fase 0 — Cimientos ✅
 

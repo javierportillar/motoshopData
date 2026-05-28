@@ -68,3 +68,7 @@ errores.txt
 # ─── Outputs generados por scripts de conectividad ────────
 conectividad/
 *.log
+
+# ─── Staging del dump local antes de subir a cloud storage ─
+_staging/
+*.parquet

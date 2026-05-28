@@ -8,6 +8,109 @@
 
 ---
 
+## Sesión 2026-05-28 · Cierre estricto de F0 (auditoría)
+
+### Resumen
+Auditoría de la entrega F0 detectó **2 violaciones de gate** y **1 ⚠️ de compute** que la metodología obliga a cerrar antes de abrir F1. El agente preparó todo el código y la documentación; faltan **4 acciones humanas** en el PC para sellar el cierre.
+
+> Si todo lo de abajo pasa ✅, F0 queda cerrado limpio y arrancamos F1.
+
+### 1. ⬜ Rotar contraseñas MySQL *(violación Regla de Oro #2)*
+
+El `infra/create_users.sql.example` versionado tenía la contraseña real (`123450`). Aunque los 3 usuarios son `@localhost`, esto es deuda pública en GitHub. Pasos detallados en [infra/rotate_mysql_passwords.md](infra/rotate_mysql_passwords.md):
+
+1. Generar 3 contraseñas de 24 caracteres con PowerShell (snippet en el doc).
+2. Aplicar `SET PASSWORD FOR ... = PASSWORD('<nueva>')` para los 3 usuarios.
+3. Actualizar `MYSQL_PASSWORD=` en los 3 `.env` locales.
+4. Verificar: `pytest` en la API + `python infra/test_mysql_connectivity.py`.
+
+**Reportar al agente:** "passwords rotados, todo verde" — sin compartir las contraseñas.
+
+---
+
+### 2. ⬜ Crear el UC Volume de aterrizaje *(una vez)*
+
+Pasos en [infra/setup_uc_volume.md](infra/setup_uc_volume.md). Desde el SQL Editor del workspace Databricks:
+
+```sql
+CREATE VOLUME IF NOT EXISTS motoshop.bronze._landing
+  COMMENT 'Staging de Parquet subidos por dump_to_cloud.py (Track A · F1)';
+```
+
+**Reportar al agente:** confirmar que aparece en Catalog Explorer bajo `motoshop > bronze > _landing`.
+
+---
+
+### 3. ⬜ Configurar SQL Warehouse con autoapagado 10 min *(verificación F0 #4)*
+
+En el workspace:
+
+1. **SQL → Warehouses → Create SQL Warehouse.**
+2. Tamaño: el más pequeño disponible (en Free Edition, "Starter").
+3. **Auto stop:** 10 minutos.
+4. Permisos: el PAT actual debe poder ejecutarlo.
+
+**Reportar al agente:** capturar el setting de auto-stop (screenshot o copy del valor). Eso cierra la verificación crítica #4.
+
+---
+
+### 4. ⬜ Ejecutar el pipeline real Databricks ↔ MySQL *(verificación F0 #3)*
+
+Esto es lo que de verdad sella la verificación #3 (la que el smoke test sintético no cumplía).
+
+**En el PC Windows:**
+
+```powershell
+cd C:\Users\MotoShop\Documents\javidevmoto
+python -m venv .venv-infra
+.\.venv-infra\Scripts\Activate.ps1
+pip install -r infra\requirements.txt
+
+# Smoke test: 1 tabla, sin subir a Databricks
+python infra\dump_to_cloud.py --tables sucursales --dry-run
+# → genera _staging/sucursales/ingest_date=YYYY-MM-DD/part-0.parquet
+
+# Smoke test completo: sube al UC Volume
+python infra\dump_to_cloud.py --tables sucursales
+# → sube al Volume + genera _staging/manifest_YYYY-MM-DD.json
+```
+
+**En Databricks (workspace UI):**
+
+5. Importar `notebooks/bronze/01_ingest_smoke_test.py` (o ya está sincronizado si conectaste el repo en la tarea 5 de la sesión anterior).
+6. Ejecutar el notebook con el SQL Warehouse pequeño o con serverless compute.
+7. La última celda debe imprimir: `✅ Smoke test OK · verificación crítica #3 de F0 cumplida`.
+
+**Reportar al agente:** copia del output de la celda 4 (los conteos coinciden) o screenshot del notebook completo. Esto cierra la verificación #3.
+
+---
+
+### 5. ⬜ (Opcional) Conectar el repo al workspace Databricks
+
+Para que los notebooks se editen en Databricks UI y se versionen en GitHub:
+
+1. **Workspace → User Settings → Linked accounts → GitHub.**
+2. Conectar `javierportillar/motoshopData`.
+3. **Repos → Add Repo → seleccionar el repo conectado.**
+4. Trabajar los notebooks dentro de esa carpeta de `Repos/`.
+
+No es bloqueante para cerrar F0 — se puede ejecutar el notebook importándolo manualmente — pero es lo "limpio".
+
+---
+
+### Estado del gate F0 tras esta sesión
+
+| Verificación crítica | Antes de esta sesión | Después de tareas 1-4 |
+|----------------------|----------------------|------------------------|
+| #1 read-only | ✅ | ✅ |
+| #2 túnel desde 4G | ✅ | ✅ |
+| #3 Databricks → MySQL end-to-end | 🔴 (smoke test sintético) | ✅ tras tarea 4 |
+| #4 cluster se apaga solo | ⚠️ | ✅ tras tarea 3 |
+| #5 credenciales fuera de Git | 🔴 (password en ejemplo) | ✅ tras tarea 1 |
+| #6 backup MySQL | ✅ | ✅ |
+
+---
+
 ## Sesión 2026-05-27 · Decisiones P1–P4 aceptadas
 
 ### Resumen de esta sesión

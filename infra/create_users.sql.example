@@ -1,31 +1,59 @@
 -- ============================================================
--- Creacion de usuarios MySQL read-only para MotoShop
+-- Plantilla de creación de usuarios MySQL read-only para MotoShop
+--
+-- ⚠️ NUNCA EJECUTAR ESTE ARCHIVO LITERALMENTE.
+-- Antes de correrlo, reemplazar los placeholders <PASTE_*_PASSWORD>
+-- por contraseñas FUERTES y únicas, generadas por ejemplo con:
+--
+--   openssl rand -base64 24        # Linux/macOS
+--   pwgen -s 24 1                  # si está instalado
+--   [System.Web.Security.Membership]::GeneratePassword(24,4)   # PowerShell
+--
+-- Las contraseñas reales NO deben quedar nunca en este archivo
+-- ni en ningún archivo trackeado por Git. Guardarlas en un
+-- password manager. Los .env locales (gitignored) son el único
+-- lugar donde la API/scripts las leen.
+--
 -- Ejecutar como root en el MySQL local:
---   mysql -u root < infra\create_users.sql.example
+--   mysql -u root < infra\create_users.sql
 --
 -- NOTA: MySQL 5.0 no soporta IF NOT EXISTS ni DROP IF EXISTS.
--- Si ya existen, se omite el error.
+-- Si ya existen, ejecutar primero el bloque DROP USER (al final
+-- de este archivo) o usar ALTER USER para rotar contraseñas.
 -- ============================================================
 
--- Usuario para el script de dump/ingesta (Track A)
-CREATE USER 'analytics'@'localhost'
-  IDENTIFIED BY '123450';
+-- ─── Usuarios nuevos ─────────────────────────────────────────
 
+-- Track A · script de dump local que empuja Parquet a cloud storage
+CREATE USER 'analytics'@'localhost'
+  IDENTIFIED BY '<PASTE_ANALYTICS_PASSWORD>';
 GRANT SELECT ON `motoshop2024`.* TO 'analytics'@'localhost';
 
--- Usuario para la API FastAPI (Track T)
+-- Track T · API FastAPI
 CREATE USER 'api_read'@'localhost'
-  IDENTIFIED BY '123450';
-
+  IDENTIFIED BY '<PASTE_API_READ_PASSWORD>';
 GRANT SELECT ON `motoshop2024`.* TO 'api_read'@'localhost';
 
--- Usuario personal de Javier
+-- Usuario personal (uso interactivo desde DBeaver/Workbench, etc.)
 CREATE USER 'javier'@'localhost'
-  IDENTIFIED BY '123450';
-
+  IDENTIFIED BY '<PASTE_JAVIER_PASSWORD>';
 GRANT SELECT ON `motoshop2024`.* TO 'javier'@'localhost';
 
 FLUSH PRIVILEGES;
 
--- Mostrar usuarios creados
+-- ─── Verificación ────────────────────────────────────────────
 SELECT User, Host FROM mysql.User WHERE User IN ('analytics', 'api_read', 'javier');
+
+-- ─── Rotación de contraseñas (si los usuarios ya existen) ───
+-- Descomentar el bloque que corresponda y ajustar.
+--
+-- SET PASSWORD FOR 'analytics'@'localhost' = PASSWORD('<NEW_PASSWORD>');
+-- SET PASSWORD FOR 'api_read'@'localhost'  = PASSWORD('<NEW_PASSWORD>');
+-- SET PASSWORD FOR 'javier'@'localhost'    = PASSWORD('<NEW_PASSWORD>');
+-- FLUSH PRIVILEGES;
+
+-- ─── Limpieza completa (si hay que recrear) ─────────────────
+-- DROP USER 'analytics'@'localhost';
+-- DROP USER 'api_read'@'localhost';
+-- DROP USER 'javier'@'localhost';
+-- FLUSH PRIVILEGES;

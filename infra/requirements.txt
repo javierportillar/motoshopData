@@ -1,0 +1,12 @@
+# Dependencias para los scripts locales de extracción (Track A).
+# Se instalan en el PC Windows donde corre el dump nocturno.
+#
+#   python -m venv .venv-infra
+#   .\.venv-infra\Scripts\Activate.ps1   # Windows
+#   source .venv-infra/bin/activate       # Linux/macOS
+#   pip install -r infra/requirements.txt
+
+mysql-connector-python>=8.0,<9.0
+pyarrow>=14.0
+databricks-sdk>=0.30
+python-dotenv>=1.0

@@ -30,3 +30,4 @@ Cada decisión técnica importante del proyecto vive aquí como un archivo Markd
 | [0007](0007-api-hosting.md) | Hosting de la API (P3) | **Proposed** | F0 → F1 |
 | [0008](0008-auth-provider.md) | Provider de autenticación (P4) | **Proposed** | F1 |
 | [0009](0009-monorepo-vs-two-repos.md) | Monorepo vs. dos repos separados | Accepted | F0 |
+| [0010](0010-compute-databricks-free.md) | Compute en Databricks Free Edition | Accepted | F0 → F1 |
