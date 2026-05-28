@@ -16,6 +16,7 @@ Aplicación práctica del marco conceptual de **Big Data y Transformación Digit
 | [PLAN.md](PLAN.md) | Fuente de verdad: arquitectura, fases, stack, KPIs, VPC/BMC. |
 | [SEGUIMIENTO.md](SEGUIMIENTO.md) | Estado vivo: checklist de la fase activa, bitácora, riesgos. |
 | [PENDIENTES.md](PENDIENTES.md) | Lo que tiene que hacer Javier entre sesiones del agente. |
+| [docs/handoff-f1.md](docs/handoff-f1.md) | **Empezá aquí si vas a desarrollar Fase 1.** Pre-flight, roles, flujo de trabajo. |
 | [docs/plan-f1.md](docs/plan-f1.md) | Plan operativo detallado de Fase 1 (sprints, archivos, KPIs, riesgos). |
 | [infollm.md](infollm.md) | Conexión a la BD y esquema general. |
 | [AGENT_PROMPT.md](AGENT_PROMPT.md) | Instrucciones del agente de IA que asiste el desarrollo. |

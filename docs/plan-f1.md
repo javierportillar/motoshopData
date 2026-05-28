@@ -16,20 +16,20 @@
 
 ## Decisiones técnicas
 
-Resueltas en [ADR-0011 · Stack técnico F1](decisions/0011-stack-f1.md). Hasta que el humano apruebe ese ADR, F1-A está en pausa.
+Resueltas en [ADR-0011 · Stack técnico F1](decisions/0011-stack-f1.md), **Accepted 2026-05-28**.
 
 | # | Decisión | Recomendación | Estado |
 |---|----------|----------------|--------|
-| DT-1 | Acceso MySQL desde API | SQLAlchemy 2.0 core + pymysql | **Proposed** |
-| DT-2 | JWT + bcrypt | pyjwt + bcrypt | **Proposed** |
-| DT-3 | Rate limiting | slowapi in-memory | **Proposed** |
-| DT-4 | Store usuarios F1 | users.yaml gitignored | **Proposed** |
-| DT-5 | Paginación | offset+limit (50/200) | **Proposed** |
-| DT-6 | Bronze idempotente | `INSERT REPLACE WHERE` | **Proposed** |
-| DT-7 | Manifest del dump | Subir al Volume `/_manifests/` | **Proposed** |
-| DT-8 | Logging | structlog JSON + PII redaction | **Proposed** |
-| DT-9 | Tests API | Repos + `pytest.mark.integration` | **Proposed** |
-| DT-10 | Timezone | Bronze raw → Silver UTC → API UTC `Z` | **Proposed** |
+| DT-1 | Acceso MySQL desde API | SQLAlchemy 2.0 core + pymysql | Accepted |
+| DT-2 | JWT + bcrypt | pyjwt + bcrypt | Accepted |
+| DT-3 | Rate limiting | slowapi in-memory | Accepted |
+| DT-4 | Store usuarios F1 | users.yaml gitignored | Accepted |
+| DT-5 | Paginación | offset+limit (50/200) | Accepted |
+| DT-6 | Bronze idempotente | `INSERT REPLACE WHERE` | Accepted |
+| DT-7 | Manifest del dump | Subir al Volume `/_manifests/` | Accepted |
+| DT-8 | Logging | structlog JSON + PII redaction | Accepted |
+| DT-9 | Tests API | Repos + `pytest.mark.integration` | Accepted |
+| DT-10 | Timezone | Bronze raw → Silver UTC → API UTC `Z` | Accepted |
 
 ---
 

@@ -1,9 +1,9 @@
 # ADR-0011 · Stack técnico de Fase 1 (DT-1 a DT-10)
 
-- **Estado:** **Proposed** — bloquea inicio de Sprint F1-A
+- **Estado:** **Accepted** — 2026-05-28
 - **Fecha:** 2026-05-28
 - **Bloquea:** F1 (los 3 sprints)
-- **Decide:** Humano (responsable del proyecto)
+- **Decide:** Humano (responsable del proyecto) · aprobado en bloque las 10 DT con las recomendaciones del agente sin ajustes
 
 ## Contexto
 
@@ -261,9 +261,6 @@ FROM parquet.`/Volumes/motoshop/bronze/_landing/<tabla>/ingest_date=$ingest_date
 | DT-9 | Tests API | Repos + `pytest.mark.integration` | `pytest-asyncio`, `aiosqlite` (unit) |
 | DT-10 | Timezone | Bronze raw → Silver UTC → API UTC `Z` | — |
 
-## Aceptación
+## Aceptación · 2026-05-28
 
-Cuando el humano confirme este ADR (o pida cambios), el agente:
-- Cambia el estado a `Accepted` y le pone fecha.
-- Añade D11 a la bitácora de SEGUIMIENTO.
-- Procede con Sprint F1-A.
+Confirmado por el responsable del proyecto: las 10 DT aceptadas en bloque con las recomendaciones del agente sin ajustes. D11 marcado Accepted en la bitácora de SEGUIMIENTO. El ejecutor de Sprint F1-A puede arrancar.

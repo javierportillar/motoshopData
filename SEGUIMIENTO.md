@@ -58,7 +58,7 @@ F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 | D8 | 2026-05-27 | Hosting API en PC local (Opción A) | VPS | Simple, gratis, latencia mínima a BD. ADR: [0007](docs/decisions/0007-api-hosting.md) |
 | D9 | 2026-05-27 | Auth: login propio JWT + bcrypt (Opción A) | Google OAuth; Microsoft Entra | Control total, sin dependencias externas. ADR: [0008](docs/decisions/0008-auth-provider.md) |
 | D10 | 2026-05-28 | Compute Databricks: extracción local + UC Volume + Serverless SQL (Opción A) | Migrar a plan con clusters (B); reemplazar Databricks por DuckDB (C) | Free Edition no tiene clusters; el camino crítico no depende de drivers JDBC en Databricks. ADR: [0010](docs/decisions/0010-compute-databricks-free.md) |
-| D11 | _pendiente_ | Stack F1 (DT-1 a DT-10): SQLAlchemy core, pyjwt+bcrypt, slowapi, users.yaml, offset+limit, INSERT REPLACE WHERE, manifest al Volume, structlog, repos+integration mark, bronze raw → silver UTC → API UTC | Por decisión: mysql-connector directo (DT-1), python-jose (DT-2), Redis (DT-3), SQLite (DT-4), keyset (DT-5), CREATE OR REPLACE (DT-6), tabla _meta_runs (DT-7), loguru (DT-8), solo unit (DT-9), bronze TZ-aware (DT-10) | Equilibrio entre velocidad de F1 y portabilidad a F2+. ADR: [0011](docs/decisions/0011-stack-f1.md) **Proposed** |
+| D11 | 2026-05-28 | Stack F1 (DT-1 a DT-10): SQLAlchemy core, pyjwt+bcrypt, slowapi, users.yaml, offset+limit, INSERT REPLACE WHERE, manifest al Volume, structlog, repos+integration mark, bronze raw → silver UTC → API UTC | mysql-connector directo (DT-1), python-jose (DT-2), Redis (DT-3), SQLite (DT-4), keyset (DT-5), CREATE OR REPLACE (DT-6), tabla _meta_runs (DT-7), loguru (DT-8), solo unit (DT-9), bronze TZ-aware (DT-10) | Equilibrio entre velocidad de F1 y portabilidad a F2+. Aprobado en bloque sin ajustes. ADR: [0011](docs/decisions/0011-stack-f1.md) |
 
 ---
 
@@ -154,7 +154,7 @@ F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 **Objetivo:** primer dato en Bronze y primera consulta remota funcionando.
 
 > Plan detallado: [docs/plan-f1.md](docs/plan-f1.md) — 3 sprints (F1-A bronze, F1-B auth + /products, F1-C /stock + /sales).
-> Stack: [ADR-0011](docs/decisions/0011-stack-f1.md) — 10 decisiones técnicas (DT-1 a DT-10) **Proposed**, pendientes de confirmación humana antes de Sprint F1-A.
+> Stack: [ADR-0011](docs/decisions/0011-stack-f1.md) — 10 decisiones técnicas (DT-1 a DT-10) **Accepted 2026-05-28**.
 
 ### Definition of Done
 - 12 tablas core ingeridas a Bronze diariamente con ingesta idempotente por `ingest_date`.
@@ -217,7 +217,7 @@ F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 
 | ID | Bloqueador | Mitigación / cuándo se activa |
 |----|------------|-------------------------------|
-| B-F1-1 | ADR-0011 no aceptado | Sprint F1-A no arranca hasta confirmación humana |
+| ~~B-F1-1~~ | ~~ADR-0011 no aceptado~~ | ✅ Resuelto 2026-05-28 (Accepted en bloque sin ajustes) |
 | B-F1-2 | `JWT_SECRET` no generado | Sprint F1-B no termina sin secret en `.env` |
 | B-F1-3 | `users.yaml` no creado por humano | Sprint F1-B demo manual no se puede correr |
 | B-F1-4 | Free Edition agota horas serverless | Diferir activación de Workflow schedule; correr manual durante el sprint |
@@ -609,6 +609,25 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-28 — Sesión 11 · Handoff F1 listo
+
+- **Hecho:**
+  - ✅ ADR-0011 marcado Accepted (las 10 DT aprobadas en bloque sin ajustes por el humano).
+  - ✅ D11 en bitácora a Accepted con fecha.
+  - ✅ Bloqueador B-F1-1 tachado en SEGUIMIENTO §F1.
+  - ✅ [`docs/handoff-f1.md`](docs/handoff-f1.md) — punto de entrada único para el ejecutor de F1: contexto en 30s, roles claros (ejecutor / humano-PC owner / revisor), pre-flight check, flujo de trabajo por sprint, política de commits (push directo a `main`), cómo escalar, definición de "F1 cerrado", docs a leer en orden.
+  - ✅ README enlaza handoff-f1.md como **"Empezá aquí si vas a desarrollar Fase 1"**.
+  - ✅ PENDIENTES sesión 11 con la única instrucción: arrancar Sprint F1-A.
+- **Aprendido:**
+  - Separar roles ejecutor / revisor explícitamente reduce el riesgo de que el implementador audite su propio código.
+  - Tener un único punto de entrada (`handoff-f1.md`) ahorra al ejecutor leer 5 docs en desorden.
+- **Abierto:**
+  - Nada bloqueante. Sprint F1-A listo para arrancar.
+- **Próximo paso:**
+  - Ejecutor implementa Sprint F1-A siguiendo `docs/plan-f1.md` §Sprint F1-A; al cierre, revisor audita.
+
+---
 
 ### 2026-05-28 — Sesión 10 · Planificación detallada de F1 (Proposed)
 

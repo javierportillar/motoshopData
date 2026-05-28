@@ -8,14 +8,28 @@
 
 ---
 
+## Sesión 2026-05-28 (11) · Handoff F1 listo — sin acciones humanas pendientes
+
+### Resumen
+ADR-0011 Accepted, plan F1 detallado y aprobado, handoff doc escrito. El ejecutor (otra sesión de IA o vos en el PC) puede arrancar Sprint F1-A leyendo [`docs/handoff-f1.md`](docs/handoff-f1.md). El revisor (otra sesión Claude) auditará al cierre de cada sprint.
+
+### Pendientes diferibles (no bloquean F1-A)
+- ⬜ Conectar repo `motoshopdata` al workspace Databricks (3 min; mejora UX pero no necesario para correr notebooks importados).
+- ⬜ CI básico GitHub Actions (lint + tests) — se planificará en Sprint F1-C o cierre F1.
+
+### Próximo paso
+Ejecutor arranca **Sprint F1-A · Bronze de las 12 tablas core** siguiendo [`docs/plan-f1.md`](docs/plan-f1.md) §Sprint F1-A.
+
+---
+
 ## Sesión 2026-05-28 (10) · Aprobar stack F1 antes de arrancar F1-A
 
 ### Resumen
-Plan detallado de F1 listo: [`docs/plan-f1.md`](docs/plan-f1.md) (3 sprints, archivos exactos, V1-V7 mapeadas, KPIs medibles, riesgos, backout) + [ADR-0011](docs/decisions/0011-stack-f1.md) con 10 decisiones técnicas en estado **Proposed**.
+Plan detallado de F1 listo: [`docs/plan-f1.md`](docs/plan-f1.md) (3 sprints, archivos exactos, V1-V7 mapeadas, KPIs medibles, riesgos, backout) + [ADR-0011](docs/decisions/0011-stack-f1.md) con 10 decisiones técnicas.
 
-Antes de tocar línea de código de F1, necesito que confirmes el stack. Es una sola decisión: revisar las 10 micro-decisiones de [ADR-0011](docs/decisions/0011-stack-f1.md) y darme el OK (o pedir ajustes en las que quieras cambiar).
+**✅ Cerrado 2026-05-28:** ADR-0011 aprobado en bloque sin ajustes. Ejecutor confirmado en el mismo PC Windows (acceso directo a entorno). Push directo a `main` sin PRs. Handoff doc creado en [`docs/handoff-f1.md`](docs/handoff-f1.md).
 
-### 1. ⬜ Revisar y aprobar ADR-0011 *(bloquea Sprint F1-A)*
+### 1. ✅ Revisar y aprobar ADR-0011 *(bloquea Sprint F1-A)*
 
 Abrir [`docs/decisions/0011-stack-f1.md`](docs/decisions/0011-stack-f1.md) y revisar la tabla resumen al final. 10 decisiones, cada una con su recomendación:
 
