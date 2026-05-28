@@ -8,6 +8,7 @@ from pathlib import Path
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -80,3 +81,10 @@ class HealthResponse(BaseModel):
 def health() -> HealthResponse:
     """Endpoint de salud usado por el túnel y el monitoreo."""
     return HealthResponse(status="ok", version=__version__, env=settings.env)
+
+
+@app.get("/demo", response_class=HTMLResponse, tags=["meta"])
+def demo():
+    """Página de demo interactiva para probar la API desde el celular."""
+    html_path = Path(__file__).parent / "demo.html"
+    return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
