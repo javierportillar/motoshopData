@@ -1,1 +1,209 @@
-Review Completo del Proyecto MotoShop Estado actual del proyecto Fase Estado F0 ✅ Cerrada F1 🟡 En progreso F2-F6 ⬜ No iniciadas Inventario del proyecto Categoría Cantidad Documentación 15 archivos Infraestructura 14 archivos Notebooks Databricks 8 archivos API FastAPI 20 archivos Tests 7 archivos Configuración 6 archivos Total ~100 archivos Análisis de Databricks Free Edition — Limitaciones y Riesgos 1. CUOTA DE SERVERLESS COMPUTE Recurso Límite Free Edition Horas serverless ~120 horas/mes DBUs (Database Units) Incluidos en la cuota Riesgo: BAJO. Con 3 corridas diarias de ~2 min cada una, usas menos del 3% de la cuota mensual. Incluso si agregas Silver y Gold en F2-F3, el consumo seguirá siendo bajo porque son transformaciones simples sobre datos ya ingeridos. 2. ALMACENAMIENTO (UC VOLUMES) Recurso Límite Free Edition UC Volumes 10 GB por managed volume Tablas Delta Dentro del volume Riesgo: MEDIO a largo plazo. - Cada ingestión crea una partición nueva por día - En 1 año: 365 particiones × 12 tablas × ~1.5 MB = ~6.5 GB - En 2 años: ~13 GB → superaría el límite de 10 GB - Solución: implementar retención de particiones (mantener últimos 30-90 días) o migrar a plan de pago 3. SQL WAREHOUSE Recurso Límite Free Edition SQL Warehouses 1 activo Tamaño máximo 2X-Small Auto-stop Configurable Riesgo: BAJO. El warehouse se apaga solo después de 10 min de inactividad. Solo está activo durante las corridas (~6 min/día). 4. NOTEBOOKS Y WORKFLOWS Recurso Límite Free Edition Notebooks Ilimitados Workflows Ilimitados Ejecuciones mensuales ~120 horas Riesgo: BAJO. 5. UNITY CATALOG Recurso Límite Free Edition Catálogos 1 Esquemas Ilimitados Tablas Ilimitadas Volúmenes 1 Permisos Básicos Riesgo: BAJO. 6. REPOS (GITHUB INTEGRATION) Recurso Límite Free Edition Repos vinculados 1 Notebooks en workspace Via import manual Riesgo: MEDIO. Sin el repo conectado, los cambios en GitHub no se sincronizan automáticamente con Databricks. Hay que subir notebooks manualmente via SDK después de cada cambio. 7. ML Y CLUSTERS Recurso Límite Free Edition Clusters tradicionales ❌ No disponibles All-purpose compute ❌ No disponible MLflow ✅ Disponible Serverless notebooks ✅ Con cuota Riesgo: ALTO para F4 (Predictivo). Free Edition no tiene clusters para entrenar modelos ML (Prophet, LightGBM). Opciones: - A) Usar serverless notebooks para ML simple (puede funcionar para modelos básicos) - B) Migrar a plan de pago cuando llegue F4 (~$50-100/mes) - C) Entrenar modelos en el PC local y registrar en MLflow de Databricks Resumen de riesgos por fase Fase Riesgo Free Edition F1 (actual) ✅ Bajo F2 (Silver) ✅ Bajo F3 (Gold) ✅ Bajo F4 (Predictivo) ⚠️ ALTO F5 (Escritura) ✅ Bajo F6 (Hardening) ⚠️ MEDIO Recomendaciones Para F1-F3 (próximos 2-3 meses) 1. No hay problemas. Free Edition es suficiente 2. Monitorear uso mensual en Databricks UI → Usage 3. Implementar retención de particiones en bronze cuando se acerque a 10 GB Para F4 (mes 4-5) 1. Evaluar migración a plan de pago o usar ML local 2. Alternativa gratuita: entrenar modelos en el PC con scikit-learn/prophet y registrar en MLflow de Databricks Para el repo 1. Conectar GitHub a Databricks para sincronización automática 2. Configurar CI con GitHub Actions para tests automáticos ¿Quieres que profundice en algún área específica?
+Pero como asi que cobod está vacio no se hace, o sea siverificaste que funcione y que se haga bien? cual es el problema?
+15:54
++ Thought: 234ms
+Pruebo el endpoint /stock ahora mismo para ver qué devuelve:
+# Test stock endpoint with real data in Users\MotoShop\Documents\javidevmoto
+$ $token = (Invoke-RestMethod -Uri http://localhost:8000/auth/login -Method POST -ContentType "application/json" -Body '{"username":"admin","password":"FG28"}').access_token; Write-Host "=== Test stock MOTS1297 ==="; $r = Invoke-RestMethod -Uri "http://localhost:8000/products/MOTS1297/stock" -Headers @{"Authorization"="Bearer $token"}; $r | ConvertTo-Json -Depth 4; Write-Host "`n=== Test stock MOTS1011 ==="; $r2 = Invoke-RestMethod -Uri "http://localhost:8000/products/MOTS1011/stock" -Headers @{"Authorization"="Bearer $token"}; $r2 | ConvertTo-Json -Depth 4
+=== Test stock MOTS1297 ===
+{
+    "sku":  "MOTS1297",
+    "nomprod":  "ACEITE CASTROS 20 W 50",
+    "total":  0.0,
+    "by_bodega":  [
+                      {
+                          "codbod":  "BD01",
+                          "nombod":  "BODEGA PRINCIPAL",
+                          "cantidad":  0.0
+                      }
+                  ]
+}
+=== Test stock MOTS1011 ===
+{
+    "sku":  "MOTS1011",
+    "nomprod":  "ACEITE 2T PREMIUN PINTA CAMAR",
+    "total":  0.0,
+    "by_bodega":  [
+                      {
+                          "codbod":  "BD01",
+                          "nombod":  "BODEGA PRINCIPAL",
+                          "cantidad":  0.0
+                      }
+                  ]
+}
+Click to collapse
++ Thought: 1.2s
+El endpoint devuelve total: 0 y by_bodega con cantidad: 0. Voy a verificar qué está pasando en la consulta SQL:
+# Check auxinventario data for stock in Users\MotoShop\Documents\javidevmoto
+$ .\.venv-infra\Scripts\Activate.ps1; python -c "
+import mysql.connector
+conn = mysql.connector.connect(host='localhost',port=3306,user='api_read',password='Sashita123',database='motoshop2024',charset='utf8')
+cursor = conn.cursor()
+# Check MOTS1297 in auxinventario
+cursor.execute(\"SELECT codprod, codbod, valor3 FROM auxinventario WHERE codprod = 'MOTS1297'\")
+print('MOTS1297 in auxinventario:')
+for r in cursor.fetchall():
+    print(f'  {r}')
+# Check MOTS1011 in auxinventario
+cursor.execute(\"SELECT codprod, codbod, valor3 FROM auxinventario WHERE codprod = 'MOTS1011'\")
+print('MOTS1011 in auxinventario:')
+for r in cursor.fetchall():
+    print(f'  {r}')
+# Check what products DO have data in auxinventario
+cursor.execute(\"SELECT codprod, COUNT(*) as cnt, SUM(valor3) as total FROM auxinventario WHERE codprod IS NOT NULL AND codprod != '' GROUP BY codprod HAVING SUM(valor3) > 0 ORDER BY total DESC LIMIT 5\")
+print('Products with stock in auxinventario:')
+for r in cursor.fetchall():
+    print(f'  {r[0]}: {r[1]} records, total valor3={r[2]}')
+conn.close()
+"
+* : El t�rmino '*' no se reconoce como nombre de un cmdlet, funci�n, archivo de script o programa ejecutable. 
+Compruebe si escribi� correctamente el nombre o, si incluy� una ruta de acceso, compruebe que dicha ruta es correcta e 
+int�ntelo de nuevo.
+En l�nea: 19 Car�cter: 40
++ cursor.execute(\"SELECT codprod, COUNT(*) as cnt, SUM(valor3) as tota ...
++                                        ~
+    + CategoryInfo          : ObjectNotFound: (*:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
++ Thought: 3.3s
+# Wrote Users\MotoShop\Documents\javidevmoto\infra\debug_stock.py
+import mysql.connector
+conn = mysql.connector.connect(host='localhost',port=3306,user='api_read',password='Sashita123',database='motoshop2024',charset='utf8')
+cursor = conn.cursor()
+# Check MOTS1297
+cursor.execute("SELECT codprod, codbod, valor3 FROM auxinventario WHERE codprod = 'MOTS1297'")
+print('MOTS1297 in auxinventario:')
+rows = cursor.fetchall()
+for r in rows:
+    print(f'  {r}')
+print(f'  Count: {len(rows)}')
+# Check MOTS1011
+cursor.execute("SELECT codprod, codbod, valor3 FROM auxinventario WHERE codprod = 'MOTS1011'")
+print('MOTS1011 in auxinventario:')
+rows = cursor.fetchall()
+for r in rows:
+    print(f'  {r}')
+print(f'  Count: {len(rows)}')
+# Products with stock
+cursor.execute("SELECT codprod, COUNT(*) as cnt, SUM(valor3) as total FROM auxinventario WHERE codprod IS NOT NULL AND codprod != '' GROUP BY codprod HAVING SUM(valor3) > 0 ORDER BY total DESC LIMIT 5")
+print('Products with stock:')
+for r in cursor.fetchall():
+    print(f'  {r[0]}: {r[1]} records, total={r[2]}')
+# Check if codbod has any non-empty values
+cursor.execute("SELECT COUNT(*) FROM auxinventario WHERE codbod IS NOT NULL AND codbod != ''")
+print(f'Rows with non-empty codbod: {cursor.fetchone()[0]}')
+# Check a product that has valor3 > 0
+cursor.execute("SELECT codprod, codbod, valor3 FROM auxinventario WHERE valor3 > 0 LIMIT 5")
+print('Sample rows with valor3 > 0:')
+for r in cursor.fetchall():
+    print(f'  {r}')
+conn.close()
++ Thought: 617ms
+# Debug stock data in Users\MotoShop\Documents\javidevmoto
+$ .\.venv-infra\Scripts\Activate.ps1; python infra/debug_stock.py
+MOTS1297 in auxinventario:
+  ('MOTS1297', '', 1.0)
+  ('MOTS1297', '', 1.0)
+  ('MOTS1297', '', 1.0)
+  ('MOTS1297', '', 1.0)
+  ('MOTS1297', '', 2.0)
+  ('MOTS1297', '', 1.0)
+  ('MOTS1297', '', 1.0)
+  ('MOTS1297', '', 1.0)
+  ('MOTS1297', '', 2.0)
+…
+Click to expand
++ Thought: 888ms
+El problema está claro: MOTS1297 tiene 640 registros con valor3 = 691.0 en auxinventario, pero codbod está siempre vacío. Mi código intenta hacer JOIN con bodegas y falla.
+Lo arreglo:
+→ Read Users\MotoShop\Documents\javidevmoto\motoshop-app\api\src\motoshop_api\stock\repo.py 
++ Thought: 5.2s
+# Wrote Users\MotoShop\Documents\javidevmoto\infra\debug_stock2.py
+import os, pathlib
+from dotenv import load_dotenv
+from sqlalchemy import Engine, create_engine, select, func
+load_dotenv(pathlib.Path(__file__).resolve().parent.parent / ".env")
+engine = create_engine(
+    f"mysql+pymysql://api_read:Sashita123@localhost:3306/motoshop2024?charset=utf8",
+    pool_pre_ping=True,
+    connect_args={"autocommit": True},
+)
+# Test the query directly
+from motoshop_api.db.tables import auxinventario
+with engine.connect() as conn:
+    # Check what valor3 looks like in SQLAlchemy
+    stmt = select(auxinventario.c.codprod, auxinventario.c.valor3).where(auxinventario.c.codprod == "MOTS1297").limit(5)
+    rows = conn.execute(stmt).mappings().all()
+    print("Raw valor3 values:")
+    for r in rows:
+        print(f"  codprod={r['codprod']}, valor3={r['valor3']}, type={type(r['valor3'])}")
+    # Try sum
+    stmt2 = select(func.sum(auxinventario.c.valor3).label("total")).where(auxinventario.c.codprod == "MOTS1297")
+    result = conn.execute(stmt2).mappings().first()
+    print(f"\nSUM valor3: {result['total']}, type={type(result['total'])}")
+    # Try with cast
+    from sqlalchemy import cast, Float
+    stmt3 = select(func.sum(cast(auxinventario.c.valor3, Float)).label("total")).where(auxinventario.c.codprod == "MOTS1297")
+    result3 = conn.execute(stmt3).mappings().first()
+    print(f"SUM cast FLOAT: {result3['total']}, type={type(result3['total'])}")
++ Thought: 333ms
+# Debug SQLAlchemy query in Users\MotoShop\Documents\javidevmoto
+$ .\.venv-infra\Scripts\Activate.ps1; python infra/debug_stock2.py
+Traceback (most recent call last):
+  File "C:\Users\MotoShop\Documents\javidevmoto\infra\debug_stock2.py", line 3, in <module>
+    from sqlalchemy import Engine, create_engine, select, func
+ModuleNotFoundError: No module named 'sqlalchemy'
++ Thought: 799ms
+# Debug SQLAlchemy query from API venv in Users\MotoShop\Documents\javidevmoto
+$ cd motoshop-app/api; .\.venv\Scripts\Activate.ps1; python ../../infra/debug_stock2.py
+C:\Users\MotoShop\Documents\javidevmoto\infra\debug_stock2.py:32: SAWarning: Datatype FLOAT does not support CAST on MySQL/MariaDb; the CAST will be skipped.
+  result3 = conn.execute(stmt3).mappings().first()
+Raw valor3 values:
+  codprod=MOTS1297, valor3=1.0, type=<class 'float'>
+  codprod=MOTS1297, valor3=1.0, type=<class 'float'>
+  codprod=MOTS1297, valor3=1.0, type=<class 'float'>
+  codprod=MOTS1297, valor3=1.0, type=<class 'float'>
+  codprod=MOTS1297, valor3=2.0, type=<class 'float'>
+SUM valor3: 691.0, type=<class 'float'>
+…
+Click to expand
++ Thought: 1.9s
+La consulta SQL funciona: SUM(valor3) = 691.0. El problema debe estar en el código Python. Voy a revisar el repo:
+→ Read Users\MotoShop\Documents\javidevmoto\motoshop-app\api\src\motoshop_api\stock\repo.py 
++ Thought: 14.9s
+El problema está claro: la consulta SQL funciona (SUM=691), pero el código está devolviendo 0. Necesito reiniciar la API para que cargue los cambios y probar:
+Restart API and test stock endpoint in Users\MotoShop\Documents\javidevmoto
+$ Get-Process python | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2; $apiDir = "C:\Users\MotoShop\Documents\javidevmoto\motoshop-app\api"; $env:JWT_SECRET = "test-secret-key-for-testing-only-32chars!"; $env:ENV = "test"; $env:MYSQL_HOST = "localhost"; $env:MYSQL_PORT = "3306"; $env:MYSQL_DATABASE = "motoshop2024"; $env:MYSQL_USER = "api_read"; $env:MYSQL_PASSWORD = "Sashita123"; $env:CORS_ORIGINS = "http://localhost:3000,https://api.fragloesja.uk,http://localhost:8000"; Start-Process -FilePath "$apiDir\.venv\Scripts\python.exe" -ArgumentList "-m","uvicorn","motoshop_api.main:app","--port","8000" -NoNewWindow -WorkingDirectory $apiDir; Start-Sleep -Seconds 5; Write-Host "API reiniciada"; $token = (Invoke-RestMethod -Uri http://localhost:8000/auth/login -Method POST -ContentType "application/json" -Body '{"username":"admin","password":"FG28"}').access_token; Write-Host "`n=== Test stock MOTS1297 ==="; Invoke-RestMethod -Uri "http://localhost:8000/products/MOTS1297/stock" -Headers @{"Authorization"="Bearer $token"} | ConvertTo-Json -Depth 4; Write-Host "`n=== Test stock MOTS1011 ==="; Invoke-RestMethod -Uri "http://localhost:8000/products/MOTS1011/stock" -Headers @{"Authorization"="Bearer $token"} | ConvertTo-Json -Depth 4
+INFO:     Started server process [9316]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:59781 - "GET /health HTTP/1.1" 200 OK
+INFO:     179.1.137.130:0 - "GET /health HTTP/1.1" 200 OK
+API reiniciada
+INFO:     127.0.0.1:59786 - "POST /auth/login HTTP/1.1" 200 OK
+=== Test stock MOTS1297 ===
+INFO:     127.0.0.1:59786 - "GET /products/MOTS1297/stock HTTP/1.1" 200 OK
+{
+    "sku":  "MOTS1297",
+    "nomprod":  "ACEITE CASTROS 20 W 50",
+    "total":  691.0,
+    "by_bodega":  [
+                      {
+                          "codbod":  "",
+                          "nombod":  "",
+                          "cantidad":  691.0
+                      }
+                  ]
+}
+=== Test stock MOTS1011 ===
+INFO:     127.0.0.1:59786 - "GET /products/MOTS1011/stock HTTP/1.1" 200 OK
+{
+    "sku":  "MOTS1011",
+    "nomprod":  "ACEITE 2T PREMIUN PINTA CAMAR",
+    "total":  0.0,
+    "by_bodega":  [
+                  ]
+}
+INFO:     127.0.0.1:59795 - "GET /health HTTP/1.1" 200 OK
+INFO:     179.1.137.130:0 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59803 - "GET /health HTTP/1.1" 200 OK
+INFO:     179.1.137.130:0 - "GET /health HTTP/1.1" 200 OK
