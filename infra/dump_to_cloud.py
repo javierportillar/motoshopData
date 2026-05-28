@@ -198,6 +198,19 @@ def upload_to_volume(local_file: pathlib.Path, table: str, ingest_date: str, cfg
     return remote_file
 
 
+def upload_manifest_to_volume(manifest_path: pathlib.Path, ingest_date: str, cfg: Config) -> str:
+    """Sube el manifest JSON al UC Volume en /_manifests/."""
+    from databricks.sdk import WorkspaceClient
+
+    remote_dir = f"{cfg.databricks_volume_path.rstrip('/')}/_manifests"
+    remote_file = f"{remote_dir}/manifest_{ingest_date}.json"
+
+    w = WorkspaceClient(host=cfg.databricks_host, token=cfg.databricks_token)
+    with open(manifest_path, "rb") as fh:
+        w.files.upload(file_path=remote_file, contents=fh, overwrite=True)
+    return remote_file
+
+
 def process_table(conn, table: str, ingest_date: str, cfg: Config, dry_run: bool) -> dict:
     t0 = time.time()
     log.info(f"→ {table}: extrayendo de MySQL...")
@@ -285,7 +298,15 @@ def main() -> int:
         ),
         encoding="utf-8",
     )
-    log.info(f"Manifiesto: {manifest_path.relative_to(PROJECT_ROOT)}")
+    log.info(f"Manifiesto local: {manifest_path.relative_to(PROJECT_ROOT)}")
+
+    # Subir manifest al UC Volume para que el notebook de validación lo lea.
+    if not args.dry_run:
+        try:
+            remote_manifest = upload_manifest_to_volume(manifest_path, args.ingest_date, cfg)
+            log.info(f"Manifiesto subido a {remote_manifest}")
+        except Exception as exc:
+            log.warning(f"No se pudo subir manifest al Volume: {exc}")
 
     return 0 if all("error" not in t for t in summary) else 1
 

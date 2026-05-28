@@ -1,0 +1,16 @@
+# usuarios de ejemplo — copiar a users.yaml y generar hashes reales.
+# Generar hashes: python infra/hash_password.py 'tu_password'
+
+users:
+  - username: admin
+    hashed_password: "$2b$12$PLACEHOLDER_HASH_GENERAR_CON_hash_password.py"
+    email: admin@motoshop.local
+    role: admin
+  - username: vendedor1
+    hashed_password: "$2b$12$PLACEHOLDER_HASH_GENERAR_CON_hash_password.py"
+    email: vendedor1@motoshop.local
+    role: vendedor
+  - username: gerente1
+    hashed_password: "$2b$12$PLACEHOLDER_HASH_GENERAR_CON_hash_password.py"
+    email: gerente1@motoshop.local
+    role: gerente

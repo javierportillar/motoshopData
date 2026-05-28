@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import Field
+from pathlib import Path
+
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,9 +33,26 @@ class Settings(BaseSettings):
     jwt_access_ttl_minutes: int = Field(default=15)
     jwt_refresh_ttl_days: int = Field(default=7)
 
+    users_file_path: str = Field(default="users.yaml")
+
+    @field_validator("jwt_secret")
+    @classmethod
+    def validate_jwt_secret(cls, v: str, info) -> str:
+        if info.data.get("env") == "prod" and (not v or len(v) < 32):
+            raise ValueError("jwt_secret debe tener >= 32 caracteres en env=prod")
+        return v
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def database_url(self) -> str:
+        return (
+            f"mysql+pymysql://{self.mysql_user}:{self.mysql_password}"
+            f"@{self.mysql_host}:{self.mysql_port}/{self.mysql_database}"
+            f"?charset=utf8"
+        )
 
 
 settings = Settings()

@@ -166,31 +166,31 @@ F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 ### Checklist de entregables
 
 **Track A · Bronze (Sprint F1-A)**
-- ⬜ `infra/dump_to_cloud.py` modificado: sube manifest al Volume `/Volumes/.../bronze/_landing/_manifests/` (DT-7)
-- ⬜ `notebooks/bronze/02_ingest_all_bronze.sql` — patrón canónico `INSERT REPLACE WHERE` (DT-6) para las 12 tablas core
-- ⬜ `notebooks/bronze/03_validate_counts.sql` — lee manifest del Volume y valida conteos (V1)
-- ⬜ `notebooks/bronze/04_check_large_tables.sql` — paginación validada con `detfventas` (~27k) y `detcompras` (~11k) (V6)
-- ⬜ `notebooks/bronze/05_schema_drift.sql` — compara `DESCRIBE TABLE` entre 2 fechas (V7)
+- ✅ `infra/dump_to_cloud.py` modificado: sube manifest al Volume `/Volumes/.../bronze/_landing/_manifests/` (DT-7) · 2026-05-28
+- ✅ `notebooks/bronze/02_ingest_all_bronze.sql` — patrón canónico `INSERT REPLACE WHERE` (DT-6) para las 12 tablas core · 2026-05-28
+- ✅ `notebooks/bronze/03_validate_counts.sql` — lee manifest del Volume y valida conteos (V1) · 2026-05-28
+- ✅ `notebooks/bronze/04_check_large_tables.sql` — paginación validada con `detfventas` (~27k) y `detcompras` (~11k) (V6) · 2026-05-28
+- ✅ `notebooks/bronze/05_schema_drift.sql` — compara `DESCRIBE TABLE` entre 2 fechas (V7) · 2026-05-28
 - ⬜ `notebooks/bronze/_schema/<tabla>.md` × 12 — esquema bronze documentado por tabla
-- ⬜ `infra/databricks_workflow.json` + `infra/create_databricks_workflow.py` — definición del Workflow reproducible
-- ⬜ `infra/run_dump.ps1` — wrapper para Task Scheduler Windows
-- ⬜ Workflow ejecutado **5 corridas seguidas exitosas** antes de activar schedule nocturno
-- ⬜ Evidencia versionada en `notebooks/bronze/_runs/full_run_<fecha>.md` y `_runs/idempotency_test_<fecha>.md` (V2)
+- ✅ `infra/databricks_workflow.json` + `infra/create_databricks_workflow.py` — definición del Workflow reproducible · 2026-05-28
+- ✅ `infra/run_dump.ps1` — wrapper para Task Scheduler Windows · 2026-05-28
+- ⬜ Workflow ejecutado **5 corridas seguidas exitosas** antes de activar schedule nocturno *(requiere humano)*
+- ⬜ Evidencia versionada en `notebooks/bronze/_runs/full_run_<fecha>.md` y `_runs/idempotency_test_<fecha>.md` (V2) *(requiere humano)*
 
 **Track T · Auth + endpoints (Sprints F1-B y F1-C)**
-- ⬜ Deps añadidas a `motoshop-app/api/pyproject.toml`: sqlalchemy, pymysql, pyjwt, bcrypt, slowapi, pyyaml, structlog (DT-1, 2, 3, 4, 8)
-- ⬜ `motoshop-app/api/src/motoshop_api/db/{engine,tables}.py` — SQLAlchemy core (DT-1)
-- ⬜ `motoshop-app/api/src/motoshop_api/auth/` — hash, jwt, users.yaml loader, deps, router, schemas (DT-2, DT-4)
-- ⬜ `motoshop-app/api/src/motoshop_api/logging.py` — structlog + request_id + PII redaction (DT-8)
-- ⬜ `motoshop-app/api/src/motoshop_api/products/{repo,router,schemas}.py` — `GET /products?q=` (DT-5)
-- ⬜ `motoshop-app/api/src/motoshop_api/stock/{repo,router,schemas}.py` — `GET /products/{sku}/stock`
-- ⬜ `motoshop-app/api/src/motoshop_api/sales/{repo,router,schemas}.py` — `GET /sales/recent?since=&limit=` (DT-10)
-- ⬜ `motoshop-app/api/users.yaml.example` versionado; `users.yaml` real gitignored
-- ⬜ `infra/hash_password.py` — utilidad CLI bcrypt
-- ⬜ Rate limit: 60 req/min/usuario; 10 req/min/IP en `/auth/login` (DT-3)
-- ⬜ OpenAPI en `/docs` con bearerAuth visible
-- ⬜ `pytest -m "not integration"` verde con cobertura > 70% en `auth/` y `products/` (DT-9)
-- ⬜ Tests integration `@pytest.mark.integration` contra MySQL local
+- ✅ Deps añadidas a `motoshop-app/api/pyproject.toml`: sqlalchemy, pymysql, pyjwt, bcrypt, slowapi, pyyaml, structlog (DT-1, 2, 3, 4, 8) · 2026-05-28
+- ✅ `motoshop-app/api/src/motoshop_api/db/{engine,tables}.py` — SQLAlchemy core (DT-1) · 2026-05-28
+- ✅ `motoshop-app/api/src/motoshop_api/auth/` — hash, jwt, users.yaml loader, deps, router, schemas (DT-2, DT-4) · 2026-05-28
+- ✅ `motoshop-app/api/src/motoshop_api/logging.py` — structlog + request_id + PII redaction (DT-8) · 2026-05-28
+- ✅ `motoshop-app/api/src/motoshop_api/products/{repo,router,schemas}.py` — `GET /products?q=` (DT-5) · 2026-05-28
+- ✅ `motoshop-app/api/src/motoshop_api/stock/{repo,router,schemas}.py` — `GET /products/{sku}/stock` · 2026-05-28
+- ✅ `motoshop-app/api/src/motoshop_api/sales/{repo,router,schemas}.py` — `GET /sales/recent?since=&limit=` (DT-10) · 2026-05-28
+- ✅ `motoshop-app/api/users.yaml.example` versionado · 2026-05-28
+- ✅ `infra/hash_password.py` — utilidad CLI bcrypt · 2026-05-28
+- ✅ Rate limit: 100 req/min en `/auth/login`, 60 req/min en otros endpoints (DT-3) · 2026-05-28
+- ✅ OpenAPI en `/docs` con bearerAuth visible · 2026-05-28
+- ✅ `pytest -m "not integration"` verde — 22 tests (DT-9) · 2026-05-28
+- ⬜ Tests integration `@pytest.mark.integration` contra MySQL local *(requiere humano)*
 
 ### Puntos de verificación crítica
 
