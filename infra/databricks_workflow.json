@@ -1,7 +1,7 @@
 {
   "name": "MotoShop Bronze Ingestion",
   "schedule": {
-    "quartz_cron_expression": "0 0 2 * * ?",
+    "quartz_cron_expression": "0 0,12,20 * * ?",
     "timezone_id": "America/Bogota"
   },
   "tasks": [
@@ -37,6 +37,5 @@
       },
       "depends_on": [{"task_key": "02_ingest_all_bronze"}]
     }
-  ],
-  "tasks_json": null
+  ]
 }
