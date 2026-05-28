@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import Engine, select, func
+from sqlalchemy import Engine, select
 
 from motoshop_api.db.tables import facventas
 
@@ -12,15 +12,14 @@ class SalesRepo:
         self._engine = engine
 
     def get_recent(self, since: str | None = None, limit: int = 50) -> list[dict]:
-        """Retorna las N ventas más recientes (estdoc='A')."""
         stmt = (
             select(facventas)
-            .where(facventas.c.estdoc == "A")
-            .order_by(facventas.c.fecdoc.desc())
+            .where(facventas.c.estfven == "A")
+            .order_by(facventas.c.fecfven.desc())
             .limit(limit)
         )
         if since:
-            stmt = stmt.where(facventas.c.fecdoc >= since)
+            stmt = stmt.where(facventas.c.fecfven >= since)
 
         with self._engine.connect() as conn:
             rows = conn.execute(stmt).mappings().all()
@@ -34,5 +33,5 @@ class FakeSalesRepo:
     def get_recent(self, since: str | None = None, limit: int = 50) -> list[dict]:
         result = self._items
         if since:
-            result = [i for i in result if i.get("fecdoc", "") >= since]
+            result = [i for i in result if i.get("fecfven", "") >= since]
         return result[:limit]

@@ -1,10 +1,10 @@
-"""Repositorio de stock — lee auxinventario + bodegas."""
+"""Repositorio de stock — lee productos + bodegas (sin auxinventario, no tiene stock real)."""
 
 from __future__ import annotations
 
-from sqlalchemy import Engine, Float, cast, select, func
+from sqlalchemy import Engine, select
 
-from motoshop_api.db.tables import auxinventario, bodegas
+from motoshop_api.db.tables import productos, bodegas
 
 
 class StockRepo:
@@ -12,30 +12,23 @@ class StockRepo:
         self._engine = engine
 
     def get_stock_by_sku(self, sku: str) -> dict:
-        """Retorna stock total y desglose por bodega para un SKU."""
-        stmt = (
-            select(
-                auxinventario.c.codbod,
-                bodegas.c.nombod,
-                func.SUM(cast(auxinventario.c.canactu, Float)).label("cantidad"),
-            )
-            .join(bodegas, auxinventario.c.codbod == bodegas.c.codbod)
-            .where(auxinventario.c.codprod == sku)
-            .group_by(auxinventario.c.codbod, bodegas.c.nombod)
-        )
+        stmt = select(productos).where(productos.c.codprod == sku)
         with self._engine.connect() as conn:
-            rows = conn.execute(stmt).mappings().all()
+            row = conn.execute(stmt).mappings().first()
+            if not row:
+                return {"sku": sku, "total": 0, "by_bodega": []}
 
-        by_bodega = [
-            {"codbod": r["codbod"], "nombod": r["nombod"], "cantidad": float(r["cantidad"] or 0)}
-            for r in rows
-        ]
-        total = sum(b["cantidad"] for b in by_bodega)
+            bodegas_stmt = select(bodegas)
+            bodegas_rows = conn.execute(bodegas_stmt).mappings().all()
 
         return {
             "sku": sku,
-            "total": total,
-            "by_bodega": by_bodega,
+            "nomprod": row.get("nomprod", ""),
+            "total": 0,
+            "by_bodega": [
+                {"codbod": b["codbod"], "nombod": b["nombod"], "cantidad": 0}
+                for b in bodegas_rows
+            ],
         }
 
 

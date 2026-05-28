@@ -29,6 +29,8 @@ async def lifespan(app: FastAPI):
     setup_logging()
     log = structlog.get_logger("motoshop")
     users_path = Path(settings.users_file_path)
+    if not users_path.is_absolute():
+        users_path = Path(__file__).resolve().parent.parent.parent / users_path
     if users_path.exists():
         users = load_users(users_path)
         log.info("users_loaded", count=len(users))

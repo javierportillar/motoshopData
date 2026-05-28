@@ -13,5 +13,6 @@ class BodegaStock(BaseModel):
 
 class StockResponse(BaseModel):
     sku: str
+    nomprod: str | None = None
     total: float
     by_bodega: list[BodegaStock]

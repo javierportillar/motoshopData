@@ -8,13 +8,10 @@ from motoshop_api.db.tables import productos
 
 
 class ProductsRepo:
-    """Repositorio de lectura de productos."""
-
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
 
     def search(self, query: str | None = None, limit: int = 50, offset: int = 0) -> list[dict]:
-        """Busca productos por nombre/código con paginación."""
         stmt = select(productos)
         if query:
             search = f"%{query}%"
@@ -27,7 +24,6 @@ class ProductsRepo:
             return [dict(r) for r in rows]
 
     def count(self, query: str | None = None) -> int:
-        """Cuenta productos que coinciden con la búsqueda."""
         stmt = select(func.count()).select_from(productos)
         if query:
             search = f"%{query}%"
@@ -38,7 +34,6 @@ class ProductsRepo:
             return conn.execute(stmt).scalar() or 0
 
     def get_by_sku(self, sku: str) -> dict | None:
-        """Retorna un producto por código exacto."""
         stmt = select(productos).where(productos.c.codprod == sku)
         with self._engine.connect() as conn:
             row = conn.execute(stmt).mappings().first()
@@ -46,8 +41,6 @@ class ProductsRepo:
 
 
 class FakeProductsRepo:
-    """Repo fake para tests unitarios."""
-
     def __init__(self, items: list[dict] | None = None) -> None:
         self._items = items or []
 
