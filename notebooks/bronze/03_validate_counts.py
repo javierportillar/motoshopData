@@ -32,8 +32,9 @@ TABLES = [
 
 manifest_path = f"{VOLUME}/_manifests/manifest_{ingest_date}.json"
 
-# El manifest es JSON anidado (no NDJSON), hay que leerlo como texto y parsear
-manifest_text = spark.read.text(manifest_path).collect()[0][0]
+# El manifest es JSON anidado (no NDJSON), leer todas las lineas y unirlas
+lines = spark.read.text(manifest_path).toPandas()["value"].tolist()
+manifest_text = "".join(lines)
 manifest_data = json.loads(manifest_text)
 
 print(f"Manifest: {ingest_data := manifest_data.get('ingest_date', ingest_date)}")
