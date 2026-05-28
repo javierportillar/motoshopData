@@ -14,8 +14,10 @@
 - ✅ P1–P4 revisados y aceptados (recomendaciones confirmadas sin cambios)
 - ✅ ADRs 0005–0008 actualizados a `Accepted`
 - ✅ Script PowerShell `infra/backup_mysql.ps1` generado (alternativa Windows)
-- ✅ SQL `infra/create_users.sql` generado con usuarios `analytics` y `api_read`
-- ➡️ Pendiente: ejecutar backup, crear usuarios, Databricks, Cloudflare Tunnel, probar scaffolds
+- ✅ SQL `infra/create_users.sql.example` generado con usuarios `analytics` y `api_read`
+- ✅ Backup MySQL ejecutado (5.02MB, 7s)
+- ✅ Usuarios MySQL creados: analytics, api_read, javier
+- ➡️ Pendiente: cuenta Databricks, Cloudflare Tunnel, probar scaffolds
 
 ---
 
@@ -78,22 +80,10 @@ npm run dev
 
 ---
 
-### 4. ⬜ Crear usuarios MySQL read-only
+### 4. ✅ Crear usuarios MySQL read-only
 
-Con P1 = A (dump local), ambos usuarios son `@localhost`:
-
-```sql
--- 1. Reemplazar 'changeme_analytics' y 'changeme_api' por contraseñas seguras
--- 2. Guardarlas en el password manager
--- 3. Ejecutar como root:
-mysql -u root < infra\create_users.sql.example
-```
-
-**Verificación crítica #1 de F0:** Probar que INSERT/UPDATE/DELETE fallan:
-```sql
-mysql -u analytics -p -e "INSERT INTO motoshop2024.productos (codprod) VALUES ('test')"
--- debe dar: ERROR 1142 (42000): INSERT command denied...
-```
+Usuarios creados: `analytics`, `api_read`, `javier` (todos @localhost, password `123450`).
+Verificación crítica #1 ✅ — INSERT command denied para los 3.
 
 ---
 

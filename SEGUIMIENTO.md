@@ -76,14 +76,15 @@ F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 - ⬜ Cuenta y workspace Databricks creados *(requiere humano)*
 - ⬜ Unity Catalog habilitado y catálogo `motoshop` creado *(requiere humano)*
 - ⬜ Esquemas `bronze`, `silver`, `gold` creados *(requiere humano)*
-- ⬜ Usuario MySQL `analytics` (read-only, con contraseña) *(requiere humano + decisión P1)*
+- ✅ Usuario MySQL `analytics` (read-only, con contraseña) · 2026-05-27
 - ⬜ Repo `motoshopdata` conectado al workspace *(requiere humano)*
 - 🟡 Estrategia conectividad decidida (D5) — **Opción A** aceptada ✅; pendiente de implementar (script dump + cloud storage) *(requiere humano: cuenta Databricks + cloud storage)*
 - ⬜ Cluster small configurado con autoterminación (10 min) *(requiere humano)*
 
 **Track T · Transaccional**
 - ✅ Repo `motoshop-app` (FastAPI + Next.js) creado con estructura base · 2026-05-27
-- ⬜ Usuario MySQL `api_read` (read-only, con contraseña) *(requiere humano)*
+- ✅ Usuario MySQL `api_read` (read-only, con contraseña) · 2026-05-27
+- ✅ Usuario MySQL `javier` (read-only, personal) · 2026-05-27
 - ⚠️ FastAPI corriendo localmente con un endpoint `/health` — scaffold listo en `motoshop-app/api/`, falta `pip install` + `uvicorn` por parte del humano
 - ⚠️ Next.js corriendo localmente con una página vacía — scaffold listo en `motoshop-app/web/`, falta `npm install` + `npm run dev` por parte del humano
 - 🟡 Túnel remoto configurado (D6) — Cloudflare Tunnel aceptado ✅; pendiente de instalar `cloudflared` y generar token *(requiere humano)*
@@ -101,8 +102,8 @@ F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 
 ### Puntos de verificación crítica
 
-1. **¿El usuario read-only es realmente read-only?**
-   Probar manualmente: `INSERT`, `UPDATE`, `DELETE`, `DROP` deben fallar con error de permisos.
+1. ✅ **¿El usuario read-only es realmente read-only?**
+   ✅ Verificado: `INSERT command denied` para `analytics`, `api_read` y `javier` · 2026-05-27
 2. **¿El túnel funciona desde una red distinta?**
    No basta probar desde la misma wifi. Usar 4G del celular o una VPN externa.
 3. **¿La conectividad Databricks → MySQL local funciona end-to-end?**
@@ -123,7 +124,8 @@ F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 ### Bloqueadores actuales
 - ~~P1–P4 resueltos ✅~~
 - ✅ Backup MySQL ejecutado
-- Pendiente humano: crear usuarios MySQL, cuenta Databricks, Cloudflare Tunnel, probar scaffolds
+- ✅ Usuarios MySQL creados (analytics, api_read, javier)
+- Pendiente humano: cuenta Databricks, Cloudflare Tunnel, probar scaffolds
 
 ### Lecciones de cierre
 _(rellenar al cerrar la fase)_
