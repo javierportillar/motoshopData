@@ -8,6 +8,140 @@
 
 ---
 
+## Sesión 2026-05-28 (14) · F1-FIX1 · Remediación de auditoría — 🔴 NO-GO a F2
+
+### Resumen
+La auditoría de F1 (Sesión 14) detectó **5 hallazgos críticos**, **5 serios** y **3 KPIs sin medir**. F1 vuelve a 🟡. Plan correctivo: [`docs/plan-f1-fix1.md`](docs/plan-f1-fix1.md). Mientras no cierre, F2 no arranca.
+
+> Por favor leé [`docs/plan-f1-fix1.md`](docs/plan-f1-fix1.md) antes de actuar — tiene los detalles, archivos exactos, criterios de aceptación y orden recomendado.
+
+---
+
+### 🚨 PASO 0 — Mitigación URGENTE de C-5 (humano, antes de cualquier otra cosa)
+
+> Mientras esto no pase, la API en `https://api.fragloesja.uk/` es **vulnerable**. Cualquiera con acceso al repo puede loguearse con `admin/FG28`.
+
+#### 0.1 ⬜ Generar 3 passwords aleatorios fuertes
+
+PowerShell:
+```powershell
+1..3 | ForEach-Object { -join ((33..126) | Get-Random -Count 24 | ForEach-Object {[char]$_}) }
+```
+Guardar en password manager. **NO** compartir por chat, **NO** commitear, **NO** anotar en SEGUIMIENTO ni en commit messages (lección R1).
+
+#### 0.2 ⬜ Generar hashes bcrypt
+```powershell
+cd C:\Users\MotoShop\Documents\javidevmoto\motoshop-app\api
+.\.venv\Scripts\Activate.ps1
+python ..\..\infra\hash_password.py '<password admin>'
+python ..\..\infra\hash_password.py '<password vendedor1>'
+python ..\..\infra\hash_password.py '<password gerente1>'
+```
+
+#### 0.3 ⬜ Editar `motoshop-app/api/users.yaml` (gitignored)
+
+Reemplazar los `hashed_password` por los nuevos. Verificar que NO se hace `git add`.
+
+#### 0.4 ⬜ Reiniciar la API
+```powershell
+.\infra\start_api.ps1   # o reiniciar el servicio según tu setup
+```
+
+#### 0.5 ⬜ Verificar
+```powershell
+# La vieja debe fallar
+curl -X POST https://api.fragloesja.uk/auth/login -H "Content-Type: application/json" -d '{"username":"admin","password":"FG28"}'
+# → debe devolver 401
+
+# La nueva debe funcionar
+curl -X POST https://api.fragloesja.uk/auth/login -H "Content-Type: application/json" -d '{"username":"admin","password":"<new>"}'
+# → debe devolver 200 con JWT
+```
+
+#### 0.6 ⬜ Reportar al revisor
+*"Paso 0 hecho: vieja 401, nueva 200, API reiniciada."* — sin compartir las nuevas.
+
+---
+
+### Sprint F1-FIX1.A · Track A · Notebooks honestos (Ejecutor)
+
+#### A-1 ⬜ Reescribir `04_check_large_tables` para probar paginación real
+
+`notebooks/bronze/04_check_large_tables.py`: paginar `detfventas` (~27k) y `detcompras` (~11k) con offsets sucesivos de 5000, unir, comparar `distinct.count() == COUNT(*)`. Falla si pierde o duplica filas. Evidencia: `notebooks/bronze/_runs/v6_pagination_<fecha>.md`. Detalle: plan-f1-fix1.md §3 A-1.
+
+#### A-2 ⬜ Reescribir `05_schema_drift` para comparar 2 `ingest_date`s
+
+`notebooks/bronze/05_schema_drift.py`: capturar (nombre, tipo, nullable) de cada tabla en dos `ingest_date`s y diffearlas. Si hay drift, falla. Pre-requisito: 2 corridas del dump con `--ingest-date` distinto. Evidencia: `notebooks/bronze/_runs/v7_drift_<fecha>.md`. Detalle: plan-f1-fix1.md §3 A-2.
+
+#### A-3 ⬜ Eliminar (o reparar) `databricks_workflow.json` y `create_databricks_workflow.py`
+
+El JSON está corrupto sintácticamente (`Extra data`). El flujo real corre en Task Scheduler. **Recomendado: eliminar ambos archivos** y dejar R4 documentado. Si prefieres mantener, hay que arreglar las 2 líneas extra al final del JSON y verificar que el script lo carga sin error.
+
+---
+
+### Sprint F1-FIX1.B · Track T · Auth + stock real (Ejecutor)
+
+> Prerequisito: Paso 0 completado.
+
+#### B-1 ⬜ `/stock` debe leer `auxinventario` de verdad
+
+Introspectar primero `DESCRIBE auxinventario;` y `SELECT * FROM auxinventario LIMIT 5;` para descubrir el nombre real de la columna de cantidad. Añadir tabla a `db/tables.py`. Reescribir `stock/repo.py` con JOIN `auxinventario ⨝ bodegas`. Evidencia: `notebooks/api/_runs/c1_stock_real_<fecha>.md` comparando la respuesta de la API contra `SELECT` directo en MySQL para un SKU concreto. Detalle: plan-f1-fix1.md §4 B-1.
+
+#### B-2 ⬜ Refactor de tests con FakeRepos + `pytest.mark.integration`
+
+- Mover tests que necesitan MySQL a `tests/integration/`.
+- Reescribir `test_products.py` / `test_stock.py` / `test_sales.py` con `app.dependency_overrides` + `FakeRepos` que ya están en los `repo.py`.
+- **Eliminar todos los `assert resp.status_code in (200, 500)`** y sus equivalentes.
+- Registrar marker `integration` en `pyproject.toml`.
+- Correr `pytest -m "not integration" --cov=...` y guardar el output en `notebooks/api/_runs/k2_coverage_<fecha>.md`. Meta: > 70%. Detalle: plan-f1-fix1.md §4 B-2.
+
+#### B-3 ⬜ Limpiar credenciales del README
+
+- Eliminar la tabla "Credenciales de prueba" de `motoshop-app/api/README.md`.
+- Reemplazar por "Para credenciales, pedir al responsable del proyecto. Se gestionan en password manager interno; nunca se versionan."
+- Actualizar `docs/handoff-f1.md` §3.2.
+- Antes de commit: `git diff --cached | grep -iE "password\s*[:=]"` debe estar vacío.
+
+#### B-4 ⬜ Login timing-safe (mitiga S-1)
+
+Añadir dummy bcrypt verify cuando `user is None`. Añadir test que mida tiempos y verifique que la diferencia entre "usuario existe" y "usuario no existe" es < 50% del menor.
+
+#### B-5 ⬜ Refresh token en body (mitiga S-2)
+
+Cambiar `POST /auth/refresh` a body JSON `{"token": "..."}`. Actualizar tests.
+
+#### B-6 ⬜ Rate limits al plan (mitiga S-3)
+
+`/auth/login` y `/auth/refresh`: 10/min. `/products` y `/products/{sku}/stock` y `/sales/recent`: 60/min. Añadir test que excede el límite y verifica 429.
+
+---
+
+### Sprint F1-FIX1.C · KPIs medidos (Ejecutor + Humano)
+
+#### C-K1 ⬜ Latencia `/stock` p95
+
+100 requests secuenciales contra `/products/<sku>/stock` con un SKU real (post-B-1). Calcular p95. Evidencia: `notebooks/api/_runs/k1_stock_latency_<fecha>.md`. Meta: < 500 ms.
+
+#### C-K2 ⬜ Cobertura > 70%
+
+Cubierto por B-2. Confirmar que el reporte `pytest --cov` supera 70% en `auth/`, `products/`, `stock/`, `sales/`.
+
+#### C-K3 ⬜ 5 corridas seguidas exitosas del dump
+
+Hoy hay 2 documentadas. Necesitamos 3 más. Pueden venir naturalmente del schedule 3x diaria. Una vez haya 5 manifests con `error=null` consecutivos: `notebooks/bronze/_runs/k3_five_runs_<fecha>.md`.
+
+---
+
+### Cierre de F1-FIX1
+
+Cuando todo esté hecho, ejecutor:
+1. Actualiza SEGUIMIENTO §F1: V6/V7 vuelven a ✅, KPIs con cifras reales, sección F1-FIX1 cerrada.
+2. Ping al revisor.
+3. Revisor audita los `_runs/` nuevos + corre `pytest -m "not integration"` + verifica que README está limpio.
+4. Si todo pasa: F1 ✅ y abre F2 🟡. Si no: F1-FIX2.
+
+---
+
 ## Sesión 2026-05-28 (11) · Handoff F1 listo — sin acciones humanas pendientes
 
 ### Resumen

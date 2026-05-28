@@ -1,6 +1,8 @@
 # Plan detallado · Fase 1 · Ingesta + API de lectura
 
 > Plan operativo de F1, derivado de PLAN.md §7 y SEGUIMIENTO.md. Sirve como sprint planning real. Cada entregable apunta a un archivo concreto, una verificación crítica F1 y una métrica medible. Se actualiza al cierre de cada sprint.
+>
+> **⚠️ 2026-05-28 (Sesión 14):** la implementación de los 3 sprints (F1-A/B/C) tuvo problemas detectados por auditoría. F1 sigue 🟡. Plan de remediación en [`docs/plan-f1-fix1.md`](plan-f1-fix1.md).
 
 ---
 
