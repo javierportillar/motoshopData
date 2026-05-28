@@ -28,17 +28,22 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **Fase 1 · Ingesta + API de lectura** |
+| Fase activa | **Fase 0 · Cimientos** (re-abierto tras auditoría 2026-05-28) |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Cierre Fase 1 |
-| Avance global | 1/7 fases cerradas |
+| Próximo gate | Cierre Fase 0 (1 acción humana pendiente: smoke test honesto con N>0) |
+| Avance global | 0/7 fases cerradas |
 | Última actualización | 2026-05-28 |
 
 ```
-F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
+F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 ```
 
-> **2026-05-28 — Fase 0 cerrada.** Las 4 acciones pendientes (rotar passwords, crear UC Volume, configurar SQL Warehouse, ejecutar pipeline real) se completaron en esta sesión. Verificaciones #3, #4, #5 pasan a ✅. Ver notas de sesión abajo.
+> **2026-05-28 — F0 reabierto.** La auditoría de la sesión 6 detectó:
+> - Verificación #3 atestada con `COUNT = 0` (sucursales vacía); no demuestra movimiento de datos.
+> - Verificación #5 reintroducida: el commit de cierre (`20c4d5f`) filtró la nueva password `Sashita123` en el mensaje y en SEGUIMIENTO. **Decisión humana 2026-05-28: aceptar como deuda residual sin rotar de nuevo ni reescribir historial** — el riesgo está acotado a `@localhost`. Ver [Riesgos vivos](#tablero-de-riesgos-vivos).
+> - El notebook `01_ingest_smoke_test.py` (PySpark) no es ejecutable en SQL Warehouse de Free Edition.
+>
+> Esta sesión (7) entrega: notebook SQL ejecutable, `create_uc_volume.py` y `create_sql_warehouse.py` reproducibles, deuda de credenciales documentada como riesgo vivo. Falta **1 acción humana** (re-ejecutar smoke test con `bodegas`/`formapago`) para cerrar F0 limpio.
 
 ---
 
@@ -82,9 +87,9 @@ F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 - ⬜ Repo `motoshopdata` conectado al workspace *(requiere humano, diferible a F1)*
 - ✅ Estrategia conectividad decidida (D5) — **Opción A** aceptada
 - ✅ Hello world conectividad MySQL local: `infra/test_mysql_connectivity.py` (SELECT 1 -> 1) · 2026-05-28
-- ✅ Hello world Databricks ↔ MySQL end-to-end (verif. #3 real) — `dump_to_cloud.py` + SQL Warehouse leen desde UC Volume · 2026-05-28
-- ✅ Compute Databricks (D10 aceptado): SQL Warehouse con auto-stop 10 min configurado · 2026-05-28
-- ✅ Volume `motoshop.bronze._landing` creado · 2026-05-28
+- 🟡 Hello world Databricks ↔ MySQL end-to-end (verif. #3 real) — pipeline `dump_to_cloud.py` → UC Volume → `CREATE OR REPLACE TABLE FROM parquet` ejecutado el 2026-05-28, pero el target fue `sucursales` (0 filas). **Pendiente:** re-ejecutar con `bodegas`/`formapago` (N>0) y capturar evidencia en `notebooks/bronze/_runs/`. Ver [PENDIENTES.md](PENDIENTES.md) sesión 7.
+- ✅ Compute Databricks (D10 aceptado): SQL Warehouse con auto-stop 10 min configurado · 2026-05-28 · script reproducible en `infra/create_sql_warehouse.py`
+- ✅ Volume `motoshop.bronze._landing` creado · 2026-05-28 · script reproducible en `infra/create_uc_volume.py`
 
 **Track T · Transaccional**
 - ✅ Repo `motoshop-app` (FastAPI + Next.js) creado con estructura base · 2026-05-27
@@ -120,13 +125,13 @@ F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
    ✅ Verificado: `INSERT command denied` para `analytics`, `api_read` y `javier` · 2026-05-27
 2. ✅ **¿El túnel funciona desde una red distinta?**
    ✅ Verificado desde 4G del celular: `https://api.fragloesja.uk/health` → `{"status":"ok","version":"0.0.0","env":"dev"}` · 2026-05-28
-3. ✅ **¿La conectividad Databricks → MySQL local funciona end-to-end?**
+3. 🟡 **¿La conectividad Databricks → MySQL local funciona end-to-end?**
    ✅ Local: `infra/test_mysql_connectivity.py` (SELECT 1 -> 1) · 2026-05-28
-   ✅ End-to-end: `dump_to_cloud.py` extrae `sucursales` → sube Parquet a UC Volume → SQL Warehouse lee el Parquet y crea `motoshop.bronze.sucursales` · 2026-05-28
+   🟡 End-to-end: `dump_to_cloud.py` + UC Volume + SQL Warehouse ejecutados, pero el run del 2026-05-28 usó `sucursales` (COUNT=0). **No demuestra movimiento de datos.** Acción pendiente: re-ejecutar con `bodegas` o `formapago` (N>0) usando el notebook SQL [`notebooks/bronze/01_ingest_smoke_test.sql`](notebooks/bronze/01_ingest_smoke_test.sql) y capturar evidencia en `notebooks/bronze/_runs/`.
 4. ✅ **¿El cluster se apaga solo?**
-   ✅ SQL Warehouse configurado con auto-stop 10 min (Serverless Starter Warehouse, ID: 43bc044eaef4cca4) · 2026-05-28
-5. ✅ **¿Las credenciales están fuera de Git?**
-   ✅ Passwords MySQL rotadas de `123450` a `Sashita123` y actualizadas en `.env` raíz y `motoshop-app/api/.env`. Tokens reales verificados ausentes del historial. · 2026-05-28
+   ✅ SQL Warehouse Serverless Starter con auto-stop 10 min (ID: 43bc044eaef4cca4) — script reproducible: `infra/create_sql_warehouse.py`. Documentación: [`infra/setup_sql_warehouse.md`](infra/setup_sql_warehouse.md) · 2026-05-28
+5. ⚠️ **¿Las credenciales están fuera de Git?**
+   ⚠️ **Deuda residual aceptada (2026-05-28).** Los strings `123450` y `Sashita123` quedaron en el historial de commits (mensaje del commit `20c4d5f` y SEGUIMIENTO). Decisión humana: NO rotar de nuevo ni reescribir historial; el riesgo está acotado a usuarios `@localhost`, puerto 3306 nunca expuesto. Registrado en [Riesgos vivos](#tablero-de-riesgos-vivos). Tokens reales (Databricks PAT, Cloudflare) NO están en el historial.
 6. ✅ **¿Tengo backup del MySQL antes de seguir?**
    ✅ `mysqldump` exitoso de `motoshop2024` — 5.02 MB comprimido, ~60 MB raw, 7s de duración. Archivo: `C:\Users\MotoShop\Backups\motoshop\motoshop2024_20260527_212611.sql.zip`
 
@@ -137,7 +142,8 @@ F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 - ✅ Costo Databricks en Fase 0: ~0 USD (free tier, sin clusters activos)
 
 ### Bloqueadores actuales
-- Sin bloqueadores. Fase 0 cerrada. Pendiente conectar repo a workspace Databricks (diferible a F1).
+- 1 acción humana pendiente: re-ejecutar smoke test con tabla N>0 (ver [PENDIENTES.md](PENDIENTES.md) sesión 2026-05-28 sesión 7).
+- Conectar repo a workspace Databricks: diferible a F1.
 
 ### Lecciones de cierre
 
@@ -519,7 +525,7 @@ _(rellenar al cerrar la fase)_
 
 | Riesgo | Fase activado | Estado | Impacto observado | Mitigación aplicada |
 |--------|---------------|--------|-------------------|---------------------|
-| _(ninguno aún)_ | | | | |
+| **R1 · Passwords MySQL en historial de Git** | F0 (sesión 6, commit `20c4d5f`) | 🟡 Aceptado | Strings `123450` (password vieja) y `Sashita123` (password actual) son grepables en `git log -p` del repo público. Cualquiera con acceso al repo puede probar esas credenciales. | **Mitigaciones activas:** (1) los 3 usuarios son `@localhost`, MySQL no escucha en la WAN; (2) el túnel Cloudflare solo expone el puerto 8000 (API), nunca 3306; (3) el PC está detrás del router doméstico. **Mitigaciones NO aplicadas (decisión humana 2026-05-28):** no se rota otra vez, no se reescribe historial. **Triggers de re-evaluación:** (a) si MySQL pasa a aceptar conexiones `@%` o `@<ip>`; (b) si se expone el puerto 3306 a través de cualquier túnel; (c) si en F-F se replica a una BD cloud. Cualquiera de los 3 obliga rotación + audit de accesos previos. |
 
 ---
 
@@ -567,6 +573,30 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-28 — Sesión 8 · Remediación de auditoría F0 (NO GO a F1 todavía)
+
+- **Hecho:**
+  - 🔍 Segunda auditoría detectó que el commit `20c4d5f` (que cerró F0 en Sesión 7) filtró la nueva password `Sashita123` en el mensaje y en SEGUIMIENTO, y que el smoke test atestado tenía `COUNT=0` (sucursales vacía → no demuestra movimiento de datos).
+  - 🟡 **R1 · Passwords MySQL en historial:** aceptado como deuda residual con triggers de re-evaluación documentados. Decisión humana 2026-05-28: NO rotar otra vez ni reescribir historial; riesgo acotado a usuarios `@localhost`.
+  - ✅ `notebooks/bronze/01_ingest_smoke_test.sql` — versión SQL ejecutable en SQL Warehouse de Free Edition. Parametrizable por tabla e ingest_date; valida `bronze == origen AND N > 0`; verdicts explícitos para `N=0` vs `N>0`.
+  - ✅ Cabecera del notebook PySpark actualizada con nota clara de "no ejecutable en SQL Warehouse — referencia para serverless compute futuro".
+  - ✅ `infra/create_uc_volume.py` — script reproducible idempotente vía Databricks SDK.
+  - ✅ `infra/create_sql_warehouse.py` — script reproducible idempotente; verifica auto_stop_mins ≤ 10.
+  - ✅ `infra/setup_sql_warehouse.md` — UI + SDK + query SQL de verificación.
+  - ✅ Estado global revertido a F0 🟡; verificación #3 a 🟡 (espera smoke test honesto); verificación #5 a ⚠️ con deuda aceptada y triggers.
+  - ✅ PENDIENTES sesión 7 con la única acción humana restante (re-ejecutar smoke test con tabla N>0).
+- **Aprendido:**
+  - **Atestación ≠ evidencia.** Un commit que dice "cerrado" sin artefactos versionados no es base sólida.
+  - Mensajes de commit son parte del historial public-grep-able. Toda credencial que asome ahí queda filtrada permanentemente salvo rebase destructivo.
+  - `COUNT = 0` pasa el `assert` pero no demuestra el espíritu de la verificación. Elegir tablas con datos para los smoke tests.
+  - Mantener dos versiones del notebook (SQL ejecutable hoy, PySpark para futuro) es más barato que reescribir cuando llegue el compute Python.
+- **Abierto:**
+  - 1 acción humana: re-ejecutar smoke test con `bodegas` o `formapago` desde el notebook SQL y capturar evidencia en `notebooks/bronze/_runs/`.
+- **Próximo paso:**
+  - Humano corre los pasos de PENDIENTES sesión 7 → agente sella verificación #3 a ✅ → F0 cerrado limpio (con #5 como ⚠️ documentado) → abre F1.
+
+---
 
 ### 2026-05-28 — Sesión 7 · Cierre de F0 (GO a F1)
 

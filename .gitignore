@@ -44,6 +44,8 @@ secrets/
 *.sql
 *.sql.gz
 *.dump
+# Notebooks SQL del proyecto (excepción a *.sql) — sí se versionan.
+!notebooks/**/*.sql
 
 # ─── Databricks ────────────────────────────────────────────
 .databricks/

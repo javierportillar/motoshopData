@@ -1,6 +1,15 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 01 · Smoke Test — Ingesta Bronze (`sucursales`)
+# MAGIC # 01 · Smoke Test — Ingesta Bronze (versión PySpark)
+# MAGIC
+# MAGIC > **⚠️ Esta versión NO se ejecuta en SQL Warehouse.** Requiere
+# MAGIC > compute Python (serverless notebook compute o cluster). En
+# MAGIC > Databricks Free Edition la versión que se usa hoy es
+# MAGIC > [`01_ingest_smoke_test.sql`](01_ingest_smoke_test.sql), ejecutable
+# MAGIC > directamente en el SQL Warehouse. Este notebook PySpark queda como
+# MAGIC > referencia para cuando F1/F2 demanden compute Python y la lógica
+# MAGIC > tenga que escribirse en DataFrame API (lectura incremental,
+# MAGIC > bookmarks por `fecdoc`, etc.). Ver [ADR-0010](../docs/decisions/0010-compute-databricks-free.md).
 # MAGIC
 # MAGIC **Objetivo:** verificación crítica **#3 de Fase 0** — *"La conectividad
 # MAGIC Databricks → MySQL local funciona end-to-end. Un notebook que lea una

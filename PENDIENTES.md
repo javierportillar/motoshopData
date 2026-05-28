@@ -8,6 +8,96 @@
 
 ---
 
+## Sesión 2026-05-28 (8) · Remediación de auditoría — 1 acción para cerrar F0
+
+### Resumen
+La auditoría detectó dos cosas en el cierre anterior: (a) el commit de cierre filtró la nueva password en su mensaje (**deuda aceptada** — no se va a corregir, ver R1 en SEGUIMIENTO), y (b) el smoke test atestó la verificación #3 con `sucursales` que tenía 0 filas, lo cual no demuestra movimiento de datos. Esta acción cierra (b).
+
+El agente preparó: notebook SQL ejecutable en SQL Warehouse, scripts reproducibles del Volume y del Warehouse, deuda de credenciales documentada como riesgo vivo.
+
+### 1. ⬜ Re-ejecutar el smoke test con una tabla con datos *(bloquea cierre F0)*
+
+**Por qué:** `sucursales` salió con 0 filas. El gate pide *"aunque sea con 10 filas"*. Hay que elegir una tabla pequeña pero **no vacía**. Candidatas:
+- `bodegas` (~10 filas, recomendado — modelo mental directo)
+- `formapago` (~20 filas — códigos de pago)
+- `subproduct` (~? filas — alternativa)
+
+**En el PC Windows:**
+
+```powershell
+cd C:\Users\MotoShop\Documents\javidevmoto
+.\.venv-infra\Scripts\Activate.ps1
+
+# Dump de las dos tablas pequeñas a Parquet local + UC Volume
+python infra\dump_to_cloud.py --tables bodegas formapago
+# El script imprime: filas, tamaño, ruta del Volume. Copiá esa salida.
+```
+
+**En Databricks (SQL Editor del SQL Warehouse):**
+
+1. Importar/abrir [`notebooks/bronze/01_ingest_smoke_test.sql`](notebooks/bronze/01_ingest_smoke_test.sql) (o pegar las celdas en un nuevo notebook SQL).
+2. Setear los widgets:
+   - `table_name = bodegas`
+   - `ingest_date = <la fecha del dump>` (por defecto hoy)
+3. **Run all.**
+4. La última celda 5 (validación) debe devolver:
+   ```
+   ✅ OK — conteos cuadran y N > 0 (verif. #3 cumplida)
+   ```
+5. Repetir el run con `table_name = formapago` para confirmar que el patrón funciona en >1 tabla.
+
+### 2. ⬜ Capturar la evidencia en el repo *(2 minutos)*
+
+Crear `notebooks/bronze/_runs/smoke_test_2026-05-28.md` con este contenido base (rellenar valores reales):
+
+```markdown
+# Smoke test bronze · 2026-05-28
+
+## bodegas (ingest_date=2026-05-28)
+- Dump local: N filas, X KB, Y segundos
+- Subida UC Volume: ok
+- COUNT(*) parquet:  N
+- COUNT(*) bronze:   N
+- Verdict: ✅ OK — conteos cuadran y N > 0
+
+## formapago (ingest_date=2026-05-28)
+- Dump local: N filas, X KB, Y segundos
+- Subida UC Volume: ok
+- COUNT(*) parquet:  N
+- COUNT(*) bronze:   N
+- Verdict: ✅ OK — conteos cuadran y N > 0
+
+## DESCRIBE HISTORY motoshop.bronze.bodegas (5 últimas operaciones)
+| version | timestamp | operation        | userName |
+|---------|-----------|------------------|----------|
+| ...     | ...       | CREATE_OR_REPLACE| ...      |
+```
+
+Commit:
+```powershell
+git add notebooks/bronze/_runs/smoke_test_2026-05-28.md
+git commit -m "feat(F0): evidencia smoke test bronze - bodegas y formapago N>0"
+git push
+```
+
+### 3. Reportar al agente
+"Smoke test honesto pasó: bodegas N=X, formapago N=Y, evidencia en `notebooks/bronze/_runs/smoke_test_2026-05-28.md`." El agente marca verificación #3 a ✅, F0 cierra (con #5 como ⚠️ documentado por deuda aceptada), y abre F1.
+
+---
+
+### (Opcional, complementarias) Scripts reproducibles ya en el repo
+
+Si querés re-correr el setup desde cero en otra máquina, ahora hay scripts versionados que reemplazan los clicks de la UI:
+
+```powershell
+python infra\create_uc_volume.py        # crea (o verifica) motoshop.bronze._landing
+python infra\create_sql_warehouse.py    # crea (o verifica) auto_stop_mins ≤ 10
+```
+
+Ambos son idempotentes y validan permisos. La sesión 7 los hizo manualmente; estos scripts dejan el trabajo reproducible para auditoría académica y para F-F del roadmap.
+
+---
+
 ## Sesión 2026-05-28 · Cierre estricto de F0 (auditoría)
 
 ### Resumen
