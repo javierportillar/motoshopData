@@ -8,7 +8,7 @@
 # COMMAND ----------
 
 import json
-from pyspark.sql.functions import col, lit, sum as spark_sum, when, count, expr
+from pyspark.sql.functions import col, lit, sum as spark_sum, when, count
 
 dbutils.widgets.text("ingest_date", "2026-05-28")
 ingest_date = dbutils.widgets.get("ingest_date")
@@ -31,11 +31,14 @@ TABLES = [
 # COMMAND ----------
 
 manifest_path = f"{VOLUME}/_manifests/manifest_{ingest_date}.json"
-manifest_df = spark.read.json(manifest_path)
-manifest_data = manifest_df.collect()[0].asDict()
 
-print(f"Manifest: {ingest_date}")
+# El manifest es JSON anidado (no NDJSON), hay que leerlo como texto y parsear
+manifest_text = spark.read.text(manifest_path).collect()[0][0]
+manifest_data = json.loads(manifest_text)
+
+print(f"Manifest: {ingest_data := manifest_data.get('ingest_date', ingest_date)}")
 print(f"Duracion: {manifest_data.get('duration_seconds', '?')}s")
+print(f"Tablas en manifest: {len(manifest_data.get('tables', []))}")
 
 # COMMAND ----------
 
@@ -44,12 +47,11 @@ print(f"Duracion: {manifest_data.get('duration_seconds', '?')}s")
 
 # COMMAND ----------
 
-# Contar filas en el manifest
+# Extraer conteos del manifest
 manifest_tables = {}
-for row in manifest_df.select("tables").collect():
-    for t in row.tables:
-        if t.get("error") is None:
-            manifest_tables[t["table"]] = t["rows"]
+for t in manifest_data.get("tables", []):
+    if t.get("error") is None:
+        manifest_tables[t["table"]] = t["rows"]
 
 print("Manifest tables:", manifest_tables)
 
@@ -86,7 +88,7 @@ for table in sorted(TABLES):
     b = bronze_counts.get(table, 0)
     total_manifest += m
     total_bronze += b
-    
+
     if m == b and b > 0:
         status = "OK"
     elif m == b and b == 0:
@@ -94,11 +96,11 @@ for table in sorted(TABLES):
     else:
         status = "MISMATCH"
         mismatches += 1
-    
-    print(f"{table:<20} {m:>10,} {b:>10,} {status:>10}")
+
+    print(f"{table:<20} {m:>10} {b:>10} {status:>10}")
 
 print("-" * 55)
-print(f"{'TOTAL':<20} {total_manifest:>10,} {total_bronze:>10,}")
+print(f"{'TOTAL':<20} {total_manifest:>10} {total_bronze:>10}")
 
 # COMMAND ----------
 
