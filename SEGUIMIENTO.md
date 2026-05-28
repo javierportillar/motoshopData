@@ -58,6 +58,7 @@ F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 | D8 | 2026-05-27 | Hosting API en PC local (Opción A) | VPS | Simple, gratis, latencia mínima a BD. ADR: [0007](docs/decisions/0007-api-hosting.md) |
 | D9 | 2026-05-27 | Auth: login propio JWT + bcrypt (Opción A) | Google OAuth; Microsoft Entra | Control total, sin dependencias externas. ADR: [0008](docs/decisions/0008-auth-provider.md) |
 | D10 | 2026-05-28 | Compute Databricks: extracción local + UC Volume + Serverless SQL (Opción A) | Migrar a plan con clusters (B); reemplazar Databricks por DuckDB (C) | Free Edition no tiene clusters; el camino crítico no depende de drivers JDBC en Databricks. ADR: [0010](docs/decisions/0010-compute-databricks-free.md) |
+| D11 | _pendiente_ | Stack F1 (DT-1 a DT-10): SQLAlchemy core, pyjwt+bcrypt, slowapi, users.yaml, offset+limit, INSERT REPLACE WHERE, manifest al Volume, structlog, repos+integration mark, bronze raw → silver UTC → API UTC | Por decisión: mysql-connector directo (DT-1), python-jose (DT-2), Redis (DT-3), SQLite (DT-4), keyset (DT-5), CREATE OR REPLACE (DT-6), tabla _meta_runs (DT-7), loguru (DT-8), solo unit (DT-9), bronze TZ-aware (DT-10) | Equilibrio entre velocidad de F1 y portabilidad a F2+. ADR: [0011](docs/decisions/0011-stack-f1.md) **Proposed** |
 
 ---
 
@@ -152,56 +153,97 @@ F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 
 **Objetivo:** primer dato en Bronze y primera consulta remota funcionando.
 
+> Plan detallado: [docs/plan-f1.md](docs/plan-f1.md) — 3 sprints (F1-A bronze, F1-B auth + /products, F1-C /stock + /sales).
+> Stack: [ADR-0011](docs/decisions/0011-stack-f1.md) — 10 decisiones técnicas (DT-1 a DT-10) **Proposed**, pendientes de confirmación humana antes de Sprint F1-A.
+
 ### Definition of Done
-- 12 tablas core ingeridas a Bronze diariamente.
-- Conteos en Bronze coinciden con conteos en MySQL para todas las tablas.
-- API expone al menos 3 endpoints de lectura con autenticación.
+- 12 tablas core ingeridas a Bronze diariamente con ingesta idempotente por `ingest_date`.
+- Conteos en Bronze coinciden 1:1 con conteos en MySQL para todas las tablas (V1).
+- API expone los 3 endpoints de lectura (`/products`, `/products/{sku}/stock`, `/sales/recent`) con auth JWT, rate limit y logs estructurados.
 - Login + consulta de stock desde celular fuera de la red local funcionando.
+- KPIs F1 medidos: tiempo ingesta < 30 min, latencia `/stock` p95 < 500 ms, 5 corridas seguidas exitosas.
 
 ### Checklist de entregables
 
-**Track A**
-- ⬜ Job de ingesta Bronze (las 12 tablas core)
-- ⬜ Particionado por `ingest_date` validado
-- ⬜ Bookmarks por `fecdoc` donde aplique (`facventas`, `compras`, etc.)
-- ⬜ Notebook de validación de conteos bronze vs. origen
-- ⬜ Workflow programado (manual por ahora; nocturno cuando se valide)
-- ⬜ Documentación del esquema bronze
+**Track A · Bronze (Sprint F1-A)**
+- ⬜ `infra/dump_to_cloud.py` modificado: sube manifest al Volume `/Volumes/.../bronze/_landing/_manifests/` (DT-7)
+- ⬜ `notebooks/bronze/02_ingest_all_bronze.sql` — patrón canónico `INSERT REPLACE WHERE` (DT-6) para las 12 tablas core
+- ⬜ `notebooks/bronze/03_validate_counts.sql` — lee manifest del Volume y valida conteos (V1)
+- ⬜ `notebooks/bronze/04_check_large_tables.sql` — paginación validada con `detfventas` (~27k) y `detcompras` (~11k) (V6)
+- ⬜ `notebooks/bronze/05_schema_drift.sql` — compara `DESCRIBE TABLE` entre 2 fechas (V7)
+- ⬜ `notebooks/bronze/_schema/<tabla>.md` × 12 — esquema bronze documentado por tabla
+- ⬜ `infra/databricks_workflow.json` + `infra/create_databricks_workflow.py` — definición del Workflow reproducible
+- ⬜ `infra/run_dump.ps1` — wrapper para Task Scheduler Windows
+- ⬜ Workflow ejecutado **5 corridas seguidas exitosas** antes de activar schedule nocturno
+- ⬜ Evidencia versionada en `notebooks/bronze/_runs/full_run_<fecha>.md` y `_runs/idempotency_test_<fecha>.md` (V2)
 
-**Track T**
-- ⬜ Endpoint `GET /products?q=...`
-- ⬜ Endpoint `GET /products/{sku}/stock`
-- ⬜ Endpoint `GET /sales/recent?limit=...`
-- ⬜ Auth JWT + roles (admin / vendedor / gerente)
-- ⬜ Rate limiting básico (ej. 60 req/min por usuario)
-- ⬜ Logging estructurado (JSON) con request_id
-- ⬜ OpenAPI docs autogenerados en `/docs`
-- ⬜ Pruebas de integración mínimas
+**Track T · Auth + endpoints (Sprints F1-B y F1-C)**
+- ⬜ Deps añadidas a `motoshop-app/api/pyproject.toml`: sqlalchemy, pymysql, pyjwt, bcrypt, slowapi, pyyaml, structlog (DT-1, 2, 3, 4, 8)
+- ⬜ `motoshop-app/api/src/motoshop_api/db/{engine,tables}.py` — SQLAlchemy core (DT-1)
+- ⬜ `motoshop-app/api/src/motoshop_api/auth/` — hash, jwt, users.yaml loader, deps, router, schemas (DT-2, DT-4)
+- ⬜ `motoshop-app/api/src/motoshop_api/logging.py` — structlog + request_id + PII redaction (DT-8)
+- ⬜ `motoshop-app/api/src/motoshop_api/products/{repo,router,schemas}.py` — `GET /products?q=` (DT-5)
+- ⬜ `motoshop-app/api/src/motoshop_api/stock/{repo,router,schemas}.py` — `GET /products/{sku}/stock`
+- ⬜ `motoshop-app/api/src/motoshop_api/sales/{repo,router,schemas}.py` — `GET /sales/recent?since=&limit=` (DT-10)
+- ⬜ `motoshop-app/api/users.yaml.example` versionado; `users.yaml` real gitignored
+- ⬜ `infra/hash_password.py` — utilidad CLI bcrypt
+- ⬜ Rate limit: 60 req/min/usuario; 10 req/min/IP en `/auth/login` (DT-3)
+- ⬜ OpenAPI en `/docs` con bearerAuth visible
+- ⬜ `pytest -m "not integration"` verde con cobertura > 70% en `auth/` y `products/` (DT-9)
+- ⬜ Tests integration `@pytest.mark.integration` contra MySQL local
 
 ### Puntos de verificación crítica
 
-1. **¿Los conteos coinciden?**
-   `SELECT COUNT(*) FROM motoshop2024.facventas` vs. `SELECT COUNT(*) FROM motoshop.bronze.facventas WHERE ingest_date = LATEST`. Tolerancia: 0 filas de diferencia para tablas estables.
-2. **¿Qué pasa si la ingesta falla a mitad?**
-   Simular un kill al job. ¿Quedan datos parciales? ¿Se puede reintentar sin duplicar? Idealmente la ingesta es idempotente por `ingest_date`.
-3. **¿La API rechaza tokens vencidos?**
-   Probar con un JWT expirado: debe responder 401.
-4. **¿La API rechaza credenciales malas?**
-   Login con password incorrecta: debe responder 401, no 500. Y no debe filtrar si el usuario existe o no.
-5. **¿Los logs no exponen datos sensibles?**
-   Revisar que los logs no imprimen contraseñas, tokens completos o PII.
-6. **¿La paginación de ingesta funciona para tablas grandes?**
-   Probar con `detcuentas` (~137k filas): ¿se ingiere completa? ¿en cuánto tiempo?
-7. **¿El esquema bronze es estable o cambia entre corridas?**
-   Validar que tipos y columnas no varían inesperadamente.
+> Cada uno mapeado a un sprint + un entregable concreto.
 
-### Métricas mínimas
-- Tiempo de ingesta diaria total: < 30 min.
-- Latencia endpoint `/products/{sku}/stock` p95: < 500ms.
-- Tasa de éxito de corridas de ingesta: 100% en al menos 5 corridas consecutivas.
+1. **V1 · ¿Los conteos coinciden?** Tolerancia: 0 filas de diferencia para tablas estables. Cierra con `03_validate_counts.sql` + `_runs/full_run_<fecha>.md`. **Sprint F1-A.**
+2. **V2 · ¿Qué pasa si la ingesta falla a mitad?** Idempotente por `ingest_date`. Cierra con `_runs/idempotency_test_<fecha>.md`. **Sprint F1-A.**
+3. **V3 · ¿La API rechaza tokens vencidos?** 401. Cierra con `test_auth_expired_token`. **Sprint F1-B.**
+4. **V4 · ¿La API rechaza credenciales malas sin filtrar si el usuario existe?** 401 genérico, mismo timing. Cierra con `test_auth_wrong_password_returns_401_without_user_enumeration`. **Sprint F1-B.**
+5. **V5 · ¿Los logs no exponen datos sensibles?** Cierra con `test_logs_redact_pii_and_secrets` + revisión manual de muestras. **Sprint F1-B.**
+6. **V6 · ¿La paginación funciona para tablas grandes?** Probar con `detfventas` (~27k) y `detcompras` (~11k) — `detcuentas` no entra en las 12 core. Cierra con `04_check_large_tables.sql`. **Sprint F1-A.**
+7. **V7 · ¿El esquema bronze es estable entre corridas?** Cierra con `05_schema_drift.sql` comparando 2 ingest_dates. **Sprint F1-A.**
 
-### Bloqueadores actuales
-_(rellenar)_
+### Métricas mínimas (cómo se miden)
+
+| KPI | Meta | Cómo se mide |
+|-----|------|---------------|
+| Tiempo ingesta diaria total | < 30 min | `manifest.duration_seconds` en `/_manifests/manifest_<date>.json` |
+| Latencia `/products/{sku}/stock` p95 | < 500 ms | structlog `duration_ms` por request → `jq` sobre el log del día |
+| Tasa éxito ingesta | 100% en 5 corridas | Contar manifests `error=null` consecutivos |
+| Cobertura tests `auth/`+`products/` | > 70% | `pytest --cov=motoshop_api/auth --cov=motoshop_api/products` |
+
+### Bloqueadores anticipados
+
+| ID | Bloqueador | Mitigación / cuándo se activa |
+|----|------------|-------------------------------|
+| B-F1-1 | ADR-0011 no aceptado | Sprint F1-A no arranca hasta confirmación humana |
+| B-F1-2 | `JWT_SECRET` no generado | Sprint F1-B no termina sin secret en `.env` |
+| B-F1-3 | `users.yaml` no creado por humano | Sprint F1-B demo manual no se puede correr |
+| B-F1-4 | Free Edition agota horas serverless | Diferir activación de Workflow schedule; correr manual durante el sprint |
+
+### Riesgos específicos de F1
+
+| ID | Riesgo | Mitigación |
+|----|--------|------------|
+| R-A1 | `detfventas` (27k) puede saturar `pyarrow` en una sola carga | Chunkear el dump en `part-0.parquet`, `part-1.parquet`, … si pasa |
+| R-A2 | MyISAM con datetimes `'0000-00-00'` o NULL | Bronze los guarda como string; silver hará casteo |
+| R-A3 | `productos.codprod` con whitespace | Bronze sin limpiar; silver hará `TRIM` |
+| R-B1 | MyISAM sin transacciones rompe `pool_pre_ping` ocasionalmente | `connect_args={"autocommit": True}` + retry con backoff |
+| R-B2 | JWT_SECRET débil en `.env` | Validador en `config.py`: rechaza secrets < 32 chars |
+| R-X1 | Free Edition limita horas serverless | Diferir schedule; mantener disparo manual |
+| R-X2 | `/stock` lento por falta de índice en `auxinventario.codprod` | Caché en memoria 5 min antes que tocar índice MySQL |
+| R-X3 | `users.yaml` se pierde | Incluir en backups del PC; documentar en runbook |
+| R-X4 | Cloudflare Tunnel cae | Runbook de reinicio; alerta UptimeRobot diferida a F6 |
+
+### Backout plan
+
+| Si pasa esto… | Hacemos esto |
+|----------------|--------------|
+| 3 corridas Workflow falladas seguidas | Volver a manual; investigar; mover B-F1-4 a riesgos vivos |
+| `/stock` p95 > 1s | Caché en memoria + revisar query plan |
+| Auth filtra info de usuarios | Hotfix → 401 genérico + test que reproduce |
+| Commit filtra `JWT_SECRET` o `users.yaml` real | Rotar secret + revoke de tokens emitidos |
 
 ### Lecciones de cierre
 _(rellenar al cerrar la fase)_
@@ -567,6 +609,24 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-28 — Sesión 10 · Planificación detallada de F1 (Proposed)
+
+- **Hecho:**
+  - ✅ [ADR-0011 · Stack técnico F1](docs/decisions/0011-stack-f1.md) escrito con 10 decisiones (DT-1 a DT-10): SQLAlchemy core, pyjwt+bcrypt, slowapi, users.yaml, offset+limit, INSERT REPLACE WHERE, manifest al Volume, structlog, repos+integration mark, bronze raw → silver UTC → API UTC. Estado **Proposed**.
+  - ✅ [docs/plan-f1.md](docs/plan-f1.md) — plan operativo de F1 desagregado en 3 sprints (F1-A bronze, F1-B auth + /products, F1-C /stock + /sales). Cada sprint con: pre-requisitos, lista de archivos exacta, tareas en orden, Definition of Done, KPIs medibles y riesgos específicos.
+  - ✅ Sección Fase 1 de SEGUIMIENTO actualizada: entregables desagregados, verificaciones críticas V1-V7 mapeadas a sprint + entregable, bloqueadores B-F1-1..4, riesgos R-A1..3 / R-B1..2 / R-X1..4, backout plan, cómo se mide cada KPI.
+  - ✅ D11 añadido a la bitácora (estado _pendiente_).
+  - ✅ PENDIENTES sesión 10 con la única acción humana antes de F1-A.
+- **Aprendido:**
+  - Detallar el plan en este nivel cuesta una sesión pero ahorra muchas paradas a debatir cada decisión a mitad de implementación.
+  - Mapear V1–V7 a un entregable concreto evita que el cierre de F1 sea negociación interpretativa.
+- **Abierto:**
+  - 1 acción humana: revisar ADR-0011 y aprobarlo / pedir ajustes (ver [PENDIENTES.md](PENDIENTES.md) sesión 10).
+- **Próximo paso:**
+  - Humano aprueba ADR-0011 → agente marca D11 Accepted → arranca Sprint F1-A.
+
+---
 
 ### 2026-05-28 — Sesión 9 · Smoke test real con N>0 + cierre definitivo F0 ✅
 

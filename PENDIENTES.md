@@ -8,6 +8,41 @@
 
 ---
 
+## Sesión 2026-05-28 (10) · Aprobar stack F1 antes de arrancar F1-A
+
+### Resumen
+Plan detallado de F1 listo: [`docs/plan-f1.md`](docs/plan-f1.md) (3 sprints, archivos exactos, V1-V7 mapeadas, KPIs medibles, riesgos, backout) + [ADR-0011](docs/decisions/0011-stack-f1.md) con 10 decisiones técnicas en estado **Proposed**.
+
+Antes de tocar línea de código de F1, necesito que confirmes el stack. Es una sola decisión: revisar las 10 micro-decisiones de [ADR-0011](docs/decisions/0011-stack-f1.md) y darme el OK (o pedir ajustes en las que quieras cambiar).
+
+### 1. ⬜ Revisar y aprobar ADR-0011 *(bloquea Sprint F1-A)*
+
+Abrir [`docs/decisions/0011-stack-f1.md`](docs/decisions/0011-stack-f1.md) y revisar la tabla resumen al final. 10 decisiones, cada una con su recomendación:
+
+| # | Decisión | Recomendación |
+|---|----------|----------------|
+| DT-1 | Acceso MySQL desde API | **SQLAlchemy 2.0 core + pymysql** |
+| DT-2 | JWT + bcrypt | **pyjwt + bcrypt** |
+| DT-3 | Rate limiting | **slowapi in-memory** |
+| DT-4 | Store usuarios F1 | **`users.yaml` gitignored** |
+| DT-5 | Paginación | **offset + limit (50 / 200)** |
+| DT-6 | Bronze idempotente | **`INSERT REPLACE WHERE`** |
+| DT-7 | Manifest | **Subir al Volume `/_manifests/`** |
+| DT-8 | Logging | **structlog JSON + PII redaction** |
+| DT-9 | Tests API | **Repos + `pytest.mark.integration`** |
+| DT-10 | Timezone | **Bronze raw → Silver UTC → API UTC `Z`** |
+
+**Opciones de respuesta:**
+- **"OK todas"** → marco D11 Accepted, ajusto el ADR a Accepted, y arranco F1-A en la próxima sesión.
+- **"OK pero cambia X"** → me dices qué quieres distinto y lo refleja antes de arrancar.
+- **"Necesito pensar Y"** → te dejo más opciones / contexto donde tengas duda.
+
+### (Opcional, no bloquea F1-A) Cosas diferibles ya conocidas
+- ⬜ Conectar repo `motoshopdata` al workspace Databricks (3 min, te pasé los pasos en sesiones previas).
+- ⬜ CI básico GitHub Actions — lo escribo cuando lo pidas.
+
+---
+
 ## Sesión 2026-05-28 (9) · Smoke test con datos reales + cierre F0 ✅
 
 ### Resumen
