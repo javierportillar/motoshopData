@@ -20,7 +20,8 @@ Aplicación práctica del marco conceptual de **Big Data y Transformación Digit
 | [docs/handoff-f1.md](docs/handoff-f1.md) | **Empezá aquí si vas a desarrollar Fase 1.** Pre-flight, roles, flujo de trabajo. |
 | [docs/plan-f1.md](docs/plan-f1.md) | Plan operativo detallado de Fase 1 (sprints, archivos, KPIs, riesgos). |
 | [docs/plan-f1-fix1.md](docs/plan-f1-fix1.md) | Plan F1-FIX1 · Remediación post-auditoría F1. Resolvió 11/13 ítems. |
-| [docs/plan-f1-fix2.md](docs/plan-f1-fix2.md) | **Plan F1-FIX2 · Cierre limpio de F1** (3 evidencias + sync SEGUIMIENTO). |
+| [docs/plan-f1-fix2.md](docs/plan-f1-fix2.md) | Plan F1-FIX2 · Cierre limpio de F1 (3 evidencias + sync SEGUIMIENTO). |
+| [docs/plan-f1-hardening.md](docs/plan-f1-hardening.md) | **Plan F1.5 · Hardening pre-F2** (R3 idempotencia + R-X2 cache /stock). |
 | [infollm.md](infollm.md) | Conexión a la BD y esquema general. |
 | [AGENT_PROMPT.md](AGENT_PROMPT.md) | Instrucciones del agente de IA que asiste el desarrollo. |
 | [docs/decisions/](docs/decisions/README.md) | ADRs — bitácora detallada de cada decisión arquitectural. |

@@ -642,6 +642,27 @@ _(rellenar al cerrar la fase)_
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
 
+### 2026-05-28 — Sesión 18 · Plan F1.5 Hardening pre-F2 (R3 + R-X2)
+
+- **Hecho:**
+  - 💬 Conversación con humano sobre las 3 recomendaciones tras revisar `docs/contexto-proyecto.md`:
+    - (1) Fortalecer idempotencia y validaciones → coincide con **R3** (kill-y-retry no probada).
+    - (2) Optimizar latencia `/stock` → coincide con **R-X2** (781 ms p95 > 500 ms meta).
+    - (3) Iterar constantemente → principio embebido, no requiere sprint.
+  - ✅ Decisión humana: hacer un sprint corto F1.5 antes de F2 que cierre R3 y R-X2.
+  - ✅ [`docs/plan-f1-hardening.md`](docs/plan-f1-hardening.md) escrito: 3 tareas (R3 kill-y-retry, R-X2 cache TTL 5 min, sync docs). ~2 horas de ejecutor. Plantillas exactas de evidencia para pegar outputs. Plan de remedio si R3 falla. Riesgos del cache documentados (no thread-safe, OK para single-instance F1-F4).
+  - ✅ PENDIENTES sesión 18 con handoff al ejecutor.
+- **Aprendido:**
+  - El usuario propuso 3 recomendaciones; 2 eran fixes reales (R3, R-X2) y 1 era principio. Identificarlo evita ceremonia.
+  - Hardening proactivo (no es FIX, nada está roto) es buena práctica antes de construir capas nuevas encima.
+  - Silver y PWA van a heredar lo que entreguemos en bronze y `/stock`. Mejor entregarles base limpia.
+- **Abierto:**
+  - 3 tareas de F1.5 a cargo del ejecutor (~2 h total).
+- **Próximo paso:**
+  - Ejecutor corre las 3 tareas siguiendo `docs/plan-f1-hardening.md`, captura evidencia, commit + push. Revisor audita y emite GO a F2.
+
+---
+
 ### 2026-05-28 — Sesión 17 · F1 cerrada vía F1-FIX2 (revisor: GO a F2)
 
 - **Hecho (ejecutor, commit `05e6ca4`):**

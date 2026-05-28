@@ -8,6 +8,126 @@
 
 ---
 
+## Sesión 2026-05-28 (18) · F1.5 · Hardening pre-F2 (R3 + R-X2)
+
+### Resumen
+Sprint corto **proactivo** (no es FIX, nada está roto) que cierra 2 de las 5 deudas vivas antes de arrancar F2. Originado por recomendación humana 2026-05-28: *"fortalecer idempotencia + optimizar latencia /stock"*.
+
+**Plan completo: [`docs/plan-f1-hardening.md`](docs/plan-f1-hardening.md)** — leer antes de actuar. Tiene plantillas exactas de evidencia y plan de remedio si R3 falla.
+
+Tiempo estimado: **~2 horas** del ejecutor. Después, GO a F2.
+
+---
+
+### Tarea 1 ⬜ · R3 · Probar idempotencia kill-y-retry (~45 min)
+
+> **Coordinar ventana fuera del schedule 02:00 / 12:00 / 20:00** para no interferir con el dump nocturno.
+
+1. PC MotoShop:
+   ```powershell
+   cd C:\Users\MotoShop\Documents\javidevmoto
+   .\.venv-infra\Scripts\Activate.ps1
+   Remove-Item -Recurse -Force _staging -ErrorAction SilentlyContinue
+   $TEST_DATE = "2026-05-30"
+   ```
+
+2. Terminal A: `python infra\dump_to_cloud.py --tables-core --ingest-date $TEST_DATE 2>&1 | Tee-Object _staging\kill_test_run1.log`.
+
+3. Terminal B: `Get-Content -Wait _staging\kill_test_run1.log` — esperar a que arranque la 7ª tabla (`→ terceros: extrayendo...`), entonces `Ctrl+C` en A.
+
+4. Inspeccionar `_staging/` + UC Volume (script en plan §3.3).
+
+5. Re-correr completo: `python infra\dump_to_cloud.py --tables-core --ingest-date $TEST_DATE`.
+
+6. Databricks: ejecutar notebook `02_ingest_all_bronze.py` con widget `ingest_date = 2026-05-30`.
+
+7. Comparar conteos bronze (12 tablas, partición `2026-05-30`) vs MySQL para las mismas tablas.
+
+8. Pegar resultados en `notebooks/bronze/_runs/r3_idempotency_kill_retry_2026-05-30.md` siguiendo plantilla del plan §3 Evidencia.
+
+**Pasa si:** las 12 tablas tienen `bronze_rows == count_mysql` (con tolerancia ±5 filas por ventas/compras nuevas entre runs).
+
+**Si NO pasa:** aplicar patrón atomic-move en `dump_to_cloud.py` (plan §3 "Si R3 falla"), abrir ADR-0013 si el cambio es estructural.
+
+---
+
+### Tarea 2 ⬜ · R-X2 · Cache `/stock` con TTL 5 min (~30 min)
+
+1. PC MotoShop:
+   ```powershell
+   cd C:\Users\MotoShop\Documents\javidevmoto\motoshop-app\api
+   ```
+
+2. Editar `pyproject.toml`: añadir `cachetools>=5.3` a `dependencies`.
+
+3. Editar `src/motoshop_api/stock/repo.py` con el patrón del plan §4 Implementación sugerida (TTLCache 200 entries / 300 s + función `clear_stock_cache`).
+
+4. Editar `tests/test_stock.py`: añadir `test_stock_cache_hits_second_call` (plantilla en plan §4).
+
+5. Instalar + correr tests:
+   ```powershell
+   .\.venv\Scripts\Activate.ps1
+   pip install -e ".[dev]"
+   pytest -m "not integration" -v
+   ```
+
+6. Reiniciar la API (`start_api.ps1`).
+
+7. Re-medir latencia con **dos pasadas** (cold + warm), 100 requests cada una:
+
+   ```powershell
+   # Pasada cold (primer hit por SKU)
+   # ... script de 100 requests ...
+   # Pasada warm (segundas llamadas)
+   # ... script de 100 requests ...
+   ```
+
+8. Pegar resultados en `notebooks/api/_runs/r_x2_cache_2026-05-30.json` siguiendo plantilla del plan §4 Re-medición K-1.
+
+**Pasa si:** warm p95 < 500 ms (esperado: ~5-50 ms).
+
+---
+
+### Tarea 3 ⬜ · Sincronizar SEGUIMIENTO + contexto-proyecto (~15 min)
+
+- **SEGUIMIENTO §Tablero de riesgos vivos:** R3 a ✅ Resuelto, R-X2 a ✅ Resuelto con cifras warm.
+- **SEGUIMIENTO §Notas de sesión:** añadir Sesión 19 con plantilla del plan §5.
+- **docs/contexto-proyecto.md §10 Riesgos vivos:** sincronizar.
+- **docs/contexto-proyecto.md §12.4 Métricas:** actualizar latencia `/stock` a `~50 ms warm / ~780 ms cold`.
+- **docs/contexto-proyecto.md §6.2 Cronología F1:** añadir Sesión 19.
+- **docs/contexto-proyecto.md §15:** actualizar (3 deudas, no 5).
+- **PENDIENTES:** marcar tareas 1-3 a ✅ + bloque Sesión 19 cerrado.
+
+---
+
+### Tarea 4 ⬜ · Commit + push
+
+```powershell
+git add `
+  motoshop-app/api/pyproject.toml `
+  motoshop-app/api/src/motoshop_api/stock/repo.py `
+  motoshop-app/api/tests/test_stock.py `
+  notebooks/bronze/_runs/r3_idempotency_kill_retry_2026-05-30.md `
+  notebooks/api/_runs/r_x2_cache_2026-05-30.json `
+  SEGUIMIENTO.md PENDIENTES.md docs/contexto-proyecto.md
+
+git diff --cached | findstr /R /C:"password.*[:=].*[\"']" | findstr /V "redact_pii\|REDACTED"
+# debería estar vacío
+
+git commit -m "feat(F1.5): hardening pre-F2 - R3 idempotencia + R-X2 cache stock"
+git push
+```
+
+---
+
+### Tarea 5 ⬜ · Reportar al revisor
+
+*"F1.5 hardening hecho: R3 cerrada (conteos cuadran), R-X2 cerrada (warm p95 X ms), evidencia en `_runs/`, commit `<hash>`."*
+
+Revisor audita en ≤10 min y emite **GO a F2** si todo cumple.
+
+---
+
 ## Sesión 2026-05-28 (17) · F1-FIX2 completado y archivado
 
 ### Resumen
