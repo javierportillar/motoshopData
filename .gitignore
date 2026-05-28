@@ -1,4 +1,4 @@
-# Python
+# ─── Python ────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *.pyo
@@ -10,13 +10,46 @@ build/
 .venv/
 venv/
 env/
-*.env
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ─── Node / Next.js ────────────────────────────────────────
+node_modules/
+.next/
+out/
+.turbo/
+.pnpm-store/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ─── Variables de entorno / secretos ───────────────────────
+.env
 .env.*
+!.env.example
+!.env.local.example
+secrets/
+*.pem
+*.key
+
+# ─── Bases de datos locales y dumps ────────────────────────
 *.db
 *.sqlite
 *.sqlite3
+*.sql
+*.sql.gz
+*.dump
 
-# IDE
+# ─── Databricks ────────────────────────────────────────────
+.databricks/
+.databricks-connect
+
+# ─── IDEs y sistema ────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
@@ -24,3 +57,7 @@ env/
 *~
 .DS_Store
 Thumbs.db
+
+# ─── Capturas y binarios pesados ───────────────────────────
+*.heic
+*.HEIC

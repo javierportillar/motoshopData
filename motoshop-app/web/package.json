@@ -1,0 +1,31 @@
+{
+  "name": "motoshop-web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "PWA Next.js de MotoShop (Track T). Consulta remota de catálogo, stock y ventas.",
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "lint": "next lint",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md,css}\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "^14.2.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "^14.2.0",
+    "prettier": "^3.3.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  }
+}
