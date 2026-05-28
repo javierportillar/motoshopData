@@ -15,7 +15,7 @@ Auditoría de la entrega F0 detectó **2 violaciones de gate** y **1 ⚠️ de c
 
 > Si todo lo de abajo pasa ✅, F0 queda cerrado limpio y arrancamos F1.
 
-### 1. ⬜ Rotar contraseñas MySQL *(violación Regla de Oro #2)*
+### 1. ✅ Rotar contraseñas MySQL *(violación Regla de Oro #2)*
 
 El `infra/create_users.sql.example` versionado tenía la contraseña real (`123450`). Aunque los 3 usuarios son `@localhost`, esto es deuda pública en GitHub. Pasos detallados en [infra/rotate_mysql_passwords.md](infra/rotate_mysql_passwords.md):
 
@@ -28,7 +28,7 @@ El `infra/create_users.sql.example` versionado tenía la contraseña real (`1234
 
 ---
 
-### 2. ⬜ Crear el UC Volume de aterrizaje *(una vez)*
+### 2. ✅ Crear el UC Volume de aterrizaje *(una vez)*
 
 Pasos en [infra/setup_uc_volume.md](infra/setup_uc_volume.md). Desde el SQL Editor del workspace Databricks:
 
@@ -41,7 +41,7 @@ CREATE VOLUME IF NOT EXISTS motoshop.bronze._landing
 
 ---
 
-### 3. ⬜ Configurar SQL Warehouse con autoapagado 10 min *(verificación F0 #4)*
+### 3. ✅ Configurar SQL Warehouse con autoapagado 10 min *(verificación F0 #4)*
 
 En el workspace:
 
@@ -54,7 +54,7 @@ En el workspace:
 
 ---
 
-### 4. ⬜ Ejecutar el pipeline real Databricks ↔ MySQL *(verificación F0 #3)*
+### 4. ✅ Ejecutar el pipeline real Databricks ↔ MySQL *(verificación F0 #3)*
 
 Esto es lo que de verdad sella la verificación #3 (la que el smoke test sintético no cumplía).
 
@@ -98,16 +98,9 @@ No es bloqueante para cerrar F0 — se puede ejecutar el notebook importándolo 
 
 ---
 
-### Estado del gate F0 tras esta sesión
+### ✅ Fase 0 cerrada
 
-| Verificación crítica | Antes de esta sesión | Después de tareas 1-4 |
-|----------------------|----------------------|------------------------|
-| #1 read-only | ✅ | ✅ |
-| #2 túnel desde 4G | ✅ | ✅ |
-| #3 Databricks → MySQL end-to-end | 🔴 (smoke test sintético) | ✅ tras tarea 4 |
-| #4 cluster se apaga solo | ⚠️ | ✅ tras tarea 3 |
-| #5 credenciales fuera de Git | 🔴 (password en ejemplo) | ✅ tras tarea 1 |
-| #6 backup MySQL | ✅ | ✅ |
+Las 4 acciones se completaron en la sesión del 2026-05-28. Verificaciones #3, #4, #5 pasan a ✅. Fase 0 cerrada. Pasamos a Fase 1.
 
 ---
 
