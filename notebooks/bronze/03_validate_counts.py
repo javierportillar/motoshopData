@@ -37,7 +37,8 @@ lines = spark.read.text(manifest_path).toPandas()["value"].tolist()
 manifest_text = "".join(lines)
 manifest_data = json.loads(manifest_text)
 
-print(f"Manifest: {ingest_data := manifest_data.get('ingest_date', ingest_date)}")
+manifest_date = manifest_data.get('ingest_date', ingest_date)
+print(f"Manifest: {manifest_date}")
 print(f"Duracion: {manifest_data.get('duration_seconds', '?')}s")
 print(f"Tablas en manifest: {len(manifest_data.get('tables', []))}")
 
