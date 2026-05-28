@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MotoShop API Demo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, Arial, sans-serif; background: #f0f2f5; padding: 16px; max-width: 600px; margin: 0 auto; }
+    h1 { color: #1a73e8; margin-bottom: 20px; font-size: 22px; }
+    h2 { color: #333; font-size: 16px; margin: 16px 0 8px; border-left: 4px solid #1a73e8; padding-left: 8px; }
+    input { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; margin-bottom: 8px; }
+    .btn { background: #1a73e8; color: white; border: none; padding: 14px; border-radius: 8px; font-size: 16px; width: 100%; cursor: pointer; margin-bottom: 8px; }
+    .btn:active { background: #1557b0; }
+    .result { background: white; padding: 12px; border-radius: 8px; margin: 8px 0; font-size: 14px; white-space: pre-wrap; border: 1px solid #e0e0e0; min-height: 40px; }
+    .ok { color: #2e7d32; font-weight: bold; }
+    .err { color: #c62828; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>MotoShop API Demo</h1>
+
+  <h2>1. Login</h2>
+  <input type="text" id="username" value="admin" placeholder="Usuario">
+  <input type="password" id="password" value="FG28" placeholder="Password">
+  <button class="btn" onclick="login()">Entrar</button>
+  <div class="result" id="r1">...</div>
+
+  <h2>2. Buscar productos</h2>
+  <input type="text" id="q" value="aceite" placeholder="Buscar por nombre o codigo">
+  <button class="btn" onclick="buscar()">Buscar</button>
+  <div class="result" id="r2">...</div>
+
+  <h2>3. Ver stock</h2>
+  <input type="text" id="sku" value="MOTS1011" placeholder="Codigo SKU">
+  <button class="btn" onclick="stock()">Ver stock</button>
+  <div class="result" id="r3">...</div>
+
+  <h2>4. Ventas recientes</h2>
+  <button class="btn" onclick="ventas()">Ver ventas</button>
+  <div class="result" id="r4">...</div>
+
+<script>
+var T='';
+var H='https://api.fragloesja.uk';
+
+function ok(id,m){document.getElementById(id).innerHTML='<span class="ok">'+m+'</span>';}
+function er(id,m){document.getElementById(id).innerHTML='<span class="err">'+m+'</span>';}
+
+async function login(){
+  document.getElementById('r1').innerText='Cargando...';
+  try{
+    var r=await fetch(H+'/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:document.getElementById('username').value,password:document.getElementById('password').value})});
+    var d=await r.json();
+    if(r.ok){T=d.access_token;ok('r1','Login OK - Token valido por '+d.expires_in+'s');}
+    else{er('r1','Error: '+d.detail);}
+  }catch(e){er('r1','Error: '+e.message);}
+}
+
+async function buscar(){
+  document.getElementById('r2').innerText='Cargando...';
+  if(!T){er('r2','Primero hace login');return;}
+  try{
+    var q=document.getElementById('q').value;
+    var r=await fetch(H+'/products?q='+encodeURIComponent(q)+'&limit=5',{headers:{'Authorization':'Bearer '+T}});
+    var d=await r.json();
+    if(r.ok){
+      var s='Total: '+d.total+' productos\n\n';
+      d.items.forEach(function(i){s+=i.codprod+' - '+i.nomprod+'\n';});
+      ok('r2',s);
+    }else{er('r2','Error: '+d.detail);}
+  }catch(e){er('r2','Error: '+e.message);}
+}
+
+async function stock(){
+  document.getElementById('r3').innerText='Cargando...';
+  if(!T){er('r3','Primero hace login');return;}
+  try{
+    var s=document.getElementById('sku').value;
+    var r=await fetch(H+'/products/'+s+'/stock',{headers:{'Authorization':'Bearer '+T}});
+    var d=await r.json();
+    if(r.ok){
+      var x='SKU: '+d.sku+'\nProducto: '+d.nomprod+'\n\n';
+      d.by_bodega.forEach(function(b){x+='Bodega '+b.codbod+' ('+b.nombod+'): '+b.cantidad+'\n';});
+      ok('r3',x);
+    }else{er('r3','Error: '+d.detail);}
+  }catch(e){er('r3','Error: '+e.message);}
+}
+
+async function ventas(){
+  document.getElementById('r4').innerText='Cargando...';
+  if(!T){er('r4','Primero hace login');return;}
+  try{
+    var r=await fetch(H+'/sales/recent?limit=5',{headers:{'Authorization':'Bearer '+T}});
+    var d=await r.json();
+    if(r.ok){
+      var x='Facturas recientes: '+d.total+'\n\n';
+      d.items.forEach(function(i){x+='Factura #'+i.numfven+'\n  Fecha: '+i.fecfven+'\n  Total: $'+i.totfven+'\n\n';});
+      ok('r4',x);
+    }else{er('r4','Error: '+d.detail);}
+  }catch(e){er('r4','Error: '+e.message);}
+}
+</script>
+</body>
+</html>
