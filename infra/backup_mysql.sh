@@ -57,7 +57,6 @@ mysqldump \
   --lock-tables \
   --routines \
   --triggers \
-  --events \
   --default-character-set=utf8 \
   "$MYSQL_DATABASE" \
   | gzip -9 > "$OUTFILE"

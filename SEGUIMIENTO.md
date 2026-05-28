@@ -95,7 +95,7 @@ F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 - ✅ `.env.example` raíz + por track · 2026-05-27
 - ✅ `pyproject.toml` raíz (Track A) con ruff + pytest · 2026-05-27
 - ✅ Estructura de carpetas (`notebooks/{bronze,silver,gold}`, `src/`, `tests/`, `docs/decisions/`, `infra/`, `motoshop-app/{api,web}/`) · 2026-05-27
-- ✅ Script `infra/backup_mysql.sh` listo para ejecutar · 2026-05-27 *(falta ejecutarlo — verificación crítica #6)*
+- ✅ Script `infra/backup_mysql.ps1` ejecutado exitosamente · 2026-05-27 *(verificación crítica #6 ✅)*
 - ✅ 9 ADRs en `docs/decisions/` (D1–D4 + D7 aceptados; P1–P4 propuestos) · 2026-05-27
 - ✅ README.md reescrito con descripción real del monorepo · 2026-05-27
 
@@ -111,17 +111,19 @@ F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
    Confirmar que después de la autoterminación no quedó cómputo corriendo (revisar consumo).
 5. **¿Las credenciales están fuera de Git?**
    Revisar que `.env`, `secrets`, contraseñas no están en ningún commit. `.gitignore` revisado.
-6. **¿Tengo backup del MySQL antes de seguir?**
-   `mysqldump` exitoso de `motoshop2024` guardado en un lugar seguro (no en el mismo PC).
+6. ✅ **¿Tengo backup del MySQL antes de seguir?**
+   ✅ `mysqldump` exitoso de `motoshop2024` — 5.02 MB comprimido, ~60 MB raw, 7s de duración. Archivo: `C:\Users\MotoShop\Backups\motoshop\motoshop2024_20260527_212611.sql.zip`
 
 ### Métricas mínimas
-- Latencia query MySQL local desde el PC: < 100ms.
-- Latencia llamada HTTPS al endpoint `/health` desde 4G: < 1s.
-- Costo Databricks en Fase 0: ~0 USD (free tier o pruebas mínimas).
+- ✅ Backup MySQL: 5.02 MB comprimido, 7s de duración · 2026-05-27
+- ⬜ Latencia query MySQL local desde el PC: < 100ms *(pendiente de medir)*
+- ⬜ Latencia llamada HTTPS al endpoint `/health` desde 4G: < 1s *(pendiente de túnel)*
+- ⬜ Costo Databricks en Fase 0: ~0 USD (free tier o pruebas mínimas)
 
 ### Bloqueadores actuales
 - ~~P1–P4 resueltos ✅~~
-- Pendiente humano: backup MySQL, crear usuarios, cuenta Databricks, Cloudflare Tunnel, probar scaffolds
+- ✅ Backup MySQL ejecutado
+- Pendiente humano: crear usuarios MySQL, cuenta Databricks, Cloudflare Tunnel, probar scaffolds
 
 ### Lecciones de cierre
 _(rellenar al cerrar la fase)_
@@ -564,13 +566,13 @@ _(rellenar al cerrar la fase)_
   - Javier está en Windows — los scripts bash no funcionan directamente. Se proveen alternativas PowerShell.
   - Las 4 decisiones estaban alineadas con lo recomendado en PLAN.md, sin ajustes.
 - **Abierto (humano):**
-  - Ejecutar backup MySQL (tarea #2 de PENDIENTES.md)
+  - ~~Ejecutar backup MySQL ✅~~ *(5.02 MB, 7s)*
   - Crear usuarios MySQL `analytics` y `api_read` con contraseñas reales
   - Crear cuenta/workspace Databricks + catálogo `motoshop`
   - Instalar Cloudflare Tunnel
   - Probar scaffolds FastAPI y Next.js (opcional)
 - **Próximo paso:**
-  1. Humano: ejecuta backup y reporta tamaño + duración.
+  1. ~~Humano: ejecuta backup ✅~~
   2. Humano: crea usuarios MySQL.
   3. Humano: crea cuenta Databricks.
   4. Agente: una vez tengas Databricks, escribe el primer notebook bronze.

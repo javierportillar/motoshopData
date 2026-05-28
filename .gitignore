@@ -61,3 +61,6 @@ Thumbs.db
 # ─── Capturas y binarios pesados ───────────────────────────
 *.heic
 *.HEIC
+
+# ─── Logs y errores de sesión ──────────────────────────────
+errores.txt

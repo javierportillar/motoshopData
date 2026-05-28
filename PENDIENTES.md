@@ -31,7 +31,7 @@ Los 4 ADRs fueron aceptados con las recomendaciones originales:
 
 ---
 
-### 2. ⬜ Ejecutar el backup del MySQL *(verificación crítica #6 de F0)*
+### 2. ✅ Ejecutar el backup del MySQL *(verificación crítica #6 de F0)*
 
 Desde PowerShell (como Administrador) en el PC donde corre `motoshop2024`:
 
