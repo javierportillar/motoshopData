@@ -74,3 +74,17 @@ formapago = Table(
     Column("nompag", String(100)),
     extend_existing=True,
 )
+
+auxinventario = Table(
+    "auxinventario",
+    metadata,
+    Column("codprod", String(20)),
+    Column("codbod", String(4)),
+    Column("codlis", String(3)),
+    Column("valor1", String(20)),
+    Column("valor2", String(20)),
+    Column("valor3", String(20)),
+    Column("valor4", String(20)),
+    Column("valor5", String(20)),
+    extend_existing=True,
+)

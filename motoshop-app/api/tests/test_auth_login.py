@@ -1,4 +1,4 @@
-"""Tests de autenticación: login, token expirado, credenciales malas."""
+"""Tests de autenticación: login, token expirado, credenciales malas, timing."""
 
 from __future__ import annotations
 
@@ -41,10 +41,9 @@ def test_auth_required_without_token(client) -> None:
 
 def test_auth_expired_token(client, fake_users) -> None:
     """V3: token vencido devuelve 401."""
-    # Crear token con TTL 0 (expira inmediatamente)
     import motoshop_api.config as cfg
     original_ttl = cfg.settings.jwt_access_ttl_minutes
-    cfg.settings.jwt_access_ttl_minutes = -1  # Forzar expiración
+    cfg.settings.jwt_access_ttl_minutes = -1
     try:
         token = create_access_token(subject="admin", role="admin")
     finally:
@@ -60,9 +59,27 @@ def test_auth_invalid_token(client) -> None:
 
 
 def test_auth_refresh_token_works(client, fake_users) -> None:
+    """Test refresh con token en body (no query string)."""
     login_resp = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
     refresh = login_resp.json()["refresh_token"]
 
-    resp = client.post("/auth/refresh", params={"token": refresh})
+    resp = client.post("/auth/refresh", json={"token": refresh})
     assert resp.status_code == 200
     assert "access_token" in resp.json()
+
+
+def test_login_timing_is_similar(client, fake_users) -> None:
+    """Timing-safe: tiempo similar para usuario existente vs inexistente."""
+    # Usuario inexistente
+    t0 = time.perf_counter()
+    client.post("/auth/login", json={"username": "noexiste", "password": "x"})
+    t_no = time.perf_counter() - t0
+
+    # Usuario existente con password mala
+    t1 = time.perf_counter()
+    client.post("/auth/login", json={"username": "admin", "password": "wrong"})
+    t_yes = time.perf_counter() - t1
+
+    # Diferencia menor al 50% del menor
+    if min(t_no, t_yes) > 0:
+        assert abs(t_no - t_yes) / min(t_no, t_yes) < 0.5, f"timing leak: no={t_no:.3f}s, yes={t_yes:.3f}s"

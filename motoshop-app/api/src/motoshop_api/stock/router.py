@@ -29,11 +29,11 @@ async def get_stock(
     _user: User = Depends(get_current_user),
     repo: StockRepo = Depends(get_stock_repo),
 ) -> StockResponse:
-    """Retorna stock de un SKU por bodega. Requiere autenticación."""
+    """Retorna stock de un SKU. Requiere autenticación."""
     result = repo.get_stock_by_sku(sku)
-    if not result["by_bodega"]:
+    if result["nomprod"] is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"SKU '{sku}' no encontrado en inventario",
+            detail=f"SKU '{sku}' no encontrado",
         )
     return StockResponse(**result)

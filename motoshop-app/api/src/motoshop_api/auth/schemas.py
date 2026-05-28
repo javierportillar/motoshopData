@@ -21,3 +21,7 @@ class UserOut(BaseModel):
     username: str
     email: str
     role: str
+
+
+class RefreshRequest(BaseModel):
+    token: str

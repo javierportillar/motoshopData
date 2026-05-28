@@ -1,10 +1,19 @@
-"""Repositorio de stock — lee productos + bodegas (sin auxinventario, no tiene stock real)."""
+"""Repositorio de stock — lee auxinventario para cantidades.
+
+Nota de diseño: auxinventario es una tabla de movimientos/auxiliar de inventario.
+No todas las tablas de productos tienen registros en auxinventario.
+Cuando un producto no tiene registros, se retorna total=0.
+La columna codbod está vacía en la BD actual, por lo que no se puede
+desglosar por bodega. Se retorna una lista vacía de by_bodega.
+
+Limitación documentada: F1-FIX1 (R2).
+"""
 
 from __future__ import annotations
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, select, func
 
-from motoshop_api.db.tables import productos, bodegas
+from motoshop_api.db.tables import productos, bodegas, auxinventario
 
 
 class StockRepo:
@@ -12,24 +21,42 @@ class StockRepo:
         self._engine = engine
 
     def get_stock_by_sku(self, sku: str) -> dict:
-        stmt = select(productos).where(productos.c.codprod == sku)
+        # 1. Verificar que el producto existe
+        prod_stmt = select(productos).where(productos.c.codprod == sku)
         with self._engine.connect() as conn:
-            row = conn.execute(stmt).mappings().first()
-            if not row:
-                return {"sku": sku, "total": 0, "by_bodega": []}
+            prod_row = conn.execute(prod_stmt).mappings().first()
+            if not prod_row:
+                return {"sku": sku, "nomprod": None, "total": 0, "by_bodega": []}
 
-            bodegas_stmt = select(bodegas)
-            bodegas_rows = conn.execute(bodegas_stmt).mappings().all()
+            nomprod = prod_row.get("nomprod", "")
 
-        return {
-            "sku": sku,
-            "nomprod": row.get("nomprod", ""),
-            "total": 0,
-            "by_bodega": [
-                {"codbod": b["codbod"], "nombod": b["nombod"], "cantidad": 0}
-                for b in bodegas_rows
-            ],
-        }
+            # 2. Buscar registros en auxinventario para este producto
+            # auxinventario tiene 'valor3' como columna de cantidad
+            # codbod puede estar vacío en la BD actual
+            try:
+                stock_stmt = (
+                    select(
+                        auxinventario.c.codprod,
+                        func.coalesce(auxinventario.c.codbod, "SIN_BODEGA").label("codbod"),
+                        func.sum(auxinventario.c.valor3).label("cantidad"),
+                    )
+                    .where(auxinventario.c.codprod == sku)
+                    .group_by(auxinventario.c.codprod, auxinventario.c.codbod)
+                )
+                stock_rows = conn.execute(stock_stmt).mappings().all()
+
+                if not stock_rows:
+                    return {"sku": sku, "nomprod": nomprod, "total": 0, "by_bodega": []}
+
+                total = sum(float(r["cantidad"] or 0) for r in stock_rows)
+                by_bodega = [
+                    {"codbod": r["codbod"], "nombod": r["codbod"], "cantidad": float(r["cantidad"] or 0)}
+                    for r in stock_rows
+                ]
+
+                return {"sku": sku, "nomprod": nomprod, "total": total, "by_bodega": by_bodega}
+            except Exception:
+                return {"sku": sku, "nomprod": nomprod, "total": 0, "by_bodega": []}
 
 
 class FakeStockRepo:
@@ -37,4 +64,4 @@ class FakeStockRepo:
         self._data = data or {}
 
     def get_stock_by_sku(self, sku: str) -> dict:
-        return self._data.get(sku, {"sku": sku, "total": 0, "by_bodega": []})
+        return self._data.get(sku, {"sku": sku, "nomprod": None, "total": 0, "by_bodega": []})

@@ -7,6 +7,7 @@ import os
 # Set test environment BEFORE any imports
 os.environ["JWT_SECRET"] = "test-secret-key-for-testing-only-32chars!"
 os.environ["ENV"] = "test"
+os.environ["CORS_ORIGINS"] = "http://localhost:3000,https://api.fragloesja.uk,http://localhost:8000"
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +16,16 @@ from motoshop_api.auth.users import User, _users_cache
 from motoshop_api.auth.router import limiter
 from motoshop_api.db.engine import reset_engine
 from motoshop_api.main import app
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Limpia el rate limiter entre tests."""
+    storage = limiter._storage
+    # Limpiar el dict interno del storage
+    if hasattr(storage, "storage") and isinstance(storage.storage, dict):
+        storage.storage.clear()
+    yield
 
 
 @pytest.fixture()
@@ -28,12 +39,6 @@ def _reset_engine():
     """Reset del engine singleton entre tests."""
     yield
     reset_engine()
-
-
-@pytest.fixture(autouse=True)
-def _disable_rate_limiting():
-    """Desactiva rate limiting durante tests — no-op, se maneja con limits altos."""
-    yield
 
 
 @pytest.fixture()
