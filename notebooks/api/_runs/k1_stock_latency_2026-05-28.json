@@ -1,0 +1,12 @@
+{
+  "sku": "MOTS1297",
+  "requests": 100,
+  "p50_ms": 675.7,
+  "p95_ms": 781.0,
+  "p99_ms": 821.5,
+  "avg_ms": 681.2,
+  "min_ms": 634.0,
+  "max_ms": 821.5,
+  "meta_cumplida": false,
+  "nota": "P95 > 500ms. Mitigar con cache en memoria (R-X2) en F2."
+}
