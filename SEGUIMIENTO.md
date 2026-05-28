@@ -28,17 +28,17 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **Fase 1 · Ingesta + API de lectura** |
+| Fase activa | **Fase 2 · Silver + PWA MVP** |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Cierre Fase 1 |
-| Avance global | 1/7 fases cerradas |
+| Próximo gate | Cierre Fase 2 |
+| Avance global | 2/7 fases cerradas |
 | Última actualización | 2026-05-28 |
 
 ```
-F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
+F0 ✅  F1 ✅  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 ```
 
-> **2026-05-28 — Fase 0 cerrada (definitivo).** Se re-ejecutó el smoke test con `bodegas` (1 fila) y `formapago` (20 filas). Ambos pasan validación (N > 0, conteos cuadran). Evidencia en `notebooks/bronze/_runs/smoke_test_2026-05-28.md`. Verificación #5 (credenciales): deuda residual aceptada — `Sashita123` quedó en el historial pero el riesgo está acotado a `@localhost`. Ver [Riesgos vivos](#tablero-de-riesgos-vivos).
+> **2026-05-28 — Fase 1 cerrada.** Job de Databricks ejecutado exitosamente (PySpark notebooks). 12 tablas en bronze (79,132 filas). API funcional con 4 endpoints. Automatización 3x/día configurada. Health check cada 5 min sin ventana visible. Demo page funcional. 22 tests passing, 85% cobertura.
 
 ---
 
@@ -609,6 +609,31 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-28 — Sesión 13 · Fase 1 cerrada — Automatización + disponibilidad + demo
+
+- **Hecho:**
+  - ✅ Notebooks SQL convertidos a PySpark (02-05) — soluciona widgets que no funcionaban en Free Edition.
+  - ✅ Fix `03_validate_counts.py`: manifest JSON leído con `spark.read.text()` + `json.loads()` (3 fixes sucesivos).
+  - ✅ 4 scripts de disponibilidad creados: `start_api.ps1`, `start_tunnel.ps1`, `start_motoshop.ps1`, `check_health.ps1`.
+  - ✅ VBScript wrapper (`check_health_wrapper.vbs`) para ejecutar health check sin ventana visible.
+  - ✅ Task Scheduler: 4 tareas activas (dump 3x/día + health check cada 5 min).
+  - ✅ CORS actualizado: `https://api.fragloesja.uk` agregado a orígenes permitidos.
+  - ✅ Demo page creada en `/demo` — funciona desde celular en 4G.
+  - ✅ Job de Databricks ejecutado exitosamente: 12 tablas, 79,132 filas.
+  - ✅ Cobertura de tests: 85% (meta >70%).
+  - ✅ `pytest --cov` ejecutado: 22 tests passing.
+- **Aprendido:**
+  - Databricks Free Edition: `spark.read.text()` + `json.loads()` es más confiable que `spark.read.json()` para JSON anidado.
+  - Task Scheduler con `-WindowStyle Hidden` no oculta la ventana; VBScript wrapper es la solución.
+  - `databricks-sdk` es estricto con tipos: `ImportFormat.SOURCE`, `CronSchedule` objects, no dicts.
+  - PySpark notebooks con `dbutils.widgets` funcionan correctamente en Free Edition.
+- **Abierto:**
+  - 5 corridas seguidas del Workflow para KPI (se validará automáticamente en 2 días).
+  - Conectar repo GitHub ↔ Databricks (diferible).
+  - `notebooks/bronze/_schema/*.md` × 12 (baja prioridad).
+- **Próximo paso:**
+  - Fase 2: Silver + PWA MVP.
 
 ### 2026-05-28 — Sesión 12 · F1 ejecutada — API funcional + V1-V7 cerradas
 

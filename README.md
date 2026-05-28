@@ -100,4 +100,42 @@ Lista completa en [AGENT_PROMPT.md](AGENT_PROMPT.md) §3.
 
 ## Estado actual
 
-Ver el cabecero de [SEGUIMIENTO.md](SEGUIMIENTO.md) para fase activa, próximo gate y avance global.
+```
+F0 ✅  F1 ✅  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
+```
+
+**Fase 1 completada.** Ver [SEGUIMIENTO.md](SEGUIMIENTO.md) para detalles.
+
+### Lo que funciona
+
+| Componente | Status | URL |
+|------------|--------|-----|
+| API FastAPI | ✅ | `http://localhost:8000` |
+| Túnel Cloudflare | ✅ | `https://api.fragloesja.uk` |
+| Demo page | ✅ | `https://api.fragloesja.uk/demo` |
+| Databricks Job | ✅ | 3x/día (12PM, 8PM, 2AM) |
+| Health check | ✅ | Cada 5 min (invisible) |
+| 12 tablas Bronze | ✅ | 79,132 filas |
+| API: 4 endpoints | ✅ | login, products, stock, sales |
+| Tests | ✅ | 22 passing, 85% cobertura |
+
+### Automatización
+
+| Tarea | Horario | Descripción |
+|-------|---------|-------------|
+| `MotoShop_Dump_Midday` | 12:00 PM | MySQL → Parquet → UC Volume |
+| `MotoShop_Dump_Evening` | 8:00 PM | MySQL → Parquet → UC Volume |
+| `MotoShop_Dump_Night` | 2:00 AM | MySQL → Parquet → UC Volume |
+| `MotoShop_HealthCheck` | Cada 5 min | Verifica MySQL + API + Túnel |
+
+### Para arrancar todo en el PC
+
+```powershell
+powershell -ExecutionPolicy Bypass -File infra\start_motoshop.ps1
+```
+
+### Para probar la demo en el celular
+
+1. Apaga WiFi (solo 4G)
+2. Ve a `https://api.fragloesja.uk/demo`
+3. Haz clic en "Entrar" → "Buscar productos" → "Ver stock" → "Ver ventas"
