@@ -73,9 +73,8 @@ F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 ### Checklist de entregables
 
 **Track A · Analítico**
-- ⬜ Cuenta y workspace Databricks creados *(requiere humano)*
-- ⬜ Unity Catalog habilitado y catálogo `motoshop` creado *(requiere humano)*
-- ⬜ Esquemas `bronze`, `silver`, `gold` creados *(requiere humano)*
+- 🟡 Cuenta y workspace Databricks creados (URL recibida, token guardado en .env)
+- 🟡 Catálogo `motoshop` — pendiente de crear esquemas `bronze`/`silver`/`gold` *(humano)*
 - ✅ Usuario MySQL `analytics` (read-only, con contraseña) · 2026-05-27
 - ⬜ Repo `motoshopdata` conectado al workspace *(requiere humano)*
 - 🟡 Estrategia conectividad decidida (D5) — **Opción A** aceptada ✅; pendiente de implementar (script dump + cloud storage) *(requiere humano: cuenta Databricks + cloud storage)*
@@ -123,9 +122,9 @@ F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 
 ### Bloqueadores actuales
 - ~~P1–P4 resueltos ✅~~
-- ✅ Backup MySQL ejecutado
-- ✅ Usuarios MySQL creados (analytics, api_read, javier)
-- Pendiente humano: cuenta Databricks, Cloudflare Tunnel, probar scaffolds
+- ~~Backup MySQL ✅~~
+- ~~Usuarios MySQL ✅~~
+- Pendiente: crear esquemas bronze/silver/gold en Databricks, Cloudflare Tunnel, probar scaffolds
 
 ### Lecciones de cierre
 _(rellenar al cerrar la fase)_
@@ -552,32 +551,29 @@ _(rellenar al cerrar la fase)_
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
 
-### 2026-05-27 — Sesión 2 · Decisiones P1–P4 aceptadas + herramientas para humano
+### 2026-05-27 — Sesión 3 · Backup + usuarios MySQL + .env + push
 
 - **Hecho:**
-  - P1–P4 revisados por Javier y aceptados (recomendaciones confirmadas):
-    - P1 → A · Self-hosted dump → cloud storage
-    - P2 → A · Cloudflare Tunnel
-    - P3 → A · PC local
-    - P4 → A · Login propio (JWT + bcrypt)
-  - ADRs 0005–0008 cambiados de `Proposed` a `Accepted` con fecha.
-  - Bitácora de decisiones actualizada con D5–D9 completos.
-  - Script PowerShell `infra/backup_mysql.ps1` generado como alternativa Windows.
-  - Comandos `CREATE USER` para `analytics` y `api_read` generados (contraseñas placeholder).
+  - ✅ Backup MySQL ejecutado: 5.02 MB comprimido, ~60 MB raw, 7s
+  - ✅ Usuarios MySQL creados: `analytics`, `api_read`, `javier` (todos @localhost, pass 123450)
+  - ✅ Verificación crítica #1: INSERT command denied para los 3
+  - ✅ Token Databricks asegurado en `.env` (no en `.env.example`)
+  - ✅ `.env` files creados con credenciales reales (raíz, API, web)
+  - ✅ Push a `origin/main` completado
 - **Aprendido:**
-  - Javier está en Windows — los scripts bash no funcionan directamente. Se proveen alternativas PowerShell.
-  - Las 4 decisiones estaban alineadas con lo recomendado en PLAN.md, sin ajustes.
+  - `$Host` es variable reservada de PowerShell — renamed a `$MySQLHost`
+  - MySQL 5.0 no soporta `--events` ni `IF NOT EXISTS` en CREATE USER
+  - El `.env.example` se versiona en Git — los secretos van en `.env`
 - **Abierto (humano):**
-  - ~~Ejecutar backup MySQL ✅~~ *(5.02 MB, 7s)*
-  - Crear usuarios MySQL `analytics` y `api_read` con contraseñas reales
-  - Crear cuenta/workspace Databricks + catálogo `motoshop`
+  - ~~Backup MySQL ✅~~
+  - ~~Usuarios MySQL ✅~~
+  - Crear esquemas `bronze`/`silver`/`gold` en Databricks (el catálogo `motoshop` ya está creado)
   - Instalar Cloudflare Tunnel
   - Probar scaffolds FastAPI y Next.js (opcional)
 - **Próximo paso:**
-  1. ~~Humano: ejecuta backup ✅~~
-  2. Humano: crea usuarios MySQL.
-  3. Humano: crea cuenta Databricks.
-  4. Agente: una vez tengas Databricks, escribe el primer notebook bronze.
+  1. Humano: crear los 3 esquemas en Databricks (bronze, silver, gold)
+  2. Agente: escribir el primer notebook bronze de prueba
+  3. Humano: probar scaffolds opcionalmente
 
 ---
 
