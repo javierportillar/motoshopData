@@ -8,6 +8,17 @@
 
 ---
 
+## Sesión 2026-05-28 (9) · Smoke test con datos reales + cierre F0 ✅
+
+### Resumen
+Se re-ejecutó el smoke test con `bodegas` (1 fila) y `formapago` (20 filas). Ambos pasaron validación (N > 0, conteos cuadran 1:1). Verificación #3 ✅. **F0 cerrado.**
+
+### ✅ Fase 0 cerrada — no hay más acciones humanas pendientes
+- ✅ 1. Smoke test real con `bodegas` (1 fila) y `formapago` (20 filas) — evidencia en `notebooks/bronze/_runs/smoke_test_2026-05-28.md`
+- Pendientes diferibles: conectar repo a workspace Databricks, CI básico (GitHub Actions)
+
+---
+
 ## Sesión 2026-05-28 (8) · Remediación de auditoría — 1 acción para cerrar F0
 
 ### Resumen
@@ -15,7 +26,7 @@ La auditoría detectó dos cosas en el cierre anterior: (a) el commit de cierre 
 
 El agente preparó: notebook SQL ejecutable en SQL Warehouse, scripts reproducibles del Volume y del Warehouse, deuda de credenciales documentada como riesgo vivo.
 
-### 1. ⬜ Re-ejecutar el smoke test con una tabla con datos *(bloquea cierre F0)*
+### 1. ✅ Re-ejecutar el smoke test con una tabla con datos *(bloquea cierre F0)*
 
 **Por qué:** `sucursales` salió con 0 filas. El gate pide *"aunque sea con 10 filas"*. Hay que elegir una tabla pequeña pero **no vacía**. Candidatas:
 - `bodegas` (~10 filas, recomendado — modelo mental directo)

@@ -28,22 +28,17 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **Fase 0 · Cimientos** (re-abierto tras auditoría 2026-05-28) |
+| Fase activa | **Fase 1 · Ingesta + API de lectura** |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Cierre Fase 0 (1 acción humana pendiente: smoke test honesto con N>0) |
-| Avance global | 0/7 fases cerradas |
+| Próximo gate | Cierre Fase 1 |
+| Avance global | 1/7 fases cerradas |
 | Última actualización | 2026-05-28 |
 
 ```
-F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
+F0 ✅  F1 🟡  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 ```
 
-> **2026-05-28 — F0 reabierto.** La auditoría de la sesión 6 detectó:
-> - Verificación #3 atestada con `COUNT = 0` (sucursales vacía); no demuestra movimiento de datos.
-> - Verificación #5 reintroducida: el commit de cierre (`20c4d5f`) filtró la nueva password `Sashita123` en el mensaje y en SEGUIMIENTO. **Decisión humana 2026-05-28: aceptar como deuda residual sin rotar de nuevo ni reescribir historial** — el riesgo está acotado a `@localhost`. Ver [Riesgos vivos](#tablero-de-riesgos-vivos).
-> - El notebook `01_ingest_smoke_test.py` (PySpark) no es ejecutable en SQL Warehouse de Free Edition.
->
-> Esta sesión (7) entrega: notebook SQL ejecutable, `create_uc_volume.py` y `create_sql_warehouse.py` reproducibles, deuda de credenciales documentada como riesgo vivo. Falta **1 acción humana** (re-ejecutar smoke test con `bodegas`/`formapago`) para cerrar F0 limpio.
+> **2026-05-28 — Fase 0 cerrada (definitivo).** Se re-ejecutó el smoke test con `bodegas` (1 fila) y `formapago` (20 filas). Ambos pasan validación (N > 0, conteos cuadran). Evidencia en `notebooks/bronze/_runs/smoke_test_2026-05-28.md`. Verificación #5 (credenciales): deuda residual aceptada — `Sashita123` quedó en el historial pero el riesgo está acotado a `@localhost`. Ver [Riesgos vivos](#tablero-de-riesgos-vivos).
 
 ---
 
@@ -125,9 +120,9 @@ F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
    ✅ Verificado: `INSERT command denied` para `analytics`, `api_read` y `javier` · 2026-05-27
 2. ✅ **¿El túnel funciona desde una red distinta?**
    ✅ Verificado desde 4G del celular: `https://api.fragloesja.uk/health` → `{"status":"ok","version":"0.0.0","env":"dev"}` · 2026-05-28
-3. 🟡 **¿La conectividad Databricks → MySQL local funciona end-to-end?**
+3. ✅ **¿La conectividad Databricks → MySQL local funciona end-to-end?**
    ✅ Local: `infra/test_mysql_connectivity.py` (SELECT 1 -> 1) · 2026-05-28
-   🟡 End-to-end: `dump_to_cloud.py` + UC Volume + SQL Warehouse ejecutados, pero el run del 2026-05-28 usó `sucursales` (COUNT=0). **No demuestra movimiento de datos.** Acción pendiente: re-ejecutar con `bodegas` o `formapago` (N>0) usando el notebook SQL [`notebooks/bronze/01_ingest_smoke_test.sql`](notebooks/bronze/01_ingest_smoke_test.sql) y capturar evidencia en `notebooks/bronze/_runs/`.
+   ✅ End-to-end: `dump_to_cloud.py` extrajo `bodegas` (1 fila) y `formapago` (20 filas) → Parquet → UC Volume → `CREATE TABLE ... AS SELECT` en SQL Warehouse → conteos cuadran 1:1. Evidencia en `notebooks/bronze/_runs/smoke_test_2026-05-28.md`. · 2026-05-28
 4. ✅ **¿El cluster se apaga solo?**
    ✅ SQL Warehouse Serverless Starter con auto-stop 10 min (ID: 43bc044eaef4cca4) — script reproducible: `infra/create_sql_warehouse.py`. Documentación: [`infra/setup_sql_warehouse.md`](infra/setup_sql_warehouse.md) · 2026-05-28
 5. ⚠️ **¿Las credenciales están fuera de Git?**
@@ -142,8 +137,7 @@ F0 🟡  F1 ⬜  F2 ⬜  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 - ✅ Costo Databricks en Fase 0: ~0 USD (free tier, sin clusters activos)
 
 ### Bloqueadores actuales
-- 1 acción humana pendiente: re-ejecutar smoke test con tabla N>0 (ver [PENDIENTES.md](PENDIENTES.md) sesión 2026-05-28 sesión 7).
-- Conectar repo a workspace Databricks: diferible a F1.
+- Sin bloqueadores. Fase 0 cerrada. Pendiente conectar repo a workspace Databricks y CI básico (diferibles a F1).
 
 ### Lecciones de cierre
 
@@ -573,6 +567,23 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-28 — Sesión 9 · Smoke test real con N>0 + cierre definitivo F0 ✅
+
+- **Hecho:**
+  - ✅ Ejecutado `dump_to_cloud.py --tables bodegas formapago` — bodegas (1 fila, 1.3 KB), formapago (20 filas, 6.7 KB), subida a UC Volume exitosa.
+  - ✅ SQL Warehouse: `CREATE OR REPLACE TABLE ... AS SELECT` desde Parquet del Volume para ambas tablas.
+  - ✅ Validación 1:1: source = bronze para bodegas (1=1) y formapago (20=20).
+  - ✅ Ambos validan N > 0 — verificación #3 cumplida con datos reales.
+  - ✅ Evidencia capturada en `notebooks/bronze/_runs/smoke_test_2026-05-28.md`.
+  - ✅ F0 actualizado a ✅, F1 abierto.
+- **Aprendido:**
+  - Elegir tablas con datos para smoke tests desde el principio.
+- **Abierto:**
+  - Conectar repo a workspace Databricks (diferible).
+  - CI básico (GitHub Actions) — diferible.
+- **Próximo paso:**
+  - Fase 1: ingesta 12 tablas core + endpoints API reales.
 
 ### 2026-05-28 — Sesión 8 · Remediación de auditoría F0 (NO GO a F1 todavía)
 
