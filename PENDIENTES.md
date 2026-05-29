@@ -8,6 +8,27 @@
 
 ---
 
+## Sesión 2026-05-28 (20) · F1.5 validada + arranque F2
+
+### Resumen
+Se revisó el bloque vivo de F1.5, se confirmó que la validación física en Windows ya está resuelta por evidencia, y se dejó escrito el arranque formal de Fase 2 para no seguir atados a un estado viejo.
+
+### Evidencia ya disponible
+- `pytest -m "not integration"`: 24/24 tests pasando.
+- `notebooks/bronze/_runs/r3_idempotency_kill_retry_2026-05-30.md`
+- `notebooks/api/_runs/r_x2_cache_2026-05-30.json`
+- `docs/plan-f2.md`
+- `docs/decisions/0012-stack-f2.md`
+
+### Estado
+- ✅ R3 resuelta
+- ✅ R-X2 resuelta
+- ✅ F1.5 cerrada
+- 🟡 F2 arrancada con plan y ADR escritos
+
+### Próximo paso
+Empezar F2-A: Silver + validaciones de calidad.
+
 ## Sesión 2026-05-29 (19) · F1.5 Hardening — código commiteado, pendiente validación empírica en PC Windows
 
 ### Resumen

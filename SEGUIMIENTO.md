@@ -283,6 +283,8 @@ _(rellenar al cerrar la fase)_
 
 **Objetivo:** modelo dimensional limpio + frontend usable end-to-end.
 
+Plan operativo: [docs/plan-f2.md](docs/plan-f2.md) y stack base en [docs/decisions/0012-stack-f2.md](docs/decisions/0012-stack-f2.md).
+
 ### Definition of Done
 - Silver con hechos y dimensiones tipados, deduplicados, con reglas de calidad.
 - PWA con login, búsqueda de productos, ficha de SKU, stock por bodega, instalable en móvil.

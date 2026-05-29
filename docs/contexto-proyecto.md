@@ -466,7 +466,7 @@ Cada deuda tiene un **trigger de re-evaluación obligatoria**: si se cumple, se 
 | Seguridad y gobernanza | Unity Catalog + usuarios read-only + structlog PII + Cloudflare |
 | Integración/orquestación | Task Scheduler hoy; Databricks Workflow diferido (R4) |
 | Mantenimiento/monitoreo | F6 (no en F1) |
-| Calidad de datos | F2 (silver) con DLT expectations |
+| Calidad de datos | F2 (silver) con notebooks SQL y expectations manuales |
 | Elasticidad | Compute en nube por demanda |
 
 ### 11.2 Módulo 3 · Decisión crítica + modelo ML
@@ -543,7 +543,7 @@ Cada deuda tiene un **trigger de re-evaluación obligatoria**: si se cumple, se 
 
 ## 13 · Lo siguiente · Fase 2 · Silver + PWA MVP
 
-> Detalle pendiente de escribir en `docs/plan-f2.md` + `docs/decisions/0012-stack-f2.md`.
+> Detalle operativo en [`docs/plan-f2.md`](plan-f2.md) y [`docs/decisions/0012-stack-f2.md`](decisions/0012-stack-f2.md).
 
 ### 13.1 Objetivo
 
@@ -553,17 +553,17 @@ Modelo dimensional limpio (Silver) + PWA usable end-to-end. Hito: *"vendedor en 
 
 | Sprint | Track | Entregables |
 |--------|-------|-------------|
-| F2-A | A · Silver | `fact_ventas`, `fact_compras`, `fact_inventario` + `dim_producto`, `dim_tiempo`, `dim_tercero`, `dim_sucursal`, `dim_bodega`. Casteos formales (TZ → UTC, decimales, `'0000-00-00'` → NULL). Reglas de calidad. Linaje UC. |
-| F2-B | T · PWA login + búsqueda | Login con JWT + persistencia + refresh automático on 401. Página de búsqueda de productos con paginación. Fetch wrapper. |
-| F2-C | T · PWA stock + offline | Ficha de SKU con stock por bodega. Modo offline básico (service worker). Manifest PWA (instalable). |
+| F2-A | A · Silver | `fact_ventas`, `fact_compras`, `fact_inventario` + `dim_producto`, `dim_tiempo`, `dim_tercero`, `dim_sucursal`, `dim_bodega`. Casteos formales (TZ → UTC, decimales, `'0000-00-00'` → NULL). Reglas de calidad con notebooks SQL. Linaje UC. |
+| F2-B | T · PWA login + búsqueda | Login con JWT + persistencia + refresh automático on 401. Página de búsqueda de productos con paginación. `fetch` nativo con wrapper mínimo. |
+| F2-C | T · PWA stock + offline | Ficha de SKU con stock por bodega. Modo offline básico (`next-pwa`). Manifest PWA (instalable). |
 
 ### 13.3 Decisiones técnicas previstas en ADR-0012
 
-- Schema evolution silver: ¿`INSERT REPLACE WHERE` por partición o `MERGE INTO` por clave?
-- Librería PWA: `next-pwa` vs service worker custom.
-- Fetch wrapper: `axios` vs `fetch` nativo + interceptor de refresh.
-- Casting `fecdoc`: dónde redirigir `'0000-00-00'`.
-- Reglas de calidad: Delta Live Tables vs `pyspark` con expectations manuales.
+- Schema evolution silver: `MERGE INTO` por clave para dimensiones y cargas idempotentes por partición o llave de negocio para hechos.
+- Librería PWA: `next-pwa`.
+- Fetch wrapper: `fetch` nativo + refresh-on-401.
+- Casting `fecdoc`: `'0000-00-00'` → NULL o cuarentena explícita.
+- Reglas de calidad: notebooks SQL con assertions manuales, no DLT en el MVP.
 
 ### 13.4 Verificaciones críticas F2 (extraídas de PLAN.md §7)
 
