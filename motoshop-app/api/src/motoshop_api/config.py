@@ -35,6 +35,7 @@ class Settings(BaseSettings):
 
     databricks_host: str = Field(default="")
     databricks_token: str = Field(default="")
+    databricks_http_path: str = Field(default="")
     databricks_volume_path: str = Field(default="/Volumes/motoshop/bronze/_landing")
 
     @field_validator("jwt_secret")

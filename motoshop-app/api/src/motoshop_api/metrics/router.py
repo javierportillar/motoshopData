@@ -2,11 +2,13 @@
 
 Cache server-side de 5 min (TTL en memoria). Los marts gold solo
 cambian nocturno, no tiene sentido re-consultar Databricks en cada request.
+
+Conecta a Databricks SQL Warehouse vía RealMetricsRepo cuando DATABRICKS_HTTP_PATH
+está configurado; si no, cae a FakeMetricsRepo (datos mock).
 """
 
 from __future__ import annotations
 
-from functools import lru_cache
 from time import time
 
 from fastapi import APIRouter, Depends, Request
@@ -15,7 +17,11 @@ from slowapi.util import get_remote_address
 
 from motoshop_api.auth.deps import get_current_user
 from motoshop_api.auth.users import User
-from motoshop_api.metrics.repo import get_metrics_repo  # noqa: F401
+from motoshop_api.config import settings
+from motoshop_api.metrics.repo import (
+    MetricsRepoProtocol,
+    RealMetricsRepo,
+)
 from motoshop_api.metrics.schemas import (
     AbcSegmentation,
     CohortesResponse,
@@ -23,7 +29,6 @@ from motoshop_api.metrics.schemas import (
     InventorySummary,
     SalesSummary,
 )
-from motoshop_api.metrics.repo import FakeMetricsRepo, MetricsRepoProtocol
 
 router = APIRouter(tags=["metrics"])
 
@@ -31,6 +36,19 @@ limiter = Limiter(key_func=get_remote_address)
 
 _CACHE_TTL = 300  # 5 minutos
 _cache: dict[str, tuple[float, object]] = {}
+_workspace_client = None  # lazy singleton
+
+
+def _get_workspace():
+    global _workspace_client
+    if _workspace_client is None:
+        from databricks.sdk import WorkspaceClient
+
+        _workspace_client = WorkspaceClient(
+            host=settings.databricks_host,
+            token=settings.databricks_token,
+        )
+    return _workspace_client
 
 
 def _cached_or_fetch(key: str, fetch_fn, ttl: int = _CACHE_TTL):
@@ -49,6 +67,13 @@ def _clear_metrics_cache():
 
 
 def get_repo() -> MetricsRepoProtocol:
+    if settings.databricks_http_path:
+        w = _get_workspace()
+        # Extract warehouse ID from the http_path
+        wh_id = settings.databricks_http_path.split("/")[-1]
+        return RealMetricsRepo(w, wh_id)
+    from motoshop_api.metrics.repo import FakeMetricsRepo
+
     return FakeMetricsRepo()
 
 

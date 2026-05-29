@@ -124,39 +124,48 @@ class FakeMetricsRepo:
         ])
 
 
-# ── Real (Databricks SQL Warehouse) ──────────────────────────────────────
+# ── Real (Databricks SQL Warehouse vía SDK) ──────────────────────────────
 
 class RealMetricsRepo:
-    """Lee de marts gold reales vía Databricks SQL Warehouse.
+    """Lee de marts gold reales vía Databricks SQL Warehouse (SDK statement execution).
 
-    Se activa cuando Dev A confirma que los marts existen y tienen datos.
+    Usa databricks-sdk en vez de databricks-sql-connector porque la
+    conexión directa SSL tiene issues con certificados self-signed.
     """
 
-    def __init__(self, connection) -> None:
-        self._conn = connection
+    def __init__(self, workspace_client, warehouse_id: str) -> None:
+        self._w = workspace_client
+        self._wh_id = warehouse_id
 
     def get_sales_summary(self) -> SalesSummary:
+        # Use max available date instead of CURRENT_DATE() for demo data compatibility
         rows = self._query("""
+            WITH max_dates AS (
+                SELECT MAX(business_date) AS max_date FROM motoshop.gold.mart_ventas_diarias_sku
+            )
             SELECT
-                DATE_FORMAT(business_date, '%Y-%m') AS business_month,
+                DATE_FORMAT(business_date, 'yyyy-MM') AS business_month,
                 SUM(valor_total) AS ventas_mes,
                 SUM(cantidad_total) AS cantidad_total,
                 SUM(num_facturas) AS num_facturas,
                 ROUND(SUM(valor_total) / NULLIF(SUM(num_facturas), 0), 2) AS ticket_promedio
-            FROM motoshop.gold.mart_ventas_diarias_sku
-            WHERE business_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY)
-            GROUP BY DATE_FORMAT(business_date, '%Y-%m')
+            FROM motoshop.gold.mart_ventas_diarias_sku, max_dates
+            WHERE business_date >= DATE_SUB(max_dates.max_date, 60)
+            GROUP BY DATE_FORMAT(business_date, 'yyyy-MM')
             ORDER BY business_month DESC
             LIMIT 2
         """)
         top = self._query("""
+            WITH max_dates AS (
+                SELECT MAX(business_date) AS max_date FROM motoshop.gold.mart_ventas_diarias_sku
+            )
             SELECT
                 cod_producto, nom_producto,
                 SUM(cantidad_total) AS cantidad_total,
                 SUM(valor_total) AS valor_total,
                 ROUND(SUM(valor_total) / NULLIF(SUM(SUM(valor_total)) OVER(), 0) * 100, 1) AS porcentaje_ingreso
-            FROM motoshop.gold.mart_ventas_diarias_sku
-            WHERE business_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+            FROM motoshop.gold.mart_ventas_diarias_sku, max_dates
+            WHERE business_date >= DATE_SUB(max_dates.max_date, 30)
             GROUP BY cod_producto, nom_producto
             ORDER BY valor_total DESC
             LIMIT 10
@@ -164,30 +173,32 @@ class RealMetricsRepo:
         if not rows:
             return FakeMetricsRepo().get_sales_summary()
         mes_actual, mes_anterior = rows[0], rows[1] if len(rows) > 1 else None
+        va_actual = float(mes_actual["ventas_mes"])
+        va_anterior = float(mes_anterior["ventas_mes"]) if mes_anterior else 0.0
         return SalesSummary(
-            business_month=mes_actual["business_month"],
-            ventas_mes_actual=mes_actual["ventas_mes"],
-            ventas_mes_anterior=mes_anterior["ventas_mes"] if mes_anterior else 0.0,
+            business_month=str(mes_actual["business_month"]),
+            ventas_mes_actual=va_actual,
+            ventas_mes_anterior=va_anterior,
             delta_porcentual=round(
-                (mes_actual["ventas_mes"] - mes_anterior["ventas_mes"]) / mes_anterior["ventas_mes"] * 100, 1
-            ) if mes_anterior and mes_anterior["ventas_mes"] else None,
-            ticket_promedio=mes_actual["ticket_promedio"],
-            num_facturas=mes_actual["num_facturas"],
+                (va_actual - va_anterior) / va_anterior * 100, 1
+            ) if mes_anterior and va_anterior else None,
+            ticket_promedio=float(mes_actual["ticket_promedio"]),
+            num_facturas=int(mes_actual["num_facturas"]),
             top_skus=[TopSkuItem(**r) for r in top],
         )
 
     def get_inventory_summary(self) -> InventorySummary:
         rows = self._query("""
             SELECT
-                SUM(cantidad_total) AS stock_total,
+                SUM(cantidad_actual) AS stock_total,
                 COUNT(DISTINCT cod_producto) AS num_productos
             FROM motoshop.gold.mart_inventario_actual
         """)
         bodegas = self._query("""
             SELECT
                 cod_bodega, nom_bodega,
-                SUM(cantidad_total) AS cantidad,
-                ROUND(SUM(cantidad_total) / NULLIF(SUM(SUM(cantidad_total)) OVER(), 0) * 100, 1) AS porcentaje
+                SUM(cantidad_actual) AS cantidad,
+                ROUND(SUM(cantidad_actual) / NULLIF(SUM(SUM(cantidad_actual)) OVER(), 0) * 100, 1) AS porcentaje
             FROM motoshop.gold.mart_inventario_actual
             GROUP BY cod_bodega, nom_bodega
             ORDER BY cantidad DESC
@@ -196,27 +207,35 @@ class RealMetricsRepo:
             return FakeMetricsRepo().get_inventory_summary()
         r = rows[0]
         return InventorySummary(
-            stock_total=r["stock_total"],
+            stock_total=float(r["stock_total"]),
             valor_total=0.0,
-            num_productos=r["num_productos"],
+            num_productos=int(r["num_productos"]),
             por_bodega=[BodegaItem(**b) for b in bodegas],
         )
 
     def get_abc_segmentation(self) -> AbcSegmentation:
         buckets = self._query("""
-            SELECT categoria, COUNT(*) AS num_skus,
+            WITH max_month AS (
+                SELECT MAX(business_month) AS mm FROM motoshop.gold.mart_rotacion_abc
+            )
+            SELECT max_month.mm AS business_month,
+                   categoria_abc AS categoria, COUNT(*) AS num_skus,
                    SUM(valor_total) AS valor_total,
                    ROUND(SUM(valor_total) / NULLIF(SUM(SUM(valor_total)) OVER(), 0) * 100, 1) AS porcentaje_ingreso
-            FROM motoshop.gold.mart_rotacion_abc
-            WHERE business_month = DATE_FORMAT(CURRENT_DATE(), '%Y-%m')
-            GROUP BY categoria
-            ORDER BY FIELD(categoria, 'A', 'B', 'C')
+            FROM motoshop.gold.mart_rotacion_abc, max_month
+            WHERE business_month = max_month.mm
+            GROUP BY categoria_abc, max_month.mm
+            ORDER BY CASE categoria_abc WHEN 'A' THEN 1 WHEN 'B' THEN 2 ELSE 3 END
         """)
         if not buckets:
             return FakeMetricsRepo().get_abc_segmentation()
+        for b in buckets:
+            b["num_skus"] = int(b["num_skus"])
+            b["valor_total"] = float(b["valor_total"])
+            b["porcentaje_ingreso"] = float(b["porcentaje_ingreso"])
         by_cat = {b["categoria"]: b for b in buckets}
         return AbcSegmentation(
-            business_month=datetime.now().strftime("%Y-%m"),
+            business_month=str(buckets[0].get("business_month", "")),
             total_skus=sum(b["num_skus"] for b in buckets),
             total_ingresos=sum(b["valor_total"] for b in buckets),
             bucket_a=AbcBucket(**by_cat.get("A", {"categoria": "A", "num_skus": 0, "valor_total": 0, "porcentaje_ingreso": 0})),
@@ -233,35 +252,57 @@ class RealMetricsRepo:
         """)
         if not rows:
             return FakeMetricsRepo().get_dormidos()
+        for r in rows:
+            r["dias_sin_venta"] = int(r["dias_sin_venta"])
+            r["stock_actual"] = float(r["stock_actual"])
         return DormidosResponse(total=len(rows), productos=[DormidoItem(**r) for r in rows])
 
     def get_cohortes(self) -> CohortesResponse:
         rows = self._query("""
             SELECT
-                cohorte_mes, mes_observacion,
-                num_clientes, ticket_promedio, tasa_recurrencia
+                mes_cohorte AS cohorte_mes,
+                business_month AS mes_observacion,
+                COUNT(DISTINCT nit_cliente) AS num_clientes,
+                ROUND(AVG(ticket_promedio), 2) AS ticket_promedio,
+                ROUND(SUM(CASE WHEN compro_este_mes THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 2) AS tasa_recurrencia
             FROM motoshop.gold.mart_cohortes_clientes
-            ORDER BY cohorte_mes, mes_observacion
+            GROUP BY mes_cohorte, business_month
+            ORDER BY mes_cohorte, business_month
         """)
         if not rows:
             return FakeMetricsRepo().get_cohortes()
+        for r in rows:
+            r["num_clientes"] = int(r["num_clientes"])
+            r["ticket_promedio"] = float(r["ticket_promedio"])
+            r["tasa_recurrencia"] = float(r["tasa_recurrencia"])
         return CohortesResponse(cohortes=[CohorteItem(**r) for r in rows])
 
     def _query(self, sql: str) -> list[dict]:
-        cursor = self._conn.cursor()
-        cursor.execute(sql)
-        cols = [desc[0] for desc in cursor.description]
-        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+        result = self._w.statement_execution.execute_statement(
+            statement=sql,
+            warehouse_id=self._wh_id,
+            wait_timeout="50s",
+        )
+        if result.status.state.name != "SUCCEEDED":
+            return []
+        # Column names come from result.manifest.schema.columns
+        cols = [col.name for col in result.manifest.schema.columns]
+        chunk = self._w.statement_execution.get_statement_result_chunk_n(
+            result.statement_id, 0
+        )
+        if not chunk.data_array:
+            return []
+        return [dict(zip(cols, row)) for row in chunk.data_array]
 
 
 # ── Factory ────────────────────────────────────────────────────────────────
 
-def get_metrics_repo(connection=None) -> MetricsRepoProtocol:
-    """Devuelve FakeMetricsRepo siempre por ahora.
+def get_metrics_repo(workspace_client=None, warehouse_id=None) -> MetricsRepoProtocol:
+    """Devuelve el repo adecuado según configuración.
     
-    Cuando Dev A confirme que los marts gold existen y tienen datos,
-    se cambia a RealMetricsRepo(connection).
+    Si se pasa workspace_client + warehouse_id, usa RealMetricsRepo.
+    Si no, cae a FakeMetricsRepo (datos mock).
     """
-    if connection is not None:
-        return RealMetricsRepo(connection)
+    if workspace_client is not None and warehouse_id:
+        return RealMetricsRepo(workspace_client, warehouse_id)
     return FakeMetricsRepo()
