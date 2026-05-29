@@ -122,7 +122,7 @@ F0 ✅  F1 ✅  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 | API FastAPI | ✅ | `http://localhost:8000` |
 | Túnel Cloudflare | ✅ | `https://api.fragloesja.uk` |
 | Demo page | ✅ | `https://api.fragloesja.uk/demo` |
-| Databricks Job | ✅ | 3x/día (12PM, 8PM, 2AM) |
+| Dump pipeline | ✅ | c/30 min (07:00–19:30 COL) + catch-up |
 | Health check | ✅ | Cada 5 min (invisible) |
 | 12 tablas Bronze | ✅ | 79,132 filas |
 | API: 4 endpoints | ✅ | login, products, stock, sales |
@@ -132,9 +132,7 @@ F0 ✅  F1 ✅  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 
 | Tarea | Horario | Descripción |
 |-------|---------|-------------|
-| `MotoShop_Dump_Midday` | 12:00 PM | MySQL → Parquet → UC Volume |
-| `MotoShop_Dump_Evening` | 8:00 PM | MySQL → Parquet → UC Volume |
-| `MotoShop_Dump_Night` | 2:00 AM | MySQL → Parquet → UC Volume |
+| `MotoShop_Dump` | c/30 min (07:00–19:30 COL) + retry 10min×3 | MySQL → Parquet → UC Volume con catch-up |
 | `MotoShop_HealthCheck` | Cada 5 min | Verifica MySQL + API + Túnel |
 
 ### Para arrancar todo en el PC

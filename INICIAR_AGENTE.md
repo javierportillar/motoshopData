@@ -13,7 +13,7 @@ El proyecto tiene 4 roles posibles. Identificá cuál sos:
 | Rol | Cómo lo reconocés | Qué hacés |
 |-----|--------------------|-----------|
 | 🧑‍💻 **Dev Agent** | Estás en la PC de Javier; editás código, escribís notebooks, hacés push a `main`. | Implementás features siguiendo planes existentes (`docs/plan-f*.md`). |
-| 🛠️ **Runtime Agent** | Estás en la PC MotoShop (Windows); corre MySQL, API, Task Scheduler 3x/día. | Hacés pull cuando te avisan, restart API, diagnosticás fallos del dump o del túnel. |
+| 🛠️ **Runtime Agent** | Estás en la PC MotoShop (Windows); corre MySQL, API, Task Scheduler c/30 min (07:00–19:30). | Hacés pull cuando te avisan, restart API, diagnosticás fallos del dump o del túnel. |
 | 🔍 **Reviewer Agent** | Sos invocado para auditar commits, decidir GO/NO-GO, escribir planes. | NO tocás código. Lees, decidís, planificás. → **Usá [`INICIAR_REVIEWER.md`](INICIAR_REVIEWER.md), no este archivo.** |
 | 👤 **Humano (Javier)** | Sos el responsable del proyecto. | Aprobás ADRs, decidís políticas, ejecutás cosas que tocan secretos. |
 
@@ -27,7 +27,7 @@ El proyecto tiene 4 roles posibles. Identificá cuál sos:
 - **Tu trabajo** = construir una plataforma analítica (Databricks Lakehouse) + canal remoto (FastAPI + PWA) **sin reemplazar sgHermes**.
 - **Marco académico:** Maestría UAO 2025-2 · curso Big Data y Transformación Digital del Negocio (módulos M2/M3/M4).
 - **Estado al 2026-05-28:** F0 ✅, F1 ✅ (con 4 deudas vivas documentadas), F2 abierto.
-- **Pipeline activo:** Task Scheduler dispara `dump_to_cloud.py` 3x/día → Parquet → UC Volume → notebook PySpark → `motoshop.bronze.*`. API expuesta en `https://api.fragloesja.uk/`.
+- **Pipeline activo:** Task Scheduler dispara `dump_to_cloud.py` c/30 min (07:00–19:30 COL) con catch-up automático → Parquet → UC Volume → notebook PySpark → `motoshop.bronze.*`. API expuesta en `https://api.fragloesja.uk/`.
 
 Para más detalle leé [docs/contexto-proyecto.md](docs/contexto-proyecto.md) (5-10 min).
 
@@ -247,7 +247,7 @@ cat notebooks/*/_runs/<archivo>.md
 # Decisión: ¿cumple acceptance criteria del plan? ¿hay regresiones? ¿inconsistencias en docs?
 ```
 
-### 7.4 · Deudas vivas a 2026-05-28 *(actualizar al cierre de cada fase)*
+### 7.4 · Deudas vivas a 2026-05-29 *(actualizar al cierre de cada fase)*
 
 | ID | Deuda | Trigger de re-evaluación |
 |----|-------|--------------------------|
@@ -255,6 +255,7 @@ cat notebooks/*/_runs/<archivo>.md
 | **R2** | Creds API `FG28` en README (deuda extendida) | Red más expuesta, endpoint de escritura, usuarios externos, tráfico sospechoso |
 | **R3** | ~~Idempotencia kill-y-retry~~ → ✅ Cerrada Sesión 19 | — |
 | **R4** | Workflow Databricks postergado (Task Scheduler cubre) | PC roto, compute movido a Databricks, dependencias entre tablas |
+| **R5** | Pipeline pre-internet-estable 🟡 Mitigada con F1.9 (dump c/30 min, catch-up, lag monitor) | Lag > 24 h por 3 días seguidos; Silver/Gold no cuadran con sgHermes; gerencia pide alerta proactiva |
 | **R-X2** | ~~Latencia `/stock` 781 ms~~ → 🟡 Cache implementado; endpoint p95 con cache a re-medir en F2 | PWA percibe latencia > 500 ms |
 
 ---

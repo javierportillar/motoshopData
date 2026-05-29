@@ -234,6 +234,7 @@ F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 | Latencia `/products/{sku}/stock` p95 | < 500 ms | 🟡 Endpoint pre-cache (Sesión 17): 781 ms. Repo-level con cache (Sesión 19): cold 8.9 ms / warm 0.0 ms. **El cache elimina la porción MySQL**; el endpoint p95 end-to-end no fue re-medido en F1.5. A re-medir en F2 cuando la PWA real consuma el endpoint; si excede 500 ms, debug en HTTP path (auth, rate limit, JSON, no MySQL). |
 | Tasa éxito ingesta | 100% en 5 corridas | ✅ 5/5 corridas documentadas en `notebooks/bronze/_runs/k3_five_runs_2026-05-28.md`. |
 | Cobertura tests `auth/`+`products/` | > 70% | ✅ 79% total; módulos `auth/`, `products/`, `stock/`, `sales/` por encima del objetivo. |
+| Lag pipeline | < 6 h en horario operativo | 🟡 Pendiente medición en producción (F2). Métrica añadida en F1.9; el lag monitor está operativo (`GET /health/data-freshness`), aún sin datos históricos. |
 
 ### Bloqueadores anticipados
 

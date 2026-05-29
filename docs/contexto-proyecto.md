@@ -112,7 +112,7 @@ Sin reemplazar sgHermes: la BD operativa sigue siendo la fuente de verdad; nosot
 | Lakehouse | **Databricks Free Edition** (Serverless SQL Warehouse + notebooks PySpark) | Activo |
 | Catálogo | Unity Catalog `motoshop` con esquemas `bronze`, `silver`, `gold` | bronze ✅, silver/gold vacíos |
 | Formato | **Delta Lake** particionado por `ingest_date` | Activo |
-| Orquestación | **Windows Task Scheduler** 3x/día (02:00, 12:00, 20:00 COL) | Activo |
+| Orquestación | **Windows Task Scheduler** c/30 min (07:00–19:30) con catch-up y retry | Activo (F1.9) |
 | API | **FastAPI** + SQLAlchemy 2.0 core + pymysql | Operativa en PC |
 | Auth | JWT (HS256, pyjwt) + bcrypt + login propio | Activo |
 | Logging | structlog JSON + PII redaction + request_id | Activo |
@@ -130,7 +130,7 @@ Sin reemplazar sgHermes: la BD operativa sigue siendo la fuente de verdad; nosot
 
 ```
 ┌─────────────────┐
-│ Task Scheduler  │  02:00 / 12:00 / 20:00 (America/Bogota)
+│ Task Scheduler  │  c/30 min 07:00-19:30 COL, catch-up + retry
 │ (Windows)       │
 └────────┬────────┘
          ▼
@@ -208,8 +208,8 @@ Camino paralelo (solo cuando se valida F1):
 
 | Pieza | Frecuencia | Duración real | Volumen |
 |-------|------------|----------------|---------|
-| Dump local de las 12 tablas | 3x/día | 30-37 s | ~80k filas, ~6 MB Parquet |
-| Subida UC Volume | 3x/día | <5 s | 12 Parquets + 1 manifest |
+| Dump local de las 12 tablas | c/30 min (07:00–19:30) + catch-up | 30-37 s | ~80k filas, ~6 MB Parquet |
+| Subida UC Volume | c/30 min (07:00–19:30) | <5 s | 12 Parquets + 1 manifest |
 | Ingesta Bronze (Databricks) | A demanda (no automatizado todavía) | 1-2 min | 12 Delta tables |
 | Validación V1 (conteos) | A demanda | <1 min | 12 comparaciones |
 | API `/health` | Por request | ~5 ms p95 | — |
@@ -536,10 +536,10 @@ Cada deuda tiene un **trigger de re-evaluación obligatoria**: si se cumple, se 
 | Latencia `/health` p95 | ~5 ms |
 | Latencia `/stock` p95 | ~50 ms (warm) / ~780 ms (cold) |
 | Tiempo ingesta total | 30-37 s |
-| Schedule | 3x/día (02:00, 12:00, 20:00 COL) |
-| ADRs aceptados | 11 |
-| Sesiones de trabajo | 19 |
-| Deudas vivas | 3 (R1, R2, R4) |
+| Schedule | c/30 min (07:00–19:30) con catch-up y retry |
+| ADRs aceptados | 13 |
+| Sesiones de trabajo | 22 |
+| Deudas vivas | 4 (R1, R2, R4, R5) |
 
 ---
 
