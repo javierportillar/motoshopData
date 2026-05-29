@@ -8,6 +8,36 @@
 
 ---
 
+## Sesión 2026-05-29 (39) · F4-B arrancada · 2 devs paralelos
+
+**Estado:** F4-A cerrada (feature store + baseline + MLflow). F4-B abierta con 2 devs en paralelo. FIX de baseline es PRIORITARIO.
+
+### Evidencia F4-A
+
+| Componente | Resultado |
+|------------|-----------|
+| Feature store `gold.feature_store_sku` | ✅ 34,838 filas, 4,392 SKUs |
+| Baseline MAPE | 43.7% (benchmark a superar) |
+| MLflow | ✅ Experimento registrado, Run ID `55071d05...` |
+| `forecast_baseline_sku` | ⚠️ **Tabla vacía** — SQL syntax error en INSERT OVERWRITE |
+| Tests feature store | ✅ 16/16 pasan |
+
+### Distribución de devs
+
+| Dev | Track | Tareas | Dependencia |
+|-----|-------|--------|-------------|
+| Dev A | ML | A-1: Prophet top-100, A-2: LightGBM, A-3: Evaluate | feature_store_sku |
+| Dev B | Data Engineering | B-1: FIX baseline (PRIORITARIO), B-2/B-3: DDLs, B-4: Classifier, B-5: Tests | B-1 primero |
+
+### Pendientes para Javier
+
+- ⬜ Aprobar plan F4-B v2 (`docs/plan-f4-b.md`)
+- ⬜ Ejecutar `pip install prophet lightgbm` en la Mac (si Dev A va en Mac)
+- ⬜ Confirmar si label sintético del classifier es aceptable
+- ⬜ Verificar que Windows PC tenga `.env` con DATABRICKS_HOST/TOKEN actualizados
+
+---
+
 ## Sesión 2026-05-29 (36) · F3.5 ejecutada — Hardening Silver completado ✅
 
 **Estado:** F3.5 terminada. Silver, Gold y V6 corregidos y verificados con universo completo. Libre para planificar F4.
