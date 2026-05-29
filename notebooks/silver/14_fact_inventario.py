@@ -2,91 +2,55 @@
 # MAGIC %md
 # MAGIC # 14 · fact_inventario — desde bronze.auxinventario
 # MAGIC
-# MAGIC Auxiliar de inventario. `business_date` se deriva de `docfec` (ADR-0013).
-# MAGIC **Esquema real:** 35 columnas en bronze.
-# MAGIC **Nota:** `valor3` parece ser la cantidad/campo de stock.
+# MAGIC `business_date` de `docfec`. `valor3` = cantidad.
 
 # COMMAND ----------
 
-CATALOG = "motoshop"
-BRONZE = f"{CATALOG}.bronze"
-SILVER = f"{CATALOG}.silver"
-TARGET = f"{SILVER}.fact_inventario"
+-- MAGIC %sql
+
+CREATE OR REPLACE TABLE motoshop.silver.fact_inventario AS
+SELECT
+  monotonically_increasing_id() AS id_inventario,
+  TRIM(codlis)         AS cod_lista,
+  TRIM(nomlis)         AS nombre_lista,
+  TRIM(codlin1)        AS cod_linea1,
+  TRIM(nomlin)         AS nombre_linea,
+  TRIM(codlin2)        AS cod_linea2,
+  TRIM(nomlin2)        AS nombre_linea2,
+  TRIM(codbod)         AS cod_bodega,
+  TRIM(nombod)         AS nombre_bodega,
+  TRIM(nitter)         AS nit_tercero,
+  TRIM(nomter)         AS nombre_tercero,
+  TRIM(numdoc)         AS num_documento,
+  TRIM(nomdoc)         AS nombre_documento,
+  TRIM(codprod)        AS cod_producto,
+  TRIM(sernum)         AS num_serie,
+  TRIM(nomprod)        AS nombre_producto,
+  TRIM(unimed)         AS unidad_medida,
+  CAST(valor1 AS DOUBLE)  AS valor_costo,
+  CAST(valor2 AS DOUBLE)  AS valor_venta,
+  CAST(valor3 AS DOUBLE)  AS cantidad,
+  CAST(valor4 AS DOUBLE)  AS valor4,
+  CAST(valor5 AS DOUBLE)  AS valor5,
+  CAST(docfec AS DATE)     AS business_date,
+  TRIM(docnum)         AS num_doc_referencia,
+  TRIM(nomsub)         AS nombre_sub,
+  CAST(multiplo AS DOUBLE) AS multiplo,
+  TRIM(codcos)         AS cod_centro_costo,
+  TRIM(nomcos)         AS nombre_centro_costo
+FROM motoshop.bronze.auxinventario
+WHERE docfec IS NOT NULL
+  AND CAST(docfec AS DATE) >= DATE '2020-01-01'
+  AND CAST(docfec AS DATE) <= CURRENT_DATE();
 
 # COMMAND ----------
 
-dbutils.widgets.text("business_date", "")
-business_date = dbutils.widgets.get("business_date")
+-- MAGIC %sql
+
+SELECT COUNT(*) AS fact_inventario_rows FROM motoshop.silver.fact_inventario;
 
 # COMMAND ----------
 
-from pyspark.sql.functions import col, current_date, monotonically_increasing_id
+-- MAGIC %sql
 
-df_bronze = spark.table(f"{BRONZE}.auxinventario")
-print(f"Filas bronze.auxinventario: {df_bronze.count()}")
-
-# COMMAND ----------
-
-df_silver = (
-    df_bronze
-    .select(
-        monotonically_increasing_id().alias("id_inventario"),
-        col("codlis").alias("cod_lista"),
-        col("nomlis").alias("nombre_lista"),
-        col("codlin1").alias("cod_linea1"),
-        col("nomlin").alias("nombre_linea"),
-        col("codlin2").alias("cod_linea2"),
-        col("nomlin2").alias("nombre_linea2"),
-        col("codbod").alias("cod_bodega"),
-        col("nombod").alias("nombre_bodega"),
-        col("nitter").alias("nit_tercero"),
-        col("nomter").alias("nombre_tercero"),
-        col("numdoc").alias("num_documento"),
-        col("nomdoc").alias("nombre_documento"),
-        col("codprod").alias("cod_producto"),
-        col("sernum").alias("num_serie"),
-        col("nomprod").alias("nombre_producto"),
-        col("unimed").alias("unidad_medida"),
-        col("valor1").cast("double").alias("valor_costo"),
-        col("valor2").cast("double").alias("valor_venta"),
-        col("valor3").cast("double").alias("cantidad"),
-        col("valor4").cast("double").alias("valor4"),
-        col("valor5").cast("double").alias("valor5"),
-        col("docfec").cast("date").alias("business_date"),
-        col("docnum").alias("num_doc_referencia"),
-        col("nomsub").alias("nombre_sub"),
-        col("multiplo").cast("double").alias("multiplo"),
-        col("codcos").alias("cod_centro_costo"),
-        col("nomcos").alias("nombre_centro_costo"),
-    )
-    .where(
-        (col("business_date").isNotNull()) &
-        (col("business_date") >= "2020-01-01") &
-        (col("business_date") <= current_date())
-    )
-)
-
-print(f"Filas fact_inventario: {df_silver.count()}")
-
-# COMMAND ----------
-
-# Escritura idempotente
-if business_date:
-    df_silver = df_silver.where(col("business_date") == business_date)
-
-spark.sql(f"CREATE TABLE IF NOT EXISTS {TARGET} (dummy INT) USING delta")
-
-(
-    df_silver.write
-    .format("delta")
-    .mode("overwrite")
-    .partitionBy("business_date")
-    .option("replaceWhere", f"business_date = '{business_date}'" if business_date else None)
-    .saveAsTable(TARGET)
-)
-
-# COMMAND ----------
-
-final_count = spark.table(TARGET).count()
-print(f"✅ fact_inventario: {final_count} filas en silver")
-display(spark.table(TARGET).limit(10))
+SELECT * FROM motoshop.silver.fact_inventario LIMIT 10;

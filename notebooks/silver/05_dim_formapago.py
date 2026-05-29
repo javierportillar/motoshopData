@@ -1,62 +1,41 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # 05 · dim_formapago — SCD Type 1 desde bronze.formapago
-# MAGIC
-# MAGIC **Esquema real:** 26 columnas. Seleccionamos las más relevantes.
-# MAGIC **DT-F2-2:** SCD Type 1. **DT-F2-5:** `dim_formapago`.
 
 # COMMAND ----------
 
-CATALOG = "motoshop"
-BRONZE = f"{CATALOG}.bronze"
-SILVER = f"{CATALOG}.silver"
-TARGET = f"{SILVER}.dim_formapago"
+-- MAGIC %sql
+
+CREATE OR REPLACE TABLE motoshop.silver.dim_formapago AS
+SELECT
+  TRIM(codpag)    AS cod_formapago,
+  TRIM(forpag)    AS nombre_formapago,
+  CAST(afepag AS INT)    AS afecta_pago,
+  CAST(tippag AS INT)    AS tipo_pago,
+  TRIM(codcaj)    AS cod_caja,
+  TRIM(codban)    AS cod_banco,
+  TRIM(codcue)    AS cod_cuenta,
+  TRIM(facven)    AS factura_venta,
+  TRIM(venpos)    AS venta_pos,
+  TRIM(compra)    AS es_compra,
+  TRIM(financ)    AS es_financiacion,
+  TRIM(empsino)   AS empresa_sino,
+  CURRENT_DATE()  AS snapshot_date
+FROM motoshop.bronze.formapago
+WHERE codpag IS NOT NULL;
 
 # COMMAND ----------
 
-from pyspark.sql.functions import col, trim, current_date
+-- MAGIC %sql
 
-df_bronze = spark.table(f"{BRONZE}.formapago")
-print(f"Filas bronze.formapago: {df_bronze.count()}")
-
-# COMMAND ----------
-
-df_silver = (
-    df_bronze
-    .select(
-        trim(col("codpag")).alias("cod_formapago"),
-        trim(col("forpag")).alias("nombre_formapago"),
-        col("afepag").cast("int").alias("afecta_pago"),
-        col("tippag").cast("int").alias("tipo_pago"),
-        trim(col("codcaj")).alias("cod_caja"),
-        trim(col("codban")).alias("cod_banco"),
-        trim(col("codcue")).alias("cod_cuenta"),
-        trim(col("facven")).alias("factura_venta"),
-        trim(col("venpos")).alias("venta_pos"),
-        trim(col("compra")).alias("es_compra"),
-        trim(col("financ")).alias("es_financiacion"),
-        trim(col("empsino")).alias("empresa_sino"),
-        current_date().alias("snapshot_date"),
-    )
-    .where(col("cod_formapago").isNotNull())
-    .dropDuplicates(["cod_formapago"])
-)
-
-print(f"Filas dimension formapago: {df_silver.count()}")
+SELECT
+  COUNT(*) AS total,
+  COUNT(DISTINCT cod_formapago) AS distintos,
+  COUNT(*) - COUNT(DISTINCT cod_formapago) AS duplicados
+FROM motoshop.silver.dim_formapago;
 
 # COMMAND ----------
 
-# Validación PK
-pk_count = df_silver.count()
-pk_distinct = df_silver.select("cod_formapago").distinct().count()
-assert pk_count == pk_distinct, (
-    f"❌ Duplicados en dim_formapago: {pk_count} vs {pk_distinct}"
-)
-print(f"✅ PK única: {pk_count}")
+-- MAGIC %sql
 
-# COMMAND ----------
-
-df_silver.write.format("delta").mode("overwrite").saveAsTable(TARGET)
-final_count = spark.table(TARGET).count()
-print(f"✅ dim_formapago: {final_count} filas en silver")
-display(spark.table(TARGET).limit(10))
+SELECT COUNT(*) AS dim_formapago_rows FROM motoshop.silver.dim_formapago;

@@ -2,163 +2,141 @@
 # MAGIC %md
 # MAGIC # 31 · Reconciliation — Silver vs Bronze (proxy sgHermes)
 # MAGIC
-# MAGIC V3: Compara totales de silver con bronze como proxy de sgHermes.
-# MAGIC Tolerancia: < 0.5% diferencia.
-# MAGIC
-# MAGIC **Nota:** bronze es la fuente más cercana a sgHermes (snapshot 1:1).
-# MAGIC La reconciliación compara `SUM(total)` entre silver y bronze para el mes pasado.
+# MAGIC V3: Compara totales de silver con bronze. Tolerancia: < 0.5%.
 
 # COMMAND ----------
 
-CATALOG = "motoshop"
-BRONZE = f"{CATALOG}.bronze"
-SILVER = f"{CATALOG}.silver"
+-- MAGIC %md
+-- MAGIC ## 1 · Reconciliación fact_ventas (mes pasado)
+
+# COMMAND ----------
+-- MAGIC %sql
+
+
+WITH params AS (
+  SELECT
+    DATE_TRUNC('MONTH', DATE_SUB(CURRENT_DATE(), 1)) AS month_start,
+    LAST_DAY(DATE_SUB(CURRENT_DATE(), 1)) AS month_end
+),
+bronze_ventas AS (
+  SELECT
+    COUNT(*) AS facturas,
+    COALESCE(SUM(CAST(totfven AS DOUBLE)), 0) AS total_ventas
+  FROM motoshop.bronze.facventas, params p
+  WHERE estfven = 'A'
+    AND CAST(fecfven AS DATE) >= p.month_start
+    AND CAST(fecfven AS DATE) <= p.month_end
+),
+silver_ventas AS (
+  SELECT
+    COUNT(*) AS facturas,
+    COALESCE(SUM(total_factura), 0) AS total_ventas
+  FROM motoshop.silver.fact_ventas, params p
+  WHERE business_date >= p.month_start
+    AND business_date <= p.month_end
+)
+SELECT
+  b.facturas AS bronze_facturas,
+  s.facturas AS silver_facturas,
+  b.total_ventas AS bronze_total,
+  s.total_ventas AS silver_total,
+  ABS(b.total_ventas - s.total_ventas) AS diferencia_abs,
+  CASE WHEN b.total_ventas > 0
+    THEN ROUND(ABS(b.total_ventas - s.total_ventas) / b.total_ventas * 100, 2)
+    ELSE 0
+  END AS diferencia_pct,
+  CASE WHEN ABS(b.total_ventas - s.total_ventas) / NULLIF(b.total_ventas, 0) < 0.005
+    THEN 'PASS' ELSE 'FAIL'
+  END AS status
+FROM bronze_ventas b, silver_ventas s;
 
 # COMMAND ----------
 
-from pyspark.sql.functions import col, sum as spark_sum, abs as spark_abs, when, month, year, current_date
-from datetime import date, timedelta
+-- MAGIC %md
+-- MAGIC ## 2 · Reconciliación fact_compras (mes pasado)
 
-today = date.today().isoformat()
-# Mes pasado
-first_of_this_month = date.today().replace(day=1)
-last_month_end = first_of_this_month - timedelta(days=1)
-last_month_start = last_month_end.replace(day=1)
+# COMMAND ----------
+-- MAGIC %sql
 
-print(f"Período de reconciliación: {last_month_start} a {last_month_end}")
+
+WITH params AS (
+  SELECT
+    DATE_TRUNC('MONTH', DATE_SUB(CURRENT_DATE(), 1)) AS month_start,
+    LAST_DAY(DATE_SUB(CURRENT_DATE(), 1)) AS month_end
+),
+bronze_compras AS (
+  SELECT
+    COUNT(*) AS compras,
+    COALESCE(SUM(CAST(totcom AS DOUBLE)), 0) AS total_compras
+  FROM motoshop.bronze.compras, params p
+  WHERE estcom = 'A'
+    AND CAST(feccom AS DATE) >= p.month_start
+    AND CAST(feccom AS DATE) <= p.month_end
+),
+silver_compras AS (
+  SELECT
+    COUNT(*) AS compras,
+    COALESCE(SUM(total_compra), 0) AS total_compras
+  FROM motoshop.silver.fact_compras, params p
+  WHERE business_date >= p.month_start
+    AND business_date <= p.month_end
+)
+SELECT
+  b.compras AS bronze_compras,
+  s.compras AS silver_compras,
+  b.total_compras AS bronze_total,
+  s.total_compras AS silver_total,
+  ABS(b.total_compras - s.total_compras) AS diferencia_abs,
+  CASE WHEN b.total_compras > 0
+    THEN ROUND(ABS(b.total_compras - s.total_compras) / b.total_compras * 100, 2)
+    ELSE 0
+  END AS diferencia_pct,
+  CASE WHEN ABS(b.total_compras - s.total_compras) / NULLIF(b.total_compras, 0) < 0.005
+    THEN 'PASS' ELSE 'FAIL'
+  END AS status
+FROM bronze_compras b, silver_compras s;
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## 1 · Reconciliación fact_ventas
+-- MAGIC %md
+-- MAGIC ## 3 · Top 10 SKUs por ventas (mes pasado)
+
+# COMMAND ----------
+-- MAGIC %sql
+
+
+WITH params AS (
+  SELECT
+    DATE_TRUNC('MONTH', DATE_SUB(CURRENT_DATE(), 1)) AS month_start,
+    LAST_DAY(DATE_SUB(CURRENT_DATE(), 1)) AS month_end
+)
+SELECT
+  d.cod_producto,
+  SUM(d.total_detalle) AS total_ventas
+FROM motoshop.silver.fact_ventas_detalle d, params p
+WHERE d.business_date >= p.month_start
+  AND d.business_date <= p.month_end
+GROUP BY d.cod_producto
+ORDER BY total_ventas DESC
+LIMIT 10;
 
 # COMMAND ----------
 
-print("=" * 50)
-print("  V3 · Reconciliación Silver vs Bronze — fact_ventas")
-print("=" * 50)
-
-try:
-    # Bronze: sumar totfven del mes pasado (proxy sgHermes)
-    df_bronzeventas = spark.table(f"{BRONZE}.facventas").where(
-        (col("estfven") == "A") &
-        (col("fecfven").cast("date") >= last_month_start) &
-        (col("fecfven").cast("date") <= last_month_end)
-    )
-    bronze_total = df_bronzeventas.agg(spark_sum("totfven")).collect()[0][0] or 0
-    bronze_count = df_bronzeventas.count()
-
-    # Silver: sumar total_factura del mes pasado
-    df_silverventas = spark.table(f"{SILVER}.fact_ventas").where(
-        (col("business_date") >= last_month_start) &
-        (col("business_date") <= last_month_end)
-    )
-    silver_total = df_silverventas.agg(spark_sum("total_factura")).collect()[0][0] or 0
-    silver_count = df_silverventas.count()
-
-    # Comparación
-    diff_abs = abs(bronze_total - silver_total)
-    diff_pct = (diff_abs / bronze_total * 100) if bronze_total > 0 else 0
-
-    print(f"\n  Bronze (proxy sgHermes): {bronze_count} facturas, ${bronze_total:,.2f}")
-    print(f"  Silver:                 {silver_count} facturas, ${silver_total:,.2f}")
-    print(f"  Diferencia:             ${diff_abs:,.2f} ({diff_pct:.2f}%)")
-
-    status_ventas = "PASS" if diff_pct < 0.5 else "FAIL"
-    icon = "✅" if status_ventas == "PASS" else "❌"
-    print(f"  {icon} Veredicto: {status_ventas}")
-
-except Exception as e:
-    print(f"  ⚠️ Error: {str(e)[:100]}")
-    status_ventas = "ERROR"
+-- MAGIC %md
+-- MAGIC ## 4 · Conteos generales
 
 # COMMAND ----------
+-- MAGIC %sql
 
-# MAGIC %md
-# MAGIC ## 2 · Reconciliación fact_compras
 
-# COMMAND ----------
-
-print("\n" + "=" * 50)
-print("  V3 · Reconciliación Silver vs Bronze — fact_compras")
-print("=" * 50)
-
-try:
-    df_bronzecomp = spark.table(f"{BRONZE}.compras").where(
-        (col("estcom") == "A") &
-        (col("feccom").cast("date") >= last_month_start) &
-        (col("feccom").cast("date") <= last_month_end)
-    )
-    bronze_total_comp = df_bronzecomp.agg(spark_sum("totcom")).collect()[0][0] or 0
-    bronze_count_comp = df_bronzecomp.count()
-
-    df_silvercomp = spark.table(f"{SILVER}.fact_compras").where(
-        (col("business_date") >= last_month_start) &
-        (col("business_date") <= last_month_end)
-    )
-    silver_total_comp = df_silvercomp.agg(spark_sum("total_compra")).collect()[0][0] or 0
-    silver_count_comp = df_silvercomp.count()
-
-    diff_abs_comp = abs(bronze_total_comp - silver_total_comp)
-    diff_pct_comp = (diff_abs_comp / bronze_total_comp * 100) if bronze_total_comp > 0 else 0
-
-    print(f"\n  Bronze: {bronze_count_comp} compras, ${bronze_total_comp:,.2f}")
-    print(f"  Silver: {silver_count_comp} compras, ${silver_total_comp:,.2f}")
-    print(f"  Diferencia: ${diff_abs_comp:,.2f} ({diff_pct_comp:.2f}%)")
-
-    status_compras = "PASS" if diff_pct_comp < 0.5 else "FAIL"
-    icon = "✅" if status_compras == "PASS" else "❌"
-    print(f"  {icon} Veredicto: {status_compras}")
-
-except Exception as e:
-    print(f"  ⚠️ Error: {str(e)[:100]}")
-    status_compras = "ERROR"
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 3 · Top SKUs mes pasado
-
-# COMMAND ----------
-
-print("\n" + "=" * 50)
-print("  Top 10 SKUs por ventas (mes pasado)")
-print("=" * 50)
-
-try:
-    df_detalle = spark.table(f"{SILVER}.fact_ventas_detalle").where(
-        (col("business_date") >= last_month_start) &
-        (col("business_date") <= last_month_end)
-    )
-    top_skus = (
-        df_detalle
-        .groupBy("cod_producto")
-        .agg(spark_sum("total_detalle").alias("total_ventas"))
-        .orderBy(col("total_ventas").desc())
-        .limit(10)
-    )
-    display(top_skus)
-except Exception as e:
-    print(f"  ⚠️ No disponible: {str(e)[:60]}")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 4 · Resumen final
-
-# COMMAND ----------
-
-print(f"\n{'='*50}")
-print(f"  RESUMEN RECONCILIACIÓN — {today}")
-print(f"  Período: {last_month_start} a {last_month_end}")
-print(f"{'='*50}")
-print(f"  V3 fact_ventas:   {status_ventas}")
-print(f"  V3 fact_compras:  {status_compras}")
-
-overall = "PASS" if (status_ventas == "PASS" and status_compras == "PASS") else "FAIL"
-icon = "✅" if overall == "PASS" else "❌"
-print(f"\n  {icon} VEREDICTO GENERAL: {overall}")
-
-if overall == "FAIL":
-    print("\n  ⚠️ Acción requerida: investigar diferencias > 0.5%")
-    print("  Causas comunes: documentos anulados, redondeo, timezone")
+SELECT
+  'bronze_facventas' AS tabla, COUNT(*) AS rows FROM motoshop.bronze.facventas WHERE estfven = 'A'
+UNION ALL SELECT 'silver_fact_ventas', COUNT(*) FROM motoshop.silver.fact_ventas
+UNION ALL SELECT 'bronze_compras', COUNT(*) FROM motoshop.bronze.compras WHERE estcom = 'A'
+UNION ALL SELECT 'silver_fact_compras', COUNT(*) FROM motoshop.silver.fact_compras
+UNION ALL SELECT 'silver_dim_producto', COUNT(*) FROM motoshop.silver.dim_producto
+UNION ALL SELECT 'silver_dim_bodega', COUNT(*) FROM motoshop.silver.dim_bodega
+UNION ALL SELECT 'silver_dim_tercero', COUNT(*) FROM motoshop.silver.dim_tercero
+UNION ALL SELECT 'silver_dim_sucursal', COUNT(*) FROM motoshop.silver.dim_sucursal
+UNION ALL SELECT 'silver_dim_formapago', COUNT(*) FROM motoshop.silver.dim_formapago
+UNION ALL SELECT 'silver_dim_tiempo', COUNT(*) FROM motoshop.silver.dim_tiempo;

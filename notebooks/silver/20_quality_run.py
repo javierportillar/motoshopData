@@ -2,255 +2,227 @@
 # MAGIC %md
 # MAGIC # 20 · Quality Run — Reglas de calidad silver
 # MAGIC
-# MAGIC Ejecuta asserts sobre cada tabla silver y escribe resultados a `silver._quality_runs`.
-# MAGIC **DT-F2-3:** PySpark assert + tabla `_quality_runs`.
-# MAGIC Severidades: CRITICAL → falla el notebook; WARNING → continúa pero registra.
+# MAGIC Valida cada tabla silver y escribe resultados a `silver._quality_runs`.
 
 # COMMAND ----------
 
-CATALOG = "motoshop"
-SILVER = f"{CATALOG}.silver"
-TARGET = f"{SILVER}._quality_runs"
+-- MAGIC %sql
+
+CREATE TABLE IF NOT EXISTS motoshop.silver._quality_runs (
+  run_id STRING,
+  table_name STRING,
+  rule STRING,
+  failed_rows BIGINT,
+  severity STRING,
+  timestamp TIMESTAMP
+) USING DELTA;
 
 # COMMAND ----------
 
-from pyspark.sql.functions import lit, current_timestamp, monotonically_increasing_id
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType
-import uuid
-from datetime import datetime
+-- MAGIC %sql
+
+DELETE FROM motoshop.silver._quality_runs
+WHERE DATE(timestamp) = CURRENT_DATE();
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## Funciones de validación
+-- MAGIC %sql
+
+DECLARE run_id STRING;
+SET run_id = CONCAT('qr_', DATE_FORMAT(CURRENT_DATE(), 'yyyyMMdd'), '_', CAST(FLOOR(RAND() * 10000) AS STRING));
 
 # COMMAND ----------
 
-def write_quality_event(spark, run_id, table, rule, failed_rows, severity="WARNING"):
-    """Escribe un evento de calidad a silver._quality_runs."""
-    row = spark.createDataFrame(
-        [(run_id, table, rule, failed_rows, severity, datetime.now())],
-        ["run_id", "table", "rule", "failed_rows", "severity", "timestamp"]
-    )
-    row.write.format("delta").mode("append").saveAsTable(TARGET)
-    icon = "🔴" if severity == "CRITICAL" else "🟡"
-    print(f"  {icon} {table}.{rule}: {failed_rows} filas fallidas [{severity}]")
-
-
-def assert_no_null_pk(spark, df, pk_columns, table_name, run_id):
-    """Verifica que no haya PKs nulas."""
-    null_count = df.where(
-        df[pk_columns[0]].isNull() if len(pk_columns) == 1
-        else ~reduce(lambda a, b: a & b, [df[c].isNotNull() for c in pk_columns])
-    ).count()
-    severity = "CRITICAL" if null_count > 0 else "OK"
-    if null_count > 0:
-        write_quality_event(spark, run_id, table_name, "null_pk", null_count, severity)
-    return null_count
-
-
-def assert_no_negative(spark, df, column, table_name, run_id):
-    """Verifica que no haya valores negativos en montos."""
-    neg_count = df.where(df[column] < 0).count()
-    severity = "CRITICAL" if neg_count > 0 else "OK"
-    if neg_count > 0:
-        write_quality_event(spark, run_id, table_name, f"negative_{column}", neg_count, severity)
-    return neg_count
-
-
-def assert_no_future_dates(spark, df, date_column, table_name, run_id):
-    """Verifica que no haya business_date en el futuro."""
-    from pyspark.sql.functions import current_date
-    future_count = df.where(df[date_column] > current_date()).count()
-    severity = "WARNING" if future_count > 0 else "OK"
-    if future_count > 0:
-        write_quality_event(spark, run_id, table_name, f"future_date_{date_column}", future_count, severity)
-    return future_count
-
-
-def assert_no_duplicates(spark, df, pk_columns, table_name, run_id):
-    """Verifica unicidad de PKs."""
-    total = df.count()
-    distinct = df.select(pk_columns).distinct().count()
-    dup_count = total - distinct
-    severity = "CRITICAL" if dup_count > 0 else "OK"
-    if dup_count > 0:
-        write_quality_event(spark, run_id, table_name, "duplicate_pk", dup_count, severity)
-    return dup_count
+-- MAGIC %md
+-- MAGIC ## fact_ventas
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## Ejecutar reglas sobre cada tabla silver
+-- MAGIC %sql
+
+INSERT INTO motoshop.silver._quality_runs
+SELECT '${run_id}', 'fact_ventas', 'null_pk', COUNT(*), 'CRITICAL', CURRENT_TIMESTAMP()
+FROM motoshop.silver.fact_ventas
+WHERE num_documento IS NULL OR cod_clase IS NULL OR business_date IS NULL
+HAVING COUNT(*) > 0;
 
 # COMMAND ----------
 
-from functools import reduce
-import time
+-- MAGIC %sql
 
-run_id = str(uuid.uuid4())[:8]
-print(f"Quality run ID: {run_id}")
-print(f"Timestamp: {datetime.now()}")
-print("=" * 50)
-
-results = []
+INSERT INTO motoshop.silver._quality_runs
+SELECT '${run_id}', 'fact_ventas', 'negative_total_factura', COUNT(*), 'CRITICAL', CURRENT_TIMESTAMP()
+FROM motoshop.silver.fact_ventas
+WHERE total_factura < 0
+HAVING COUNT(*) > 0;
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ### fact_ventas
+-- MAGIC %sql
+
+INSERT INTO motoshop.silver._quality_runs
+SELECT '${run_id}', 'fact_ventas', 'future_business_date', COUNT(*), 'WARNING', CURRENT_TIMESTAMP()
+FROM motoshop.silver.fact_ventas
+WHERE business_date > CURRENT_DATE()
+HAVING COUNT(*) > 0;
 
 # COMMAND ----------
 
-try:
-    df = spark.table(f"{SILVER}.fact_ventas")
-    count = df.count()
-    print(f"\n📋 fact_ventas: {count} filas")
+-- MAGIC %sql
 
-    pk_dup = assert_no_duplicates(spark, df, ["num_documento", "cod_clase", "business_date"], "fact_ventas", run_id)
-    neg_tot = assert_no_negative(spark, df, "total_factura", "fact_ventas", run_id)
-    fut_bd = assert_no_future_dates(spark, df, "business_date", "fact_ventas", run_id)
-
-    results.append({"table": "fact_ventas", "rows": count, "duplicates": pk_dup, "negatives": neg_tot, "future_dates": fut_bd})
-except Exception as e:
-    print(f"⚠️ fact_ventas no disponible: {str(e)[:80]}")
-    results.append({"table": "fact_ventas", "rows": 0, "error": str(e)[:80]})
+INSERT INTO motoshop.silver._quality_runs
+SELECT '${run_id}', 'fact_ventas', 'duplicate_pk',
+  COUNT(*) - COUNT(DISTINCT STRUCT(num_documento, cod_clase, business_date)),
+  'CRITICAL', CURRENT_TIMESTAMP()
+FROM motoshop.silver.fact_ventas
+HAVING (COUNT(*) - COUNT(DISTINCT STRUCT(num_documento, cod_clase, business_date))) > 0;
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ### fact_ventas_detalle
+-- MAGIC %md
+-- MAGIC ## fact_compras
 
 # COMMAND ----------
 
-try:
-    df = spark.table(f"{SILVER}.fact_ventas_detalle")
-    count = df.count()
-    print(f"\n📋 fact_ventas_detalle: {count} filas")
+-- MAGIC %sql
 
-    neg_tot = assert_no_negative(spark, df, "total_detalle", "fact_ventas_detalle", run_id)
-    fut_bd = assert_no_future_dates(spark, df, "business_date", "fact_ventas_detalle", run_id)
-
-    results.append({"table": "fact_ventas_detalle", "rows": count, "negatives": neg_tot, "future_dates": fut_bd})
-except Exception as e:
-    print(f"⚠️ fact_ventas_detalle no disponible: {str(e)[:80]}")
-    results.append({"table": "fact_ventas_detalle", "rows": 0, "error": str(e)[:80]})
+INSERT INTO motoshop.silver._quality_runs
+SELECT '${run_id}', 'fact_compras', 'null_pk', COUNT(*), 'CRITICAL', CURRENT_TIMESTAMP()
+FROM motoshop.silver.fact_compras
+WHERE num_documento IS NULL OR cod_clase IS NULL OR business_date IS NULL
+HAVING COUNT(*) > 0;
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ### fact_compras
+-- MAGIC %sql
+
+INSERT INTO motoshop.silver._quality_runs
+SELECT '${run_id}', 'fact_compras', 'negative_total_compra', COUNT(*), 'CRITICAL', CURRENT_TIMESTAMP()
+FROM motoshop.silver.fact_compras
+WHERE total_compra < 0
+HAVING COUNT(*) > 0;
 
 # COMMAND ----------
 
-try:
-    df = spark.table(f"{SILVER}.fact_compras")
-    count = df.count()
-    print(f"\n📋 fact_compras: {count} filas")
+-- MAGIC %sql
 
-    pk_dup = assert_no_duplicates(spark, df, ["num_documento", "cod_clase", "business_date"], "fact_compras", run_id)
-    neg_tot = assert_no_negative(spark, df, "total_compra", "fact_compras", run_id)
-    fut_bd = assert_no_future_dates(spark, df, "business_date", "fact_compras", run_id)
-
-    results.append({"table": "fact_compras", "rows": count, "duplicates": pk_dup, "negatives": neg_tot, "future_dates": fut_bd})
-except Exception as e:
-    print(f"⚠️ fact_compras no disponible: {str(e)[:80]}")
-    results.append({"table": "fact_compras", "rows": 0, "error": str(e)[:80]})
+INSERT INTO motoshop.silver._quality_runs
+SELECT '${run_id}', 'fact_compras', 'future_business_date', COUNT(*), 'WARNING', CURRENT_TIMESTAMP()
+FROM motoshop.silver.fact_compras
+WHERE business_date > CURRENT_DATE()
+HAVING COUNT(*) > 0;
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ### fact_compras_detalle
+-- MAGIC %sql
+
+INSERT INTO motoshop.silver._quality_runs
+SELECT '${run_id}', 'fact_compras', 'duplicate_pk',
+  COUNT(*) - COUNT(DISTINCT STRUCT(num_documento, cod_clase, business_date)),
+  'CRITICAL', CURRENT_TIMESTAMP()
+FROM motoshop.silver.fact_compras
+HAVING (COUNT(*) - COUNT(DISTINCT STRUCT(num_documento, cod_clase, business_date))) > 0;
 
 # COMMAND ----------
 
-try:
-    df = spark.table(f"{SILVER}.fact_compras_detalle")
-    count = df.count()
-    print(f"\n📋 fact_compras_detalle: {count} filas")
-
-    neg_tot = assert_no_negative(spark, df, "total_detalle", "fact_compras_detalle", run_id)
-    fut_bd = assert_no_future_dates(spark, df, "business_date", "fact_compras_detalle", run_id)
-
-    results.append({"table": "fact_compras_detalle", "rows": count, "negatives": neg_tot, "future_dates": fut_bd})
-except Exception as e:
-    print(f"⚠️ fact_compras_detalle no disponible: {str(e)[:80]}")
-    results.append({"table": "fact_compras_detalle", "rows": 0, "error": str(e)[:80]})
+-- MAGIC %md
+-- MAGIC ## fact_inventario
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ### fact_inventario
+-- MAGIC %sql
+
+INSERT INTO motoshop.silver._quality_runs
+SELECT '${run_id}', 'fact_inventario', 'negative_cantidad', COUNT(*), 'CRITICAL', CURRENT_TIMESTAMP()
+FROM motoshop.silver.fact_inventario
+WHERE cantidad < 0
+HAVING COUNT(*) > 0;
 
 # COMMAND ----------
 
-try:
-    df = spark.table(f"{SILVER}.fact_inventario")
-    count = df.count()
-    print(f"\n📋 fact_inventario: {count} filas")
+-- MAGIC %sql
 
-    neg_cant = assert_no_negative(spark, df, "cantidad", "fact_inventario", run_id)
-    fut_bd = assert_no_future_dates(spark, df, "business_date", "fact_inventario", run_id)
-
-    results.append({"table": "fact_inventario", "rows": count, "negatives": neg_cant, "future_dates": fut_bd})
-except Exception as e:
-    print(f"⚠️ fact_inventario no disponible: {str(e)[:80]}")
-    results.append({"table": "fact_inventario", "rows": 0, "error": str(e)[:80]})
+INSERT INTO motoshop.silver._quality_runs
+SELECT '${run_id}', 'fact_inventario', 'future_business_date', COUNT(*), 'WARNING', CURRENT_TIMESTAMP()
+FROM motoshop.silver.fact_inventario
+WHERE business_date > CURRENT_DATE()
+HAVING COUNT(*) > 0;
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ### Dimensiones (validación PK)
+-- MAGIC %md
+-- MAGIC ## Dimensiones: PK duplicada
 
 # COMMAND ----------
 
-DIM_TABLES = {
-    "dim_producto": "cod_producto",
-    "dim_bodega": "cod_bodega",
-    "dim_tercero": "nit_tercero",
-    "dim_sucursal": "cod_sucursal",
-    "dim_formapago": "cod_formapago",
-}
+-- MAGIC %sql
 
-for dim_name, pk in DIM_TABLES.items():
-    try:
-        df = spark.table(f"{SILVER}.{dim_name}")
-        count = df.count()
-        pk_dup = assert_no_duplicates(spark, df, [pk], dim_name, run_id)
-        results.append({"table": dim_name, "rows": count, "duplicates": pk_dup})
-        print(f"  ✅ {dim_name}: {count} filas, PK única")
-    except Exception as e:
-        print(f"  ⚠️ {dim_name} no disponible: {str(e)[:60]}")
-        results.append({"table": dim_name, "rows": 0, "error": str(e)[:60]})
+INSERT INTO motoshop.silver._quality_runs
+SELECT '${run_id}', 'dim_producto', 'duplicate_pk',
+  COUNT(*) - COUNT(DISTINCT cod_producto), 'CRITICAL', CURRENT_TIMESTAMP()
+FROM motoshop.silver.dim_producto
+HAVING (COUNT(*) - COUNT(DISTINCT cod_producto)) > 0;
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ## Resumen
+-- MAGIC %sql
+
+INSERT INTO motoshop.silver._quality_runs
+SELECT '${run_id}', 'dim_bodega', 'duplicate_pk',
+  COUNT(*) - COUNT(DISTINCT cod_bodega), 'CRITICAL', CURRENT_TIMESTAMP()
+FROM motoshop.silver.dim_bodega
+HAVING (COUNT(*) - COUNT(DISTINCT cod_bodega)) > 0;
 
 # COMMAND ----------
 
-print(f"\n{'='*50}")
-print(f"  RESUMEN QUALITY RUN — {run_id}")
-print(f"  Timestamp: {datetime.now()}")
-print(f"{'='*50}")
+-- MAGIC %sql
 
-for r in results:
-    rows = r.get("rows", 0)
-    errs = []
-    if r.get("duplicates", 0) > 0:
-        errs.append(f"{r['duplicates']} duplicados")
-    if r.get("negatives", 0) > 0:
-        errs.append(f"{r['negatives']} negativos")
-    if r.get("future_dates", 0) > 0:
-        errs.append(f"{r['future_dates']} fechas futuras")
-    if r.get("error"):
-        errs.append(f"ERROR: {r['error'][:40]}")
+INSERT INTO motoshop.silver._quality_runs
+SELECT '${run_id}', 'dim_tercero', 'duplicate_pk',
+  COUNT(*) - COUNT(DISTINCT nit_tercero), 'CRITICAL', CURRENT_TIMESTAMP()
+FROM motoshop.silver.dim_tercero
+HAVING (COUNT(*) - COUNT(DISTINCT nit_tercero)) > 0;
 
-    status = "OK" if not errs else "FAIL"
-    detail = f" ({'; '.join(errs)})" if errs else ""
-    print(f"  {status} {r['table']}: {rows:,} filas{detail}")
+# COMMAND ----------
 
-print(f"\n  Tablas procesadas: {len(results)}")
-ok_count = sum(1 for r in results if not r.get("error") and r.get("duplicates", 0) == 0)
-print(f"  Tablas OK: {ok_count}/{len(results)}")
+-- MAGIC %sql
+
+INSERT INTO motoshop.silver._quality_runs
+SELECT '${run_id}', 'dim_sucursal', 'duplicate_pk',
+  COUNT(*) - COUNT(DISTINCT cod_sucursal), 'CRITICAL', CURRENT_TIMESTAMP()
+FROM motoshop.silver.dim_sucursal
+HAVING (COUNT(*) - COUNT(DISTINCT cod_sucursal)) > 0;
+
+# COMMAND ----------
+
+-- MAGIC %sql
+
+INSERT INTO motoshop.silver._quality_runs
+SELECT '${run_id}', 'dim_formapago', 'duplicate_pk',
+  COUNT(*) - COUNT(DISTINCT cod_formapago), 'CRITICAL', CURRENT_TIMESTAMP()
+FROM motoshop.silver.dim_formapago
+HAVING (COUNT(*) - COUNT(DISTINCT cod_formapago)) > 0;
+
+# COMMAND ----------
+
+-- MAGIC %sql
+
+INSERT INTO motoshop.silver._quality_runs
+SELECT '${run_id}', 'dim_tiempo', 'duplicate_pk',
+  COUNT(*) - COUNT(DISTINCT business_date), 'CRITICAL', CURRENT_TIMESTAMP()
+FROM motoshop.silver.dim_tiempo
+HAVING (COUNT(*) - COUNT(DISTINCT business_date)) > 0;
+
+# COMMAND ----------
+
+-- MAGIC %md
+-- MAGIC ## Resumen
+
+# COMMAND ----------
+
+-- MAGIC %sql
+
+SELECT table_name, rule, failed_rows, severity, timestamp
+FROM motoshop.silver._quality_runs
+WHERE run_id = '${run_id}'
+ORDER BY severity DESC, table_name;

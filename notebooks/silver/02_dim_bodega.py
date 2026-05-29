@@ -1,67 +1,34 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # 02 · dim_bodega — SCD Type 1 desde bronze.bodegas
-# MAGIC
-# MAGIC Snapshot del estado actual de bodegas.
-# MAGIC **Esquema real:** 5 columnas — `codbod`, `nombod`, `telbod`, `ubibod`, `resbod`.
-# MAGIC
-# MAGIC **DT-F2-2:** SCD Type 1. **DT-F2-5:** `dim_bodega`.
 
 # COMMAND ----------
 
-CATALOG = "motoshop"
-BRONZE = f"{CATALOG}.bronze"
-SILVER = f"{CATALOG}.silver"
-TARGET = f"{SILVER}.dim_bodega"
+-- MAGIC %sql
+
+CREATE OR REPLACE TABLE motoshop.silver.dim_bodega AS
+SELECT
+  TRIM(codbod)   AS cod_bodega,
+  TRIM(nombod)   AS nombre_bodega,
+  TRIM(telbod)   AS telefono,
+  TRIM(ubibod)   AS ubicacion,
+  TRIM(resbod)   AS responsable,
+  CURRENT_DATE() AS snapshot_date
+FROM motoshop.bronze.bodegas
+WHERE codbod IS NOT NULL;
 
 # COMMAND ----------
 
-from pyspark.sql.functions import col, trim, current_date
+-- MAGIC %sql
 
-df_bronze = spark.table(f"{BRONZE}.bodegas")
-print(f"Filas bronze.bodegas: {df_bronze.count()}")
-print("Columnas:", df_bronze.columns)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Transformación
-# MAGIC
-# MAGIC Nota: `sucursales` tiene 0 filas en la BD actual.
-# MAGIC Solo 1 bodega principal.
+SELECT
+  COUNT(*) AS total,
+  COUNT(DISTINCT cod_bodega) AS distintos,
+  COUNT(*) - COUNT(DISTINCT cod_bodega) AS duplicados
+FROM motoshop.silver.dim_bodega;
 
 # COMMAND ----------
 
-df_silver = (
-    df_bronze
-    .select(
-        trim(col("codbod")).alias("cod_bodega"),
-        trim(col("nombod")).alias("nombre_bodega"),
-        trim(col("telbod")).alias("telefono"),
-        trim(col("ubibod")).alias("ubicacion"),
-        trim(col("resbod")).alias("responsable"),
-        current_date().alias("snapshot_date"),
-    )
-    .where(col("cod_bodega").isNotNull())
-    .dropDuplicates(["cod_bodega"])
-)
+-- MAGIC %sql
 
-print(f"Filas dimension bodega: {df_silver.count()}")
-
-# COMMAND ----------
-
-# Validación PK
-pk_count = df_silver.count()
-pk_distinct = df_silver.select("cod_bodega").distinct().count()
-assert pk_count == pk_distinct, (
-    f"❌ Duplicados en dim_bodega: {pk_count} vs {pk_distinct}"
-)
-print(f"✅ PK única: {pk_count}")
-
-# COMMAND ----------
-
-# Escritura
-df_silver.write.format("delta").mode("overwrite").saveAsTable(TARGET)
-final_count = spark.table(TARGET).count()
-print(f"✅ dim_bodega: {final_count} filas en silver")
-display(spark.table(TARGET).limit(10))
+SELECT COUNT(*) AS dim_bodega_rows FROM motoshop.silver.dim_bodega;
