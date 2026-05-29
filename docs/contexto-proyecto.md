@@ -1,4 +1,4 @@
-# Contexto del Proyecto MotoShop · Snapshot 2026-05-28
+# Contexto del Proyecto MotoShop · Snapshot 2026-05-29
 
 > **Para qué sirve este documento.** Capturar en un solo archivo todo lo que se ha hecho desde el inicio hasta hoy, el pipeline operativo actual, los archivos clave y el estado de cada deuda. Es el "estado del arte" del proyecto al cierre de Fase 1. Útil para retomar contexto, presentar al curso, o hacer auditoría externa.
 >
@@ -602,4 +602,4 @@ Si vas a ejecutar (no planificar):
 
 ## 15 · Resumen ejecutivo en una frase
 
-> **Tres días, dos fases cerradas, un repo público de 121 archivos y una API operativa en internet que sirve datos reales de MotoShop a ~50 ms p95 (warm) — con 3 deudas conscientes documentadas y F2 lista para arrancar.**
+> **Tres días, dos fases cerradas y dos hardening sprints (F1.5 + F1.9), un repo público con pipeline cada 30 min resiliente a PC apagado / sin internet, API operativa con cache `/stock` y endpoint de lag monitor — con 4 deudas conscientes documentadas (R1, R2, R4, R5), 13 ADRs aceptados, y F2 · Silver + PWA MVP arrancando con `business_date` definida desde el día 1 (ADR-0013 opción C).**

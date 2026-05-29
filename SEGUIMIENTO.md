@@ -28,17 +28,17 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **Fase 2 · Silver + PWA MVP** (abierta tras cierre F1-FIX2) |
+| Fase activa | **Fase 2 · Silver + PWA MVP** (abierta tras cierre F1.9) |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Arranque de F2 |
-| Avance global | 1/7 fases cerradas (F1 cerrada) |
-| Última actualización | 2026-05-28 |
+| Próximo gate | Aprobación ADR-0014 (stack F2-A) y arranque de Sprint F2-A |
+| Avance global | 1/7 fases cerradas + 2 hardening sprints (F1.5, F1.9) |
+| Última actualización | 2026-05-29 |
 
 ```
-F0 ✅  F1 ✅  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
+F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 ```
 
-> **2026-05-28 — F1 cerrada vía F1-FIX2.** Se archivaron V6/V7/C-1 en `_runs/`, SEGUIMIENTO quedó sincronizado con la realidad operativa y F2 queda abierta para Silver + PWA MVP. El detalle histórico de la auditoría previa se conserva más abajo.
+> **2026-05-29 — F1.9 cerrada; F2 abierta.** Humano aprobó ADR-0013 (opción C: Silver con `business_date` derivada) sin ajustes. D12 a fecha. R5 documentada. Pipeline robusto contra PC apagado / sin internet. Próximo paso: revisor escribe `docs/plan-f2.md` + `docs/decisions/0014-stack-f2.md` (decisiones técnicas Sprint F2-A · Silver).
 
 ---
 
@@ -59,7 +59,7 @@ F0 ✅  F1 ✅  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 | D9 | 2026-05-27 | Auth: login propio JWT + bcrypt (Opción A) | Google OAuth; Microsoft Entra | Control total, sin dependencias externas. ADR: [0008](docs/decisions/0008-auth-provider.md) |
 | D10 | 2026-05-28 | Compute Databricks: extracción local + UC Volume + Serverless SQL (Opción A) | Migrar a plan con clusters (B); reemplazar Databricks por DuckDB (C) | Free Edition no tiene clusters; el camino crítico no depende de drivers JDBC en Databricks. ADR: [0010](docs/decisions/0010-compute-databricks-free.md) |
 | D11 | 2026-05-28 | Stack F1 (DT-1 a DT-10): SQLAlchemy core, pyjwt+bcrypt, slowapi, users.yaml, offset+limit, INSERT REPLACE WHERE, manifest al Volume, structlog, repos+integration mark, bronze raw → silver UTC → API UTC | mysql-connector directo (DT-1), python-jose (DT-2), Redis (DT-3), SQLite (DT-4), keyset (DT-5), CREATE OR REPLACE (DT-6), tabla _meta_runs (DT-7), loguru (DT-8), solo unit (DT-9), bronze TZ-aware (DT-10) | Equilibrio entre velocidad de F1 y portabilidad a F2+. Aprobado en bloque sin ajustes. ADR: [0011](docs/decisions/0011-stack-f1.md) |
-| D12 | _pendiente_ | `ingest_date` (técnica) en bronze + `business_date` derivada en silver (Opción C) | A · status quo (no recomendado, deuda silenciosa); B · bronze con doble fecha (gran refactor) | Bronze permanece inmutable (ADR-0001), Silver concentra lógica del negocio, cero re-trabajo de datos ya ingestados, maneja data sucia (`fecfven > 2099`) con expectations. ADR: [0013](docs/decisions/0013-fecha-tecnica-vs-negocio.md) **Proposed** |
+| D12 | 2026-05-29 | `ingest_date` (técnica) en bronze + `business_date` derivada en silver (Opción C) | A · status quo (no recomendado, deuda silenciosa); B · bronze con doble fecha (gran refactor) | Bronze permanece inmutable (ADR-0001), Silver concentra lógica del negocio, cero re-trabajo de datos ya ingestados, maneja data sucia (`fecfven > 2099`) con expectations. ADR: [0013](docs/decisions/0013-fecha-tecnica-vs-negocio.md). Aprobado en bloque sin ajustes. |
 
 ---
 
@@ -645,6 +645,25 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-29 — Sesión 23 · ADR-0013 aprobado · F1.9 cerrada · F2 abierta
+
+- **Hecho:**
+  - ✅ Humano leyó ADR-0013 y aprobó opción C (Silver con `business_date` derivada) sin ajustes.
+  - ✅ ADR-0013 marcado `Accepted · 2026-05-29`; D12 a fecha en bitácora.
+  - ✅ Estado global actualizado: F0 ✅ / F1 ✅ / F1.5 ✅ / F1.9 ✅ / **F2 🟡 abierta**.
+  - ✅ `docs/contexto-proyecto.md`: snapshot a 2026-05-29; §15 resumen ejecutivo refleja realidad post-F1.9 (4 deudas vivas R1/R2/R4/R5; 13 ADRs).
+  - ✅ PENDIENTES sesión 22 cerrada como histórico.
+- **Aprendido:**
+  - El patrón `sondeo → ADR informado → aprobación → fase abre` funcionó limpio: 5 minutos de lectura del humano para aprobar una decisión que va a regir toda la lógica de Silver/Gold por el resto del proyecto.
+  - La opción C (Silver con business_date) preserva el principio medallion (Bronze inmutable, ADR-0001) y concentra el trabajo semántico en la capa donde corresponde.
+- **Abierto:**
+  - **R1, R2, R4, R5** deudas vivas con triggers documentados.
+  - Verificación menor pendiente: curl en vivo `/health/data-freshness` (30 s, no bloquea F2).
+- **Próximo paso:**
+  - Revisor escribe `docs/plan-f2.md` (3 sprints) + `docs/decisions/0014-stack-f2.md` (decisiones técnicas Sprint F2-A · Silver) en commit aparte.
+
+---
 
 ### 2026-05-29 — Sesión 22 · Auditoría F1.9 + ADR-0013 (Proposed) + R5 documentada
 

@@ -8,7 +8,15 @@
 
 ---
 
-## Sesión 2026-05-29 (22) · Auditoría F1.9 + ADR-0013 esperando aprobación
+## Sesión 2026-05-29 (22) · Auditoría F1.9 + ADR-0013 — ✅ CERRADA
+
+✅ **Humano aprobó ADR-0013 opción C** (Silver con `business_date` derivada). F1.9 cierra. F2 abierta. El bloque histórico queda como referencia.
+
+(Verificación opcional del curl en vivo del endpoint `/health/data-freshness` queda al ejecutor cuando tenga 30 segundos — no bloquea F2.)
+
+---
+
+## ~~Sesión 2026-05-29 (22) · Auditoría F1.9 + ADR-0013 esperando aprobación~~ *(histórico)*
 
 ### Resumen
 Revisor auditó F1.9 (commits `c9baa7e`, `75b5727`) y emitió **🟢 GO condicional**. Las 3 tareas del ejecutor están cumplidas con evidencia honesta. Sondeo reveló datos críticos que el plan no asumía bien (no existe `fecdoc` universal — cada tabla usa su propio nombre).

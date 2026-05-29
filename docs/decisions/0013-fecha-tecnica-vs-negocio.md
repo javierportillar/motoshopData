@@ -1,6 +1,6 @@
 # ADR-0013 · `ingest_date` (técnica) vs `business_date` (de negocio)
 
-- **Estado:** **Proposed** — pendiente aprobación humana
+- **Estado:** **Accepted** — 2026-05-29 (humano aprobó opción C sin ajustes)
 - **Fecha:** 2026-05-29
 - **Bloquea:** F2-A (Silver) y reportes históricos en F3
 - **Decide:** Humano
@@ -155,16 +155,14 @@ Razones:
 
 ---
 
-## Para humano · qué tenés que decidir
+## Decisión humana · 2026-05-29
 
-Marcá una opción cuando leas este ADR:
+- [ ] A · Status quo
+- [ ] B · Bronze con doble fecha
+- [x] **C · Silver con business_date** ⭐ aprobada sin ajustes
+- [ ] Otra
 
-- [ ] **A · Status quo** (no recomendado — deuda silenciosa para F3)
-- [ ] **B · Bronze con doble fecha** (gran refactor, no recomendado)
-- [ ] **C · Silver con business_date** ⭐ recomendada
-- [ ] **Otra** (describime tu idea)
-
-Si aprobás C, marco este ADR como `Accepted`, abro F2 y el plan `docs/plan-f2.md` incorpora la lógica de business_date en Silver desde el día 1.
+ADR pasa a `Accepted`. F1.9 cierra. F2 abre. El plan `docs/plan-f2.md` (Sesión 23) incorpora la lógica de business_date en Silver desde el primer commit.
 
 ---
 
