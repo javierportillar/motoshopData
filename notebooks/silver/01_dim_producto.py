@@ -9,7 +9,6 @@ SELECT
   TRIM(codprod)        AS cod_producto,
   TRIM(nomprod)        AS nombre_producto,
   TRIM(codbar)         AS codigo_barras,
-  TRIM(unimed)         AS unidad_medida,
   TRIM(codmed)         AS cod_medida,
   CAST(valmed AS DOUBLE)    AS valor_medida,
   TRIM(presen)         AS presentacion,
