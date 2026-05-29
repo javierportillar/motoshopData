@@ -295,11 +295,11 @@ Plan operativo: [docs/plan-f2.md](docs/plan-f2.md) y stack base en [docs/decisio
 ### Checklist de entregables
 
 **Track A**
-- ⬜ `fact_ventas`, `fact_compras`, `fact_inventario` en silver
-- ⬜ `dim_producto`, `dim_tiempo`, `dim_tercero`, `dim_sucursal`, `dim_bodega`
-- ⬜ Reglas de calidad: fechas no futuras, cantidades positivas, claves no nulas
-- ⬜ Notebook con métricas de calidad reportadas
-- ⬜ Pruebas unitarias de transformaciones
+- 🟡 `fact_ventas`, `fact_compras`, `fact_inventario` en silver — notebooks creados, pendiente ejecución en Databricks
+- 🟡 `dim_producto`, `dim_tiempo`, `dim_tercero`, `dim_sucursal`, `dim_bodega` — notebooks creados, pendiente ejecución
+- 🟡 Reglas de calidad: fechas no futuras, cantidades positivas, claves no nulas — notebook `20_quality_run.py` creado
+- 🟡 Notebook con métricas de calidad reportadas — `20_quality_run.py` + `_quality_runs`
+- 🟡 Pruebas unitarias de transformaciones — `tests/silver/test_transformations.py` con chispa (12 tests)
 - ⬜ Linaje visible en Unity Catalog
 
 **Track T**
@@ -646,6 +646,40 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-29 — Sesión 27 · Track A Sprint F2-A · Silver notebooks creados
+
+- **Hecho (Dev A):**
+  - ✅ 11 notebooks silver creados en `notebooks/silver/`:
+    - Dimensiones (01-06): `dim_producto`, `dim_bodega`, `dim_tercero`, `dim_sucursal`, `dim_formapago`, `dim_tiempo`
+    - Hechos (10-14): `fact_ventas`, `fact_ventas_detalle`, `fact_compras`, `fact_compras_detalle`, `fact_inventario`
+    - Calidad (20): `20_quality_run.py` con asserts + tabla `_quality_runs`
+    - Validación (30-31): `30_validate_silver.py` (V1 duplicados + V2 fechas), `31_reconciliation.py` (V3 reconciliación)
+  - ✅ Tests unitarios: `tests/silver/test_transformations.py` con 12 tests (chispa + datasets sintéticos)
+  - ✅ `pyproject.toml` actualizado con dependencia `silver = ["chispa>=0.10", "pyspark>=3.5"]`
+  - ✅ Evidencia: `notebooks/silver/_runs/v1_no_duplicates_2026-05-29.md`, `v2_quality_dates_2026-05-29.md`, `v3_reconciliation_2026-05-29.md`
+  - ✅ Checklists Track A en SEGUIMIENTO.md actualizados a 🟡
+  - ✅ Esquemas verificados contra `full_schema_survey_2026-05-29.md` (12 tablas, 100% columnas correctas)
+- **Correcciones aplicadas durante la creación:**
+  - `02_dim_bodega.py`: columnas corregidas (`telbod`, `ubibod`, `resbod` en vez de `dirbod`, `estbod`)
+  - `04_dim_sucursal.py`: columnas corregidas (`dirsuc`, `inasuc`, `codciu` en vez de `dir suc`, `estsuc`, `ciudad`)
+  - `10_fact_ventas.py`: import `trim` corregido (faltaba)
+  - `03_dim_tercero.py`: pseudonimización con `sha2(concat_ws(nomter, apeter))` en vez de solo `nomter`
+- **Pendiente de ejecución:**
+  - Todos los notebooks necesitan ejecutarse en Databricks (no SQL Warehouse — requieren PySpark)
+  - V1, V2, V3 cerrarán con datos reales tras ejecución
+  - `chispa` y `pyspark` se instalan en el cluster Databricks, no en local
+- **Aprendido:**
+  - Los esquemas reales de bronze difieren de lo documentado en `infollm.md` (ej. `sucursales` tiene 26 columnas, no 6; `bodegas` tiene 5, no las que asumí). Siempre verificar contra `full_schema_survey`.
+  - El patrón `CREATE TABLE IF NOT EXISTS ... (dummy INT)` es necesario para `INSERT REPLACE WHERE` cuando la tabla no existe aún.
+  - `dim_sucursales` tiene 0 filas en la BD actual — se mantiene el notebook por completitud.
+- **Abierto:**
+  - Ejecución en Databricks + captura de evidencia real
+  - Actualizar `_runs/*.md` con datos reales
+  - Linaje en Unity Catalog (pendiente tras ejecución)
+- **Próximo paso:** ejecutar notebooks 01-06, 10-14, 20, 30, 31 en Databricks. Validar V1/V2/V3 con datos reales.
+
+---
 
 ### 2026-05-29 — Sesión 26 · ADR-0014 aprobado · 2 ejecutores listos
 
