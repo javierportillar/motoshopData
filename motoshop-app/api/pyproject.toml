@@ -18,6 +18,7 @@ dependencies = [
   "pyyaml>=6",
   "structlog>=24",
   "cachetools>=5.3",
+  "databricks-sdk>=0.30",
 ]
 
 [project.optional-dependencies]

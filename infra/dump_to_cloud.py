@@ -21,6 +21,9 @@ Uso (manual):
     # Producción (las 12 tablas core de Fase 1)
     python infra/dump_to_cloud.py --tables-core
 
+    # Producción con catch-up (sube Parquets pendientes antes del dump normal)
+    python infra/dump_to_cloud.py --tables-core --catch-up
+
 Variables de entorno requeridas (en .env de la raíz del repo):
     MYSQL_HOST, MYSQL_PORT, MYSQL_DATABASE, MYSQL_USER, MYSQL_PASSWORD
     DATABRICKS_HOST          (URL del workspace)
@@ -241,6 +244,37 @@ def process_table(conn, table: str, ingest_date: str, cfg: Config, dry_run: bool
     }
 
 
+def catch_up(cfg: Config) -> int:
+    """Sube Parquets locales que no están en el UC Volume (pendientes por falta de internet)."""
+    if not STAGING_DIR.exists():
+        log.info("Catch-up: no hay directorio _staging, nada que subir.")
+        return 0
+
+    uploaded = 0
+    failed = 0
+
+    for table_dir in sorted(STAGING_DIR.iterdir()):
+        if not table_dir.is_dir():
+            continue
+        for date_dir in sorted(table_dir.iterdir()):
+            if not date_dir.is_dir() or not date_dir.name.startswith("ingest_date="):
+                continue
+            local_parquet = date_dir / "part-0.parquet"
+            if not local_parquet.exists():
+                continue
+            ingest_date_str = date_dir.name.replace("ingest_date=", "")
+            try:
+                upload_to_volume(local_parquet, table_dir.name, ingest_date_str, cfg)
+                log.info(f"  catch-up OK: {table_dir.name}/{ingest_date_str}")
+                uploaded += 1
+            except Exception as e:
+                log.warning(f"  catch-up FAIL: {table_dir.name}/{ingest_date_str}: {e}")
+                failed += 1
+
+    log.info(f"Catch-up: {uploaded} subidos, {failed} fallidos.")
+    return failed
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     group = p.add_mutually_exclusive_group(required=True)
@@ -248,6 +282,7 @@ def parse_args() -> argparse.Namespace:
     group.add_argument("--tables-core", action="store_true", help="Las 12 tablas core de F1")
     p.add_argument("--ingest-date", default=date.today().isoformat(), help="Fecha de ingesta (YYYY-MM-DD)")
     p.add_argument("--dry-run", action="store_true", help="No subir a Databricks; solo Parquet local")
+    p.add_argument("--catch-up", action="store_true", help="Subir Parquets locales pendientes antes del dump")
     return p.parse_args()
 
 
@@ -264,8 +299,18 @@ def main() -> int:
     log.info(f"Tablas:  {', '.join(tables)}")
     if args.dry_run:
         log.info("Modo:    DRY-RUN (sin subida)")
+    if args.catch_up:
+        log.info("Modo:    CATCH-UP (subir pendientes antes del dump)")
 
     STAGING_DIR.mkdir(exist_ok=True)
+
+    # Catch-up: subir Parquets locales pendientes antes del dump normal
+    if args.catch_up:
+        log.info("\n=== Catch-up: buscando Parquets pendientes ===")
+        catch_up_failures = catch_up(cfg)
+        if catch_up_failures > 0:
+            log.warning(f"Catch-up tuvo {catch_up_failures} fallos. Continuando con dump normal...")
+        log.info("=== Catch-up completado ===\n")
     conn = open_connection(cfg)
 
     summary = []

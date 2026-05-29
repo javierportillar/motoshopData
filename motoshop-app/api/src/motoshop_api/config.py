@@ -33,6 +33,10 @@ class Settings(BaseSettings):
 
     users_file_path: str = Field(default="users.yaml")
 
+    databricks_host: str = Field(default="")
+    databricks_token: str = Field(default="")
+    databricks_volume_path: str = Field(default="/Volumes/motoshop/bronze/_landing")
+
     @field_validator("jwt_secret")
     @classmethod
     def validate_jwt_secret(cls, v: str, info) -> str:

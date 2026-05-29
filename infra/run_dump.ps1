@@ -1,6 +1,6 @@
 # run_dump.ps1 — Wrapper para Windows Task Scheduler
-# Ejecuta dump_to_cloud.py --tables-core con logging.
-# Programado: 12:00 PM, 8:00 PM, 2:00 AM (hora COL)
+# Ejecuta dump_to_cloud.py --tables-core --catch-up con logging.
+# Programado: cada 30 min en ventana 07:00–19:30
 
 $ErrorActionPreference = "Continue"
 
@@ -18,7 +18,7 @@ $StartTime = Get-Date
 "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') === INICIO DUMP ===" | Out-File -FilePath $LogFile -Encoding utf8
 
 & $VenvActivate
-$process = Start-Process -FilePath "python" -ArgumentList "$Script --tables-core" -NoNewWindow -PassThru -Wait -RedirectStandardOutput "$LogDir\dump_stdout_$Timestamp.txt" -RedirectStandardError "$LogDir\dump_stderr_$Timestamp.txt"
+$process = Start-Process -FilePath "python" -ArgumentList "$Script --tables-core --catch-up" -NoNewWindow -PassThru -Wait -RedirectStandardOutput "$LogDir\dump_stdout_$Timestamp.txt" -RedirectStandardError "$LogDir\dump_stderr_$Timestamp.txt"
 
 $ExitCode = $process.ExitCode
 $Duration = (Get-Date) - $StartTime

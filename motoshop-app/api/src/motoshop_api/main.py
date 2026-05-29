@@ -22,6 +22,7 @@ from motoshop_api.logging import RequestIDMiddleware, setup_logging
 from motoshop_api.products.router import router as products_router
 from motoshop_api.sales.router import router as sales_router
 from motoshop_api.stock.router import router as stock_router
+from motoshop_api.health.router import router as health_router
 
 
 @asynccontextmanager
@@ -69,6 +70,7 @@ app.include_router(auth_router)
 app.include_router(products_router)
 app.include_router(stock_router)
 app.include_router(sales_router)
+app.include_router(health_router)
 
 
 class HealthResponse(BaseModel):
