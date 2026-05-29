@@ -1,9 +1,10 @@
 # ADR-0015 · Stack técnico de Fase 3 (DT-F3-1 a DT-F3-12)
 
-- **Estado:** **Proposed** — bloquea inicio de Sprint F3-A
+- **Estado:** **Accepted** — 2026-05-29 (humano aprobó las 12 DT en bloque + modo paralelo)
 - **Fecha:** 2026-05-29
 - **Bloquea:** F3 (los 3 sprints)
 - **Decide:** Humano
+- **Resuelve:** P5 pendiente desde F0 (BI tool principal: Databricks SQL; Power BI diferido a F6 si gerencia lo pide explícitamente)
 
 ## Contexto
 

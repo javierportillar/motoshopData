@@ -34,4 +34,4 @@ Cada decisión técnica importante del proyecto vive aquí como un archivo Markd
 | [0011](0011-stack-f1.md) | Stack técnico de Fase 1 (DT-1 a DT-10) | Accepted | F1 |
 | [0013](0013-fecha-tecnica-vs-negocio.md) | `ingest_date` técnica vs `business_date` de negocio (opción C) | Accepted · 2026-05-29 | F2-A |
 | [0014](0014-stack-f2.md) | Stack técnico de Fase 2 (DT-F2-1 a DT-F2-16) | Accepted · 2026-05-29 | F2 |
-| [0015](0015-stack-f3.md) | Stack técnico de Fase 3 (DT-F3-1 a DT-F3-12) + resuelve P5 (BI tool) | **Proposed** | F3 |
+| [0015](0015-stack-f3.md) | Stack técnico de Fase 3 (DT-F3-1 a DT-F3-12) + resuelve P5 (BI tool) | Accepted · 2026-05-29 | F3 |

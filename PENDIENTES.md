@@ -8,7 +8,136 @@
 
 ---
 
-## Sesión 2026-05-29 (32) · Plan F3 + ADR-0015 listos · esperando aprobación humana
+## Sesión 2026-05-29 (33) · ADR-0015 Accepted · F3 arranca en paralelo
+
+ADR-0015 aprobado · D14 a fecha · **P5 resuelta** (Databricks SQL).
+
+**Modo: paralelo · 2 devs en el Mac.** Pegá los prompts de abajo en 2 chats Claude nuevos.
+
+---
+
+### 🤖 Handoff para Dev A · Track A · Sprint F3-A
+
+Abrí un chat Claude nuevo (no este) y pegá esto:
+
+```
+Soy Dev A · Track A para la Fase 3 del proyecto MotoShop.
+
+PRE-FLIGHT obligatorio antes de tocar nada:
+1. cd /Users/javierportillarosero/Documents/personal/dataEmpresas/motoshopData
+2. git pull --ff-only origin main
+3. Leé INICIAR_AGENTE.md completo (identificá mi rol = Dev Agent · Track A)
+4. Leé docs/plan-f3.md §4 (Sprint F3-A · Gold + Workflow + Dashboard SQL)
+5. Leé docs/decisions/0015-stack-f3.md (decisiones técnicas que rigen F3)
+6. Leé SEGUIMIENTO.md cabecera + última nota de sesión
+
+MI TRABAJO:
+- 14 archivos a crear/modificar en notebooks/gold/, tests/gold/, infra/, docs/gold/
+- 5 marts gold (mart_ventas_diarias_sku, mart_inventario_actual, 
+  mart_rotacion_abc, mart_cohortes_clientes, mart_productos_dormidos)
+- Workflow Databricks Job nocturno 02:30 COL
+- Dashboard ejecutivo en Databricks SQL UI (exportar JSON)
+- V1 (KPIs cuadran <0.5%), V2 (ABC estable mes a mes), V3 (workflow puntual),
+  V7 (plan refresco) con evidencia en notebooks/gold/_runs/
+
+LO QUE NO TOCO:
+- motoshop-app/web/** (Dev T)
+- motoshop-app/api/src/motoshop_api/metrics/** (Dev T)
+- Archivos de credenciales, users.yaml, .env
+- README API con FG28 (deuda R2 aceptada)
+
+COORDINACIÓN CON DEV T:
+- Cada uno actualiza solo SU sección en SEGUIMIENTO.md y PENDIENTES.md
+- Antes de cada git push: git pull --rebase origin main
+- Commits con prefijo: feat(F3-A-gold): ...
+- Acordamos el contrato JSON de los endpoints /metrics/* (Dev T los implementa
+  consumiendo mis marts; los schemas Pydantic están en docs/plan-f3.md §5.2)
+
+ARRANQUE:
+Empezá por crear los 5 marts (notebooks/gold/10..14) siguiendo el patrón
+canónico de docs/plan-f3.md §4.3 paso 1. Cuando termines cada notebook,
+ejecutalo en Databricks SQL Warehouse y verificá conteos. Push después
+de cada pieza estable.
+
+Al terminar el sprint completo: ping al revisor en el chat principal con
+hash del último commit y archivos en _runs/.
+```
+
+---
+
+### 🤖 Handoff para Dev T · Track T · Sprint F3-B
+
+Abrí OTRO chat Claude (un tercero) y pegá esto:
+
+```
+Soy Dev T · Track T para la Fase 3 del proyecto MotoShop.
+
+PRE-FLIGHT obligatorio:
+1. cd /Users/javierportillarosero/Documents/personal/dataEmpresas/motoshopData
+2. git pull --ff-only origin main
+3. Leé INICIAR_AGENTE.md completo (identificá mi rol = Dev Agent · Track T)
+4. Leé docs/plan-f3.md §5 (Sprint F3-B · API endpoints + PWA Dashboards)
+5. Leé docs/decisions/0015-stack-f3.md (decisiones técnicas)
+6. Leé SEGUIMIENTO.md cabecera + última nota de sesión
+
+MI TRABAJO:
+- 5 endpoints en motoshop-app/api/src/motoshop_api/metrics/
+  (/metrics/sales-summary, /metrics/inventory-summary, /metrics/abc-segmentation,
+   /metrics/dormidos, /metrics/cohortes)
+- Conexión a Databricks SQL Warehouse vía databricks-sql-connector
+- Sección Dashboards mobile-first en PWA (motoshop-app/web/app/(authenticated)/dashboards/)
+- 5 hooks SWR + 5 componentes chart (recharts ~12KB)
+- Estructura push notifications (web-push, prepara solo, NO dispara)
+- V4 dashboard < 5s con evidencia en motoshop-app/web/_runs/v4_dashboard_load.json
+- Tests Playwright para navegación dashboards
+
+LO QUE NO TOCO:
+- notebooks/gold/** ni notebooks/silver/** (Dev A)
+- Archivos de credenciales, users.yaml, .env
+- README API con FG28 (deuda R2 aceptada)
+
+COORDINACIÓN CON DEV A:
+- Cada uno actualiza solo SU sección en SEGUIMIENTO.md y PENDIENTES.md  
+- Antes de cada git push: git pull --rebase origin main
+- Commits con prefijo: feat(F3-B-pwa): ...
+- Mientras Dev A construye los marts, podés MOCKEAR los datos de las
+  queries Databricks para avanzar con la PWA (devolver JSON fake desde
+  el API). Cuando Dev A pushee marts reales, swap a queries reales.
+
+ARRANQUE:
+Empezá por:
+1. Instalar deps: cd motoshop-app/api && pip install -e ".[dev]" databricks-sql-connector
+2. Instalar deps PWA: cd motoshop-app/web && npm install recharts
+3. Crear módulo metrics en API con FakeMetricsRepo + schemas Pydantic (~30 min)
+4. Crear app/(authenticated)/dashboards/page.tsx landing con cards (~1.5 h)
+
+NOTA SOBRE EL API:
+Como editás motoshop-app/api/src/motoshop_api/metrics/, hay que hacer pull+restart
+en la PC Windows después de pushear endpoints (cuando estén estables). Avisame
+cuando estés listo y coordinamos el restart.
+
+Al terminar el sprint: ping al revisor con hash + evidencia v4_dashboard_load.json
+```
+
+---
+
+### Lo que pasa después
+
+Cuando ambos devs reporten "Sprint terminado":
+1. Yo (revisor) audito cada track por separado (~30 min cada uno).
+2. Si ambos PASS → arrancamos **Sprint F3-C** (validación cruzada + demo a gerencia + R6 bonus).
+3. F3-C necesita ~3-4 h con ambos devs + vos para la demo final.
+4. Cuando F3-C cierre → **GO a F4 · Predictivo (ML)**.
+
+### Acción heredada (no bloqueante)
+
+#### ⬜ R6 · Demo 4G
+
+Buena oportunidad: cuando Dev T termine F3-B, la PWA tendrá login + búsqueda + ficha SKU + dashboards. Grabar todo el flujo en 4G y subir a `motoshop-app/web/_runs/v_hito_demo_4g.md`. Cierra R6 + suma evidencia para E3 académico.
+
+---
+
+## ~~Sesión 2026-05-29 (32) · Plan F3 + ADR-0015 listos · esperando aprobación humana~~ *(histórico — ADR Accepted)*
 
 ### Resumen
 F2 cerrada en Sesión 30/31. Revisor escribió plan F3 completo (3 sprints) + ADR-0015 con 12 decisiones técnicas (DT-F3-1..12) que también **resuelve P5 pendiente desde F0** (Power BI vs Databricks SQL).

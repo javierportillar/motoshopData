@@ -65,7 +65,7 @@ F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 🟡  F4 ⬜  F5 ⬜  F6 ⬜
 | D11 | 2026-05-28 | Stack F1 (DT-1 a DT-10): SQLAlchemy core, pyjwt+bcrypt, slowapi, users.yaml, offset+limit, INSERT REPLACE WHERE, manifest al Volume, structlog, repos+integration mark, bronze raw → silver UTC → API UTC | mysql-connector directo (DT-1), python-jose (DT-2), Redis (DT-3), SQLite (DT-4), keyset (DT-5), CREATE OR REPLACE (DT-6), tabla _meta_runs (DT-7), loguru (DT-8), solo unit (DT-9), bronze TZ-aware (DT-10) | Equilibrio entre velocidad de F1 y portabilidad a F2+. Aprobado en bloque sin ajustes. ADR: [0011](docs/decisions/0011-stack-f1.md) |
 | D12 | 2026-05-29 | `ingest_date` (técnica) en bronze + `business_date` derivada en silver (Opción C) | A · status quo (no recomendado, deuda silenciosa); B · bronze con doble fecha (gran refactor) | Bronze permanece inmutable (ADR-0001), Silver concentra lógica del negocio, cero re-trabajo de datos ya ingestados, maneja data sucia (`fecfven > 2099`) con expectations. ADR: [0013](docs/decisions/0013-fecha-tecnica-vs-negocio.md). Aprobado en bloque sin ajustes. |
 | D13 | 2026-05-29 | Stack F2 (DT-F2-1..16): INSERT REPLACE WHERE business_date, SCD1, PySpark assert, partición por business_date, naming fact_/dim_, chispa, Next.js (ya), httpOnly cookies, fetch+lock, Zustand+SWR, Tailwind raw, next-pwa+Workbox, idb-keyval, Stock NetworkOnly + Catálogo SWR, TTL+manual | MERGE INTO (DT-F2-1), SCD2 (DT-F2-2), DLT (DT-F2-3), axios (DT-F2-9), Redux (DT-F2-10), shadcn (DT-F2-11), SW manual (DT-F2-12), Dexie (DT-F2-14) | Coherente con Free Edition + arquitectura medallion. Bundle PWA liviano (< 200KB JS inicial). 16 decisiones en bloque. Aprobado tras discutir patrón alternativo rotativo en DT-F2-1; tabla rotativa "hoy + cierres" se resuelve con vista sobre silver sin perder F4. ADR: [0014](docs/decisions/0014-stack-f2.md). |
-| D14 | _pendiente_ | Stack F3 (DT-F3-1..12): **Databricks SQL** (resuelve P5), INSERT REPLACE WHERE business_date/month, naming mart_, workflow 02:30 COL, SCD1 cohortes, ABC 80/15/5, dormido > 90d, recharts, SWR dedup 60s, web-push preparado, Tailwind responsive | Power BI Desktop (DT-F3-1) — requiere Windows; chart.js (DT-F3-9) — bundle más grande; localStorage (DT-F3-10); OneSignal (DT-F3-11) | Mac-friendly, multi-plataforma, coherente con stack medallion ya en uso, bundle PWA controlado. Resuelve P5 pendiente desde F0. ADR: [0015](docs/decisions/0015-stack-f3.md) **Proposed** |
+| D14 | 2026-05-29 | Stack F3 (DT-F3-1..12): **Databricks SQL** (resuelve P5), INSERT REPLACE WHERE business_date/month, naming mart_, workflow 02:30 COL, SCD1 cohortes, ABC 80/15/5, dormido > 90d, recharts, SWR dedup 60s, web-push preparado, Tailwind responsive | Power BI Desktop (DT-F3-1) — requiere Windows; chart.js (DT-F3-9); localStorage (DT-F3-10); OneSignal (DT-F3-11) | Mac-friendly, multi-plataforma, coherente con stack medallion. Resuelve P5 pendiente desde F0. Aprobado en bloque sin ajustes + modo paralelo confirmado. ADR: [0015](docs/decisions/0015-stack-f3.md). |
 
 ---
 
@@ -654,6 +654,19 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-29 — Sesión 32 · ADR-0015 Accepted · F3 arranca en paralelo
+
+- **Hecho:**
+  - ✅ Humano leyó ADR-0015 y aprobó las 12 DT en bloque (modo paralelo en su Mac).
+  - ✅ ADR-0015 marcado `Accepted · 2026-05-29` + D14 a fecha en bitácora.
+  - ✅ **P5 resuelta** (decisión pendiente desde F0): BI tool principal = Databricks SQL; Power BI diferido a F6 si gerencia lo pide.
+  - ✅ Índice de ADRs actualizado.
+  - ✅ PENDIENTES sesión 33 con **handoffs exactos** para los 2 chats Claude nuevos (Dev A · Track A y Dev T · Track T). Cada uno con pre-flight, scope, lo que NO tocar, política de coordinación, comandos exactos.
+- **Veredicto:** **GO al arranque paralelo de F3-A y F3-B.**
+- **Próximo paso:** humano abre 2 chats Claude nuevos en su Mac y pega los handoffs de PENDIENTES sesión 33. Dev A arranca F3-A (gold marts + workflow + dashboard SQL); Dev T arranca F3-B (endpoints `/metrics/*` + PWA dashboards). Cuando ambos reporten cierre de sprint, revisor audita y se arranca F3-C (validación cruzada + demo a gerencia + R6 bonus).
+
+---
 
 ### 2026-05-29 — Sesión 31 · Plan F3 completo + ADR-0015 (Proposed)
 
