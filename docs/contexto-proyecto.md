@@ -213,7 +213,7 @@ Camino paralelo (solo cuando se valida F1):
 | Ingesta Bronze (Databricks) | A demanda (no automatizado todavía) | 1-2 min | 12 Delta tables |
 | Validación V1 (conteos) | A demanda | <1 min | 12 comparaciones |
 | API `/health` | Por request | ~5 ms p95 | — |
-| API `/products/{sku}/stock` | Por request | **781 ms p95** | — |
+| API `/products/{sku}/stock` | Por request | Endpoint pre-cache: 781 ms p95. Repo cold con cache: 8.9 ms. Warm: 0.0 ms. Endpoint p95 con cache no re-medido — pendiente para F2 con PWA real. | — |
 
 ---
 
@@ -307,7 +307,7 @@ Camino paralelo (solo cuando se valida F1):
 | KPI | Meta | Real | Estado |
 |-----|------|------|--------|
 | Tiempo ingesta diaria total | < 30 min | 30-37 s en 5 corridas | ✅ |
-| Latencia `/products/{sku}/stock` p95 | < 500 ms | **781 ms** | ⚠️ Mitigar en F2 (R-X2) |
+| Latencia `/products/{sku}/stock` p95 | < 500 ms | Pre-cache (S17): 781 ms endpoint. Post-cache (S19): cold 8.9 ms / warm 0.0 ms repo-level. | 🟡 Cache implementado; endpoint p95 a re-medir con PWA real en F2. |
 | Tasa éxito ingesta | 100% en 5 corridas | 5/5 | ✅ |
 | Cobertura tests `auth/`+`products/` | > 70% | 79% global, 89-90% por módulo | ✅ |
 

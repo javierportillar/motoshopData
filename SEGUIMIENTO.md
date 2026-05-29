@@ -227,7 +227,7 @@ F0 ✅  F1 ✅  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 | KPI | Meta | Cómo se mide |
 |-----|------|---------------|
 | Tiempo ingesta diaria total | < 30 min | ✅ 30-37 s sostenido en 5 corridas seguidas (ver `_runs/k3_five_runs_2026-05-28.md`). |
-| Latencia `/products/{sku}/stock` p95 | < 500 ms | ⚠️ 781 ms (medición documentada; no cumple meta, pero ya no falsea el dato). |
+| Latencia `/products/{sku}/stock` p95 | < 500 ms | 🟡 Endpoint pre-cache (Sesión 17): 781 ms. Repo-level con cache (Sesión 19): cold 8.9 ms / warm 0.0 ms. **El cache elimina la porción MySQL**; el endpoint p95 end-to-end no fue re-medido en F1.5. A re-medir en F2 cuando la PWA real consuma el endpoint; si excede 500 ms, debug en HTTP path (auth, rate limit, JSON, no MySQL). |
 | Tasa éxito ingesta | 100% en 5 corridas | ✅ 5/5 corridas documentadas en `notebooks/bronze/_runs/k3_five_runs_2026-05-28.md`. |
 | Cobertura tests `auth/`+`products/` | > 70% | ✅ 79% total; módulos `auth/`, `products/`, `stock/`, `sales/` por encima del objetivo. |
 
@@ -249,7 +249,7 @@ F0 ✅  F1 ✅  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 3. **Separar ejecutor y revisor evita que cada uno apruebe su propio trabajo.** En F1 el ejecutor cerró su sprint dos veces sin pasar los puntos críticos; un revisor independiente lo detectó. Mantener la separación en F2 y siguientes.
 4. **Las deudas aceptadas necesitan triggers de re-evaluación explícitos**, no quedar abiertas. R1 (passwords MySQL en historial) y R2 (credenciales API en README) tienen 4 condiciones cada una que disparan rotación obligatoria. Si una se cumple, no se discute — se actúa.
 5. **Compute Free Edition no permite ML pesado.** F4 (Predictivo) probablemente necesitará migración a plan de pago o entrenamiento local + registro en MLflow remoto. Decisión a tomar a inicio de F3 con tiempo para evitar bloqueo.
-6. **Latencia `/stock` 781 ms ≠ 500 ms.** R-X2 (cache en memoria 5 min con clave SKU) se mantiene como mitigación pendiente. Activar en F2 si la PWA lo demanda al usar el endpoint en producción.
+6. **Latencia `/stock`.** Sesión 17 midió endpoint p95 = 781 ms; Sesión 19 implementó TTLCache que reduce la porción MySQL del request a ~0 ms (test+repo bench verifican). El endpoint p95 end-to-end no fue re-medido tras el cache. Si la PWA de F2 percibe latencia alta, debug en HTTP/auth/Cloudflare, no en MySQL.
 
 ### Riesgos específicos de F1
 
@@ -644,6 +644,28 @@ _(rellenar al cerrar la fase)_
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
 
+### 2026-05-29 — Sesión 20 · Auditoría F1.5 + GO a F2 + propuesta agent-guides
+
+- **Hecho (revisor):**
+  - 🔍 Auditoría de F1.5 (commits `dac0245`, `92a9419`, `768187d`):
+    - ✅ **R3 cerrada honestamente**: evidencia muestra Run 1 matado tras 2 tablas, Run 2 completo, 12/12 tablas con `diff=0` vs origen. El kill ocurrió más temprano que el plan pedía (más conservador, no menos).
+    - ✅ **R-X2 cache implementada correctamente**: `stock/repo.py` envuelve `get_stock_by_sku` con `TTLCache(maxsize=200, ttl=300)`. Test `test_stock_cache_hits_second_call` verifica `connect_calls == 1` tras 2 calls al mismo SKU (cache hit comprobado). 24/24 tests passing.
+    - 🟡 **Observación honesta sobre R-X2**: la métrica original era endpoint-level (781 ms p95, K-1 Sesión 17). El benchmark de Sesión 19 es repo-level (cold 8.9 ms / warm 0.0 ms). El cache elimina la porción MySQL del request, pero la latencia ENDPOINT end-to-end no se re-midió. La meta < 500 ms p95 para `/stock` se valida en F2 cuando la PWA real consuma el endpoint. Si excede, el cuello de botella NO es MySQL — debug HTTP/auth/Cloudflare.
+  - ✅ Inconsistencias en docs sincronizadas: SEGUIMIENTO §KPIs F1 + Lecciones #6 + contexto-proyecto §5.2 + §12.4 ahora reflejan la observación con honestidad.
+- **Veredicto:** 🟢 **GO a Fase 2 · Silver + PWA MVP.** Con la observación de R-X2 como nota visible (no oculta) en KPIs.
+- **Aprendido:**
+  - Cambiar el método de medición entre sprints (endpoint → repo) puede ocultar trade-offs reales. Mejor mantener el método original y añadir mediciones nuevas, no sustituir. R-X2 ilustra cómo evitarlo: documentar AMBAS mediciones.
+  - El cache hit a 0 ms (memoria) es la prueba estructural. La pregunta de UX (¿el usuario percibe < 500 ms?) se contesta con un test end-to-end cuando hay PWA, no antes.
+- **Abierto:**
+  - **R1, R2, R4** quedan como deudas vivas (sin cambios; sus triggers documentados).
+  - **R-X2 endpoint-level re-medición**: cuando F2-C arme la primera demo con la PWA, correr 100 requests reales contra `https://api.fragloesja.uk/products/MOTS1297/stock` y comparar.
+  - **Propuesta agent-guides**: pendiente de aprobación humana. Esquema en mensaje del revisor de Sesión 20.
+- **Próximo paso:**
+  - Si humano aprueba la propuesta de agent-guides → crear `docs/agents/` (5 archivos breves) antes de F2.
+  - Independientemente: escribir `docs/plan-f2.md` + ADR-0012 (decisiones técnicas F2).
+
+---
+
 ### 2026-05-28 — Sesión 18 · Plan F1.5 Hardening pre-F2 (R3 + R-X2)
 
 - **Hecho:**
@@ -710,7 +732,7 @@ _(rellenar al cerrar la fase)_
   - **R2** Credenciales API en README — deuda extendida indefinida con 4 triggers.
   - **R3** Idempotencia kill-y-retry — no probada; mitigación pasiva por `INSERT REPLACE WHERE`.
   - **R4** Workflow Databricks — eliminado; orquestación en Task Scheduler.
-  - **R-X2** Latencia `/stock` 781 ms — cache en memoria pendiente, activar si la PWA lo demanda.
+  - ~~**R-X2** Latencia `/stock` 781 ms — cache en memoria pendiente~~ → Cerrada en Sesión 19 con TTLCache (cache implementado y testeado; endpoint p95 end-to-end pendiente de re-medir con la PWA real de F2).
 - **Próximo paso:**
   - Planificar **F2 · Silver + PWA MVP** (sketch en `docs/plan-f1-fix2.md` §4). Decisiones técnicas nuevas previstas: estrategia silver schema evolution, librería PWA, formato service worker, fetch wrapper JWT en frontend. Sesión 18 abre con el plan F2.
 
