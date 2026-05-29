@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #881337;
+  --color-primary-light: #BE123C;
+  --color-primary-dark: #6B1029;
+  --color-secondary: #1E293B;
+  --color-secondary-light: #334155;
+  --color-secondary-dark: #0F172A;
+  --color-accent: #B45309;
+  --color-accent-light: #D97706;
+  --color-success: #15803D;
+  --color-error: #B91C1C;
+}
+
+@layer base {
+  body {
+    @apply bg-gray-50 text-secondary-dark antialiased;
+  }
+
+  ::selection {
+    @apply bg-primary/20 text-primary-dark;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md;
+  }
+}

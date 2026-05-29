@@ -1,9 +1,23 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { ToastProvider } from "@/lib/ui/Toast";
+import "./globals.css";
 
 export const metadata: Metadata = {
   title: "MotoShop",
-  description: "PWA de consulta remota para MotoShop",
+  description: "Consulta remota de catálogo, stock y ventas",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "MotoShop",
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  themeColor: "#881337",
 };
 
 export default function RootLayout({
@@ -13,7 +27,9 @@ export default function RootLayout({
 }): JSX.Element {
   return (
     <html lang="es">
-      <body>{children}</body>
+      <body className="min-h-screen bg-gray-50 text-secondary-dark antialiased">
+        <ToastProvider>{children}</ToastProvider>
+      </body>
     </html>
   );
 }

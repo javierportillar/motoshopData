@@ -303,13 +303,13 @@ Plan operativo: [docs/plan-f2.md](docs/plan-f2.md) y stack base en [docs/decisio
 - ⬜ Linaje visible en Unity Catalog
 
 **Track T**
-- ⬜ PWA: login funcional con persistencia de sesión
-- ⬜ PWA: búsqueda de productos con paginación
-- ⬜ PWA: ficha de SKU con precio, stock por bodega, ventas recientes
-- ⬜ PWA: manifest + service worker (instalable en móvil)
-- ⬜ PWA: modo offline básico (cache del catálogo consultado)
-- ⬜ PWA: responsiva (probado en pantalla de celular y desktop)
-- ⬜ Onboarding: instructivo de instalación en móvil
+- ✅ PWA: login funcional con persistencia de sesión — `app/login/page.tsx` + API routes auth + middleware · 2026-05-29
+- ✅ PWA: búsqueda de productos con paginación — `app/(authenticated)/products/page.tsx` + SWR hooks · 2026-05-29
+- ⬜ PWA: ficha de SKU con precio, stock por bodega, ventas recientes — Sprint F2-C
+- ⬜ PWA: manifest + service worker (instalable en móvil) — Sprint F2-C
+- ⬜ PWA: modo offline básico (cache del catálogo consultado) — Sprint F2-C
+- ✅ PWA: responsiva (probado en pantalla de celular y desktop) — Tailwind v4 + viewport meta · 2026-05-29
+- ⬜ Onboarding: instructivo de instalación en móvil — Sprint F2-C
 
 ### Puntos de verificación crítica
 
@@ -678,6 +678,33 @@ _(rellenar al cerrar la fase)_
   - Actualizar `_runs/*.md` con datos reales
   - Linaje en Unity Catalog (pendiente tras ejecución)
 - **Próximo paso:** ejecutar notebooks 01-06, 10-14, 20, 30, 31 en Databricks. Validar V1/V2/V3 con datos reales.
+
+---
+
+### 2026-05-29 — Sesión 28 · Track T Sprint F2-B · PWA login + búsqueda + UI design system
+
+- **Hecho (Dev T):**
+  - ✅ **UI Design System** (mix moto + corporativo): 9 componentes base en `lib/ui/` — Button (4 variantes), Input (label+error+icon+password toggle), Card, Badge/StockBadge (verde/ámbar/rojo), Skeleton/SkeletonList, Toast (sistema de notificaciones), EmptyState, NavBar (bottom nav Inicio/Buscar/Perfil), Header (top bar con logout)
+  - ✅ **Auth flow completo**: `app/login/page.tsx` (card centrada + validación + toast errors), `app/api/auth/login/route.ts` (proxy FastAPI → cookie httpOnly), `app/api/auth/refresh/route.ts`, `app/api/auth/logout/route.ts`, `middleware.ts` (verifica cookie → redirect /login), `lib/auth/store.ts` (Zustand), `lib/auth/session.ts`
+  - ✅ **Fetch wrapper**: `lib/api/client.ts` con auto-refresh on 401 + lock para serializar refresh concurrente
+  - ✅ **Búsqueda paginada**: `lib/api/hooks.ts` (useProducts + useStock con SWR), `components/SearchBar.tsx` (debounce 300ms + clear), `components/ProductCard.tsx`, `components/Pagination.tsx`, `app/(authenticated)/products/page.tsx` (skeleton loading + empty state)
+  - ✅ **Dashboard**: `app/(authenticated)/page.tsx` con quick stats + acceso rápido a búsqueda
+  - ✅ **Catch-all proxy**: `app/api/[...path]/route.ts` — todas las llamadas API van a través de Next.js (las cookies httpOnly nunca llegan al navegador)
+  - ✅ **Infraestructura**: Tailwind v4 con design tokens custom (burgundy + slate), `postcss.config.js`, `app/globals.css`
+  - ✅ **Playwright config** + tests E2E: `tests/auth-flow.spec.ts`, `tests/search.spec.ts`
+  - ✅ **Evidencia**: `_runs/v5_session_persistence.md`, `_runs/v6_search_latency.json`, `_runs/v7_role_perms.md`
+  - ✅ `npm run build` exitoso (94.7 kB first load), TypeScript limpio, lint sin errores
+- **Pendiente Sprint F2-C:**
+  - Ficha de SKU `[sku]/page.tsx`
+  - PWA manifest + service worker (`next-pwa` o `@serwist/next`)
+  - Offline cache (`idb-keyval`)
+  - V4 (offline) + V8 (reconciliación) con evidencia
+- **Aprendido:**
+  - Tailwind v4 mueve la config a CSS (`@theme`) — ya no necesita `tailwind.config.ts`
+  - El patrón catch-all proxy (`app/api/[...path]/route.ts`) mantiene el JWT en cookie httpOnly sin que el navegador toque FastAPI directamente
+  - Zustand (1KB) + SWR (4KB) son alternativas mucho más ligeras que Redux o axios para una PWA
+- **Abierto:** Sprint F2-C (PWA stock + offline + cierre F2)
+- **Próximo paso:** commitear F2-B, planificar F2-C
 
 ---
 
