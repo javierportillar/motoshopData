@@ -520,6 +520,7 @@ Cada deuda tiene un **trigger de re-evaluación obligatoria**: si se cumple, se 
 - Bronze poblada con 12 tablas (~80k filas).
 - SQL Warehouse Serverless Starter con auto-stop 10 min.
 - UC Volume `motoshop.bronze._landing` con Parquets y `_manifests/`.
+- Los notebooks viven en `Repos/javierportillar/motoshopData`; si la UI no muestra un Pull claro, el fallback operativo es sincronizar el notebook remoto por API al path del Git folder antes de relanzar el job.
 
 ### 12.4 Métricas
 
@@ -587,9 +588,14 @@ Si vuelves al proyecto después de tiempo, lee en este orden:
 3. **`PENDIENTES.md` bloque más reciente** → qué te toca.
 4. **`docs/plan-f<N>.md` de la fase activa** → cómo está estructurado el trabajo.
 
+Si vas a tocar Databricks notebooks y el cambio ya está en `main`:
+
+5. **No asumas que la UI te va a mostrar un botón de Pull.** Cuando el notebook está en `Repos/`, el agente puede sincronizarlo directamente en el path del Git folder por API (workspace import/export) si la interfaz no deja claro el refresh.
+
 Si vas a ejecutar (no planificar):
 
 5. **`docs/handoff-f<N>.md`** → pre-flight check, política de commits, escalación.
+6. **Si estás en F2, leer `docs/handoff-f2.md`** → incluye la nota operativa sobre sincronizar notebooks de Databricks por API cuando la UI no deje claro el Pull.
 
 ---
 

@@ -14,6 +14,7 @@ Construir un modelo Silver limpio y usable, y exponerlo desde una PWA que permit
 - F1.5 cerrada con R3 validada por kill-y-retry y R-X2 validada con caché real.
 - API read-only funcionando con auth, rate limit y tests verdes.
 - Seguimiento y contexto del proyecto ya distinguen F1 cerrada y F2 abierta.
+- Los notebooks de Databricks viven en `Repos/javierportillar/motoshopData`; si un cambio ya está en `main`, el agente puede sincronizar el notebook en el Git folder por API cuando la UI no haga evidente el Pull.
 
 ## Ruta rápida
 
