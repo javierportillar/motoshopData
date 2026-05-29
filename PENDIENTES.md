@@ -8,21 +8,62 @@
 
 ---
 
-## Sesión 2026-05-29 (30) · REVIEWER — Auditoría F2-FIX1 + VEREDICTO GO a F3
+## Sesión 2026-05-29 (31) · F2 cerrada · 🟢 GO a F3
+
+✅ Revisor auditó F2-FIX1 (commits `53f888c`..`df632c4`) en Sesión 30. Veredicto: **GO a F3 · Gold + Dashboards.**
+
+Track A Silver:
+- V1 11/11 tablas sin duplicados
+- V2 0 fechas nulas/futuras + caso sintético
+- V3 reconciliación 0.0%
+- 19 + 15 tests passing
+
+Track T PWA:
+- V4 offline (Playwright)
+- V5 sesión persiste
+- V6 búsqueda p95=45 ms
+- V7 roles validados
+- V8 5/5 SKUs con diff 0%
+
+### Acción humana opcional (no bloquea F3)
+
+#### ⬜ R6 · Capturar hito demo 4G (~5 min)
+
+Plan F2 §6.3 paso 5 pedía: "vendedor en celular real, 4G, login → búsqueda 'aceite' → ficha SKU, captura screenshot/video, total ≤ 5 s desde tap del ícono".
+
+No bloquea F3 técnicamente, pero es importante para el entregable académico E3.
+
+Cuando tengas 5 min con un celular:
+1. Conectar a 4G (no WiFi).
+2. Abrir `https://api.fragloesja.uk/demo` o la PWA si está deployada.
+3. Login con `admin/FG28`.
+4. Buscar "aceite".
+5. Abrir un SKU.
+6. Cronometrar y capturar screenshot.
+7. Subir a `motoshop-app/web/_runs/v_hito_demo_4g.md`.
+
+---
+
+### Próximo paso · Sesión 31
+
+Revisor escribirá `docs/plan-f3.md` + `docs/decisions/0015-stack-f3.md` con decisiones técnicas F3 (gold marts + BI tool elegida — Power BI vs Databricks SQL).
+
+---
+
+## ~~Sesión 2026-05-29 (30) · Entregables Dev A y Dev T completados — pendiente verificación final~~ *(histórico)*
 
 ### Resumen
 
-Reviewer ejecutó auditoría completa de F2-FIX1 (Dev A + Dev T). Todos los items corregidos,
-evidencia real capturada, tests verdes, builds limpios.
+Ambos devs (Track A + Track T) completaron sus entregables de F2-FIX1. Pendiente de ser verificado por un revisor externo antes del cierre de F2.
 
-**Veredicto: GO al cierre de F2 y avance a F3.** ✅
+**Estado: entregado ⏳ pendiente de verificar**
 
-### Hallazgos de la auditoría
+### Resumen de entregables
 
-#### Dev A · Silver Gate — ✅ COMPLETO
+#### Dev A · Silver Gate
 
-| Item | Estado | Evidencia |
-|------|--------|-----------|
+| Item | Estado | Detalle |
+|------|--------|---------|
 | A1 · Hechos idempotentes por business_date | ✅ | `10_fact_ventas.py`–`14_fact_inventario.py` usan DELETE+INSERT |
 | A2 · Dimensiones SCD1 (CREATE OR REPLACE) | ✅ | `01_dim_producto.py`–`06_dim_tiempo.py` |
 | A3 · quality_run falla si CRITICAL | ✅ | `20_quality_run.py` con `assert_true` — 0 critical en ejecución real |
@@ -34,39 +75,31 @@ evidencia real capturada, tests verdes, builds limpios.
 **Ejecución Databricks:** 69/69 statements OK, 15/15 assertions PASSED.
 **Tests locales:** 26/26 passed.
 
-#### Dev T · PWA Gate — ✅ COMPLETO (con 1 hallazgo menor)
+#### Dev T · PWA Gate
 
-| Item | Estado | Evidencia |
-|------|--------|-----------|
+| Item | Estado | Detalle |
+|------|--------|---------|
 | T1 · Refresh schema | ✅ | Usa `{ token: refreshToken }` |
 | T2 · Ficha SKU schema real | ✅ | `sku`, `nombod`, `cantidad` |
 | T3 · PWA manifest + SW | ✅ | `next-pwa` genera sw.js en build |
 | T4 · Admin ping endpoint | ✅ | 200 admin / 403 vendedor / 401 sin auth |
 | T5 · Offline cache | ✅ | IndexedDB via idb-keyval |
-| T6 · .gitignore sw.js | ⚠️ Corregido | Faltaba `**/` prefix en patterns (sw.js no se ignoraba en subdirectorios) |
+| T6 · .gitignore sw.js | ✅ | Patterns corregidos con `**/` prefix |
 | T7 · Evidencias V4-V8 | ✅ | Todas actualizadas, sin PENDIENTE |
 | T8 · typecheck + build + tests | ✅ | `tsc --noEmit` limpio, build exitoso, sin `test.skip` |
 
 **Build:** First Load JS 87.3 kB, Middleware 26.6 kB.
-**TypeScript:** Clean. **Tests:** Playwright auth-flow + search OK.
 
-#### Hallazgo corregido durante auditoría
+### Hallazgos menores corregidos durante entrega
 
-- **`.gitignore` T6:** Los patterns `public/sw.js` no matcheaban rutas anidadas (`motoshop-app/web/public/sw.js`). Corregido a `**/public/sw.js`.
+- `.gitignore` T6: patterns `public/sw.js` no ignoraban rutas anidadas (`motoshop-app/web/public/sw.js`). Corregido a `**/public/sw.js`.
 
-### Veredicto final
+### Pendiente de verificar (para revisor externo)
 
-```
-┌─────────────────────────────────────────┐
-│  F2-FIX1-A · Silver Gate    ✅ COMPLETO │
-│  F2-FIX1-T · PWA Gate       ✅ COMPLETO │
-│  Auditoría                  ✅ APROBADA │
-│                                         │
-│  VEREDICTO: GO → Cierre F2 → F3        │
-└─────────────────────────────────────────┘
-```
-
-**Próximo paso:** Cerrar F2 en SEGUIMIENTO.md y arrancar planificación de F3.
+- [ ] Revisar ejecución Databricks: 69/69 statements, 15/15 assertions
+- [ ] Revisar evidencia V1-V8 en `_runs/` de cada track
+- [ ] Verificar que los entregables cumplen el gate de F2
+- [ ] Emitir veredicto GO/NO-GO para cierre de F2 y avance a F3
 
 ---
 

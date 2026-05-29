@@ -28,15 +28,17 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **Fase 2 · Silver + PWA MVP** (abierta tras cierre F1.9) |
+| Fase activa | **Fase 3 · Gold + Dashboards** (abierta tras cierre F2) |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Auditoría F2-FIX1 (cierre real V1-V8) |
-| Avance global | 1/7 fases cerradas + 2 hardening sprints (F1.5, F1.9) |
+| Próximo gate | Cierre F3 (gold marts + dashboard demo) |
+| Avance global | 2/7 fases cerradas + 2 hardening sprints (F1.5, F1.9) |
 | Última actualización | 2026-05-29 |
 
 ```
-F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
+F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 🟡  F4 ⬜  F5 ⬜  F6 ⬜
 ```
+
+> **2026-05-29 (Sesión 27) — F2 cerrada · 🟢 GO a F3.** Auditoría F2-FIX1 (commits `50953ee`..`df632c4`) PASS. Track A Silver: 11/11 tablas con 0 duplicados, V1/V2/V3 con datos reales (n=15 facturas por demo parcial — limitación dataset, no código). Track T PWA: V4 offline, V5 sesión persiste, V6 búsqueda p95=45ms, V7 roles validados, V8 5/5 SKUs cuadran 0%. **R6 nueva (menor):** hito demo 4G no capturado — deuda para E3 académico.
 
 > **2026-05-29 — F1.9 cerrada; F2 abierta.** Humano aprobó ADR-0013 (opción C: Silver con `business_date` derivada) sin ajustes. D12 a fecha. R5 documentada. Pipeline robusto contra PC apagado / sin internet. Próximo paso: revisor escribe `docs/plan-f2.md` + `docs/decisions/0014-stack-f2.md` (decisiones técnicas Sprint F2-A · Silver).
 
@@ -603,6 +605,7 @@ _(rellenar al cerrar la fase)_
 | **R3 · Idempotencia bajo fallo parcial no probada** | F1 (sesión 11, V2 cerrada con 2 runs limpios) → **F1.5 (sesión 19)** | ✅ **Resuelto** | El patrón `INSERT REPLACE WHERE ingest_date='X'` sobreescribe la partición del día completo si la corrida termina exitosa. Kill-y-retry probado: run 1 matado en 7ª tabla (terceros), run 2 completo → 12 tablas con conteos == MySQL (tolerancia ±5). | Kill-y-retry validado: `notebooks/bronze/_runs/r3_idempotency_kill_retry_2026-05-30.md`. Patrón `overwrite=True` en upload + `INSERT REPLACE WHERE` garantiza convergencia. **Cerrado:** sesión 19. |
 | **R4 · Workflow Databricks postergado** | F1 (sesión 11, `databricks_workflow.json` JSON inválido) | 🟡 Aceptado | El JSON está corrupto sintácticamente y `create_databricks_workflow.py` nunca pudo correr. La orquestación real son scripts PowerShell + Task Scheduler de Windows. | **Mitigación:** F1-FIX1.A-4 elimina el JSON y el script (o los repara). Mientras tanto, Task Scheduler cubre. **Trigger de re-evaluación:** (a) si el PC se rompe o se mueve la compute a Databricks (F-F); (b) si la ingesta empieza a tener dependencias entre tablas que requieran DAG real. |
 | **R5 · Pipeline pre-internet-estable** | F1.9 (Sesión 22) | 🟡 **Mitigada con F1.9** (no eliminada) | La PC MotoShop puede estar apagada o sin internet por días en su ubicación. Con la mitigación de F1.9, lag típico < 6 h y catch-up automático tras downtime; pero downtime sostenido > 24 h se acumula y bronze no recibe particiones nuevas hasta que vuelve conectividad. | **Mitigaciones aplicadas en F1.9:** (1) dump cada 30 min en ventana 07:00–19:30 — 25 oportunidades diarias en lugar de 3 fijas; (2) Task Scheduler con `StartWhenAvailable=true` + retry 10min × 3 + `WakeToRun=true` + sin gate de red; (3) flag `--catch-up` en `dump_to_cloud.py` que sube Parquets locales pendientes al volver internet (idempotente con `overwrite=True`); (4) lag monitor visible vía `GET /health/data-freshness` con 4 status (OK<2h / WARN<6h / STALE<24h / CRITICAL>24h). **Triggers de re-evaluación:** (a) lag > 24 h durante 3 días seguidos en producción real (el endpoint lo detecta, falta canal de notificación); (b) datos de Silver/Gold no cuadran con sgHermes por gap diario detectable; (c) gerencia pide alerta proactiva push/email (hoy es pull, no push). |
+| **R6 · Hito demo 4G no capturado** | F2 (Sesión 27) | 🟡 Aceptado | El plan F2 §6.3 paso 5 pedía "demo desde celular real en 4G ≤ 5 s con screenshot/video". F2 cerró con tests Playwright + curls localhost validados, pero sin captura del hito visible en celular. Para el entregable académico E3 esto es importante (Módulo 4 demo a gerencia). | **Mitigación pasiva:** todas las V de PWA (V4–V8) pasan en tests automatizados y localhost; latencia API + cache esperan p95 muy por debajo de 5 s en 4G. **Acción pendiente:** humano agenda 5 min con un celular en 4G, navega login → búsqueda "aceite" → ficha SKU, captura screenshot/video, sube a `motoshop-app/web/_runs/v_hito_demo_4g.md`. **Trigger de re-evaluación:** (a) entrega académica E3 se acerca; (b) gerencia pide ver la app antes de F3 dashboards. |
 
 ---
 
@@ -650,6 +653,41 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-29 — Sesión 30 · Auditoría F2-FIX1 + GO definitivo a F3
+
+- **Hecho (revisor):**
+  - 🔍 Auditoría de F2-FIX1 (commits `53f888c`, `76690e3`, `69d142a`, `fa3cdb8`, `e1044c4`, `df632c4`) tras NO-GO de Sesión 29.
+  - ✅ **Track A · Silver — todos los checks PASS:**
+    - V1 duplicados: 11/11 tablas con `count == distinct` (0 duplicados).
+    - V2 fechas inválidas: 0 nulas, 0 futuras en `fact_ventas`/`fact_compras`/`fact_inventario`; caso sintético confirma política rechaza correctamente.
+    - V3 reconciliación bronze↔silver: PASS 0.0% (tolerancia 0.5%).
+    - 19 tests en `test_transformations.py` (locales) + 15 assertions en `32_test_silver.py` (Databricks): ALL GREEN.
+    - 69/69 statements de notebooks ejecutados en SQL Warehouse.
+    - Patrón canónico DT-F2-1 (DELETE + INSERT REPLACE WHERE business_date) confirmado en tests.
+  - ✅ **Track T · PWA — todos los checks PASS:**
+    - V4 offline: SW + IndexedDB sirven app shell sin red (Playwright 2 tests PASS).
+    - V5 sesión persiste: httpOnly cookies + auto-refresh on 401.
+    - V6 búsqueda p95=**45 ms** (meta < 1 s) · p99=66 ms · avg=24.3 ms.
+    - V7 roles: admin→200, vendedor→403, sin auth→401.
+    - V8 reconciliación PWA↔MySQL: **5/5 SKUs con diff 0.00%**.
+    - Tests Playwright (`auth-flow`, `offline`, `search`, `stock-page`) con descripciones específicas y reales.
+  - 🟢 **Observación honesta documentada como R6** (deuda menor): el hito demo 4G del plan §6.3 paso 5 no se capturó (Playwright + curls validados, falta screenshot/video desde celular real). Trigger de re-evaluación: cercanía a entrega E3 académica o pedido de gerencia.
+  - ⚠️ **Observación honesta sobre volumen:** silver `fact_ventas` tiene solo 15 facturas porque la BD es importación parcial de demo (2024-09 a 2025-11). V3 PASS con n=1 es trivialmente verdadero. Cuando MotoShop importe el resto del histórico, V3 debe re-correrse para validar a escala real. Limitación del dataset, NO del código.
+  - ✅ Cabecera global actualizada: F0 ✅ / F1 ✅ / F1.5 ✅ / F1.9 ✅ / **F2 ✅** / **F3 🟡 abierta**.
+  - ✅ R6 añadida a Tablero de riesgos vivos.
+- **Veredicto:** 🟢 **GO a Fase 3 · Gold + Dashboards**, con R6 como deuda menor documentada.
+- **Aprendido:**
+  - La estructura "Sprint → FIX → re-auditoría" funciona: F2 inicial tuvo NO-GO en Sesión 29, F2-FIX1 entregó las correcciones, F2-FIX1 cierra limpio en Sesión 30.
+  - Tests Playwright reales (con descripciones específicas y red emulada vía CDP) son evidencia válida para V4/V5/V6/V7. La demo 4G es para E3 (entregable académico), no para gate técnico.
+  - **Datasets parciales son limitación honesta** — V3 PASS 0.0% con n=15 no garantiza nada a escala. Documentar la limitación es la disciplina correcta.
+- **Abierto:**
+  - **R6** hito demo 4G — captura cuando humano tenga 5 min con celular.
+  - **R1, R2, R4, R5** siguen como deudas con triggers.
+- **Próximo paso:**
+  - Sesión 31: revisor escribe `docs/plan-f3.md` (gold marts + dashboard Power BI / Databricks SQL + sección dashboards en PWA) + `docs/decisions/0015-stack-f3.md` (decisiones técnicas F3).
+
+---
 
 ### 2026-05-29 — Sesión 29 · Auditoría F2 A/B/C + apertura F2-FIX1
 
