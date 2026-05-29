@@ -647,6 +647,26 @@ _(rellenar al cerrar la fase)_
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
 
+### 2026-05-29 — Sesión 25 · F2 paralelizable (Track A || Track T)
+
+- **Hecho (revisor):**
+  - 💬 Humano preguntó si F2 puede dividirse en 2 agentes en paralelo.
+  - 🔍 Análisis de dependencias: F2-A (Silver) y F2-B (PWA login + búsqueda) son técnicamente independientes — Bronze ya está, la API de F1 ya sirve `/products?q=` desde Bronze, y la PWA puede consumir whitespace en cliente como workaround mientras Silver llega. F2-C depende solo de F2-B (no de Silver).
+  - ✅ [`docs/plan-f2.md`](docs/plan-f2.md) actualizado:
+    - §10 Calendario reescrito con dos modos: serial (~12 días) y paralelo (~6-7 días).
+    - §12 nueva sección "Paralelización · 2 ejecutores en simultáneo": tabla de dependencias, asignación de roles (Dev A vs Dev T), política de coordinación de archivos compartidos (`git pull --rebase` + cada uno modifica solo su sección), cómo arrancan ambos agentes, sincronización del revisor (auditoría por sprint individual), 4 riesgos específicos del modo paralelo (R-F2-P1..4).
+  - ✅ PENDIENTES sesión 23 ajustado: añadido bloque "Modo de ejecución" con la decisión humana pendiente (serial vs paralelo).
+  - ✅ Renumeración de secciones (vieja §12 Referencias → nueva §13).
+- **Aprendido:**
+  - La separación natural Track A / Track T del proyecto (decisión inicial en PLAN.md §1) paga dividendos aquí: los dos tracks pueden avanzar sin ceremonia de coordinación profunda.
+  - Identificar las dependencias REALES (no asumidas) es lo que habilita la paralelización. F2-B parecía depender de Silver (`TRIM` en `productos`) pero en realidad puede degradarse gracefully en el cliente.
+- **Abierto:**
+  - Humano aprueba ADR-0014 + decide modo serial o paralelo.
+- **Próximo paso:**
+  - Humano responde "OK ADR + modo X" → revisor marca ADR `Accepted`, D13 a fecha. Sprint(s) arrancan.
+
+---
+
 ### 2026-05-29 — Sesión 24 · Plan F2 detallado + ADR-0014 (Proposed)
 
 - **Hecho (revisor):**

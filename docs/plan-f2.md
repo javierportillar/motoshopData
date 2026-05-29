@@ -384,24 +384,49 @@ Derivados de PLAN.md §9 y verificaciones críticas.
 
 ## 10 · Calendario sugerido
 
-```
-Día 0 (hoy) — Revisor escribe este plan + ADR-0014 (Proposed). Push.
-Día 1 — Humano lee ADR-0014 (10 min) y aprueba / ajusta.
+### 10.1 Modo serial *(1 ejecutor, ~12 días naturales)*
 
-Día 2 — Ejecutor Sprint F2-A.1: Dimensiones silver (01-06) + tests setup. Push.
-Día 3 — Ejecutor Sprint F2-A.2: Hechos silver (10-14) + reglas calidad (20). Push.
-Día 4 — Ejecutor Sprint F2-A.3: V1, V2, V3 con evidencia + reconciliación sgHermes. Push.
+```
+Día 0 — Revisor escribe este plan + ADR-0014. Push.
+Día 1 — Humano aprueba ADR-0014.
+
+Día 2 — Ejecutor F2-A.1: Dimensiones silver (01-06) + tests setup. Push.
+Día 3 — Ejecutor F2-A.2: Hechos silver (10-14) + reglas calidad (20). Push.
+Día 4 — Ejecutor F2-A.3: V1, V2, V3 con evidencia + reconciliación. Push.
 Día 5 — Revisor audita Sprint F2-A. GO/NO-GO.
 
-Día 6-7 — Ejecutor Sprint F2-B: Login + búsqueda + V5, V6, V7.
+Día 6-7 — Ejecutor Sprint F2-B (Login + búsqueda + V5/V6/V7).
 Día 8 — Revisor audita Sprint F2-B.
 
-Día 9-10 — Ejecutor Sprint F2-C: Stock + offline + manifest + V4, V8.
-Día 11 — Demo real en 4G (humano + ejecutor + vendedor invitado).
-Día 12 — Revisor audita F2 completo, escribe Lecciones de cierre F2, GO a F3.
+Día 9-10 — Ejecutor Sprint F2-C (Stock + offline + V4/V8).
+Día 11 — Demo real en 4G.
+Día 12 — Revisor audita F2 completo. Lecciones de cierre F2. GO a F3.
 ```
 
-Tiempo total estimado: **~12 días naturales** (jornadas parciales). Trabajo del ejecutor: **~18-22 horas distribuidas**.
+Tiempo total: **~12 días naturales**. Trabajo del ejecutor: **~18-22 horas**.
+
+### 10.2 Modo paralelo *(2 ejecutores, ~6-7 días naturales — recomendado)*
+
+Detalle en §13 (Paralelización).
+
+```
+Día 0 — Revisor escribe plan + ADR-0014. Push.
+Día 1 — Humano aprueba ADR-0014.
+
+Día 2-4 (en paralelo):
+  ├── Dev A (Track A): Sprint F2-A · Silver
+  └── Dev T (Track T): Sprint F2-B · PWA Login + Búsqueda
+
+Día 5 — Revisor audita F2-A y F2-B (cada uno por separado).
+
+Día 5-7 — Dev T: Sprint F2-C · PWA Stock + Offline.
+            (Dev A libre, o ayuda con observaciones de F2-A si las hubo)
+
+Día 7 — Demo real en 4G.
+Día 7-8 — Revisor audita F2 completo. Lecciones cierre F2. GO a F3.
+```
+
+Tiempo total: **~6-7 días naturales** (-40% wall-clock). Trabajo del ejecutor (suma de ambos): **~18-22 horas** (igual, solo se reparte).
 
 ---
 
@@ -413,7 +438,93 @@ Tiempo total estimado: **~12 días naturales** (jornadas parciales). Trabajo del
 
 ---
 
-## 12 · Referencias
+## 12 · Paralelización · 2 ejecutores en simultáneo
+
+### 12.1 ¿Qué se puede paralelizar y qué no?
+
+| Sprint | Depende técnicamente de | ¿Paralelo con? |
+|--------|--------------------------|-----------------|
+| **F2-A · Silver (Track A)** | Bronze (ya está) + ADR-0014 aprobado | ✅ Sí, con F2-B |
+| **F2-B · PWA Login + Búsqueda (Track T)** | API endpoints F1 (ya existen) + ADR-0014 aprobado | ✅ Sí, con F2-A |
+| **F2-C · PWA Stock + Offline (Track T)** | F2-B (scaffold PWA + auth wrapper + next-pwa setup) | ❌ Espera a F2-B |
+
+**Nota:** F2-A y F2-B son completamente independientes. F2-C depende solo de F2-B, no de F2-A. Si la PWA necesita columnas saneadas con TRIM (DT-F2-1 silver), igual puede consumir el endpoint `/products?q=` de la API (que lee Bronze directo) y el TRIM se aplica en el cliente como cosmética.
+
+### 12.2 Asignación recomendada de roles
+
+| Rol | Sprints | Skill principal | ~Tiempo |
+|-----|---------|------------------|---------|
+| **Dev A** (Track A) | F2-A | PySpark + SQL + Databricks | ~6 h |
+| **Dev T** (Track T) | F2-B, después F2-C | TypeScript + Next.js + PWA | ~12 h (6 + 6) |
+| **Reviewer** | Auditoría de ambos | — | ~2-3 h total |
+
+### 12.3 Política de coordinación de archivos compartidos
+
+Hay 3 archivos que ambos agentes van a tocar al cerrar sus tareas. Política para evitar conflictos:
+
+#### `SEGUIMIENTO.md`
+
+Cada agente actualiza **solo su sección**:
+- Dev A: §Fase 2 → Track A · Silver entregables, V1/V2/V3, métricas Track A.
+- Dev T: §Fase 2 → Track T · PWA entregables, V4/V5/V6/V7/V8, métricas Track T.
+
+Notas de sesión: cada uno escribe su propia nota (Sesión `<N>·Track A` y `<N+1>·Track T`).
+
+**Antes de cualquier `git push`:**
+```bash
+git pull --rebase origin main
+# Si hay conflicto: resolver MANUALMENTE manteniendo lo del otro agente,
+# combinar con lo tuyo. Nunca hacer overwrite.
+git push origin main
+```
+
+#### `PENDIENTES.md`
+
+Mismo patrón: cada uno actualiza su tarea en el bloque correspondiente.
+
+#### `docs/plan-f2.md`
+
+Solo el revisor lo modifica. Los ejecutores NO tocan el plan; reportan al revisor si encuentran algo que requiere ajuste.
+
+### 12.4 Cómo arrancan los 2 agentes
+
+#### Dev A (Track A · Silver)
+
+1. Lee [`INICIAR_AGENTE.md`](../INICIAR_AGENTE.md) y se auto-identifica como **Dev Agent · Track A**.
+2. Confirma que ADR-0014 está `Accepted` (mira `docs/decisions/0014-stack-f2.md`).
+3. Lee §4 (Sprint F2-A) de este plan.
+4. Trabaja en notebooks `notebooks/silver/01_*.py` … `notebooks/silver/31_*.py`.
+5. Commits con prefijo `feat(F2-A-silver):`.
+6. Al cerrar: ping al revisor con hash de commits y archivos en `_runs/`.
+
+#### Dev T (Track T · PWA)
+
+1. Lee [`INICIAR_AGENTE.md`](../INICIAR_AGENTE.md) y se auto-identifica como **Dev Agent · Track T**.
+2. Confirma ADR-0014 `Accepted`.
+3. Lee §5 (Sprint F2-B) de este plan.
+4. Trabaja en `motoshop-app/web/**/*.{ts,tsx}` y `motoshop-app/web/tests/*.spec.ts`.
+5. Commits con prefijo `feat(F2-B-pwa):`.
+6. Al cerrar F2-B: ping al revisor → arranca F2-C inmediatamente (no hay que esperar a Track A).
+7. Mientras Dev A trabaja en Silver, Dev T también puede arrancar F2-C en seguida — ningún sprint Track T necesita Silver.
+
+### 12.5 Punto de sincronización del revisor
+
+El revisor audita F2-A y F2-B por separado (cada uno con su propio veredicto GO/NO-GO) y vuelve a auditar F2-C cuando termine. Si F2-A queda en NO-GO mientras Dev T avanza con F2-B/C, el problema de Track A se resuelve sin bloquear Track T (los sprints son independientes hasta el cierre final de F2).
+
+**Cierre F2 final:** los 3 sprints deben estar ✅, con sus V correspondientes y las 8 verificaciones críticas + KPIs medidos. Si alguno queda ⚠️ o 🔴, F2 no cierra y se planifica F2-FIX.
+
+### 12.6 Riesgos del modo paralelo
+
+| ID | Riesgo | Mitigación |
+|----|--------|------------|
+| R-F2-P1 | Conflictos de merge en SEGUIMIENTO/PENDIENTES si los 2 pushean al mismo tiempo | `git pull --rebase` antes de cada push. Cada uno solo modifica su sección |
+| R-F2-P2 | El revisor se ve saturado auditando 2 sprints en simultáneo | Auditar por separado en sesiones distintas; usar [`INICIAR_REVIEWER.md`](../INICIAR_REVIEWER.md) §3.2 (6 checks) por cada uno |
+| R-F2-P3 | Decisión técnica que afecta a los 2 sprints (ej. cambio en API contract) | Cualquier decisión nueva pasa al revisor para evaluar impacto cross-sprint antes de aplicar |
+| R-F2-P4 | Dev T encuentra que `/products?q=` tiene whitespace en codprod (necesita silver) | Aceptar; aplicar TRIM en el cliente como workaround. Migrar a leer silver cuando F2-A termine |
+
+---
+
+## 13 · Referencias
 
 - Plan F1: [`plan-f1.md`](plan-f1.md).
 - Plan F1.5 hardening: [`plan-f1-hardening.md`](plan-f1-hardening.md).

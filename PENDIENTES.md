@@ -54,7 +54,7 @@ Lectura recomendada:
 | DT-F2-16 | TTL + botón manual |
 
 **Tres caminos:**
-- **"OK todas"** → marco ADR `Accepted`, D13 a fecha, F2-A arranca.
+- **"OK todas"** → marco ADR `Accepted`, D13 a fecha, ejecutor(es) arrancan.
 - **"OK pero ajustar X"** → decime qué y ajusto.
 - **"Necesito más contexto sobre Y"** → te detallo.
 
@@ -62,24 +62,42 @@ Lectura recomendada:
 
 ### Plan F2 a alto nivel *(para que sepas qué viene)*
 
-| Sprint | Duración estimada | Cierra qué V/KPI |
-|--------|-------------------|-------------------|
-| **F2-A · Silver** | 2-3 sesiones (~6 h) | V1 duplicados, V2 fechas, V3 reconciliación con sgHermes < 0.5% |
-| **F2-B · PWA Login + Búsqueda** | 2 sesiones (~6 h) | V5 sesión persiste, V6 búsqueda < 1 s, V7 roles |
-| **F2-C · PWA Stock + Offline** | 2 sesiones (~6 h) | V4 offline, V8 datos cuadran, hito visible demo 4G |
+| Sprint | Track | Duración | Cierra qué V/KPI |
+|--------|-------|----------|-------------------|
+| **F2-A · Silver** | A · Databricks | ~6 h | V1 duplicados, V2 fechas, V3 reconciliación < 0.5% |
+| **F2-B · PWA Login + Búsqueda** | T · Next.js | ~6 h | V5 sesión persiste, V6 búsqueda < 1 s, V7 roles |
+| **F2-C · PWA Stock + Offline** | T · Next.js | ~6 h | V4 offline, V8 datos cuadran, hito visible demo 4G |
 
-Total ejecutor: **~18-22 horas**. Calendario: **~12 días naturales** con jornadas parciales.
+**Modo serial (1 ejecutor):** ~12 días naturales, ~18-22 h ejecutor.
+**Modo paralelo (2 ejecutores):** ~6-7 días naturales, mismo trabajo total. Ver §12 del plan.
 
 Detalle completo en [`docs/plan-f2.md`](docs/plan-f2.md).
 
 ---
 
-### Lo que pasa cuando aprobés el ADR
+### ⚙️ Modo de ejecución · ¿1 ejecutor o 2 en paralelo?
 
-1. Revisor marca ADR-0014 `Accepted` con fecha.
-2. D13 pasa a fecha de aprobación.
-3. Ejecutor arranca Sprint F2-A.1 (dimensiones silver).
-4. Sesión 24 abre con el primer commit del sprint.
+F2-A (Silver) y F2-B (PWA login/búsqueda) son **completamente independientes** técnicamente. F2-C depende solo de F2-B (no de Silver). Se pueden disparar 2 agentes simultáneos:
+
+| Agente | Sprints | Track | ~Tiempo |
+|--------|---------|-------|---------|
+| **Dev A** | F2-A | Track A · Databricks/PySpark | ~6 h |
+| **Dev T** | F2-B → después F2-C | Track T · Next.js/TypeScript | ~12 h (6 + 6) |
+
+Política de coordinación en archivos compartidos (SEGUIMIENTO, PENDIENTES): cada agente actualiza solo su sección, `git pull --rebase` antes de cada push. Detalle en [`docs/plan-f2.md`](docs/plan-f2.md) §12.
+
+**Decidir en este chat (junto con aprobar el ADR):**
+- ⬜ **Serial** — un solo ejecutor, ~12 días.
+- ⬜ **Paralelo (recomendado si tenés ancho de banda)** — 2 ejecutores, ~6-7 días.
+
+---
+
+### Lo que pasa cuando aprobés ADR-0014 + decidás modo
+
+1. Revisor marca ADR-0014 `Accepted` con fecha. D13 a fecha.
+2. **Modo serial:** ejecutor único arranca Sprint F2-A.1.
+3. **Modo paralelo:** Dev A arranca Sprint F2-A.1 y Dev T arranca Sprint F2-B.1 al mismo tiempo.
+4. Sesión 26 abre con el(los) primer(os) commit(s).
 
 ---
 
