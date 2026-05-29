@@ -37,14 +37,11 @@ export default function VentasPage(): JSX.Element {
     );
   }
 
-  // Datos mock para tendencia (cuando haya marts reales, vienen del API)
-  const trendData = [
-    { label: "Ene", valor: 42_300_000 },
-    { label: "Feb", valor: 45_100_000 },
-    { label: "Mar", valor: 43_800_000 },
-    { label: "Abr", valor: 47_830_000 },
-    { label: "May", valor: 50_120_000 },
-  ];
+  // Top 5 SKUs como datos de tendencia real desde la API
+  const trendData = data.top_skus.slice(0, 5).map((sku, i) => ({
+    label: sku.nom_producto.substring(0, 12),
+    valor: sku.valor_total,
+  }));
 
   return (
     <div className="space-y-4">

@@ -24,7 +24,9 @@ export async function apiFetch(
 
     const ok = await refreshPromise;
     if (!ok) {
-      window.location.href = "/login";
+      if (!window.location.pathname.startsWith("/login")) {
+        window.location.href = "/login";
+      }
       return resp;
     }
 
@@ -39,6 +41,9 @@ export async function apiFetchJson<T = unknown>(
   init?: RequestInit,
 ): Promise<T> {
   const resp = await apiFetch(input, init);
-  if (!resp.ok) throw new Error(`API error ${resp.status}`);
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => "(no body)");
+    throw new Error(`API error ${resp.status} on ${input}: ${body}`);
+  }
   return resp.json();
 }

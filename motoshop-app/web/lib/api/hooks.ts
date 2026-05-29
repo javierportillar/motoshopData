@@ -1,4 +1,4 @@
-import useSWR from "swr";
+import useSWR, { type KeyedMutator } from "swr";
 import { apiFetchJson } from "./client";
 import { getCached, setCache } from "@/lib/offline/cache";
 
@@ -156,13 +156,15 @@ function useMetrics<T>(key: string | null): {
   data: T | undefined;
   error: Error | undefined;
   isLoading: boolean;
+  mutate: KeyedMutator<T>;
 } {
-  return useSWR<T>(key, apiFetchJson<T>, {
+  const { data, error, isLoading, mutate } = useSWR<T>(key, apiFetchJson<T>, {
     revalidateOnFocus: false,
     revalidateOnReconnect: false,
     dedupingInterval: DEDUP_METRICS,
     refreshInterval: 5 * 60_000, // refresh cada 5 min
   });
+  return { data, error, isLoading, mutate };
 }
 
 export function useSalesSummary() {

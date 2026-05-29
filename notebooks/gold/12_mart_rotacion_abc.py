@@ -32,12 +32,8 @@ CREATE TABLE IF NOT EXISTS motoshop.gold.mart_rotacion_abc (
 
 -- COMMAND ----------
 
-DELETE FROM motoshop.gold.mart_rotacion_abc
-WHERE business_month >= DATE '2020-01-01' AND business_month <= CURRENT_DATE();
-
--- COMMAND ----------
-
-INSERT INTO motoshop.gold.mart_rotacion_abc
+INSERT OVERWRITE motoshop.gold.mart_rotacion_abc
+PARTITION (business_month)
 WITH ingresos_mensuales AS (
   SELECT
     DATE_TRUNC('MONTH', fv.business_date) AS business_month,
@@ -62,7 +58,7 @@ ingresos_ordenados AS (
     nom_producto,
     valor_total,
     SUM(valor_total) OVER (PARTITION BY business_month) AS total_mes,
-    ROW_NUMBER() OVER (PARTITION BY business_month ORDER BY valor_total DESC) AS rn
+    ROW_NUMBER() OVER (PARTITION BY business_month ORDER BY valor_total DESC, cod_producto) AS rn
   FROM ingresos_mensuales
 ),
 ingresos_acumulados AS (

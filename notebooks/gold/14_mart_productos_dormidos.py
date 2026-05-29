@@ -30,11 +30,7 @@ CREATE TABLE IF NOT EXISTS motoshop.gold.mart_productos_dormidos (
 
 -- COMMAND ----------
 
-DELETE FROM motoshop.gold.mart_productos_dormidos;
-
--- COMMAND ----------
-
-INSERT INTO motoshop.gold.mart_productos_dormidos
+INSERT OVERWRITE motoshop.gold.mart_productos_dormidos
 WITH ultima_venta AS (
   SELECT
     fvd.cod_producto,
@@ -74,7 +70,7 @@ SELECT
   COALESCE(dp.nombre_producto, 'SIN NOMBRE') AS nom_producto,
   COALESCE(uv.cod_bodega, p.cod_bodega) AS cod_bodega,
   uv.ultima_fecha_venta,
-  CAST(DATEDIFF(CURRENT_DATE(), uv.ultima_fecha_venta) AS INT) AS dias_sin_venta,
+  CAST(COALESCE(DATEDIFF(CURRENT_DATE(), uv.ultima_fecha_venta), -1) AS INT) AS dias_sin_venta,
   COALESCE(ps.stock_total, 0) AS stock_actual,
   CASE
     WHEN COALESCE(ps.stock_total, 0) > 0 THEN 'dormido_con_stock'

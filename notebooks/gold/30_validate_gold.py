@@ -75,9 +75,13 @@ WITH gold_ventas AS (
   WHERE business_date >= DATE '2020-01-01'
 ),
 silver_ventas AS (
-  SELECT ROUND(SUM(total_factura), 2) AS silver_total
-  FROM motoshop.silver.fact_ventas
-  WHERE business_date >= DATE '2020-01-01'
+  SELECT ROUND(SUM(fvd.valor_unitario * fvd.cantidad - COALESCE(fvd.descuento_valor, 0)), 2) AS silver_total
+  FROM motoshop.silver.fact_ventas_detalle fvd
+  INNER JOIN motoshop.silver.fact_ventas fv
+    ON fvd.num_documento = fv.num_documento
+    AND fvd.cod_clase = fv.cod_clase
+    AND fvd.business_date = fv.business_date
+  WHERE fvd.business_date >= DATE '2020-01-01'
 )
 SELECT
   gv.gold_total,
@@ -93,7 +97,7 @@ SELECT
     WHEN sv.silver_total = 0 THEN 'PASS (sin datos)'
     ELSE 'FAIL'
   END AS status
-FROM gold_ventas gv, silver_ventas sv;
+FROM gold_ventas gv CROSS JOIN silver_ventas sv;
 
 -- COMMAND ----------
 

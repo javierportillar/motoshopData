@@ -31,12 +31,8 @@ CREATE TABLE IF NOT EXISTS motoshop.gold.mart_ventas_diarias_sku (
 
 -- COMMAND ----------
 
-DELETE FROM motoshop.gold.mart_ventas_diarias_sku
-WHERE business_date >= DATE '2020-01-01' AND business_date <= CURRENT_DATE();
-
--- COMMAND ----------
-
-INSERT INTO motoshop.gold.mart_ventas_diarias_sku
+INSERT OVERWRITE motoshop.gold.mart_ventas_diarias_sku
+PARTITION (business_date)
 SELECT
   fv.business_date,
   fvd.cod_producto,

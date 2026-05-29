@@ -15,6 +15,8 @@ from fastapi import APIRouter, Depends, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
+from starlette.requests import Request as StarletteRequest
+
 from motoshop_api.auth.deps import get_current_user
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
@@ -32,22 +34,34 @@ from motoshop_api.metrics.schemas import (
 
 router = APIRouter(tags=["metrics"])
 
-limiter = Limiter(key_func=get_remote_address)
+
+def _rate_limit_key(request: Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return get_remote_address(request)
+
+
+limiter = Limiter(key_func=_rate_limit_key)
 
 _CACHE_TTL = 300  # 5 minutos
 _cache: dict[str, tuple[float, object]] = {}
 _workspace_client = None  # lazy singleton
+_workspace_created_at: float = 0.0
+_WORKSPACE_TTL = 3600  # Refresh workspace client hourly
 
 
 def _get_workspace():
-    global _workspace_client
-    if _workspace_client is None:
+    global _workspace_client, _workspace_created_at
+    now = time()
+    if _workspace_client is None or (now - _workspace_created_at > _WORKSPACE_TTL):
         from databricks.sdk import WorkspaceClient
 
         _workspace_client = WorkspaceClient(
             host=settings.databricks_host,
             token=settings.databricks_token,
         )
+        _workspace_created_at = now
     return _workspace_client
 
 
@@ -79,7 +93,7 @@ def get_repo() -> MetricsRepoProtocol:
 
 @router.get("/metrics/sales-summary", response_model=SalesSummary)
 @limiter.limit("30/minute")
-async def sales_summary(
+def sales_summary(
     request: Request,
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
@@ -90,7 +104,7 @@ async def sales_summary(
 
 @router.get("/metrics/inventory-summary", response_model=InventorySummary)
 @limiter.limit("30/minute")
-async def inventory_summary(
+def inventory_summary(
     request: Request,
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
@@ -101,7 +115,7 @@ async def inventory_summary(
 
 @router.get("/metrics/abc-segmentation", response_model=AbcSegmentation)
 @limiter.limit("30/minute")
-async def abc_segmentation(
+def abc_segmentation(
     request: Request,
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
@@ -112,7 +126,7 @@ async def abc_segmentation(
 
 @router.get("/metrics/dormidos", response_model=DormidosResponse)
 @limiter.limit("30/minute")
-async def dormidos(
+def dormidos(
     request: Request,
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
@@ -123,10 +137,19 @@ async def dormidos(
 
 @router.get("/metrics/cohortes", response_model=CohortesResponse)
 @limiter.limit("30/minute")
-async def cohortes(
+def cohortes(
     request: Request,
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
 ) -> CohortesResponse:
     """Cohortes de clientes por mes de primera compra."""
     return _cached_or_fetch("cohortes", repo.get_cohortes)
+
+
+@router.post("/metrics/cache/clear")
+def clear_metrics_cache(
+    _user: User = Depends(get_current_user),
+) -> dict:
+    """Invalidar cache de métricas manualmente."""
+    _clear_metrics_cache()
+    return {"status": "ok", "message": "Cache cleared"}

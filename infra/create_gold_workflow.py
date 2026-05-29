@@ -106,7 +106,7 @@ def main():
     # Buscar job existente
     print("\n2. Buscando job existente...")
     existing_job_id = None
-    for j in w.jobs.list():
+    for j in w.jobs.list(name=JOB_NAME):
         if j.settings.name == JOB_NAME:
             existing_job_id = j.job_id
             print(f"  Job existente encontrado: ID {existing_job_id}")

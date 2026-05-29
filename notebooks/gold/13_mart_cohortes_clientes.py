@@ -32,12 +32,8 @@ CREATE TABLE IF NOT EXISTS motoshop.gold.mart_cohortes_clientes (
 
 -- COMMAND ----------
 
-DELETE FROM motoshop.gold.mart_cohortes_clientes
-WHERE business_month >= DATE '2020-01-01' AND business_month <= CURRENT_DATE();
-
--- COMMAND ----------
-
-INSERT INTO motoshop.gold.mart_cohortes_clientes
+INSERT OVERWRITE motoshop.gold.mart_cohortes_clientes
+PARTITION (business_month)
 WITH primera_compra AS (
   SELECT
     nit_cliente,
@@ -70,10 +66,12 @@ SELECT
   pc.mes_cohorte,
   vm.nit_cliente,
   vm.nombre_cliente,
-  CAST(DATEDIFF(vm.business_month, pc.mes_cohorte) / 31 AS INT) AS meses_desde_cohorte,
+  CAST(MONTHS_BETWEEN(vm.business_month, pc.mes_cohorte) AS INT) AS meses_desde_cohorte,
   CASE WHEN vm.facturas_mes > 0 THEN TRUE ELSE FALSE END AS compro_este_mes,
   vm.ticket_promedio,
   vm.ingresos_mes AS ingresos_totales,
+  -- Regla de negocio: un cliente se considera "activo" si compra >= 2 veces al mes.
+  -- Esto evita que una sola factura grande distorsione la métrica de engagement.
   CASE
     WHEN vm.facturas_mes >= 2 THEN TRUE
     ELSE FALSE

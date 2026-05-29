@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS motoshop.gold.mart_inventario_actual (
   cod_bodega STRING,
   nom_bodega STRING,
   cantidad_actual DOUBLE,
-  costo_promedio DOUBLE,
+  ultimo_costo DOUBLE,
   ultima_actualizacion DATE
 ) USING DELTA;
 
@@ -30,11 +30,7 @@ CREATE TABLE IF NOT EXISTS motoshop.gold.mart_inventario_actual (
 
 -- COMMAND ----------
 
-DELETE FROM motoshop.gold.mart_inventario_actual;
-
--- COMMAND ----------
-
-INSERT INTO motoshop.gold.mart_inventario_actual
+INSERT OVERWRITE motoshop.gold.mart_inventario_actual
 WITH ultimo_inventario AS (
   SELECT
     cod_producto,
@@ -56,7 +52,7 @@ SELECT
   ui.cod_bodega,
   COALESCE(db.nombre_bodega, 'SIN NOMBRE') AS nom_bodega,
   ROUND(ui.cantidad, 2) AS cantidad_actual,
-  ROUND(ui.valor_costo, 2) AS costo_promedio,
+  ROUND(ui.valor_costo, 2) AS ultimo_costo,
   ui.business_date AS ultima_actualizacion
 FROM ultimo_inventario ui
 LEFT JOIN motoshop.silver.dim_producto dp

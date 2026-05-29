@@ -29,6 +29,25 @@ export default function DashboardsPage(): JSX.Element {
   const dormidos = useDormidos();
 
   const loading = sales.isLoading || inventory.isLoading || abc.isLoading;
+  const errors = [sales.error, inventory.error, abc.error, dormidos.error].filter(Boolean);
+  if (errors.length > 0) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-xl font-bold text-secondary-dark">Dashboards</h1>
+          <p className="text-sm text-gray-500">Indicadores del negocio</p>
+        </div>
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+          <p className="text-sm font-medium text-red-800">
+            Error al cargar indicadores. Intentá de nuevo más tarde.
+          </p>
+          <p className="mt-1 text-xs text-red-600">
+            {errors[0]?.message ?? "Error desconocido"}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -116,7 +135,7 @@ export default function DashboardsPage(): JSX.Element {
           title="Productos Dormidos"
           value={dormidos.data ? `${dormidos.data.total}` : "—"}
           subtitle={dormidos.data && dormidos.data.total > 0 ? "> 90 días sin venta" : "Sin datos"}
-          href="/dashboards/abc"
+          href="/dashboards/dormidos"
           icon={
             <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="10" />

@@ -7,8 +7,11 @@ de repuestos de moto en Colombia (~$50M COP/mes, ~800 facturas/mes).
 
 from __future__ import annotations
 
-from datetime import datetime
+import logging
+from datetime import datetime, timedelta
 from typing import Protocol
+
+logger = logging.getLogger(__name__)
 
 from motoshop_api.metrics.schemas import (
     AbcBucket,
@@ -37,7 +40,9 @@ class MetricsRepoProtocol(Protocol):
 # ── Fake (mock) ──────────────────────────────────────────────────────────
 
 _MONTH = datetime.now().strftime("%Y-%m")
-_LAST_MONTH = "2026-04"
+_this_month = datetime.now().replace(day=1)
+_last_month = _this_month - timedelta(days=1)
+_LAST_MONTH = _last_month.strftime("%Y-%m")
 
 _TOP_SKUS = [
     TopSkuItem(cod_producto="MOTS1297", nom_producto="ACEITE 20W50 MOTUL 1L", cantidad_total=342.0, valor_total=8_550_000.0, porcentaje_ingreso=17.1),
@@ -171,6 +176,7 @@ class RealMetricsRepo:
             LIMIT 10
         """)
         if not rows:
+            logger.warning("No sales data found in gold mart")
             return FakeMetricsRepo().get_sales_summary()
         mes_actual, mes_anterior = rows[0], rows[1] if len(rows) > 1 else None
         va_actual = float(mes_actual["ventas_mes"])
@@ -194,6 +200,11 @@ class RealMetricsRepo:
                 COUNT(DISTINCT cod_producto) AS num_productos
             FROM motoshop.gold.mart_inventario_actual
         """)
+        valor = self._query("""
+            SELECT ROUND(SUM(cantidad_actual * ultimo_costo), 2) AS valor_total
+            FROM motoshop.gold.mart_inventario_actual
+            WHERE ultimo_costo IS NOT NULL AND ultimo_costo > 0
+        """)
         bodegas = self._query("""
             SELECT
                 cod_bodega, nom_bodega,
@@ -204,11 +215,12 @@ class RealMetricsRepo:
             ORDER BY cantidad DESC
         """)
         if not rows:
-            return FakeMetricsRepo().get_inventory_summary()
+            raise RuntimeError("No inventory data found in gold mart")
         r = rows[0]
+        valor_total = float(valor[0]["valor_total"]) if valor else 0.0
         return InventorySummary(
             stock_total=float(r["stock_total"]),
-            valor_total=0.0,
+            valor_total=valor_total,
             num_productos=int(r["num_productos"]),
             por_bodega=[BodegaItem(**b) for b in bodegas],
         )
@@ -228,6 +240,7 @@ class RealMetricsRepo:
             ORDER BY CASE categoria_abc WHEN 'A' THEN 1 WHEN 'B' THEN 2 ELSE 3 END
         """)
         if not buckets:
+            logger.warning("No ABC data found in gold mart")
             return FakeMetricsRepo().get_abc_segmentation()
         for b in buckets:
             b["num_skus"] = int(b["num_skus"])
@@ -251,6 +264,7 @@ class RealMetricsRepo:
             LIMIT 50
         """)
         if not rows:
+            logger.warning("No dormidos data found in gold mart")
             return FakeMetricsRepo().get_dormidos()
         for r in rows:
             r["dias_sin_venta"] = int(r["dias_sin_venta"])
@@ -270,6 +284,7 @@ class RealMetricsRepo:
             ORDER BY mes_cohorte, business_month
         """)
         if not rows:
+            logger.warning("No cohortes data found in gold mart")
             return FakeMetricsRepo().get_cohortes()
         for r in rows:
             r["num_clientes"] = int(r["num_clientes"])
@@ -284,15 +299,20 @@ class RealMetricsRepo:
             wait_timeout="50s",
         )
         if result.status.state.name != "SUCCEEDED":
-            return []
+            error_detail = result.status.error.message if hasattr(result.status, 'error') and result.status.error else 'unknown'
+            logger.error("Databricks query failed: state=%s error=%s", result.status.state.name, error_detail)
+            raise RuntimeError(f"Databricks query failed: {result.status.state.name} - {error_detail}")
         # Column names come from result.manifest.schema.columns
         cols = [col.name for col in result.manifest.schema.columns]
-        chunk = self._w.statement_execution.get_statement_result_chunk_n(
-            result.statement_id, 0
-        )
-        if not chunk.data_array:
-            return []
-        return [dict(zip(cols, row)) for row in chunk.data_array]
+        total_chunks = result.manifest.total_chunk_count if hasattr(result.manifest, 'total_chunk_count') else 1
+        all_rows = []
+        for i in range(total_chunks):
+            chunk = self._w.statement_execution.get_statement_result_chunk_n(
+                result.statement_id, i
+            )
+            if chunk.data_array:
+                all_rows.extend([dict(zip(cols, row)) for row in chunk.data_array])
+        return all_rows
 
 
 # ── Factory ────────────────────────────────────────────────────────────────
