@@ -11,7 +11,8 @@
 -- MAGIC 3. Si no → usar media_móvil_28d (metodo='moving_average_28d').
 -- MAGIC 4. Si tampoco hay media_móvil → NULL.
 -- MAGIC
--- MAGIC INSERT OVERWRITE particionado por business_date.
+-- MAGIC FIX v2: Databricks serverless no acepta WITH dentro de INSERT OVERWRITE PARTITION.
+-- MAGIC Se separa en CREATE TEMP VIEW + INSERT independiente.
 
 -- COMMAND ----------
 
@@ -26,14 +27,14 @@ CREATE TABLE IF NOT EXISTS motoshop.gold.forecast_baseline_sku (
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## INSERT OVERWRITE — baseline naive estacional
+-- MAGIC ## Paso 1: Temporary view con el cálculo del baseline
 -- MAGIC
 -- MAGIC Estrategia: self-join con ventana de ±7 días alrededor de la fecha del año anterior.
 -- MAGIC Fallback a media_móvil_28d desde feature_store_sku.
 
 -- COMMAND ----------
 
-INSERT OVERWRITE motoshop.gold.forecast_baseline_sku PARTITION (business_date)
+CREATE OR REPLACE TEMPORARY VIEW baseline_calc AS
 WITH
 demanda_diaria AS (
   SELECT
@@ -71,24 +72,38 @@ con_fallback AS (
     ns.cod_producto,
     ns.business_date,
     ns.demanda_real,
-    COALESCE(ns.demanda_naive, fs.media_movil_28d) AS demanda_predicha
+    COALESCE(ns.demanda_naive, fs.media_movil_28d) AS demanda_predicha,
+    ns.matches_naive
   FROM naive_seasonal ns
   LEFT JOIN motoshop.gold.feature_store_sku fs
     ON ns.cod_producto = fs.cod_producto
     AND ns.business_date = fs.business_date
 )
 SELECT
-  cod_producto,
-  business_date,
-  demanda_real,
-  demanda_predicha,
+  cf.cod_producto,
+  cf.business_date,
+  cf.demanda_real,
+  cf.demanda_predicha,
   CASE
-    WHEN demanda_predicha IS NULL THEN CAST(NULL AS STRING)
-    WHEN matches_naive > 0 THEN 'naive_seasonal'
+    WHEN cf.demanda_predicha IS NULL THEN CAST(NULL AS STRING)
+    WHEN cf.matches_naive > 0 THEN 'naive_seasonal'
     ELSE 'moving_average_28d'
   END AS metodo
-FROM con_fallback
-JOIN naive_seasonal USING (cod_producto, business_date, demanda_real);
+FROM con_fallback cf;
+
+-- COMMAND ----------
+
+-- MAGIC %md
+-- MAGIC ## Paso 2: INSERT desde la temporary view
+-- MAGIC
+-- MAGIC Separado del CTE porque Databricks serverless no soporta WITH anidado
+-- MAGIC dentro de INSERT OVERWRITE PARTITION.
+
+-- COMMAND ----------
+
+INSERT OVERWRITE motoshop.gold.forecast_baseline_sku
+PARTITION (business_date)
+SELECT * FROM baseline_calc;
 
 -- COMMAND ----------
 
