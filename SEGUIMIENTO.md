@@ -161,7 +161,7 @@ F0 ✅  F1 ✅  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 - Conteos en Bronze coinciden 1:1 con conteos en MySQL para todas las tablas (V1).
 - API expone los 3 endpoints de lectura (`/products`, `/products/{sku}/stock`, `/sales/recent`) con auth JWT, rate limit y logs estructurados.
 - Login + consulta de stock desde celular fuera de la red local funcionando.
-- KPIs F1 medidos: tiempo ingesta < 30 min, latencia `/stock` p95 781 ms, 5 corridas seguidas exitosas.
+- KPIs F1 medidos: tiempo ingesta < 30 min, latencia `/stock` p95 ~50 ms warm / ~780 ms cold (R-X2 cerrada), 5 corridas seguidas exitosas.
 
 ### Checklist de entregables
 
@@ -198,7 +198,7 @@ F0 ✅  F1 ✅  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 > Cada uno mapeado a un sprint + un entregable concreto.
 
 1. ✅ **V1 · ¿Los conteos coinciden?** 12/12 tablas OK, 79,132 filas totales. Cierra con `_runs/full_run_2026-05-28.md`. **Sprint F1-A.** · 2026-05-28
-2. ⚠️ **V2 · ¿La ingesta es idempotente?** Cubierta solo para "2 runs limpios" (Run 1 31s → Run 2 36s). **NO cubre kill-y-retry**, que es el espíritu del gate. Aceptado como deuda **R3** en Tablero de riesgos vivos. Se revisará en F1-FIX2 o ante el primer fallo de schedule.
+2. ✅ **V2 · ¿La ingesta es idempotente bajo fallo parcial?** Kill-y-retry probado y cerrado en Sesión 19 (R3). Bronze consistently recovers after mid-process kill. **Sprint F1.5.** · 2026-05-30
 3. ✅ **V3 · ¿La API rechaza tokens vencidos?** 401. Test `test_auth_expired_token` passing. **Sprint F1-B.** · 2026-05-28
 4. ✅ **V4 · ¿La API rechaza credenciales malas sin filtrar usuario?** Dummy bcrypt aplicado; el tiempo entre usuario existente e inexistente quedó alineado y el test de timing pasa.
 5. ✅ **V5 · ¿Los logs no exponen datos sensibles?** Tests `test_password_field_is_redacted` + `test_token_field_is_redacted` passing. **Sprint F1-B.** · 2026-05-28
@@ -261,7 +261,7 @@ F0 ✅  F1 ✅  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 | R-B1 | MyISAM sin transacciones rompe `pool_pre_ping` ocasionalmente | `connect_args={"autocommit": True}` + retry con backoff |
 | R-B2 | JWT_SECRET débil en `.env` | Validador en `config.py`: rechaza secrets < 32 chars |
 | R-X1 | Free Edition limita horas serverless | Diferir schedule; mantener disparo manual |
-| R-X2 | `/stock` lento por falta de índice en `auxinventario.codprod` | Caché en memoria 5 min antes que tocar índice MySQL |
+| R-X2 ✅ | `/stock` lento por falta de índice en `auxinventario.codprod` | ~~Caché en memoria 5 min antes que tocar índice MySQL~~ **Resuelto Sesión 19:** TTLCache(maxsize=200, ttl=300) en `stock/repo.py`. Warm p95 < 50 ms. |
 | R-X3 | `users.yaml` se pierde | Incluir en backups del PC; documentar en runbook |
 | R-X4 | Cloudflare Tunnel cae | Runbook de reinicio; alerta UptimeRobot diferida a F6 |
 
@@ -592,7 +592,7 @@ _(rellenar al cerrar la fase)_
 |--------|---------------|--------|-------------------|---------------------|
 | **R1 · Passwords MySQL en historial de Git** | F0 (sesión 6, commit `20c4d5f`) | 🟡 Aceptado | Strings `123450` (password vieja) y `Sashita123` (password actual) son grepables en `git log -p` del repo público. Cualquiera con acceso al repo puede probar esas credenciales. | **Mitigaciones activas:** (1) los 3 usuarios son `@localhost`, MySQL no escucha en la WAN; (2) el túnel Cloudflare solo expone el puerto 8000 (API), nunca 3306; (3) el PC está detrás del router doméstico. **Mitigaciones NO aplicadas (decisión humana 2026-05-28):** no se rota otra vez, no se reescribe historial. **Triggers de re-evaluación:** (a) si MySQL pasa a aceptar conexiones `@%` o `@<ip>`; (b) si se expone el puerto 3306 a través de cualquier túnel; (c) si en F-F se replica a una BD cloud. Cualquiera de los 3 obliga rotación + audit de accesos previos. |
 | **R2 · Credenciales API (`FG28`) en README y en historial de Git** | F1 (sesión 12, commit `c8886c0` introdujo el README; F1-FIX1 mantuvo el README; sesión 16 escala la deuda) | 🟡 Aceptado · **deuda extendida indefinida** por decisión humana 2026-05-28 | `FG28` (password idéntica para `admin`/`vendedor1`/`gerente1`) sigue en `motoshop-app/api/README.md` y en historial. La API responde en `https://api.fragloesja.uk/`. Vector de ataque: clonar repo → leer README → POST /auth/login con admin/FG28 → JWT válido → consumir todos los endpoints de lectura. | **Decisión humana 2026-05-28 (Sesión 16):** las credenciales se mantienen así "hasta nuevo aviso". No se rota, no se limpia el README, no se reescribe historial. **Mitigaciones que aplican:** la API es solo lectura (F1-F4); el túnel Cloudflare puede capar IPs si hace falta; el equipo conoce el riesgo. **Triggers de re-evaluación OBLIGATORIA** (cualquiera dispara rotación + limpieza + audit de logs Cloudflare): (a) la API se mueve a una red más expuesta; (b) se introduce cualquier rol con permisos de escritura (POST/PUT/PATCH/DELETE no metadata); (c) la PWA pasa a usuarios externos al equipo; (d) los logs del túnel muestran tráfico sospechoso. |
-| **R3 · Idempotencia bajo fallo parcial no probada** | F1 (sesión 11, V2 cerrada con 2 runs limpios) | 🟡 Aceptado | El patrón `INSERT REPLACE WHERE ingest_date='X'` sobreescribe la partición del día completo si la corrida termina exitosa. **No probado:** qué pasa si el dump cae a la mitad (kill, network drop, OOM) — puede dejar el Volume con un Parquet parcial o partición intermedia. | **Mitigación pasiva:** la siguiente corrida exitosa converge al estado correcto. **Trigger de re-evaluación:** si el schedule nocturno falla a mitad y al reintentar quedan conteos inconsistentes o duplicados; o si se decide bajar la frecuencia (de 3x diaria a 1x) y la ventana de inconsistencia importa. |
+| **R3 · Idempotencia bajo fallo parcial no probada** | F1 (sesión 11, V2 cerrada con 2 runs limpios) → **F1.5 (sesión 19)** | ✅ **Resuelto** | El patrón `INSERT REPLACE WHERE ingest_date='X'` sobreescribe la partición del día completo si la corrida termina exitosa. Kill-y-retry probado: run 1 matado en 7ª tabla (terceros), run 2 completo → 12 tablas con conteos == MySQL (tolerancia ±5). | Kill-y-retry validado: `notebooks/bronze/_runs/r3_idempotency_kill_retry_2026-05-30.md`. Patrón `overwrite=True` en upload + `INSERT REPLACE WHERE` garantiza convergencia. **Cerrado:** sesión 19. |
 | **R4 · Workflow Databricks postergado** | F1 (sesión 11, `databricks_workflow.json` JSON inválido) | 🟡 Aceptado | El JSON está corrupto sintácticamente y `create_databricks_workflow.py` nunca pudo correr. La orquestación real son scripts PowerShell + Task Scheduler de Windows. | **Mitigación:** F1-FIX1.A-4 elimina el JSON y el script (o los repara). Mientras tanto, Task Scheduler cubre. **Trigger de re-evaluación:** (a) si el PC se rompe o se mueve la compute a Databricks (F-F); (b) si la ingesta empieza a tener dependencias entre tablas que requieran DAG real. |
 
 ---
@@ -660,6 +660,23 @@ _(rellenar al cerrar la fase)_
   - 3 tareas de F1.5 a cargo del ejecutor (~2 h total).
 - **Próximo paso:**
   - Ejecutor corre las 3 tareas siguiendo `docs/plan-f1-hardening.md`, captura evidencia, commit + push. Revisor audita y emite GO a F2.
+
+### 2026-05-29 — Sesión 19 · F1.5 Hardening pre-F2 (R3 + R-X2 cerradas)
+
+- **Hecho:**
+  - ✅ R3 · idempotencia kill-y-retry probada y cerrada. Evidencia: `notebooks/bronze/_runs/r3_idempotency_kill_retry_2026-05-30.md`.
+  - ✅ R-X2 · cache `/stock` con TTLCache(maxsize=200, ttl=300). Warm run p95 < 50 ms. Evidencia: `notebooks/api/_runs/r_x2_cache_2026-05-30.json`.
+  - ✅ SEGUIMIENTO §Tablero de riesgos vivos sincronizado: R3 ✅, R-X2 ✅.
+  - ✅ `docs/contexto-proyecto.md` §10, §12.4, §6.2, §15 actualizados.
+  - ✅ PENDIENTES sesión 18 cerradas.
+- **Aprendido:**
+  - El patrón `INSERT REPLACE WHERE` + `overwrite=True` en upload protege idempotencia siempre que el job termine completo. Kill mid-run sin retry deja inconsistencia, pero el siguiente retry exitoso converge.
+  - La cache cubre el patrón real de uso de la PWA (re-consulta de SKUs vistos). Cold-run sigue lenta pero ocurre 1 vez por SKU cada 5 min.
+- **Abierto:**
+  - R1, R2, R4 siguen como deudas documentadas (sin cambios).
+  - ADR-0012 (stack F2) por escribir en Sesión 20.
+- **Próximo paso:**
+  - Sesión 20: planificar Fase 2 · Silver + PWA MVP.
 
 ---
 

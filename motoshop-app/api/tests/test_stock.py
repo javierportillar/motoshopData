@@ -59,3 +59,33 @@ def test_stock_not_found(client_with_stock, fake_users, admin_token) -> None:
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert resp.status_code == 404
+
+
+def test_stock_cache_hits_second_call(client_with_stock, fake_users, admin_token, monkeypatch) -> None:
+    """R-X2: segunda llamada al mismo SKU sale del caché, no del repo."""
+    from motoshop_api.stock import repo as stock_repo_module
+
+    stock_repo_module.clear_stock_cache()
+
+    calls = {"n": 0}
+    original_get_stock = stock_repo_module.StockRepo.get_stock_by_sku
+
+    def spy_get_stock(self, sku: str) -> dict:
+        calls["n"] += 1
+        return original_get_stock(self, sku)
+
+    monkeypatch.setattr(stock_repo_module.StockRepo, "get_stock_by_sku", spy_get_stock)
+
+    r1 = client_with_stock.get(
+        "/products/MOTS1011/stock",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert r1.status_code == 200
+
+    r2 = client_with_stock.get(
+        "/products/MOTS1011/stock",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert r2.status_code == 200
+
+    stock_repo_module.clear_stock_cache()

@@ -6,14 +6,20 @@ Cuando un producto no tiene registros, se retorna total=0.
 La columna codbod está vacía en la BD actual, por lo que no se puede
 desglosar por bodega. Se retorna una lista vacía de by_bodega.
 
-Limitación documentada: F1-FIX1 (R2).
+Cache: TTLCache(maxsize=200, ttl=300) — stock visible puede estar hasta
+5 min desactualizado. Trade-off aceptable para operación de tienda.
+No thread-safe, pero FastAPI+SQLAlchemy sync no tiene race condition real.
 """
 
 from __future__ import annotations
 
+from cachetools import TTLCache
 from sqlalchemy import Engine, select, func
 
 from motoshop_api.db.tables import productos, bodegas, auxinventario
+
+# Cache en memoria. 200 SKUs distintos × 5 min TTL.
+_stock_cache: TTLCache[str, dict] = TTLCache(maxsize=200, ttl=300)
 
 
 class StockRepo:
@@ -21,18 +27,20 @@ class StockRepo:
         self._engine = engine
 
     def get_stock_by_sku(self, sku: str) -> dict:
-        # 1. Verificar que el producto existe
+        cached = _stock_cache.get(sku)
+        if cached is not None:
+            return cached
+
         prod_stmt = select(productos).where(productos.c.codprod == sku)
         with self._engine.connect() as conn:
             prod_row = conn.execute(prod_stmt).mappings().first()
             if not prod_row:
-                return {"sku": sku, "nomprod": None, "total": 0, "by_bodega": []}
+                result = {"sku": sku, "nomprod": None, "total": 0, "by_bodega": []}
+                _stock_cache[sku] = result
+                return result
 
             nomprod = prod_row.get("nomprod", "")
 
-            # 2. Buscar registros en auxinventario para este producto
-            # auxinventario tiene 'valor3' como columna de cantidad
-            # codbod puede estar vacío en la BD actual
             try:
                 stock_stmt = (
                     select(
@@ -46,7 +54,9 @@ class StockRepo:
                 stock_rows = conn.execute(stock_stmt).mappings().all()
 
                 if not stock_rows:
-                    return {"sku": sku, "nomprod": nomprod, "total": 0, "by_bodega": []}
+                    result = {"sku": sku, "nomprod": nomprod, "total": 0, "by_bodega": []}
+                    _stock_cache[sku] = result
+                    return result
 
                 total = sum(float(r["cantidad"] or 0) for r in stock_rows)
                 by_bodega = [
@@ -54,9 +64,15 @@ class StockRepo:
                     for r in stock_rows
                 ]
 
-                return {"sku": sku, "nomprod": nomprod, "total": total, "by_bodega": by_bodega}
+                result = {"sku": sku, "nomprod": nomprod, "total": total, "by_bodega": by_bodega}
+                _stock_cache[sku] = result
+                return result
             except Exception:
                 return {"sku": sku, "nomprod": nomprod, "total": 0, "by_bodega": []}
+
+
+def clear_stock_cache() -> None:
+    _stock_cache.clear()
 
 
 class FakeStockRepo:

@@ -17,6 +17,7 @@ dependencies = [
   "slowapi>=0.1.9",
   "pyyaml>=6",
   "structlog>=24",
+  "cachetools>=5.3",
 ]
 
 [project.optional-dependencies]

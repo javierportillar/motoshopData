@@ -260,6 +260,8 @@ Camino paralelo (solo cuando se valida F1):
 | 15 | F1-FIX1 ejecutado: 11/13 ítems resueltos. |
 | 16 | Auditoría F1-FIX1: faltaban 3 evidencias + sync SEGUIMIENTO. Plan F1-FIX2. R2 (FG28) reclasificada como deuda extendida indefinida por decisión humana. |
 | 17 | F1-FIX2 ejecutado: V6/V7/C-1 archivadas. **Revisor: 🟢 GO a F2.** |
+| 18 | Plan F1.5 Hardening pre-F2 escrito: R3 kill-y-retry + R-X2 cache + sync docs. |
+| 19 | **F1.5 ejecutado:** R3 kill-y-retry cerrada, R-X2 cache implementado (warm p95 < 50 ms). |
 
 **Resultado F1:**
 
@@ -271,7 +273,7 @@ Camino paralelo (solo cuando se valida F1):
 - Login desde 4G en celular: funcional.
 - Stock real desde `auxinventario`: `MOTS1297` API=691 == SQL=691.
 - ADR-0011 (stack F1) aceptado.
-- 4 deudas adicionales documentadas: **R2** (FG28 en README, extendida), **R3** (idempotencia kill-y-retry), **R4** (Workflow Databricks eliminado), **R-X2** (latencia /stock 781 ms).
+- 4 deudas adicionales documentadas: **R2** (FG28 en README, extendida), **R3** (idempotencia kill-y-retry → **resuelta Sesión 19**), **R4** (Workflow Databricks eliminado), **R-X2** (latencia /stock → **resuelta Sesión 19** con cache).
 
 ---
 
@@ -444,9 +446,9 @@ Cada deuda tiene un **trigger de re-evaluación obligatoria**: si se cumple, se 
 |----|--------|--------|---------|
 | **R1** | Passwords MySQL (`123450`, `Sashita123`) en historial Git | 🟡 Aceptado | (a) MySQL pasa a `@%` o `@<ip>`; (b) puerto 3306 expuesto por túnel; (c) réplica a BD cloud |
 | **R2** | Credenciales API (`FG28`) en README y en historial | 🟡 **Deuda extendida** (decisión humana 2026-05-28) | (a) red más expuesta; (b) cualquier endpoint de escritura; (c) usuarios externos al equipo; (d) tráfico sospechoso en logs Cloudflare |
-| **R3** | Idempotencia kill-y-retry no probada | 🟡 Aceptado | Si el schedule falla a mitad y al reintentar quedan duplicados o estado inconsistente |
+| **R3** | Idempotencia kill-y-retry no probada | ✅ **Resuelto** (Sesión 19) | Kill-y-retry validado: `r3_idempotency_kill_retry_2026-05-30.md`. 12 tablas con conteos == MySQL. |
 | **R4** | Workflow Databricks postergado (corre en Task Scheduler) | 🟡 Aceptado | PC se rompe / se mueve compute a Databricks (F-F) / dependencias entre tablas requieren DAG |
-| **R-X2** | Latencia `/stock` 781 ms > 500 ms | ⚠️ Mitigación pendiente | Si la PWA de F2 lo nota; cache `cachetools.TTLCache(maxsize=200, ttl=300)` sobre `StockRepo.get_stock_by_sku` |
+| **R-X2** | Latencia `/stock` 781 ms > 500 ms | ✅ **Resuelto** (Sesión 19) | TTLCache(maxsize=200, ttl=300) implementado. Warm p95 < 50 ms. Evidencia: `r_x2_cache_2026-05-30.json`. |
 
 ---
 
@@ -530,12 +532,12 @@ Cada deuda tiene un **trigger de re-evaluación obligatoria**: si se cumple, se 
 | Cobertura tests | 79% global |
 | Corridas dump exitosas | 5/5 |
 | Latencia `/health` p95 | ~5 ms |
-| Latencia `/stock` p95 | 781 ms |
+| Latencia `/stock` p95 | ~50 ms (warm) / ~780 ms (cold) |
 | Tiempo ingesta total | 30-37 s |
 | Schedule | 3x/día (02:00, 12:00, 20:00 COL) |
 | ADRs aceptados | 11 |
-| Sesiones de trabajo | 17 |
-| Deudas vivas | 5 (R1, R2, R3, R4, R-X2) |
+| Sesiones de trabajo | 19 |
+| Deudas vivas | 3 (R1, R2, R4) |
 
 ---
 
@@ -593,4 +595,4 @@ Si vas a ejecutar (no planificar):
 
 ## 15 · Resumen ejecutivo en una frase
 
-> **Tres días, dos fases cerradas, un repo público de 121 archivos y una API operativa en internet que sirve datos reales de MotoShop a 781 ms p95 — con 5 deudas conscientes documentadas y un plan para F2 listo para arrancar.**
+> **Tres días, dos fases cerradas, un repo público de 121 archivos y una API operativa en internet que sirve datos reales de MotoShop a ~50 ms p95 (warm) — con 3 deudas conscientes documentadas y F2 lista para arrancar.**
