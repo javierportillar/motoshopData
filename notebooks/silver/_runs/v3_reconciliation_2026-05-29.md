@@ -34,11 +34,51 @@ Tolerancia: < 0.5% diferencia.
 
 ## Top 10 SKUs por ventas (noviembre 2025)
 
-_Completar tras ejecutar `31_reconciliation.py` en Databricks con DELETE+INSERT actualizado._
+> Las queries existen en `31_reconciliation.py` §4 (Top 10 SKUs) y §5 (Top 5 clientes).
+> Para capturar el output real, ejecutar el notebook en Databricks SQL Warehouse:
+
+```sql
+-- Query de Top 10 SKUs (ya en 31_reconciliation.py §4)
+WITH last_month AS (
+  SELECT DATE_TRUNC('MONTH', MAX(fecfven)) AS ms, LAST_DAY(MAX(fecfven)) AS me
+  FROM motoshop.bronze.facventas WHERE estfven = 'A'
+)
+SELECT d.cod_producto, pr.nombre_producto,
+  COUNT(DISTINCT d.num_documento) AS facturas,
+  SUM(d.cantidad) AS cantidad_total,
+  SUM(d.total_detalle) AS total_ventas
+FROM motoshop.silver.fact_ventas_detalle d
+INNER JOIN motoshop.silver.fact_ventas h
+  ON d.num_documento = h.num_documento AND d.cod_clase = h.cod_clase
+LEFT JOIN motoshop.silver.dim_producto pr ON d.cod_producto = pr.cod_producto, last_month lm
+WHERE h.business_date >= lm.ms AND h.business_date <= lm.me
+GROUP BY d.cod_producto, pr.nombre_producto
+ORDER BY total_ventas DESC
+LIMIT 10;
+```
+
+**Status:** Query lista en notebook. Pendiente ejecución en Databricks SQL Warehouse para capturar output real.
 
 ## Top 5 clientes por compras
 
-_Completar tras ejecutar `31_reconciliation.py` en Databricks con DELETE+INSERT actualizado._
+```sql
+-- Query de Top 5 clientes (ya en 31_reconciliation.py §5)
+WITH last_month AS (
+  SELECT DATE_TRUNC('MONTH', MAX(fecfven)) AS ms, LAST_DAY(MAX(fecfven)) AS me
+  FROM motoshop.bronze.facventas WHERE estfven = 'A'
+)
+SELECT h.nit_cliente, tc.nombre_completo,
+  COUNT(*) AS facturas,
+  SUM(h.total_factura) AS total_compras
+FROM motoshop.silver.fact_ventas h
+LEFT JOIN motoshop.silver.dim_tercero tc ON h.nit_cliente = tc.nit_tercero, last_month lm
+WHERE h.business_date >= lm.ms AND h.business_date <= lm.me
+GROUP BY h.nit_cliente, tc.nombre_completo
+ORDER BY total_compras DESC
+LIMIT 5;
+```
+
+**Status:** Query lista en notebook. Pendiente ejecución en Databricks SQL Warehouse para capturar output real.
 
 ## Notebook ejecutado
 

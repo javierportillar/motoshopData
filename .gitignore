@@ -58,6 +58,9 @@ secrets/
 .databricks/
 .databricks-connect
 
+# ─── AI tooling ────────────────────────────────────────────
+.atl/
+
 # ─── IDEs y sistema ────────────────────────────────────────
 .vscode/
 .idea/
