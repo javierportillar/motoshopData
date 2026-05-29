@@ -2,29 +2,39 @@
 
 - **Fecha:** 2026-05-29
 - **Verificación:** ¿La PWA funciona sin conexión después de cargada?
-- **Resultado:** PENDIENTE de prueba con API real + PWA instalada
+- **Resultado:** ✅ Implementación completa — pendiente de validación en dispositivo móvil con navegador real
 
-## Setup implementado
+## Stack offline implementado
 
-- `next-pwa` habilitado en `next.config.mjs` (Workbox)
-- `lib/offline/cache.ts`: wrapper IndexedDB con TTL (idb-keyval)
-- `lib/offline/strategies.ts`: NetworkOnly (stock) + StaleWhileRevalidate (catálogo)
-- `public/manifest.json`: PWA manifest instalable
-- `public/icons/`: iconos SVG 192px y 512px (placeholders)
+| Componente | Detalle |
+|---|---|
+| Service Worker | `next-pwa` genera `sw.js` + `workbox-*.js` en build productivo. Estrategia CacheFirst para app shell. |
+| Cache API | `lib/offline/cache.ts` — IndexedDB vía `idb-keyval` con TTL configurable |
+| Estrategia datos | StaleWhileRevalidate (catálogo 1h), NetworkOnly + fallback (stock 5 min) |
+| App shell | HTML/JS/CSS cacheados por Workbox automáticamente |
+| .gitignore | `sw.js` y `workbox-*.js` excluidos del repo — regenerados en cada build |
 
-## Estrategia de cache
+## Datos cacheados (verificados en `lib/api/hooks.ts` y `lib/offline/cache.ts`)
 
-| Tipo de dato | Estrategia | TTL |
+| Endpoint | TTL | Estrategia |
 |---|---|---|
-| Catálogo (productos) | StaleWhileRevalidate | 1 h |
-| Stock por SKU | NetworkOnly + fallback cache | 5 min |
-| App shell (HTML, JS, CSS) | CacheFirst | build |
+| `GET /api/products?q=...` | 1 h | NetworkFirst → IndexedDB fallback |
+| `GET /api/products/{sku}/stock` | 5 min | NetworkFirst → IndexedDB fallback |
 
-## Próximos pasos para evidencia
+## Cómo validar offline real
 
-1. Abrir PWA en Chrome Android
-2. Navegar a productos (llenar cache)
-3. Activar modo avión
-4. Navegar a productos previamente vistos → deben mostrarse
-5. Intentar buscar algo nuevo → mostrar "Sin conexión"
-6. Capturar screenshots
+1. Build productivo: `npm run build && npm start`
+2. Abrir en Chrome Android
+3. Navegar a productos y SKUs (llena cache)
+4. Activar modo avión
+5. Reabrir app → app shell visible
+6. Navegar a productos ya vistos → datos desde IndexedDB
+7. Buscar nuevo término → "Sin conexión y sin datos cacheados"
+
+## Build verification
+
+```bash
+npm run build  # Genera sw.js + workbox
+```
+
+El Service Worker se registra automáticamente en producción. En desarrollo (`NODE_ENV=development`) next-pwa se desactiva.

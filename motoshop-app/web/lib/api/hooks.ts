@@ -19,12 +19,12 @@ interface ProductsResponse {
 
 interface StockItem {
   codbod: string;
-  nom_bodega?: string;
-  stock: number;
+  nombod?: string;
+  cantidad: number;
 }
 
 interface StockResponse {
-  codprod: string;
+  sku: string;
   total: number;
   by_bodega: StockItem[];
 }

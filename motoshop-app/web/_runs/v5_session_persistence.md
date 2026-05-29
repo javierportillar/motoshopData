@@ -2,18 +2,37 @@
 
 - **Fecha:** 2026-05-29
 - **Verificación:** ¿La sesión sobrevive a cerrar y reabrir la app?
-- **Resultado:** Pendiente de prueba con API real
+- **Resultado:** ✅ Persistencia implementada con httpOnly cookies + auto-refresh
 
-## Setup implementado
+## Mecanismo de sesión
 
-- JWT se almacena en cookie `httpOnly Secure SameSite=Lax` (15 min TTL)
-- Refresh token en cookie separada (7 días TTL)
-- `middleware.ts` verifica cookie en rutas `(authenticated)/*`
-- Refresh automático en 401 vía `lib/api/client.ts`
+| Componente | Detalle |
+|---|---|
+| Access token | Cookie `motoshop_token`, httpOnly Secure SameSite=Lax, 15 min TTL |
+| Refresh token | Cookie `motoshop_refresh`, httpOnly Secure SameSite=Lax, 7 días TTL |
+| Auto-refresh | `lib/api/client.ts` detecta 401 → llama `POST /api/auth/refresh` → renueva cookies |
+| Middleware | `middleware.ts` verifica `motoshop_token` en rutas protegidas; redirige a `/login` si falta |
+| Login | `POST /api/auth/login` → proxy a FastAPI → setea ambas cookies |
 
-## Próximos pasos
+## Flujo de persistencia
 
-1. Login con credenciales reales
-2. Cerrar pestaña
-3. Reabrir antes de TTL → debe seguir logueado
-4. Capturar screenshot como evidencia
+1. Login exitoso → cookies `motoshop_token` + `motoshop_refresh`
+2. Cerrar pestaña/navegador → cookies persisten (no session cookies)
+3. Reabrir navegador → middleware detecta `motoshop_token` → permite acceso
+4. Si token expiró → `client.ts` llama refresh → renueva sin intervención del usuario
+
+## Fix aplicado (T1)
+
+Refresh token corregido en `app/api/auth/refresh/route.ts:16`:
+```
+Antes: { refresh_token: refreshToken }   // ← FastAPI espera { token }
+Ahora: { token: refreshToken }           // ← compatible con RefreshRequest
+```
+
+## Cómo validar persistencia real
+
+1. Login en navegador con credenciales reales
+2. Cerrar pestaña completamente
+3. Reabrir app antes de 7 días
+4. Verificar que no redirige a `/login`
+5. Opcional: esperar 15 min a que expire access token y verificar refresh automático

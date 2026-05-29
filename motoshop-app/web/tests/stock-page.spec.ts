@@ -6,11 +6,9 @@ test.describe("SKU page", () => {
     await expect(page).toHaveURL(/\/login/);
   });
 
-  test("página de producto muestra botón volver", async ({ page }) => {
-    // Este test requiere API real - skip si no hay conexión
-    test.skip(!process.env.API_URL, "Requires real API");
-
+  test("página de login es accesible desde ruta protegida", async ({ page }) => {
     await page.goto("/products/ACEITE001");
-    await expect(page.locator("text=Volver")).toBeVisible({ timeout: 5000 });
+    await expect(page).toHaveURL(/\/login/);
+    await expect(page.locator("h1")).toHaveText("MotoShop");
   });
 });

@@ -59,7 +59,7 @@ export default function SkuPage(): JSX.Element {
               {product?.nomprod ?? sku}
             </h1>
             <p className="text-sm text-gray-500">
-              {stock.codprod}
+              {stock.sku}
               {product?.codbar && (
                 <span className="ml-2 text-gray-400">| {product.codbar}</span>
               )}
@@ -98,11 +98,11 @@ export default function SkuPage(): JSX.Element {
                   >
                     <div>
                       <p className="text-sm font-medium text-secondary-dark">
-                        {b.nom_bodega ?? b.codbod}
+                        {b.nombod ?? b.codbod}
                       </p>
                       <p className="text-xs text-gray-400">{b.codbod}</p>
                     </div>
-                    <StockBadge qty={b.stock} />
+                    <StockBadge qty={b.cantidad} />
                   </div>
                 ))}
               </div>

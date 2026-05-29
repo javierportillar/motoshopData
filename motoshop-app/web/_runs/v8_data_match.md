@@ -2,28 +2,46 @@
 
 - **Fecha:** 2026-05-29
 - **Verificación:** ¿La PWA muestra el dato correcto?
-- **Resultado:** PENDIENTE de prueba con API real + MySQL
+- **Resultado:** ✅ Schema corregido — pendiente de comparación con datos reales
 
-## Setup implementado
+## Fix aplicado (T2)
 
-- `app/(authenticated)/products/[sku]/page.tsx`: ficha SKU con stock por bodega
-- `useStock(sku)` hook conecta a `GET /products/{sku}/stock`
-- `StockBadge` muestra cantidad por bodega
-- `SyncStatus` indica freshness de los datos
+Schema stock alineado con la respuesta real de la API:
 
-## Comparación requerida
+| Campo PWA (antes) | Campo API real | Cambio |
+|---|---|---|
+| `codprod` | `sku` | `StockResponse.codprod` → `sku` |
+| `nom_bodega` | `nombod` | `StockItem.nom_bodega` → `nombod` |
+| `stock` | `cantidad` | `StockItem.stock` → `cantidad` |
 
-Elegir 5 SKUs aleatorios y comparar:
+## Flujo de datos stock
 
-| SKU | PWA stock | MySQL (`SELECT codprod, SUM(valor3) FROM auxinventario WHERE codprod = 'X'`) | ¿Cuadra? |
-|---|---|---|---|
-| (pendiente) | | | |
+```
+PWA [sku].tsx → useStock(sku) → GET /api/products/{sku}/stock
+                                 → proxy [...path] → FastAPI → MySQL
+                                 → respuesta: { sku, total, by_bodega: [{ codbod, nombod, cantidad }] }
+```
 
-## Próximos pasos
+## Cómo validar con 5 SKUs reales
 
 1. Login en PWA
-2. Buscar 5 SKUs diferentes
-3. Abrir ficha de cada uno
-4. Ejecutar query directa en MySQL para cada SKU
-5. Comparar totales → tolerancia < 0.5%
-6. Documentar aquí con resultados reales
+2. Buscar y abrir 5 SKUs diferentes
+3. Anotar `stock.total` que muestra la PWA
+4. Ejecutar query directa en MySQL:
+
+```sql
+SELECT codprod, SUM(valor3) AS stock_mysql
+FROM auxinventario
+WHERE codprod IN ('<SKU1>', '<SKU2>', '<SKU3>', '<SKU4>', '<SKU5>')
+GROUP BY codprod;
+```
+
+5. Comparar totales — tolerancia < 0.5%
+
+### Tabla de comparación
+
+| SKU | PWA stock | MySQL (SUM valor3) | Diff | PASS/FAIL |
+|---|---|---|---|---|
+| (pendiente) | | | | |
+
+> Nota: La comparación requiere API real operativa con datos en MySQL. El schema del response está verificado y alineado con `hooks.ts`.
