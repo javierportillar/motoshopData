@@ -8,9 +8,111 @@
 
 ---
 
+## Sesión 2026-05-29 (35) · F3.5 abierta · 🔴 F4 pausada por bug de universo Silver
+
+**Estado:** se detectó un hallazgo crítico post-F3: Bronze contiene histórico real suficiente para F4, pero Silver está conservando solo una fracción mínima de ventas. Por lo tanto, **F4 queda pausada** hasta cerrar F3.5.
+
+### Evidencia que gatilla F3.5
+
+| Capa | Tabla | Filas | Evidencia |
+|------|-------|------:|-----------|
+| Bronze | `facventas` | 6,340 | `notebooks/bronze/_runs/business_date_survey_2026-05-29.md` |
+| Bronze | `detfventas` | 27,775 | `notebooks/bronze/_runs/business_date_survey_2026-05-29.md` |
+| Bronze | `auxinventario` | 26,174 | `notebooks/bronze/_runs/business_date_survey_2026-05-29.md` |
+| Silver | `fact_ventas` | 15 | `notebooks/silver/_runs/v3_reconciliation_2026-05-29.md` |
+| Silver | `fact_ventas_detalle` | 58 | `notebooks/silver/_runs/v3_reconciliation_2026-05-29.md` |
+| Silver | `fact_inventario` | 26,174 | `notebooks/silver/_runs/v3_reconciliation_2026-05-29.md` |
+
+**Lectura:** inventario conserva el universo completo, pero ventas y detalle colapsan. La hipótesis principal es un bug/filtro no documentado en `notebooks/silver/10_fact_ventas.py` y/o `notebooks/silver/11_fact_ventas_detalle.py`.
+
+### Handoff para Dev A · F3.5 · Hardening Silver
+
+Pegá esto en un chat nuevo de Dev A:
+
+```md
+Soy Dev A · Track A para F3.5 Hardening Silver del proyecto MotoShop.
+
+PRE-FLIGHT obligatorio:
+1. cd /Users/javierportillarosero/Documents/personal/dataEmpresas/motoshopData
+2. git pull --ff-only origin main
+3. Leé `PENDIENTES.md` §Sesión 35 y `SEGUIMIENTO.md` §Fase 3.5.
+4. Leé evidencia:
+   - `notebooks/bronze/_runs/business_date_survey_2026-05-29.md`
+   - `notebooks/silver/_runs/v3_reconciliation_2026-05-29.md`
+5. Leé notebooks afectados:
+   - `notebooks/silver/10_fact_ventas.py`
+   - `notebooks/silver/11_fact_ventas_detalle.py`
+   - `notebooks/silver/31_reconciliation.py`
+
+OBJETIVO:
+Corregir Silver para que `fact_ventas` y `fact_ventas_detalle` representen el universo real de Bronze, salvo filtros de negocio legítimos y documentados.
+
+TAREAS:
+1. Auditar filtros actuales de `10_fact_ventas.py`:
+   - `estfven`
+   - fechas inválidas/futuras
+   - `fecfven`
+   - cualquier cast que descarte filas silenciosamente.
+2. Definir y documentar el universo válido de ventas:
+   - ejemplo: `facventas WHERE estfven IN (...) AND fecfven IS NOT NULL AND fecha válida`.
+   - No asumir que `estfven = 'A'` alcanza sin verificar distribución real por estado.
+3. Corregir `10_fact_ventas.py` para cargar todas las facturas válidas.
+4. Corregir `11_fact_ventas_detalle.py` para que el detalle cuadre contra las cabeceras válidas.
+5. Reescribir `31_reconciliation.py` para validar universo completo, no solo "último mes con datos".
+6. Agregar evidencia nueva en `notebooks/silver/_runs/`:
+   - conteo Bronze esperado vs Silver real;
+   - conteo detalle Bronze esperado vs Silver real;
+   - diferencias por estado/fecha con explicación;
+   - total monetario Bronze vs Silver;
+   - top SKUs y clientes sobre universo corregido.
+7. Ejecutar de nuevo Silver completo y tests Silver.
+8. Re-ejecutar Gold completo sobre Silver corregido:
+   - `notebooks/gold/10..14_*`
+   - `notebooks/gold/20_quality_gold.py`
+   - `notebooks/gold/30_validate_gold.py`
+9. Revalidar V6 PWA↔Databricks SQL con datos corregidos.
+10. Actualizar `SEGUIMIENTO.md` con resultados, conteos y veredicto GO/NO-GO a F4.
+
+VERIFICACIÓN OBLIGATORIA:
+- `COUNT(silver.fact_ventas)` debe aproximar `COUNT(bronze.facventas WHERE filtros_documentados)`.
+- `COUNT(silver.fact_ventas_detalle)` debe aproximar `COUNT(bronze.detfventas JOIN cabeceras_validas)`.
+- Toda diferencia debe estar explicada por estado, fecha inválida, llave huérfana o regla de negocio documentada.
+- F3.5 NO cierra si la reconciliación solo compara un subset temporal pequeño.
+
+FUERA DE SCOPE:
+- No diseñar F4.
+- No entrenar Prophet/LightGBM.
+- No cambiar PWA salvo que V6 demuestre contrato roto.
+- No tocar archivos de credenciales ni `.env`.
+
+ENTREGA:
+- Commit con prefijo `fix(F3.5-silver): ...`.
+- Evidencia nueva versionada en `_runs/`.
+- Resumen final con: causa raíz, conteos antes/después, filtros documentados, impacto sobre Gold y V6.
+```
+
+### Checklist F3.5 para el revisor
+
+- ⬜ Confirmar causa raíz del colapso `6340 → 15` y `27775 → 58`.
+- ⬜ Revisar que los filtros de negocio queden explícitos y justificados.
+- ⬜ Revisar que V3 Silver ya valide universo completo, no último mes trivial.
+- ⬜ Revisar nueva evidencia Silver `_runs`.
+- ⬜ Revisar nueva evidencia Gold `_runs` post-fix.
+- ⬜ Revisar V6 PWA↔Databricks SQL post-fix.
+- ⬜ Emitir nuevo veredicto: GO/NO-GO a F4.
+
+### Decisión de planificación
+
+- F4 queda **pausada** hasta cerrar F3.5.
+- `docs/plan-f4.md` y `docs/decisions/0016-stack-f4.md` no se deben escribir todavía.
+- Si F3.5 recupera el histórico real, F4 se planifica con ~17 meses de ventas y miles de facturas.
+- Si F3.5 demuestra que el histórico válido real sigue siendo pequeño, F4 cambia de enfoque: baseline técnico y alertas descriptivas, no forecasting avanzado.
+
+---
+
 ## Sesión 2026-05-29 (34) · F3 cerrada · 🟢 GO a F4 con deudas diferidas a F6
 
-**Estado:** F3 ✅ aprobada por el revisor. Veredicto y observaciones en `SEGUIMIENTO.md` §Notas de sesión (Sesión 33).
+**Estado:** F3 ✅ aprobada por el revisor en ese momento. **Superseded por Sesión 35:** F4 queda pausada hasta cerrar F3.5 por el hallazgo de universo Silver incompleto.
 
 ### Acciones humanas pendientes (post-F3, antes/durante F4)
 
@@ -19,14 +121,16 @@
 - ⬜ **R8 (demo gerencia)** — diferida a F6. Agendar 30 min con stakeholder (gerencia o vos mismo como dueño del negocio); capturar feedback en template `notebooks/gold/_runs/v5_stakeholder_demo.md`.
 - ⬜ **Revisar próxima madrugada (mañana 02:30 COL)** que el workflow gold corrió exitoso. Si la pestaña `Workflows > motoshop_gold_workflow > Run history` no muestra una corrida ✅, debug.
 
-### Próximo paso del revisor (Sesión 35)
+### Próximo paso del revisor (superseded por F3.5)
 
-1. Escribir `docs/plan-f4.md` (3 sprints ML):
+1. ~~Escribir `docs/plan-f4.md` (3 sprints ML):~~
    - F4-A: baseline naïve por SKU + métricas (MAPE, sMAPE, WAPE) + sandbox MLflow
    - F4-B: Prophet top-100 + LightGBM cola larga + clasificador quiebre con horizon 7/14/30 días
    - F4-C: endpoints `/predict/*` + dashboards predictivos en PWA + alertas web-push (recién aquí se activa `push/router.py`)
-2. Escribir `docs/decisions/0016-stack-f4.md` con DT F4 (MLflow tracking, `prophet`, `lightgbm`, `optuna` para HPO, riesgo R-A4 docs/errores.txt sobre compute en Free Edition para train).
-3. Decidir si F4 se hace en paralelo (Dev A entrena, Dev T integra API+PWA predictivo) o secuencial. Mi recomendación: paralelo si Dev A puede aislar el train sin tocar Gold.
+2. ~~Escribir `docs/decisions/0016-stack-f4.md` con DT F4 (MLflow tracking, `prophet`, `lightgbm`, `optuna` para HPO, riesgo R-A4 docs/errores.txt sobre compute en Free Edition para train).~~
+3. ~~Decidir si F4 se hace en paralelo (Dev A entrena, Dev T integra API+PWA predictivo) o secuencial.~~
+
+**Nuevo orden:** primero cerrar F3.5, después planificar F4 con el volumen real corregido.
 
 ### Notas de la decisión humana
 

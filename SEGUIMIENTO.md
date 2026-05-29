@@ -28,15 +28,17 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **Fase 4 · Predictivo (ML)** (abierta tras cierre F3) |
+| Fase activa | **Fase 3.5 · Hardening Silver** (F4 pausada) |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Cierre F4 (modelos forecasting + alertas quiebre) |
-| Avance global | 3/7 fases cerradas + 2 hardening sprints (F1.5, F1.9) |
+| Próximo gate | Cierre F3.5 (reconciliación universo Bronze→Silver→Gold) |
+| Avance global | 3/7 fases cerradas + 3 hardening sprints (F1.5, F1.9, F3.5 abierto) |
 | Última actualización | 2026-05-29 |
 
 ```
-F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 ✅  F4 🟡  F5 ⬜  F6 ⬜
+F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 ⚠️  F3.5 🟡  F4 ⏸️  F5 ⬜  F6 ⬜
 ```
+
+> **2026-05-29 (Sesión 35) — F3.5 abierta · F4 pausada.** Hallazgo post-F3: Bronze evidencia `facventas=6,340` y `detfventas=27,775`, pero Silver tiene `fact_ventas=15` y `fact_ventas_detalle=58`; `fact_inventario=26,174` sí conserva el universo de Bronze. La reconciliación V3 de F2 validó solo el último mes con 1 factura, así que no probó cobertura completa. Se abre F3.5 para corregir Silver, re-ejecutar Gold y revalidar V3/V6 antes de diseñar F4.
 
 > **2026-05-29 (Sesión 33) — F3 cerrada · 🟢 GO a F4 con deudas R6/R7/R8 diferidas a F6 hardening.** Auditoría F3 PASS sustancia técnica: 5 marts gold (57/57 statements OK), workflow `motoshop_gold_workflow` UNPAUSED 02:30 COL, V6 reconciliación PWA↔Databricks SQL 5/5 KPIs match 0%, V4 dashboard FCP < 5s, V7 refresh plan, 52 tests sqlparse, auto-auditoría interna resolvió 25 hallazgos antes de revisor. **Deudas diferidas a F6 (decisión humana 2026-05-29):** R7 (V3 workflow 7 corridas — se acumula con tiempo), R8 (V5 demo gerencia — humano agenda), R6 (demo 4G heredada F2 — humano captura). Triggers explícitos en §Tablero.
 
@@ -408,6 +410,80 @@ _(rellenar al cerrar la fase)_
 
 ---
 
+## Fase 3.5 · Hardening Silver antes de Predictivo
+
+**Objetivo:** corregir la cobertura de ventas en Silver para que Gold y F4 se construyan sobre el universo real de sgHermes/bronze, no sobre un subset accidental.
+
+### Por qué existe esta fase
+
+La evidencia versionada muestra una discrepancia fuerte:
+
+| Capa | Tabla | Filas | Evidencia |
+|------|-------|------:|-----------|
+| Bronze | `facventas` | 6,340 | `notebooks/bronze/_runs/business_date_survey_2026-05-29.md` |
+| Bronze | `detfventas` | 27,775 | `notebooks/bronze/_runs/business_date_survey_2026-05-29.md` |
+| Bronze | `auxinventario` | 26,174 | `notebooks/bronze/_runs/business_date_survey_2026-05-29.md` |
+| Silver | `fact_ventas` | 15 | `notebooks/silver/_runs/v3_reconciliation_2026-05-29.md` |
+| Silver | `fact_ventas_detalle` | 58 | `notebooks/silver/_runs/v3_reconciliation_2026-05-29.md` |
+| Silver | `fact_inventario` | 26,174 | `notebooks/silver/_runs/v3_reconciliation_2026-05-29.md` |
+
+La reconciliación V3 anterior comparó el último mes con datos y encontró 1 factura en ambos lados. Eso prueba igualdad de un subset, no cobertura del universo completo.
+
+### Definition of Done
+
+- `notebooks/silver/10_fact_ventas.py` carga todas las facturas válidas según filtros documentados.
+- `notebooks/silver/11_fact_ventas_detalle.py` conserva el detalle asociado a cabeceras válidas.
+- `notebooks/silver/31_reconciliation.py` valida universo completo Bronze→Silver, no solo último mes.
+- Nueva evidencia Silver versionada en `notebooks/silver/_runs/` explica conteos esperados, conteos reales y diferencias.
+- Gold se re-ejecuta completo sobre Silver corregido.
+- V6 PWA↔Databricks SQL se revalida con datos corregidos.
+- Revisor emite GO/NO-GO a F4 con volumen histórico real.
+
+### Checklist de entregables
+
+**Track A · Silver/Gold**
+- ⬜ Auditar distribución real de `estfven`, fechas inválidas/futuras y casts en `bronze.facventas`.
+- ⬜ Documentar filtros legítimos para ventas válidas.
+- ⬜ Corregir `10_fact_ventas.py`.
+- ⬜ Corregir `11_fact_ventas_detalle.py`.
+- ⬜ Reescribir `31_reconciliation.py` para comparar universo completo.
+- ⬜ Ejecutar Silver completo y guardar evidencia nueva.
+- ⬜ Ejecutar tests Silver.
+- ⬜ Re-ejecutar Gold completo y guardar evidencia nueva.
+- ⬜ Revalidar V6 PWA↔Databricks SQL con los nuevos marts.
+- ⬜ Actualizar notas de cierre y veredicto F3.5.
+
+**Track T · API/PWA**
+- ⬜ Confirmar que los endpoints `/metrics/*` siguen respondiendo con el contrato actual.
+- ⬜ Confirmar que dashboards no asumen dataset pequeño.
+- ⬜ Actualizar evidencia PWA solo si cambian KPIs o contrato.
+
+### Puntos de verificación crítica
+
+1. **¿Silver representa el universo esperado de Bronze?**
+   `COUNT(silver.fact_ventas)` debe aproximar `COUNT(bronze.facventas WHERE filtros_documentados)`; toda diferencia debe tener explicación.
+2. **¿El detalle conserva integridad con cabeceras válidas?**
+   `fact_ventas_detalle` debe cuadrar contra `detfventas` unido a cabeceras válidas; huérfanos y descartes quedan reportados.
+3. **¿V3 dejó de ser trivial?**
+   La reconciliación debe validar cobertura completa, totales monetarios y cortes por mes/estado.
+4. **¿Gold cambia de escala coherentemente?**
+   Marts de ventas, ABC, cohortes y dormidos deben reflejar el histórico corregido.
+5. **¿V6 sigue pasando con datos corregidos?**
+   PWA y Databricks SQL deben cuadrar después del reproceso.
+6. **¿F4 es honesto con el volumen real?**
+   Si hay histórico suficiente, F4 puede planificar forecasting; si no, se rediseña como baseline/alertas descriptivas.
+
+### Bloqueadores actuales
+
+- 🔴 F4 pausada hasta cerrar F3.5.
+- 🔴 No diseñar `docs/plan-f4.md` ni ADR-0016 hasta conocer el volumen Silver corregido.
+
+### Lecciones de cierre
+
+_(rellenar al cerrar F3.5)_
+
+---
+
 ## Fase 4 · Predictivo (ML)
 
 **Objetivo:** cumplir el Módulo 3 — predecir demanda y alertar quiebres.
@@ -609,6 +685,7 @@ _(rellenar al cerrar la fase)_
 | **R6 · Hito demo 4G no capturado** | F2 (Sesión 27) · diferida a F6 hardening en Sesión 33 | 🟡 Aceptado · diferida a F6 | El plan F2 §6.3 paso 5 pedía "demo desde celular real en 4G ≤ 5 s con screenshot/video". F2 cerró con tests Playwright + curls localhost validados, pero sin captura del hito visible en celular. F3 era la siguiente oportunidad y tampoco se capturó. Decisión humana 2026-05-29: diferir a F6 hardening (cierre académico) cuando ya haya días de registros reales y la demo sea más representativa. | **Mitigación pasiva:** todas las V de PWA (V4–V8) pasan en tests automatizados; V6 reconciliación PWA↔SQL en F3 confirma datos correctos. **Acción pendiente (F6):** humano agenda 5 min con un celular en 4G, navega login → búsqueda → ficha SKU → dashboards, captura screenshot/video, sube a `motoshop-app/web/_runs/v_hito_demo_4g.md`. **Trigger de re-evaluación:** (a) entrega académica E3/E5 se acerca; (b) gerencia pide ver la app antes de F6. |
 | **R7 · V3 workflow 7 corridas pendiente** | F3 (Sesión 33) · diferida a F6 hardening | 🟡 Aceptado · cierra solo en background | El gate V3 de F3 pedía "7 corridas seguidas exitosas del workflow nocturno > 95%". El workflow `motoshop_gold_workflow` está UNPAUSED con schedule cron `0 30 2 * * ?` (02:30 COL); solo 1 corrida iniciada en Sesión 32. Se cierra automáticamente acumulando noches. | **Mitigación pasiva:** schedule activo; cada noche acumula una corrida. **Acción pendiente (F6):** revisor cuenta corridas exitosas/total en `system.workflows.runs` tras 7+ días, documenta KPI en `notebooks/gold/_runs/v3_workflow_7_runs_<fecha>.md`. **Trigger de re-evaluación:** (a) F6 hardening kickoff (~7+ días después de Sesión 33); (b) si tasa éxito < 95% se debug antes; (c) si workflow falla 3 noches seguidas, alerta inmediata. |
 | **R8 · V5 demo a gerencia pendiente** | F3 (Sesión 33) · diferida a F6 hardening | 🟡 Aceptado · requiere acción humana | El gate V5 de F3 pedía "demo a stakeholder real con feedback capturado". cierre-f3.md tiene template vacío. Decisión humana 2026-05-29: aplazar demo a F6 cuando: (a) ya haya datos reales acumulados (workflow corre nocturno), (b) la PWA esté en versión más madura, (c) se pueda capturar feedback más representativo. | **Mitigación pasiva:** la PWA muestra los mismos números que el dashboard SQL (V6 PASS); arquitecturalmente correcto. **Acción pendiente (F6):** humano agenda 30 min con stakeholder (gerencia o Javier mismo), demo PWA + dashboard, captura feedback en `notebooks/gold/_runs/v5_stakeholder_demo.md` (template ya creado). **Trigger de re-evaluación:** (a) F6 kickoff; (b) entrega académica E3 (Producto descriptivo). |
+| **R9 · Universo Silver de ventas incompleto** | F3.5 (Sesión 35) | 🔴 Activo · bloquea F4 | Bronze evidencia `facventas=6,340` y `detfventas=27,775`, pero Silver quedó en `fact_ventas=15` y `fact_ventas_detalle=58`. La V3 anterior comparó solo el último mes con 1 factura, por lo que no validó cobertura completa. Gold y V6 F3 se construyeron sobre ese Silver reducido. | **Mitigación:** abrir F3.5 para auditar/fijar `notebooks/silver/10_fact_ventas.py`, `11_fact_ventas_detalle.py` y `31_reconciliation.py`; re-ejecutar Silver+Gold; revalidar V3 y V6. **Trigger de cierre:** nueva evidencia Bronze→Silver demuestra universo completo o diferencias documentadas por regla de negocio. |
 
 ---
 
@@ -656,6 +733,22 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-29 — Sesión 35 · F3.5 abierta por universo Silver incompleto
+
+- **Hecho (revisor):**
+  - Verifiqué evidencia versionada antes de aceptar el hallazgo.
+  - `notebooks/bronze/_runs/business_date_survey_2026-05-29.md` muestra `facventas=6,340`, `detfventas=27,775`, `auxinventario=26,174`.
+  - `notebooks/silver/_runs/v3_reconciliation_2026-05-29.md` muestra `fact_ventas=15`, `fact_ventas_detalle=58`, `fact_inventario=26,174`.
+  - Confirmé que la V3 anterior compara el último mes con 1 factura y no valida el universo completo.
+  - Abrí **F3.5 · Hardening Silver** y pausé F4 hasta cerrar la corrección.
+- **Impacto:**
+  - La lectura anterior de "dataset demo limitado" queda superseded: hay indicios fuertes de bug o filtro no documentado en Silver ventas.
+  - Los marts Gold y la V6 PWA↔Databricks siguen siendo útiles como prueba de integración, pero deben revalidarse después del reproceso.
+  - F4 no debe planificarse hasta saber el volumen real corregido.
+- **Próximo paso:**
+  - Dev A ejecuta el handoff F3.5 en `PENDIENTES.md` §Sesión 35.
+  - Revisor audita causa raíz, conteos antes/después, filtros documentados y veredicto GO/NO-GO a F4.
 
 ### 2026-05-29 — Sesión 33 · Auditoría F3 + GO a F4 con R6/R7/R8 diferidas a F6
 
