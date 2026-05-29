@@ -66,7 +66,7 @@ def upload_notebook(host: str, token: str, local_path: pathlib.Path, dest_path: 
     payload = {
         "path": dest_path,
         "format": "SOURCE",
-        "language": "PYTHON",
+        "language": "SQL",
         "content": content,
         "overwrite": True,
     }
