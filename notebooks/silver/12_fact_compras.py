@@ -3,7 +3,9 @@
 -- MAGIC # 12 · fact_compras — desde bronze.compras
 -- MAGIC
 -- MAGIC Patrón idempotente: DELETE + INSERT por `business_date`.
--- MAGIC Solo activos (`estcom = 'A'`).
+-- MAGIC Estados incluidos: 'B' (746 compras, dominante), 'A' (16 compras).
+-- MAGIC En sgHermes Colombia, 'B' corresponde a documentos válidos; 'A' puede ser
+-- MAGIC anuladas u otro estado. Se incluyen ambos para preservar el universo completo.
 
 -- COMMAND ----------
 
@@ -39,7 +41,7 @@ DELETE FROM motoshop.silver.fact_compras
 WHERE business_date IN (
   SELECT DISTINCT CAST(feccom AS DATE)
   FROM motoshop.bronze.compras
-  WHERE estcom = 'A'
+  WHERE estcom IN ('A', 'B')
     AND feccom IS NOT NULL
     AND CAST(feccom AS DATE) >= DATE '2020-01-01'
     AND CAST(feccom AS DATE) <= CURRENT_DATE()
@@ -73,7 +75,7 @@ SELECT
   TRIM(nitvend)       AS nit_vendedor,
   CURRENT_DATE()      AS ingest_date_silver
 FROM motoshop.bronze.compras
-WHERE estcom = 'A'
+WHERE estcom IN ('A', 'B')
   AND feccom IS NOT NULL
   AND CAST(feccom AS DATE) >= DATE '2020-01-01'
   AND CAST(feccom AS DATE) <= CURRENT_DATE();

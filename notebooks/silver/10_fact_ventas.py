@@ -3,7 +3,10 @@
 -- MAGIC # 10 · fact_ventas — desde bronze.facventas
 -- MAGIC
 -- MAGIC Patrón idempotente: DELETE + INSERT por `business_date`.
--- MAGIC `business_date` se deriva de `fecfven`. Solo activos (`estfven = 'A'`).
+-- MAGIC `business_date` se deriva de `fecfven`.
+-- MAGIC Estados incluidos: 'B' (6,325 facturas, dominante), 'A' (15 facturas).
+-- MAGIC En sgHermes Colombia, 'B' corresponde a facturas válidas; 'A' puede ser
+-- MAGIC anuladas u otro estado. Se incluyen ambos para preservar el universo completo.
 -- MAGIC Repetible sin duplicar: si ya existe la partición, se sobreescribe.
 
 -- COMMAND ----------
@@ -53,7 +56,7 @@ DELETE FROM motoshop.silver.fact_ventas
 WHERE business_date IN (
   SELECT DISTINCT CAST(fecfven AS DATE)
   FROM motoshop.bronze.facventas
-  WHERE estfven = 'A'
+  WHERE estfven IN ('A', 'B')
     AND fecfven IS NOT NULL
     AND CAST(fecfven AS DATE) >= DATE '2020-01-01'
     AND CAST(fecfven AS DATE) <= CURRENT_DATE()
@@ -90,7 +93,7 @@ SELECT
   TRIM(codres)                       AS cod_resolucion,
   CURRENT_DATE()                     AS ingest_date_silver
 FROM motoshop.bronze.facventas
-WHERE estfven = 'A'
+WHERE estfven IN ('A', 'B')
   AND fecfven IS NOT NULL
   AND CAST(fecfven AS DATE) >= DATE '2020-01-01'
   AND CAST(fecfven AS DATE) <= CURRENT_DATE();

@@ -138,7 +138,47 @@ HAVING COUNT(*) > 0;
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## Dimensiones: PK duplicada
+-- MAGIC ## Completeness checks (Silver ≅ Bronze)
+
+-- COMMAND ----------
+
+-- fact_ventas completeness: silver ≈ bronze (≤1% difference in row count)
+-- tolerancia amplia (1%) para cubrir casos donde Bronze tenga outliers de fecha
+INSERT INTO motoshop.silver._quality_runs
+SELECT CONCAT('qr_', DATE_FORMAT(CURRENT_DATE(), 'yyyyMMdd'), '_', CAST(FLOOR(RAND() * 10000) AS STRING)),
+  'fact_ventas', 'silver_completeness', CAST(ABS(b.n - s.n) AS BIGINT), 'CRITICAL', CURRENT_TIMESTAMP()
+FROM (
+  SELECT COUNT(*) AS n FROM motoshop.bronze.facventas
+  WHERE estfven IN ('A','B')
+    AND fecfven IS NOT NULL
+    AND CAST(fecfven AS DATE) >= DATE '2020-01-01'
+    AND CAST(fecfven AS DATE) <= CURRENT_DATE()
+) b,
+(
+  SELECT COUNT(*) AS n FROM motoshop.silver.fact_ventas
+) s
+WHERE ABS(b.n - s.n) * 1.0 / NULLIF(b.n, 0) > 0.01;
+
+-- fact_compras completeness
+INSERT INTO motoshop.silver._quality_runs
+SELECT CONCAT('qr_', DATE_FORMAT(CURRENT_DATE(), 'yyyyMMdd'), '_', CAST(FLOOR(RAND() * 10000) AS STRING)),
+  'fact_compras', 'silver_completeness', CAST(ABS(b.n - s.n) AS BIGINT), 'CRITICAL', CURRENT_TIMESTAMP()
+FROM (
+  SELECT COUNT(*) AS n FROM motoshop.bronze.compras
+  WHERE estcom IN ('A','B')
+    AND feccom IS NOT NULL
+    AND CAST(feccom AS DATE) >= DATE '2020-01-01'
+    AND CAST(feccom AS DATE) <= CURRENT_DATE()
+) b,
+(
+  SELECT COUNT(*) AS n FROM motoshop.silver.fact_compras
+) s
+WHERE ABS(b.n - s.n) * 1.0 / NULLIF(b.n, 0) > 0.01;
+
+-- COMMAND ----------
+
+-- MAGIC %md
+-- MAGIC ## Dimensions: PK duplicadaensiones: PK duplicada
 
 -- COMMAND ----------
 

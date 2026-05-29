@@ -1,152 +1,208 @@
 -- Databricks notebook source
 -- MAGIC %md
--- MAGIC # 31 · Reconciliation — Silver vs Bronze (proxy sgHermes)
+-- MAGIC # 31 · Reconciliation — Silver vs Bronze (Full Universe)
 -- MAGIC
--- MAGIC V3: Compara totales de silver con bronze.
--- MAGIC Tolerancia: < 0.5%.
--- MAGIC Mes usado: último mes con datos (no "mes pasado" que puede estar vacío).
+-- MAGIC **V3 rediseñada** según DT-F3.5-4: valida el universo COMPLETO, no solo
+-- MAGIC el último mes con datos. Previene regresiones como la de F3 donde Silver
+-- MAGIC perdió ~99.7% del histórico por un filtro destructivo no detectado.
+-- MAGIC
+-- MAGIC Estados documentados: 'B' es el estado dominante en sgHermes para facturas
+-- MAGIC y compras válidas (~99.7% del total). 'A' representa un número menor.
+-- MAGIC Se incluyen ambos para preservar el universo completo.
 
 -- COMMAND ----------
-
 -- MAGIC %md
--- MAGIC ## 1 · Determinar el mes con datos
+-- MAGIC ## 1 · Definir filtros canónicos
+-- MAGIC
+-- MAGIC Los mismos filtros que usan 10_fact_ventas.py y 12_fact_compras.py.
 
 -- COMMAND ----------
 
-SELECT
-  'metadata' AS seccion,
-  DATE_TRUNC('MONTH', MAX(fecfven)) AS mes_usado_start,
-  LAST_DAY(MAX(fecfven)) AS mes_usado_end,
-  COUNT(*) AS facturas_en_mes,
-  'Se usa el último mes con datos, no mes actual (que puede estar vacío)' AS nota
-FROM motoshop.bronze.facventas
-WHERE estfven = 'A';
+-- Filtros canónicos para ventas y compras
+-- Se declaran como CTE para mantenerlos en un solo lugar.
+-- Ventas: estfven IN ('A','B'), fecfven NOT NULL, fecha >= 2020-01-01, <= today
+-- Compras: estcom IN ('A','B'), feccom NOT NULL, fecha >= 2020-01-01, <= today
 
 -- COMMAND ----------
-
 -- MAGIC %md
--- MAGIC ## 2 · Reconciliación fact_ventas (último mes con datos)
+-- MAGIC ## 2 · Universo ventas: bronce completo vs silver completo
 
 -- COMMAND ----------
 
-WITH last_month AS (
-  SELECT DATE_TRUNC('MONTH', MAX(fecfven)) AS ms, LAST_DAY(MAX(fecfven)) AS me
-  FROM motoshop.bronze.facventas WHERE estfven = 'A'
+WITH bronze_ventas AS (
+  SELECT
+    COUNT(*) AS total_rows,
+    COALESCE(SUM(CAST(totfven AS DOUBLE)), 0) AS total_monetario
+  FROM motoshop.bronze.facventas
+  WHERE estfven IN ('A', 'B')
+    AND fecfven IS NOT NULL
+    AND CAST(fecfven AS DATE) >= DATE '2020-01-01'
+    AND CAST(fecfven AS DATE) <= CURRENT_DATE()
 ),
-bv AS (
-  SELECT COUNT(*) AS n, COALESCE(SUM(CAST(totfven AS DOUBLE)), 0) AS t
-  FROM motoshop.bronze.facventas, last_month p
-  WHERE estfven = 'A' AND CAST(fecfven AS DATE) >= ms AND CAST(fecfven AS DATE) <= me
-),
-sv AS (
-  SELECT COUNT(*) AS n, COALESCE(SUM(total_factura), 0) AS t
-  FROM motoshop.silver.fact_ventas, last_month p
-  WHERE business_date >= ms AND business_date <= me
+silver_ventas AS (
+  SELECT
+    COUNT(*) AS total_rows,
+    COALESCE(SUM(total_factura), 0) AS total_monetario
+  FROM motoshop.silver.fact_ventas
 )
 SELECT
-  b.n AS bronze_facturas,
-  s.n AS silver_facturas,
-  b.t AS bronze_total,
-  s.t AS silver_total,
-  ABS(b.t - s.t) AS diff_abs,
-  CASE WHEN b.t > 0 THEN ROUND(ABS(b.t - s.t) / b.t * 100, 2) ELSE 0 END AS diff_pct,
-  CASE WHEN ABS(b.t - s.t) / NULLIF(b.t, 0) < 0.005 THEN 'PASS' ELSE 'FAIL' END AS status
-FROM bv b, sv s;
+  'VENTAS' AS seccion,
+  b.total_rows AS bronze_rows,
+  s.total_rows AS silver_rows,
+  b.total_rows - s.total_rows AS diff_rows,
+  CASE WHEN b.total_rows > 0
+    THEN ROUND((b.total_rows - s.total_rows) * 100.0 / b.total_rows, 2)
+    ELSE 0 END AS diff_rows_pct,
+  b.total_monetario AS bronze_total,
+  s.total_monetario AS silver_total,
+  ROUND(b.total_monetario - s.total_monetario, 2) AS diff_monetario,
+  CASE WHEN b.total_monetario > 0
+    THEN ROUND(ABS(b.total_monetario - s.total_monetario) / b.total_monetario * 100, 4)
+    ELSE 0 END AS diff_monetario_pct,
+  CASE
+    WHEN b.total_rows = s.total_rows AND ABS(b.total_monetario - s.total_monetario) / NULLIF(b.total_monetario, 0) < 0.005
+    THEN '✅ PASS'
+    ELSE '❌ FAIL'
+  END AS status
+FROM bronze_ventas b, silver_ventas s;
 
 -- COMMAND ----------
-
 -- MAGIC %md
--- MAGIC ## 3 · Reconciliación fact_compras (último mes con datos)
+-- MAGIC ## 3 · Universo compras: bronce completo vs silver completo
 
 -- COMMAND ----------
 
-WITH last_month AS (
-  SELECT DATE_TRUNC('MONTH', MAX(fecfven)) AS ms, LAST_DAY(MAX(fecfven)) AS me
-  FROM motoshop.bronze.facventas WHERE estfven = 'A'
+WITH bronze_compras AS (
+  SELECT
+    COUNT(*) AS total_rows,
+    COALESCE(SUM(CAST(totcom AS DOUBLE)), 0) AS total_monetario
+  FROM motoshop.bronze.compras
+  WHERE estcom IN ('A', 'B')
+    AND feccom IS NOT NULL
+    AND CAST(feccom AS DATE) >= DATE '2020-01-01'
+    AND CAST(feccom AS DATE) <= CURRENT_DATE()
 ),
-bc AS (
-  SELECT COUNT(*) AS n, COALESCE(SUM(CAST(totcom AS DOUBLE)), 0) AS t
-  FROM motoshop.bronze.compras, last_month p
-  WHERE estcom = 'A' AND CAST(feccom AS DATE) >= ms AND CAST(feccom AS DATE) <= me
-),
-sc AS (
-  SELECT COUNT(*) AS n, COALESCE(SUM(total_compra), 0) AS t
-  FROM motoshop.silver.fact_compras, last_month p
-  WHERE business_date >= ms AND business_date <= me
+silver_compras AS (
+  SELECT
+    COUNT(*) AS total_rows,
+    COALESCE(SUM(total_compra), 0) AS total_monetario
+  FROM motoshop.silver.fact_compras
 )
 SELECT
-  b.n AS bronze_compras,
-  s.n AS silver_compras,
-  b.t AS bronze_total,
-  s.t AS silver_total,
-  ABS(b.t - s.t) AS diff_abs,
-  CASE WHEN b.t > 0 THEN ROUND(ABS(b.t - s.t) / b.t * 100, 2) ELSE 0 END AS diff_pct,
-  CASE WHEN ABS(b.t - s.t) / NULLIF(b.t, 0) < 0.005 THEN 'PASS' ELSE 'FAIL' END AS status
-FROM bc b, sc s;
+  'COMPRAS' AS seccion,
+  b.total_rows AS bronze_rows,
+  s.total_rows AS silver_rows,
+  b.total_rows - s.total_rows AS diff_rows,
+  CASE WHEN b.total_rows > 0
+    THEN ROUND((b.total_rows - s.total_rows) * 100.0 / b.total_rows, 2)
+    ELSE 0 END AS diff_rows_pct,
+  b.total_monetario AS bronze_total,
+  s.total_monetario AS silver_total,
+  ROUND(b.total_monetario - s.total_monetario, 2) AS diff_monetario,
+  CASE WHEN b.total_monetario > 0
+    THEN ROUND(ABS(b.total_monetario - s.total_monetario) / b.total_monetario * 100, 4)
+    ELSE 0 END AS diff_monetario_pct,
+  CASE
+    WHEN b.total_rows = s.total_rows AND ABS(b.total_monetario - s.total_monetario) / NULLIF(b.total_monetario, 0) < 0.005
+    THEN '✅ PASS'
+    ELSE '❌ FAIL'
+  END AS status
+FROM bronze_compras b, silver_compras s;
 
 -- COMMAND ----------
-
 -- MAGIC %md
--- MAGIC ## 4 · Top 10 SKUs por ventas (último mes con datos)
+-- MAGIC ## 4 · Distribución por año-mes (ventas)
+-- MAGIC
+-- MAGIC Valida que cada (year, month) en Bronze tenga su equivalente en Silver.
 
 -- COMMAND ----------
 
-WITH last_month AS (
-  SELECT DATE_TRUNC('MONTH', MAX(fecfven)) AS ms, LAST_DAY(MAX(fecfven)) AS me
-  FROM motoshop.bronze.facventas WHERE estfven = 'A'
+WITH bronze_dist AS (
+  SELECT
+    YEAR(CAST(fecfven AS DATE)) AS ano,
+    MONTH(CAST(fecfven AS DATE)) AS mes,
+    COUNT(*) AS n_bronze,
+    COALESCE(SUM(CAST(totfven AS DOUBLE)), 0) AS t_bronze
+  FROM motoshop.bronze.facventas
+  WHERE estfven IN ('A', 'B')
+    AND fecfven IS NOT NULL
+    AND CAST(fecfven AS DATE) >= DATE '2020-01-01'
+    AND CAST(fecfven AS DATE) <= CURRENT_DATE()
+  GROUP BY YEAR(CAST(fecfven AS DATE)), MONTH(CAST(fecfven AS DATE))
+),
+silver_dist AS (
+  SELECT
+    YEAR(business_date) AS ano,
+    MONTH(business_date) AS mes,
+    COUNT(*) AS n_silver,
+    COALESCE(SUM(total_factura), 0) AS t_silver
+  FROM motoshop.silver.fact_ventas
+  GROUP BY YEAR(business_date), MONTH(business_date)
 )
+SELECT
+  COALESCE(b.ano, s.ano) AS ano,
+  COALESCE(b.mes, s.mes) AS mes,
+  COALESCE(b.n_bronze, 0) AS bronze_rows,
+  COALESCE(s.n_silver, 0) AS silver_rows,
+  COALESCE(b.n_bronze, 0) - COALESCE(s.n_silver, 0) AS diff_rows,
+  CASE WHEN COALESCE(b.n_bronze, 0) > 0
+    THEN ROUND(ABS(COALESCE(b.n_bronze, 0) - COALESCE(s.n_silver, 0)) * 100.0 / b.n_bronze, 1)
+    ELSE 0 END AS diff_pct,
+  ROUND(COALESCE(b.t_bronze, 0), 2) AS bronze_total,
+  ROUND(COALESCE(s.t_silver, 0), 2) AS silver_total,
+  CASE WHEN COALESCE(b.n_bronze, 0) = COALESCE(s.n_silver, 0) THEN '✅' ELSE '⚠️' END AS match
+FROM bronze_dist b
+FULL OUTER JOIN silver_dist s ON b.ano = s.ano AND b.mes = s.mes
+ORDER BY ano DESC, mes DESC;
+
+-- COMMAND ----------
+-- MAGIC %md
+-- MAGIC ## 5 · Top 10 SKUs por ventas (universo completo)
+
+-- COMMAND ----------
+
 SELECT
   d.cod_producto,
   pr.nombre_producto,
   COUNT(DISTINCT d.num_documento) AS facturas,
   SUM(d.cantidad) AS cantidad_total,
-  SUM(d.total_detalle) AS total_ventas
+  ROUND(SUM(d.total_detalle), 2) AS total_ventas
 FROM motoshop.silver.fact_ventas_detalle d
 INNER JOIN motoshop.silver.fact_ventas h
   ON d.num_documento = h.num_documento AND d.cod_clase = h.cod_clase
 LEFT JOIN motoshop.silver.dim_producto pr ON d.cod_producto = pr.cod_producto
-, last_month lm
-WHERE h.business_date >= lm.ms AND h.business_date <= lm.me
 GROUP BY d.cod_producto, pr.nombre_producto
 ORDER BY total_ventas DESC
 LIMIT 10;
 
 -- COMMAND ----------
-
 -- MAGIC %md
--- MAGIC ## 5 · Top 5 clientes por compras
+-- MAGIC ## 6 · Top 5 clientes (universo completo)
 
 -- COMMAND ----------
 
-WITH last_month AS (
-  SELECT DATE_TRUNC('MONTH', MAX(fecfven)) AS ms, LAST_DAY(MAX(fecfven)) AS me
-  FROM motoshop.bronze.facventas WHERE estfven = 'A'
-)
 SELECT
   h.nit_cliente,
   tc.nombre_completo,
   COUNT(*) AS facturas,
-  SUM(h.total_factura) AS total_compras
+  ROUND(SUM(h.total_factura), 2) AS total_compras
 FROM motoshop.silver.fact_ventas h
 LEFT JOIN motoshop.silver.dim_tercero tc ON h.nit_cliente = tc.nit_tercero
-, last_month lm
-WHERE h.business_date >= lm.ms AND h.business_date <= lm.me
 GROUP BY h.nit_cliente, tc.nombre_completo
 ORDER BY total_compras DESC
 LIMIT 5;
 
 -- COMMAND ----------
-
 -- MAGIC %md
--- MAGIC ## 6 · Conteos generales
+-- MAGIC ## 7 · Conteos generales de todas las tablas silver
 
 -- COMMAND ----------
 
 SELECT
-  'bronze_facventas' AS tabla, COUNT(*) AS rows FROM motoshop.bronze.facventas WHERE estfven = 'A'
+  'bronze_facventas' AS tabla, COUNT(*) AS rows FROM motoshop.bronze.facventas WHERE estfven IN ('A', 'B')
 UNION ALL SELECT 'silver_fact_ventas', COUNT(*) FROM motoshop.silver.fact_ventas
 UNION ALL SELECT 'silver_fact_ventas_detalle', COUNT(*) FROM motoshop.silver.fact_ventas_detalle
-UNION ALL SELECT 'bronze_compras', COUNT(*) FROM motoshop.bronze.compras WHERE estcom = 'A'
+UNION ALL SELECT 'bronze_compras', COUNT(*) FROM motoshop.bronze.compras WHERE estcom IN ('A', 'B')
 UNION ALL SELECT 'silver_fact_compras', COUNT(*) FROM motoshop.silver.fact_compras
 UNION ALL SELECT 'silver_fact_compras_detalle', COUNT(*) FROM motoshop.silver.fact_compras_detalle
 UNION ALL SELECT 'silver_fact_inventario', COUNT(*) FROM motoshop.silver.fact_inventario
@@ -155,4 +211,5 @@ UNION ALL SELECT 'silver_dim_bodega', COUNT(*) FROM motoshop.silver.dim_bodega
 UNION ALL SELECT 'silver_dim_tercero', COUNT(*) FROM motoshop.silver.dim_tercero
 UNION ALL SELECT 'silver_dim_sucursal', COUNT(*) FROM motoshop.silver.dim_sucursal
 UNION ALL SELECT 'silver_dim_formapago', COUNT(*) FROM motoshop.silver.dim_formapago
-UNION ALL SELECT 'silver_dim_tiempo', COUNT(*) FROM motoshop.silver.dim_tiempo;
+UNION ALL SELECT 'silver_dim_tiempo', COUNT(*) FROM motoshop.silver.dim_tiempo
+ORDER BY tabla;
