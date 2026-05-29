@@ -1,0 +1,181 @@
+{
+  "dashboard": {
+    "name": "Dashboard Ejecutivo — MotoShop",
+    "description": "Dashboard ejecutivo con KPIs principales de ventas, inventario y rotación. Actualización diaria desde gold marts.",
+    "tags": ["motoshop", "ejecutivo", "gold"],
+    "warehouse_id": "43bc044eaef4cca4",
+    "created_at": "2026-05-29",
+    "version": "1.0.0",
+    "refresh_schedule": {
+      "type": "DAILY",
+      "time": "02:30",
+      "timezone": "America/Bogota",
+      "state": "PAUSED"
+    },
+    "layout": [
+      {
+        "id": "kpi_ventas",
+        "type": "CARD",
+        "title": "Ventas Totales",
+        "query": "SELECT ROUND(SUM(valor_total), 0) AS value FROM motoshop.gold.mart_ventas_diarias_sku WHERE business_date = (SELECT MAX(business_date) FROM motoshop.gold.mart_ventas_diarias_sku)",
+        "position": { "x": 0, "y": 0, "width": 2, "height": 1 },
+        "visualization": {
+          "type": "counter",
+          "title": "Ventas del día",
+          "format": "currency",
+          "prefix": "$"
+        }
+      },
+      {
+        "id": "kpi_facturas",
+        "type": "CARD",
+        "title": "Facturas Emitidas",
+        "query": "SELECT SUM(num_facturas) AS value FROM motoshop.gold.mart_ventas_diarias_sku WHERE business_date = (SELECT MAX(business_date) FROM motoshop.gold.mart_ventas_diarias_sku)",
+        "position": { "x": 2, "y": 0, "width": 2, "height": 1 },
+        "visualization": {
+          "type": "counter",
+          "title": "Facturas del día",
+          "format": "number"
+        }
+      },
+      {
+        "id": "kpi_productos",
+        "type": "CARD",
+        "title": "Productos Activos",
+        "query": "SELECT COUNT(*) AS value FROM motoshop.gold.mart_inventario_actual WHERE cantidad_actual > 0",
+        "position": { "x": 4, "y": 0, "width": 2, "height": 1 },
+        "visualization": {
+          "type": "counter",
+          "title": "Productos con stock",
+          "format": "number"
+        }
+      },
+      {
+        "id": "kpi_abc_a",
+        "type": "CARD",
+        "title": "ABC A",
+        "query": "SELECT COUNT(*) AS value FROM motoshop.gold.mart_rotacion_abc WHERE business_month = (SELECT MAX(business_month) FROM motoshop.gold.mart_rotacion_abc) AND categoria_abc = 'A'",
+        "position": { "x": 6, "y": 0, "width": 2, "height": 1 },
+        "visualization": {
+          "type": "counter",
+          "title": "Productos categoría A",
+          "format": "number"
+        }
+      },
+      {
+        "id": "ventas_mes",
+        "type": "CHART",
+        "title": "Ventas del Mes",
+        "query": "SELECT business_date, ROUND(SUM(valor_total), 0) AS ventas FROM motoshop.gold.mart_ventas_diarias_sku WHERE business_date >= DATE_TRUNC('MONTH', CURRENT_DATE()) AND business_date <= CURRENT_DATE() GROUP BY business_date ORDER BY business_date",
+        "position": { "x": 0, "y": 1, "width": 4, "height": 3 },
+        "visualization": {
+          "type": "line",
+          "x_column": "business_date",
+          "y_column": "ventas",
+          "title": "Ventas diarias del mes",
+          "sort": "ASC",
+          "stacked": false
+        }
+      },
+      {
+        "id": "top_skus",
+        "type": "CHART",
+        "title": "Top 10 SKUs por Ingresos",
+        "query": "SELECT nom_producto, ROUND(SUM(valor_total), 0) AS ingresos FROM motoshop.gold.mart_ventas_diarias_sku WHERE business_date >= DATEADD(DAY, -30, CURRENT_DATE()) AND business_date <= CURRENT_DATE() GROUP BY nom_producto ORDER BY ingresos DESC LIMIT 10",
+        "position": { "x": 4, "y": 1, "width": 4, "height": 3 },
+        "visualization": {
+          "type": "bar",
+          "x_column": "nom_producto",
+          "y_column": "ingresos",
+          "title": "Top 10 SKUs (últimos 30 días)",
+          "sort": "DESC",
+          "stacked": false
+        }
+      },
+      {
+        "id": "top_clientes",
+        "type": "TABLE",
+        "title": "Top 5 Clientes por Ingresos",
+        "query": "SELECT nit_cliente, nombre_cliente, ROUND(SUM(ingresos_totales), 0) AS ingresos FROM motoshop.gold.mart_cohortes_clientes WHERE business_month = (SELECT MAX(business_month) FROM motoshop.gold.mart_cohortes_clientes) GROUP BY nit_cliente, nombre_cliente ORDER BY ingresos DESC LIMIT 5",
+        "position": { "x": 0, "y": 4, "width": 4, "height": 2 },
+        "visualization": {
+          "type": "table",
+          "title": "Top 5 clientes del mes",
+          "columns": [
+            { "name": "nit_cliente", "label": "NIT", "type": "string" },
+            { "name": "nombre_cliente", "label": "Cliente", "type": "string" },
+            { "name": "ingresos", "label": "Ingresos", "type": "currency", "format": "$#,##0" }
+          ]
+        }
+      },
+      {
+        "id": "stock_bodega",
+        "type": "CHART",
+        "title": "Stock por Bodega",
+        "query": "SELECT nom_bodega, ROUND(SUM(cantidad_actual), 0) AS stock FROM motoshop.gold.mart_inventario_actual GROUP BY nom_bodega ORDER BY stock DESC",
+        "position": { "x": 4, "y": 4, "width": 2, "height": 2 },
+        "visualization": {
+          "type": "pie",
+          "x_column": "nom_bodega",
+          "y_column": "stock",
+          "title": "Distribución de stock por bodega"
+        }
+      },
+      {
+        "id": "productos_dormidos",
+        "type": "TABLE",
+        "title": "Productos Dormidos",
+        "query": "SELECT nom_producto, cod_bodega, dias_sin_venta, stock_actual, categoria FROM motoshop.gold.mart_productos_dormidos WHERE categoria = 'dormido_con_stock' ORDER BY dias_sin_venta DESC LIMIT 10",
+        "position": { "x": 6, "y": 4, "width": 2, "height": 2 },
+        "visualization": {
+          "type": "table",
+          "title": "Top 10 productos dormidos con stock",
+          "columns": [
+            { "name": "nom_producto", "label": "Producto", "type": "string" },
+            { "name": "cod_bodega", "label": "Bodega", "type": "string" },
+            { "name": "dias_sin_venta", "label": "Días sin venta", "type": "number" },
+            { "name": "stock_actual", "label": "Stock", "type": "number" },
+            { "name": "categoria", "label": "Tipo", "type": "string" }
+          ]
+        }
+      },
+      {
+        "id": "abc_distribution",
+        "type": "CHART",
+        "title": "Distribución ABC",
+        "query": "SELECT categoria_abc, COUNT(*) AS productos, ROUND(SUM(valor_total), 0) AS ingresos FROM motoshop.gold.mart_rotacion_abc WHERE business_month = (SELECT MAX(business_month) FROM motoshop.gold.mart_rotacion_abc) GROUP BY categoria_abc ORDER BY categoria_abc",
+        "position": { "x": 0, "y": 6, "width": 4, "height": 2 },
+        "visualization": {
+          "type": "pie",
+          "x_column": "categoria_abc",
+          "y_column": "ingresos",
+          "title": "Distribución ABC (ingresos)"
+        }
+      },
+      {
+        "id": "abc_kpi_b",
+        "type": "CARD",
+        "title": "ABC B",
+        "query": "SELECT COUNT(*) AS value FROM motoshop.gold.mart_rotacion_abc WHERE business_month = (SELECT MAX(business_month) FROM motoshop.gold.mart_rotacion_abc) AND categoria_abc = 'B'",
+        "position": { "x": 4, "y": 6, "width": 2, "height": 1 },
+        "visualization": {
+          "type": "counter",
+          "title": "Productos categoría B",
+          "format": "number"
+        }
+      },
+      {
+        "id": "abc_kpi_c",
+        "type": "CARD",
+        "title": "ABC C",
+        "query": "SELECT COUNT(*) AS value FROM motoshop.gold.mart_rotacion_abc WHERE business_month = (SELECT MAX(business_month) FROM motoshop.gold.mart_rotacion_abc) AND categoria_abc = 'C'",
+        "position": { "x": 6, "y": 6, "width": 2, "height": 1 },
+        "visualization": {
+          "type": "counter",
+          "title": "Productos categoría C",
+          "format": "number"
+        }
+      }
+    ]
+  }
+}
