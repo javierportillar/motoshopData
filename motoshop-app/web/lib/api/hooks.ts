@@ -75,3 +75,112 @@ export function useStock(sku: string | null) {
     },
   );
 }
+
+// ── Metrics / Dashboards ─────────────────────────────────────────────────
+
+interface TopSkuItem {
+  cod_producto: string;
+  nom_producto: string;
+  cantidad_total: number;
+  valor_total: number;
+  porcentaje_ingreso?: number;
+}
+
+interface SalesSummary {
+  business_month: string;
+  ventas_mes_actual: number;
+  ventas_mes_anterior: number;
+  delta_porcentual?: number;
+  ticket_promedio: number;
+  num_facturas: number;
+  top_skus: TopSkuItem[];
+}
+
+interface BodegaItem {
+  cod_bodega: string;
+  nom_bodega: string;
+  cantidad: number;
+  porcentaje: number;
+}
+
+interface InventorySummary {
+  stock_total: number;
+  valor_total: number;
+  num_productos: number;
+  por_bodega: BodegaItem[];
+}
+
+interface AbcBucket {
+  categoria: string;
+  num_skus: number;
+  valor_total: number;
+  porcentaje_ingreso: number;
+}
+
+interface AbcSegmentation {
+  business_month: string;
+  total_skus: number;
+  total_ingresos: number;
+  bucket_a: AbcBucket;
+  bucket_b: AbcBucket;
+  bucket_c: AbcBucket;
+}
+
+interface DormidoItem {
+  cod_producto: string;
+  nom_producto: string;
+  dias_sin_venta: number;
+  stock_actual?: number;
+}
+
+interface DormidosResponse {
+  total: number;
+  productos: DormidoItem[];
+}
+
+interface CohorteItem {
+  cohorte_mes: string;
+  mes_observacion: string;
+  num_clientes: number;
+  ticket_promedio: number;
+  tasa_recurrencia?: number;
+}
+
+interface CohortesResponse {
+  cohortes: CohorteItem[];
+}
+
+const DEDUP_METRICS = 60_000; // 1 min (DT-F3-10)
+
+function useMetrics<T>(key: string | null): {
+  data: T | undefined;
+  error: Error | undefined;
+  isLoading: boolean;
+} {
+  return useSWR<T>(key, apiFetchJson<T>, {
+    revalidateOnFocus: false,
+    revalidateOnReconnect: false,
+    dedupingInterval: DEDUP_METRICS,
+    refreshInterval: 5 * 60_000, // refresh cada 5 min
+  });
+}
+
+export function useSalesSummary() {
+  return useMetrics<SalesSummary>("/api/metrics/sales-summary");
+}
+
+export function useInventorySummary() {
+  return useMetrics<InventorySummary>("/api/metrics/inventory-summary");
+}
+
+export function useAbcSegmentation() {
+  return useMetrics<AbcSegmentation>("/api/metrics/abc-segmentation");
+}
+
+export function useDormidos() {
+  return useMetrics<DormidosResponse>("/api/metrics/dormidos");
+}
+
+export function useCohortes() {
+  return useMetrics<CohortesResponse>("/api/metrics/cohortes");
+}
