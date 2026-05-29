@@ -8,7 +8,82 @@
 
 ---
 
-## Sesión 2026-05-29 (22) · Auditoría F1.9 + ADR-0013 — ✅ CERRADA
+## Sesión 2026-05-29 (23) · Plan F2 detallado + ADR-0014 esperando aprobación
+
+### Resumen
+F1.9 cerrada definitivamente. Revisor escribió plan F2 completo (3 sprints, ~18-22 h ejecutor, 12 días naturales) + ADR-0014 con 16 decisiones técnicas (DT-F2-1..16) para Silver y PWA.
+
+Una sola acción humana cierra el gap y arranca Sprint F2-A:
+
+---
+
+### 🚨 Acción humana — 1 cosa
+
+#### ⬜ Leer ADR-0014 y aprobar (o pedir ajustes) — ~10 min
+
+Abrir [`docs/decisions/0014-stack-f2.md`](docs/decisions/0014-stack-f2.md).
+
+Lectura recomendada:
+- **Tabla resumen ejecutivo** al final (todas las DT en una tabla).
+- Decisiones que tengan dudas (cada una con contexto + 3 opciones + recomendación).
+
+16 decisiones, divididas en 2 bloques:
+
+**Track A · Silver (6 decisiones):**
+| # | Recomendación |
+|---|----------------|
+| DT-F2-1 | `INSERT REPLACE WHERE business_date` |
+| DT-F2-2 | SCD Type 1 (snapshot) |
+| DT-F2-3 | PySpark assert + `_quality_runs` |
+| DT-F2-4 | Hechos por `business_date`, dims sin partición |
+| DT-F2-5 | `fact_*` / `dim_*` |
+| DT-F2-6 | `chispa` para tests Spark |
+
+**Track T · PWA (10 decisiones):**
+| # | Recomendación |
+|---|----------------|
+| DT-F2-7 | Next.js 14 + TS estricto (ya en F0) |
+| DT-F2-8 | `httpOnly` cookie via API routes |
+| DT-F2-9 | Fetch nativo + lock |
+| DT-F2-10 | Zustand + SWR |
+| DT-F2-11 | Tailwind raw + componentes propios |
+| DT-F2-12 | `next-pwa` |
+| DT-F2-13 | Workbox via `next-pwa` |
+| DT-F2-14 | `idb-keyval` |
+| DT-F2-15 | Stock NetworkOnly · Catálogo SWR |
+| DT-F2-16 | TTL + botón manual |
+
+**Tres caminos:**
+- **"OK todas"** → marco ADR `Accepted`, D13 a fecha, F2-A arranca.
+- **"OK pero ajustar X"** → decime qué y ajusto.
+- **"Necesito más contexto sobre Y"** → te detallo.
+
+---
+
+### Plan F2 a alto nivel *(para que sepas qué viene)*
+
+| Sprint | Duración estimada | Cierra qué V/KPI |
+|--------|-------------------|-------------------|
+| **F2-A · Silver** | 2-3 sesiones (~6 h) | V1 duplicados, V2 fechas, V3 reconciliación con sgHermes < 0.5% |
+| **F2-B · PWA Login + Búsqueda** | 2 sesiones (~6 h) | V5 sesión persiste, V6 búsqueda < 1 s, V7 roles |
+| **F2-C · PWA Stock + Offline** | 2 sesiones (~6 h) | V4 offline, V8 datos cuadran, hito visible demo 4G |
+
+Total ejecutor: **~18-22 horas**. Calendario: **~12 días naturales** con jornadas parciales.
+
+Detalle completo en [`docs/plan-f2.md`](docs/plan-f2.md).
+
+---
+
+### Lo que pasa cuando aprobés el ADR
+
+1. Revisor marca ADR-0014 `Accepted` con fecha.
+2. D13 pasa a fecha de aprobación.
+3. Ejecutor arranca Sprint F2-A.1 (dimensiones silver).
+4. Sesión 24 abre con el primer commit del sprint.
+
+---
+
+## ~~Sesión 2026-05-29 (22) · Auditoría F1.9 + ADR-0013~~ — ✅ CERRADA
 
 ✅ **Humano aprobó ADR-0013 opción C** (Silver con `business_date` derivada). F1.9 cierra. F2 abierta. El bloque histórico queda como referencia.
 

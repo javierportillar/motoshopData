@@ -60,6 +60,7 @@ F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 | D10 | 2026-05-28 | Compute Databricks: extracción local + UC Volume + Serverless SQL (Opción A) | Migrar a plan con clusters (B); reemplazar Databricks por DuckDB (C) | Free Edition no tiene clusters; el camino crítico no depende de drivers JDBC en Databricks. ADR: [0010](docs/decisions/0010-compute-databricks-free.md) |
 | D11 | 2026-05-28 | Stack F1 (DT-1 a DT-10): SQLAlchemy core, pyjwt+bcrypt, slowapi, users.yaml, offset+limit, INSERT REPLACE WHERE, manifest al Volume, structlog, repos+integration mark, bronze raw → silver UTC → API UTC | mysql-connector directo (DT-1), python-jose (DT-2), Redis (DT-3), SQLite (DT-4), keyset (DT-5), CREATE OR REPLACE (DT-6), tabla _meta_runs (DT-7), loguru (DT-8), solo unit (DT-9), bronze TZ-aware (DT-10) | Equilibrio entre velocidad de F1 y portabilidad a F2+. Aprobado en bloque sin ajustes. ADR: [0011](docs/decisions/0011-stack-f1.md) |
 | D12 | 2026-05-29 | `ingest_date` (técnica) en bronze + `business_date` derivada en silver (Opción C) | A · status quo (no recomendado, deuda silenciosa); B · bronze con doble fecha (gran refactor) | Bronze permanece inmutable (ADR-0001), Silver concentra lógica del negocio, cero re-trabajo de datos ya ingestados, maneja data sucia (`fecfven > 2099`) con expectations. ADR: [0013](docs/decisions/0013-fecha-tecnica-vs-negocio.md). Aprobado en bloque sin ajustes. |
+| D13 | _pendiente_ | Stack F2 (DT-F2-1..16): INSERT REPLACE WHERE business_date, SCD1, PySpark assert, partición por business_date, naming fact_/dim_, chispa, Next.js (ya), httpOnly cookies, fetch+lock, Zustand+SWR, Tailwind raw, next-pwa+Workbox, idb-keyval, Stock NetworkOnly + Catálogo SWR, TTL+manual | MERGE INTO (DT-F2-1), SCD2 (DT-F2-2), DLT (DT-F2-3), axios (DT-F2-9), Redux (DT-F2-10), shadcn (DT-F2-11), SW manual (DT-F2-12), Dexie (DT-F2-14) | Coherente con Free Edition + arquitectura medallion. Bundle PWA liviano (< 200KB JS inicial). 16 decisiones en bloque. ADR: [0014](docs/decisions/0014-stack-f2.md) **Proposed** |
 
 ---
 
@@ -645,6 +646,33 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-29 — Sesión 24 · Plan F2 detallado + ADR-0014 (Proposed)
+
+- **Hecho (revisor):**
+  - ✅ [`docs/plan-f2.md`](docs/plan-f2.md) reescrito con detalle completo de los 3 sprints (F2-A Silver, F2-B PWA login+búsqueda, F2-C PWA stock+offline). Cada sprint con pre-requisitos, lista exacta de archivos con su rol, tareas en orden, DoD, métricas con objetivos numéricos, riesgos específicos.
+  - ✅ V1–V8 mapeadas a archivos de evidencia esperados (`_runs/v1_no_duplicates_<fecha>.md`, etc.).
+  - ✅ Calendario sugerido: ~12 días naturales (~18-22 horas ejecutor).
+  - ✅ KPIs F2 con método de medición numérico (cobertura silver 100%, adopción PWA ≥ 3/sem, tests > 60%, carga PWA 4G < 3 s, fallos transformación < 1%, búsqueda < 1 s, reconciliación < 0.5%).
+  - ✅ Backout plan con 5 escenarios concretos.
+  - ✅ Riesgos cross-sprint R-F2-X1..5 documentados.
+  - ✅ [`docs/decisions/0014-stack-f2.md`](docs/decisions/0014-stack-f2.md) escrito con 16 decisiones técnicas (DT-F2-1..16). Estado **Proposed**.
+    - Silver (DT-F2-1..6): `INSERT REPLACE WHERE business_date`, SCD1, PySpark assert + `_quality_runs`, partición por `business_date`, naming `fact_*`/`dim_*`, `chispa`.
+    - PWA (DT-F2-7..16): Next.js 14 (ya), `httpOnly` cookies via API routes, fetch nativo + lock, Zustand + SWR, Tailwind raw, `next-pwa`, Workbox, `idb-keyval`, Stock NetworkOnly + Catálogo SWR, TTL + invalidación manual.
+  - ✅ Total deps nuevas previstas: 7 packages, todas < 10KB gzipped salvo SWR (~4KB).
+  - ✅ PENDIENTES sesión 23 con la única acción humana (aprobar ADR-0014).
+  - ✅ README enlaza plan-f2.md.
+- **Aprendido:**
+  - Detallar el plan a este nivel ANTES del primer commit ahorra 10x el tiempo en re-discusiones a mitad de sprint.
+  - Separar Silver (Track A) y PWA (Track T) en 6 + 10 decisiones técnicas mantiene cada bloque digerible (vs un solo ADR-0011 con 10 decisiones mezcladas para F1).
+  - El mapa "Entregables → V" reforzado con archivo de evidencia esperado hace que cada ✅ futuro tenga su archivo de evidencia ya definido (lección de los F1 NO-GOs).
+- **Abierto:**
+  - Humano aprueba ADR-0014 (~10 min lectura).
+  - Verificación menor abierta de F1.9: curl en vivo del endpoint `/health/data-freshness` (no bloquea F2).
+- **Próximo paso:**
+  - Humano aprueba ADR-0014 → revisor marca `Accepted` + D13 a fecha → Ejecutor arranca **Sprint F2-A.1 · Dimensiones silver** en Sesión 25.
+
+---
 
 ### 2026-05-29 — Sesión 23 · ADR-0013 aprobado · F1.9 cerrada · F2 abierta
 
