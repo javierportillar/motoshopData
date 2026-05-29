@@ -1,7 +1,7 @@
 # Auditoría F3 — Hallazgos post-implementación
 
 > Generada: 2026-05-29
-> Estado: ✅ **TODOS RESUELTOS** — commit pendiente
+> Estado: ✅ **TODOS RESUELTOS** (incluye M5 — tests con sqlparse, commit `e32f4c0`)
 
 ---
 
@@ -22,7 +22,7 @@
 | M2 | `30_validate_gold.py:72-96` | V3 compara suma líneas vs cabecera (IVA/fletes) | Ambas queries contra line-level detail | ✅ |
 | M3 | `gold/12_mart_rotacion_abc.py:65` | ROW_NUMBER sin tiebreaker → orden arbitrario | `ORDER BY valor_total DESC, cod_producto` | ✅ |
 | M4 | `gold/14_mart_productos_dormidos.py:77` | dias_sin_venta NULL si producto nunca se vendió | `COALESCE(DATEDIFF(...), -1)` | ✅ |
-| M5 | `tests/gold/test_marts.py` | Tests validan keywords, no lógica SQL | Pendiente para próxima iteración (requiere sqlparse) | ⏳ |
+| M5 | `tests/gold/test_marts.py` | Tests validan keywords, no lógica SQL | Resuelto — 52 tests con sqlparse validan estructura SQL real (INSERT OVERWRITE, UUID, JOINs, ROW_NUMBER, MONTHS_BETWEEN, particiones) | ✅ |
 | M6 | `router.py` | Endpoints async envuelven I/O bloqueante (event loop bloqueado) | Endpoints síncronos (sin `async`) | ✅ |
 | M7 | `router.py:35` | Rate limit por IP detrás de proxy → todos mismo bucket | `X-Forwarded-For` como key | ✅ |
 | M8 | `dashboards/page.tsx` | Error states no manejados → usuario ve "—" | Bloque de error con mensaje | ✅ |
