@@ -30,7 +30,7 @@
 |-------|-------|
 | Fase activa | **Fase 2 · Silver + PWA MVP** (abierta tras cierre F1.9) |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Aprobación ADR-0014 (stack F2-A) y arranque de Sprint F2-A |
+| Próximo gate | Auditoría F2-FIX1 (cierre real V1-V8) |
 | Avance global | 1/7 fases cerradas + 2 hardening sprints (F1.5, F1.9) |
 | Última actualización | 2026-05-29 |
 
@@ -39,6 +39,8 @@ F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 ```
 
 > **2026-05-29 — F1.9 cerrada; F2 abierta.** Humano aprobó ADR-0013 (opción C: Silver con `business_date` derivada) sin ajustes. D12 a fecha. R5 documentada. Pipeline robusto contra PC apagado / sin internet. Próximo paso: revisor escribe `docs/plan-f2.md` + `docs/decisions/0014-stack-f2.md` (decisiones técnicas Sprint F2-A · Silver).
+
+> **2026-05-29 — F2-FIX1 abierto tras auditoría NO-GO.** F2-A/F2-B/F2-C tienen implementación preliminar, pero la fase no cierra: V4-V8 siguen con evidencia `PENDIENTE`, refresh token PWA no calza con contrato FastAPI, ficha SKU usa campos de stock inexistentes y hechos silver no siguen ADR-0014 (`INSERT REPLACE WHERE business_date`). Plan correctivo: [docs/plan-f2-fix1.md](docs/plan-f2-fix1.md). Dev A y Dev T pueden trabajar en paralelo.
 
 ---
 
@@ -285,7 +287,7 @@ _(rellenar al cerrar la fase)_
 
 **Objetivo:** modelo dimensional limpio + frontend usable end-to-end.
 
-Plan operativo: [docs/plan-f2.md](docs/plan-f2.md) y stack base en [docs/decisions/0012-stack-f2.md](docs/decisions/0012-stack-f2.md).
+Plan operativo: [docs/plan-f2.md](docs/plan-f2.md), fix activo en [docs/plan-f2-fix1.md](docs/plan-f2-fix1.md) y stack base en [docs/decisions/0014-stack-f2.md](docs/decisions/0014-stack-f2.md).
 
 ### Definition of Done
 - Silver con hechos y dimensiones tipados, deduplicados, con reglas de calidad.
@@ -305,9 +307,9 @@ Plan operativo: [docs/plan-f2.md](docs/plan-f2.md) y stack base en [docs/decisio
 **Track T**
 - ✅ PWA: login funcional con persistencia de sesión — `app/login/page.tsx` + API routes auth + middleware · 2026-05-29
 - ✅ PWA: búsqueda de productos con paginación — `app/(authenticated)/products/page.tsx` + SWR hooks · 2026-05-29
-- ⬜ PWA: ficha de SKU con precio, stock por bodega, ventas recientes — Sprint F2-C
-- ⬜ PWA: manifest + service worker (instalable en móvil) — Sprint F2-C
-- ⬜ PWA: modo offline básico (cache del catálogo consultado) — Sprint F2-C
+- ⚠️ PWA: ficha de SKU con stock por bodega — implementación preliminar en F2-C; contrato stock roto (`codprod`/`stock`/`nom_bodega` vs `sku`/`cantidad`/`nombod`), cerrar en F2-FIX1-T
+- ⚠️ PWA: manifest + service worker (instalable en móvil) — implementación preliminar; `sw.js`/Workbox requieren política de versionado y evidencia real en F2-FIX1-T
+- ⚠️ PWA: modo offline básico (cache del catálogo consultado) — implementación preliminar; V4 sigue `PENDIENTE` hasta prueba real post-cache
 - ✅ PWA: responsiva (probado en pantalla de celular y desktop) — Tailwind v4 + viewport meta · 2026-05-29
 - ⬜ Onboarding: instructivo de instalación en móvil — Sprint F2-C
 
@@ -336,7 +338,8 @@ Plan operativo: [docs/plan-f2.md](docs/plan-f2.md) y stack base en [docs/decisio
 - Tasa de fallos de transformación bronze → silver: < 1%.
 
 ### Bloqueadores actuales
-_(rellenar)_
+
+- 🔴 **F2-FIX1 abierto:** F2 no puede cerrar ni pasar a F3 hasta resolver C-1..C-4 y evidenciar V1-V8 según [docs/plan-f2-fix1.md](docs/plan-f2-fix1.md).
 
 ### Lecciones de cierre
 _(rellenar al cerrar la fase)_
@@ -646,6 +649,23 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-29 — Sesión 29 · Auditoría F2 A/B/C + apertura F2-FIX1
+
+- **Hecho (revisor):**
+  - 🔍 Auditoría de F2-A/F2-B/F2-C contra `docs/plan-f2.md`, ADR-0014 y evidencias `_runs/`.
+  - 🔴 Veredicto: **NO-GO a cierre de F2**. La implementación existe, pero no pasa gate por contratos rotos y evidencias pendientes.
+  - ✅ Plan correctivo creado: [`docs/plan-f2-fix1.md`](docs/plan-f2-fix1.md), dividido para Dev A (Silver) y Dev T (PWA/API) en paralelo.
+- **Hallazgos principales:**
+  - C-1: Refresh PWA manda `{ refresh_token }`, FastAPI espera `{ token }`.
+  - C-2: Ficha SKU usa campos de stock que la API no devuelve (`codprod`, `stock`, `nom_bodega`).
+  - C-3: Hechos silver usan `CREATE OR REPLACE TABLE`, no el patrón idempotente por `business_date` aceptado en ADR-0014.
+  - C-4: V4/V5/V6/V7/V8 siguen en `PENDIENTE` y no cierran gate.
+- **Veredicto:** 🔴 **F2 sigue abierta.** F3 bloqueada hasta auditoría F2-FIX1.
+- **Abierto:** Dev A ejecuta F2-FIX1-A; Dev T ejecuta F2-FIX1-T; Reviewer audita después ambos commits.
+- **Próximo paso:** lanzar dos sesiones de dev en paralelo siguiendo [`docs/plan-f2-fix1.md`](docs/plan-f2-fix1.md).
+
+---
 
 ### 2026-05-29 — Sesión 27 · Track A Sprint F2-A · Silver notebooks creados
 

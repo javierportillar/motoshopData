@@ -8,6 +8,77 @@
 
 ---
 
+## Sesión 2026-05-29 (29) · F2-FIX1 abierto — lanzar Dev A y Dev T en paralelo
+
+### Resumen
+
+Reviewer auditó F2-A/F2-B/F2-C y emitió **NO-GO al cierre de F2**. Hay implementación preliminar, pero no gate real: contratos rotos entre PWA/API, evidencias V4-V8 en `PENDIENTE`, hechos silver fuera de ADR-0014 y V2/V3 incompletas.
+
+Plan correctivo completo: [`docs/plan-f2-fix1.md`](docs/plan-f2-fix1.md).
+
+---
+
+### Acción humana — abrir 2 sesiones de dev
+
+#### 1 · Dev A · F2-FIX1-A Silver Gate
+
+Prompt sugerido:
+
+```text
+Sos Dev Agent Track A. Leé INICIAR_AGENTE.md y después docs/plan-f2-fix1.md.
+Ejecutá SOLO la sección 4 · Dev A · F2-FIX1-A · Silver Gate.
+No toques SEGUIMIENTO.md, PENDIENTES.md ni docs/plan-f2-fix1.md.
+Objetivo: cerrar V1/V2/V3 con evidencia real y corregir hechos silver para respetar ADR-0014.
+Al terminar reportá commits, comandos ejecutados y paths de evidencia.
+```
+
+Checklist Dev A:
+
+- ⬜ A1 · Hechos silver idempotentes por `business_date` o alternativa equivalente documentada.
+- ⬜ A3 · `20_quality_run.py` falla si hay reglas `CRITICAL`.
+- ⬜ A4 · V2 incluye caso sintético de fecha inválida/futura.
+- ⬜ A5 · V3 incluye top 10 SKUs y diff < 0.5%.
+- ⬜ A6 · Tests sin `assert True` cosmético.
+- ⬜ A7 · Evidencias V1/V2/V3 sin `PENDIENTE` ni `Completar`.
+
+#### 2 · Dev T · F2-FIX1-T PWA Gate
+
+Prompt sugerido:
+
+```text
+Sos Dev Agent Track T. Leé INICIAR_AGENTE.md y después docs/plan-f2-fix1.md.
+Ejecutá SOLO la sección 5 · Dev T · F2-FIX1-T · PWA Gate.
+No toques SEGUIMIENTO.md, PENDIENTES.md ni docs/plan-f2-fix1.md.
+Objetivo: corregir contratos PWA/API y cerrar V4/V5/V6/V7/V8 con evidencia real.
+Al terminar reportá commits, comandos ejecutados y paths de evidencia.
+```
+
+Checklist Dev T:
+
+- ⬜ T1 · Refresh manda `{ token: refreshToken }`.
+- ⬜ T2 · Ficha SKU usa schema real API: `sku`, `nombod`, `cantidad`.
+- ⬜ T4 · V7 roles con admin 200 / vendedor 403.
+- ⬜ T6 · PWA offline reproducible, sin `sw.js`/`workbox` untracked sin política.
+- ⬜ T7 · Evidencias V4/V5/V6/V7/V8 sin `PENDIENTE`.
+- ⬜ T8 · `npm run typecheck`, `npm run build`, Playwright relevante verdes.
+
+---
+
+### Cuando ambos terminen
+
+Cada dev debe reportar:
+
+```text
+F2-FIX1-<A/T> listo. Commits: <hashes>.
+Pruebas: <comandos + resultado>.
+Evidencias actualizadas: <paths>.
+Listo para auditoría reviewer.
+```
+
+Después el Reviewer hace auditoría F2-FIX1-R y decide GO/NO-GO a F3.
+
+---
+
 ## Sesión 2026-05-29 (23) · Plan F2 + ADR-0014 — ✅ CERRADA
 
 ✅ Humano aprobó las 16 DT en bloque + modo paralelo (2 agentes en su Mac). Discusión sobre DT-F2-1 cerrada con vista para "hoy + cierres" sin perder F4. ADR-0014 Accepted · 2026-05-29.
