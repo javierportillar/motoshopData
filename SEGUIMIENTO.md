@@ -680,7 +680,7 @@ _(rellenar al cerrar la fase)_
 - **Aprendido:**
   - El patrón `INSERT REPLACE WHERE` + `overwrite=True` en upload protege idempotencia siempre que el job termine completo.
   - La cache cubre el patrón real de uso de la PWA (re-consulta de SKUs vistos).
-  - **⚠️ REGLA:** No ejecutar validación V6 (`04_check_large_tables.py`) antes de completar la ingesta para la misma fecha — causa `KeyError: 'distinct_after_pagination'`.
+  - **⚠️ REGLA:** No ejecutar validación V6 (`04_check_large_tables.py`) antes de completar la ingesta para la misma fecha — ahora reporta `WARN: N=0`, pero la validación sigue sin servir sin datos.
 - **Abierto:**
   - R1, R2, R4 siguen como deudas documentadas (sin cambios).
   - ADR-0012 (stack F2) por escribir en Sesión 20.

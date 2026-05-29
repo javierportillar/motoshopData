@@ -116,7 +116,7 @@ Dejar terminar completa.
 
 **Validar V6 — SOLO DESPUÉS de la ingesta:**
 - Notebook `04_check_large_tables.py` → widget `ingest_date = 2026-05-30` → Run all
-- **⚠️ NO ejecutar V6 antes de la ingesta** — da `KeyError: 'distinct_after_pagination'` si no hay datos
+- **⚠️ NO ejecutar V6 antes de la ingesta** — si no hay datos, ahora reporta `WARN: N=0` en vez de fallar, pero la validación sigue sin ser útil sin la ingesta previa
 
 **Comparar conteos vs MySQL:**
 - 12 tablas, tolerancia ±5 filas

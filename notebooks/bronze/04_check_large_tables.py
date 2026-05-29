@@ -31,7 +31,14 @@ def test_pagination(table_name, ingest_date, chunk_size=5000):
     total = df.count()
     
     if total == 0:
-        return {"table": table_name, "total": 0, "status": "WARN: N=0", "chunks": 0}
+        return {
+            "table": table_name,
+            "total": 0,
+            "distinct_after_pagination": 0,
+            "chunks": 0,
+            "chunk_size": chunk_size,
+            "status": "WARN: N=0",
+        }
     
     # Agregar row number para paginación
     window = Window.orderBy("numfven", "codprod")
@@ -79,7 +86,11 @@ def test_pagination(table_name, ingest_date, chunk_size=5000):
 # COMMAND ----------
 
 result_detf = test_pagination("detfventas", ingest_date, CHUNK_SIZE)
-print(f"detfventas: total={result_detf['total']}, distinct={result_detf['distinct_after_pagination']}, chunks={result_detf['chunks']}")
+print(
+    f"detfventas: total={result_detf['total']}, "
+    f"distinct={result_detf.get('distinct_after_pagination', 0)}, "
+    f"chunks={result_detf['chunks']}"
+)
 print(f"Status: {result_detf['status']}")
 
 # COMMAND ----------
@@ -90,7 +101,11 @@ print(f"Status: {result_detf['status']}")
 # COMMAND ----------
 
 result_detc = test_pagination("detcompras", ingest_date, CHUNK_SIZE)
-print(f"detcompras: total={result_detc['total']}, distinct={result_detc['distinct_after_pagination']}, chunks={result_detc['chunks']}")
+print(
+    f"detcompras: total={result_detc['total']}, "
+    f"distinct={result_detc.get('distinct_after_pagination', 0)}, "
+    f"chunks={result_detc['chunks']}"
+)
 print(f"Status: {result_detc['status']}")
 
 # COMMAND ----------
