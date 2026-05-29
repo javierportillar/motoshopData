@@ -5,11 +5,28 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-
 FAKE_SALES = [
-    {"numfven": "4857", "fecfven": "2025-11-07 12:43:20", "nitter": "900123456", "estfven": "A", "totfven": 99200.0},
-    {"numfven": "4746", "fecfven": "2025-10-29 09:09:08", "nitter": "900123456", "estfven": "A", "totfven": 2000.0},
-    {"numfven": "4109", "fecfven": "2025-08-15 16:01:58", "nitter": "900123456", "estfven": "A", "totfven": 410400.0},
+    {
+        "numfven": "4857",
+        "fecfven": "2025-11-07 12:43:20",
+        "nitter": "900123456",
+        "estfven": "A",
+        "totfven": 99200.0,
+    },
+    {
+        "numfven": "4746",
+        "fecfven": "2025-10-29 09:09:08",
+        "nitter": "900123456",
+        "estfven": "A",
+        "totfven": 2000.0,
+    },
+    {
+        "numfven": "4109",
+        "fecfven": "2025-08-15 16:01:58",
+        "nitter": "900123456",
+        "estfven": "A",
+        "totfven": 410400.0,
+    },
 ]
 
 
@@ -17,8 +34,8 @@ FAKE_SALES = [
 def client_with_sales(fake_users):
     """Cliente con FakeSalesRepo inyectado."""
     from motoshop_api.main import app
-    from motoshop_api.sales.router import get_sales_repo
     from motoshop_api.sales.repo import FakeSalesRepo
+    from motoshop_api.sales.router import get_sales_repo
 
     fake = FakeSalesRepo(items=FAKE_SALES)
     app.dependency_overrides[get_sales_repo] = lambda: fake

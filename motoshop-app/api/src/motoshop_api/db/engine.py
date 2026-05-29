@@ -16,6 +16,7 @@ def get_engine(database_url: str | None = None) -> Engine:
     if _engine is None:
         if database_url is None:
             from motoshop_api.config import settings
+
             database_url = settings.database_url
         _engine = create_engine(
             database_url,

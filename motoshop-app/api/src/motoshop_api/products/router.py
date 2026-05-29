@@ -9,7 +9,7 @@ from slowapi.util import get_remote_address
 from motoshop_api.auth.deps import get_current_user
 from motoshop_api.auth.users import User
 from motoshop_api.products.repo import ProductsRepo
-from motoshop_api.products.schemas import ProductPage, ProductOut
+from motoshop_api.products.schemas import ProductOut, ProductPage
 
 router = APIRouter(tags=["products"])
 
@@ -18,6 +18,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 def get_products_repo() -> ProductsRepo:
     from motoshop_api.db.engine import get_engine
+
     return ProductsRepo(get_engine())
 
 

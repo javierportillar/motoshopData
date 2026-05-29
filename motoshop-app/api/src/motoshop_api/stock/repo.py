@@ -14,9 +14,9 @@ No thread-safe, pero FastAPI+SQLAlchemy sync no tiene race condition real.
 from __future__ import annotations
 
 from cachetools import TTLCache
-from sqlalchemy import Engine, select, func
+from sqlalchemy import Engine, func, select
 
-from motoshop_api.db.tables import productos, bodegas, auxinventario
+from motoshop_api.db.tables import auxinventario, productos
 
 # Cache en memoria. 200 SKUs distintos × 5 min TTL.
 _stock_cache: TTLCache[str, dict] = TTLCache(maxsize=200, ttl=300)
@@ -60,7 +60,11 @@ class StockRepo:
 
                 total = sum(float(r["cantidad"] or 0) for r in stock_rows)
                 by_bodega = [
-                    {"codbod": r["codbod"], "nombod": r["codbod"], "cantidad": float(r["cantidad"] or 0)}
+                    {
+                        "codbod": r["codbod"],
+                        "nombod": r["codbod"],
+                        "cantidad": float(r["cantidad"] or 0),
+                    }
                     for r in stock_rows
                 ]
 

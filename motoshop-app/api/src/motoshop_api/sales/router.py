@@ -18,6 +18,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 def get_sales_repo() -> SalesRepo:
     from motoshop_api.db.engine import get_engine
+
     return SalesRepo(get_engine())
 
 

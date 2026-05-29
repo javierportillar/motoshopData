@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-
 FAKE_PRODUCTS = [
     {"codprod": "MOTS1011", "nomprod": "ACEITE 2T PREMIUN", "codbar": "MOTS1011"},
     {"codprod": "MOTS1012", "nomprod": "ACEITE 20W-50 4T", "codbar": "MOTS1012"},
@@ -17,8 +16,8 @@ FAKE_PRODUCTS = [
 def client_with_fakes(fake_users):
     """Cliente con FakeProductsRepo inyectado."""
     from motoshop_api.main import app
-    from motoshop_api.products.router import get_products_repo
     from motoshop_api.products.repo import FakeProductsRepo
+    from motoshop_api.products.router import get_products_repo
 
     fake = FakeProductsRepo(items=FAKE_PRODUCTS)
     app.dependency_overrides[get_products_repo] = lambda: fake

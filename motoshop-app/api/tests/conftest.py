@@ -12,8 +12,8 @@ os.environ["CORS_ORIGINS"] = "http://localhost:3000,https://api.fragloesja.uk,ht
 import pytest
 from fastapi.testclient import TestClient
 
-from motoshop_api.auth.users import User, _users_cache
 from motoshop_api.auth.router import limiter
+from motoshop_api.auth.users import User, _users_cache
 from motoshop_api.db.engine import reset_engine
 from motoshop_api.main import app
 

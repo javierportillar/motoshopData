@@ -18,6 +18,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 def get_stock_repo() -> StockRepo:
     from motoshop_api.db.engine import get_engine
+
     return StockRepo(get_engine())
 
 

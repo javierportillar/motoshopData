@@ -42,6 +42,7 @@ def test_auth_required_without_token(client) -> None:
 def test_auth_expired_token(client, fake_users) -> None:
     """V3: token vencido devuelve 401."""
     import motoshop_api.config as cfg
+
     original_ttl = cfg.settings.jwt_access_ttl_minutes
     cfg.settings.jwt_access_ttl_minutes = -1
     try:
@@ -82,4 +83,5 @@ def test_login_timing_is_similar(client, fake_users) -> None:
 
     # Diferencia menor al 50% del menor
     if min(t_no, t_yes) > 0:
-        assert abs(t_no - t_yes) / min(t_no, t_yes) < 0.5, f"timing leak: no={t_no:.3f}s, yes={t_yes:.3f}s"
+        diff = abs(t_no - t_yes) / min(t_no, t_yes)
+        assert diff < 0.5, f"timing leak: no={t_no:.3f}s, yes={t_yes:.3f}s"

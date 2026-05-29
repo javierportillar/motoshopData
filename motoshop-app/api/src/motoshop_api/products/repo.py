@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import Engine, select, func
+from sqlalchemy import Engine, func, select
 
 from motoshop_api.db.tables import productos
 
@@ -15,9 +15,7 @@ class ProductsRepo:
         stmt = select(productos)
         if query:
             search = f"%{query}%"
-            stmt = stmt.where(
-                productos.c.nomprod.ilike(search) | productos.c.codprod.ilike(search)
-            )
+            stmt = stmt.where(productos.c.nomprod.ilike(search) | productos.c.codprod.ilike(search))
         stmt = stmt.limit(limit).offset(offset)
         with self._engine.connect() as conn:
             rows = conn.execute(stmt).mappings().all()
@@ -27,9 +25,7 @@ class ProductsRepo:
         stmt = select(func.count()).select_from(productos)
         if query:
             search = f"%{query}%"
-            stmt = stmt.where(
-                productos.c.nomprod.ilike(search) | productos.c.codprod.ilike(search)
-            )
+            stmt = stmt.where(productos.c.nomprod.ilike(search) | productos.c.codprod.ilike(search))
         with self._engine.connect() as conn:
             return conn.execute(stmt).scalar() or 0
 
@@ -48,14 +44,22 @@ class FakeProductsRepo:
         result = self._items
         if query:
             q = query.lower()
-            result = [i for i in result if q in i.get("nomprod", "").lower() or q in i.get("codprod", "").lower()]
+            result = [
+                item
+                for item in result
+                if q in item.get("nomprod", "").lower() or q in item.get("codprod", "").lower()
+            ]
         return result[offset : offset + limit]
 
     def count(self, query: str | None = None) -> int:
         result = self._items
         if query:
             q = query.lower()
-            result = [i for i in result if q in i.get("nomprod", "").lower() or q in i.get("codprod", "").lower()]
+            result = [
+                item
+                for item in result
+                if q in item.get("nomprod", "").lower() or q in item.get("codprod", "").lower()
+            ]
         return len(result)
 
     def get_by_sku(self, sku: str) -> dict | None:

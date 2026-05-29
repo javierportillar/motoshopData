@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-
 FAKE_STOCK = {
     "MOTS1011": {
         "sku": "MOTS1011",
@@ -23,8 +22,8 @@ FAKE_STOCK = {
 def client_with_stock(fake_users):
     """Cliente con FakeStockRepo inyectado."""
     from motoshop_api.main import app
-    from motoshop_api.stock.router import get_stock_repo
     from motoshop_api.stock.repo import FakeStockRepo
+    from motoshop_api.stock.router import get_stock_repo
 
     fake = FakeStockRepo(data=FAKE_STOCK)
     app.dependency_overrides[get_stock_repo] = lambda: fake
@@ -61,31 +60,63 @@ def test_stock_not_found(client_with_stock, fake_users, admin_token) -> None:
     assert resp.status_code == 404
 
 
-def test_stock_cache_hits_second_call(client_with_stock, fake_users, admin_token, monkeypatch) -> None:
+def test_stock_cache_hits_second_call() -> None:
     """R-X2: segunda llamada al mismo SKU sale del caché, no del repo."""
     from motoshop_api.stock import repo as stock_repo_module
 
     stock_repo_module.clear_stock_cache()
 
-    calls = {"n": 0}
-    original_get_stock = stock_repo_module.StockRepo.get_stock_by_sku
+    class FakeResult:
+        def __init__(self, rows):
+            self._rows = rows
 
-    def spy_get_stock(self, sku: str) -> dict:
-        calls["n"] += 1
-        return original_get_stock(self, sku)
+        def mappings(self):
+            return self
 
-    monkeypatch.setattr(stock_repo_module.StockRepo, "get_stock_by_sku", spy_get_stock)
+        def first(self):
+            return self._rows[0] if self._rows else None
 
-    r1 = client_with_stock.get(
-        "/products/MOTS1011/stock",
-        headers={"Authorization": f"Bearer {admin_token}"},
-    )
-    assert r1.status_code == 200
+        def all(self):
+            return self._rows
 
-    r2 = client_with_stock.get(
-        "/products/MOTS1011/stock",
-        headers={"Authorization": f"Bearer {admin_token}"},
-    )
-    assert r2.status_code == 200
+    class FakeConnection:
+        def __init__(self):
+            self.execute_calls = 0
 
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, stmt):
+            self.execute_calls += 1
+            if self.execute_calls == 1:
+                return FakeResult([{"codprod": "MOTS1011", "nomprod": "ACEITE 2T PREMIUN"}])
+            return FakeResult(
+                [
+                    {"codbod": "BD01", "cantidad": "10"},
+                    {"codbod": "BD02", "cantidad": "5"},
+                ]
+            )
+
+    class FakeEngine:
+        def __init__(self):
+            self.connect_calls = 0
+            self.connection = FakeConnection()
+
+        def connect(self):
+            self.connect_calls += 1
+            return self.connection
+
+    repo = stock_repo_module.StockRepo(FakeEngine())
+    first = repo.get_stock_by_sku("MOTS1011")
+    second = repo.get_stock_by_sku("MOTS1011")
+
+    assert first == second
+    assert first["total"] == 15.0
+    assert len(first["by_bodega"]) == 2
+    assert first["by_bodega"][0]["cantidad"] == 10.0
+    assert first["by_bodega"][1]["cantidad"] == 5.0
+    assert repo._engine.connect_calls == 1
     stock_repo_module.clear_stock_cache()

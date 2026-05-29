@@ -20,8 +20,8 @@ from motoshop_api.auth.users import load_users
 from motoshop_api.config import settings
 from motoshop_api.logging import RequestIDMiddleware, setup_logging
 from motoshop_api.products.router import router as products_router
-from motoshop_api.stock.router import router as stock_router
 from motoshop_api.sales.router import router as sales_router
+from motoshop_api.stock.router import router as stock_router
 
 
 @asynccontextmanager

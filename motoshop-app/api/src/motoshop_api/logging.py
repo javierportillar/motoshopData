@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import uuid
 
 import structlog
@@ -10,10 +9,18 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 # Keys que deben ser redactadas en logs
-PII_KEYS = frozenset({
-    "password", "hashed_password", "token", "authorization",
-    "nitter", "email", "telefono", "jwt_secret",
-})
+PII_KEYS = frozenset(
+    {
+        "password",
+        "hashed_password",
+        "token",
+        "authorization",
+        "nitter",
+        "email",
+        "telefono",
+        "jwt_secret",
+    }
+)
 
 
 def redact_pii(logger, method_name, event_dict):
