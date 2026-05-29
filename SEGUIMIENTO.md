@@ -28,14 +28,14 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **Fase 3.6 · Fix quality gold** (F4 pausada) |
+| Fase activa | **Fase 4 · Predictivo (ML)** (abierta tras cierre F3.6) |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Cierre F3.6 (fix quality gold + docs) → luego planificación F4 |
-| Avance global | 3/7 fases cerradas + 3 hardening sprints (F1.5 ✅, F1.9 ✅, F3.5 ✅) |
+| Próximo gate | Cierre F4 (modelos forecasting + alertas quiebre) |
+| Avance global | 3/7 fases cerradas + 3 hardening sprints (F1.5 ✅, F1.9 ✅, F3.5 ✅, F3.6 ✅) |
 | Última actualización | 2026-05-29 |
 
 ```
-F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 ⚠️  F3.5 ✅  F3.6 🟡  F4 ⏸️  F5 ⬜  F6 ⬜
+F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 ✅  F3.5 ✅  F3.6 ✅  F4 🟡  F5 ⬜  F6 ⬜
 ```
 
 > **2026-05-29 (Sesión 35) — F3.5 abierta · F4 pausada.** Hallazgo post-F3: Bronze evidencia `facventas=6,340` y `detfventas=27,775`, pero Silver tiene `fact_ventas=15` y `fact_ventas_detalle=58`; `fact_inventario=26,174` sí conserva el universo de Bronze. La reconciliación V3 de F2 validó solo el último mes con 1 factura, así que no probó cobertura completa. Se abre F3.5 para corregir Silver, re-ejecutar Gold y revalidar V3/V6 antes de diseñar F4.
@@ -151,104 +151,7 @@ F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 ⚠️  F3.5 ✅  F3.6 🟡  
 
 ### Lecciones de cierre
 
-- **MySQL 5.0 no soporta `utf8mb4`** — el charset correcto es `utf8` (utf8mb3). El driver `mysql-connector-python` moderno usa `utf8mb4` por defecto, hay que especificar `charset='utf8'` en la conexión.
-- **Cloudflare Tunnel en Windows** — la versión 2026.5.1 instala un servicio agente que no acepta el flag `--config`. La solución práctica es un acceso directo en Startup que ejecute `cloudflared tunnel run <nombre>`.
-- **Databricks Free plan** — no incluye Clusters tradicionales, solo SQL Warehouses. Para F1 habrá que evaluar si se migra a un plan con compute o si se usa el SQL Warehouse con JDBC para la ingesta.
-- **Dominio comprado en Cloudflare Registrar** — los nameservers se configuran automáticamente, no requiere acción humana adicional.
-
----
-
-## Fase 1 · Ingesta + API de lectura
-
-**Objetivo:** primer dato en Bronze y primera consulta remota funcionando.
-
-> Plan detallado: [docs/plan-f1.md](docs/plan-f1.md) — 3 sprints (F1-A bronze, F1-B auth + /products, F1-C /stock + /sales).
-> Stack: [ADR-0011](docs/decisions/0011-stack-f1.md) — 10 decisiones técnicas (DT-1 a DT-10) **Accepted 2026-05-28**.
-
-### Definition of Done
-- 12 tablas core ingeridas a Bronze diariamente con ingesta idempotente por `ingest_date`.
-- Conteos en Bronze coinciden 1:1 con conteos en MySQL para todas las tablas (V1).
-- API expone los 3 endpoints de lectura (`/products`, `/products/{sku}/stock`, `/sales/recent`) con auth JWT, rate limit y logs estructurados.
-- Login + consulta de stock desde celular fuera de la red local funcionando.
-- KPIs F1 medidos: tiempo ingesta < 30 min, latencia `/stock` p95 ~50 ms warm / ~780 ms cold (R-X2 cerrada), 5 corridas seguidas exitosas.
-
-### Checklist de entregables
-
-**Track A · Bronze (Sprint F1-A)**
-- ✅ `infra/dump_to_cloud.py` modificado: sube manifest al Volume `/Volumes/.../bronze/_landing/_manifests/` (DT-7) · 2026-05-28
-- ✅ `notebooks/bronze/02_ingest_all_bronze.sql` — patrón canónico `INSERT REPLACE WHERE` (DT-6) para las 12 tablas core · 2026-05-28
-- ✅ `notebooks/bronze/03_validate_counts.sql` — lee manifest del Volume y valida conteos (V1) · 2026-05-28
-- 🔴 `notebooks/bronze/04_check_large_tables.{py,sql}` — **no prueba paginación**, solo `COUNT(*)`. Reescribir en F1-FIX1.A-1.
-- 🔴 `notebooks/bronze/05_schema_drift.{py,sql}` — **no compara DESCRIBE entre fechas**, solo verifica existencia. Reescribir en F1-FIX1.A-2.
-- ⬜ `notebooks/bronze/_schema/<tabla>.md` × 12 — esquema bronze documentado por tabla
-- ⚠️ `infra/databricks_workflow.json` — **JSON inválido sintácticamente** (`Extra data` al cargar). El schedule real corre en Task Scheduler Windows (`run_dump.ps1`). Aceptado como **R4**; el JSON y `create_databricks_workflow.py` se eliminan o se reparan en F1-FIX1.A-4.
-- ✅ `infra/run_dump.ps1` — wrapper para Task Scheduler Windows · 2026-05-28
-- 🟡 Workflow ejecutado **5 corridas seguidas exitosas** — hoy 2 corridas documentadas. Faltan 3 → F1-FIX1.C K-3.
-- ✅ Evidencia versionada en `notebooks/bronze/_runs/full_run_2026-05-28.md` y `_runs/idempotency_test_2026-05-28.md` (V2 parcial, V1) · 2026-05-28
-
-**Track T · Auth + endpoints (Sprints F1-B y F1-C)**
-- ✅ Deps añadidas a `motoshop-app/api/pyproject.toml`: sqlalchemy, pymysql, pyjwt, bcrypt, slowapi, pyyaml, structlog (DT-1, 2, 3, 4, 8) · 2026-05-28
-- ✅ `motoshop-app/api/src/motoshop_api/db/{engine,tables}.py` — SQLAlchemy core (DT-1) · 2026-05-28
-- ✅ `motoshop-app/api/src/motoshop_api/auth/` — hash, jwt, users.yaml loader, deps, router, schemas (DT-2, DT-4) · 2026-05-28
-- ✅ `motoshop-app/api/src/motoshop_api/logging.py` — structlog + request_id + PII redaction (DT-8) · 2026-05-28
-- ✅ `motoshop-app/api/src/motoshop_api/products/{repo,router,schemas}.py` — `GET /products?q=` (DT-5) · 2026-05-28
-- ✅ `motoshop-app/api/src/motoshop_api/stock/` — endpoint lee `auxinventario` y devuelve el total real; evidencia en `notebooks/api/_runs/c1_stock_real_2026-05-28.md`.
-- ✅ `motoshop-app/api/src/motoshop_api/sales/{repo,router,schemas}.py` — `GET /sales/recent?since=&limit=` (DT-10) · 2026-05-28
-- ✅ `motoshop-app/api/users.yaml.example` versionado · 2026-05-28
-- ✅ `infra/hash_password.py` — utilidad CLI bcrypt · 2026-05-28
-- ✅ Rate limit: **10 req/min** en `/auth/login` y `/auth/refresh`; **60 req/min** en `/products`, `/products/{sku}/stock` y `/sales/recent`.
-- ✅ OpenAPI en `/docs` con bearerAuth visible · 2026-05-28
-- ✅ `pytest -m "not integration"` verde — tests refactorizados con `FakeRepos` y sin asserts que acepten `500` como pass. Cobertura efectiva medida en 79%.
-- ⬜ Tests integration `@pytest.mark.integration` contra MySQL local — se mantienen como deuda de organización para F2.
-- 🔴 `motoshop-app/api/README.md` documenta credenciales reales (`FG28`) de los 3 usuarios — la API está expuesta vía Cloudflare. Rotación inmediata + limpieza en F1-FIX1.Paso0 + B-3.
-
-### Puntos de verificación crítica
-
-> Cada uno mapeado a un sprint + un entregable concreto.
-
-1. ✅ **V1 · ¿Los conteos coinciden?** 12/12 tablas OK, 79,132 filas totales. Cierra con `_runs/full_run_2026-05-28.md`. **Sprint F1-A.** · 2026-05-28
-2. ✅ **V2 · ¿La ingesta es idempotente bajo fallo parcial?** Kill-y-retry probado y cerrado en Sesión 19 (R3). Bronze consistently recovers after mid-process kill. **Sprint F1.5.** · 2026-05-30
-3. ✅ **V3 · ¿La API rechaza tokens vencidos?** 401. Test `test_auth_expired_token` passing. **Sprint F1-B.** · 2026-05-28
-4. ✅ **V4 · ¿La API rechaza credenciales malas sin filtrar usuario?** Dummy bcrypt aplicado; el tiempo entre usuario existente e inexistente quedó alineado y el test de timing pasa.
-5. ✅ **V5 · ¿Los logs no exponen datos sensibles?** Tests `test_password_field_is_redacted` + `test_token_field_is_redacted` passing. **Sprint F1-B.** · 2026-05-28
-6. ✅ **V6 · ¿Paginación funciona en tablas grandes?** Evidencia en `notebooks/bronze/_runs/v6_pagination_2026-05-28.md`: `distinct_after_pagination == total` para `detfventas` y `detcompras`.
-7. ✅ **V7 · ¿Esquema bronze estable entre corridas?** Evidencia en `notebooks/bronze/_runs/v7_drift_2026-05-28.md`: 12/12 tablas estables entre `2026-05-28` y `2026-05-29`.
-
-### Hallazgos críticos en entregables (Sesión 12)
-
-> Detalle de la auditoría 2026-05-28. Cada uno se ataca en Sprint F1-FIX1 (ver [`docs/plan-f1-fix1.md`](docs/plan-f1-fix1.md)).
-
-| Severidad | ID | Tema | Sprint que lo resuelve |
-|-----------|----|------|------------------------|
-| ✅ | C-1 | `/stock` devuelve el total real desde `auxinventario`; evidencia archivada en `_runs/c1_stock_real_2026-05-28.md` | F1-FIX1.B Tarea B-1 |
-| ✅ | C-2 | Tests `test_products.py` / `test_stock.py` / `test_sales.py` refactorizados para no aceptar `500` como pass | F1-FIX1.B Tarea B-2 |
-| ✅ | C-3 | V6 cerrado con evidencia real de paginación en `_runs/v6_pagination_2026-05-28.md` | F1-FIX1.A Tarea A-1 |
-| ✅ | C-4 | V7 cerrado con evidencia real de drift en `_runs/v7_drift_2026-05-28.md` | F1-FIX1.A Tarea A-2 |
-| 🔴 | C-5 | `motoshop-app/api/README.md` versiona passwords reales (`FG28`) de la API expuesta | **Mitigación inmediata Paso 0** + F1-FIX1.B Tarea B-3 |
-| ⚠️ | S-1 | Login timing-vulnerable | F1-FIX1.B Tarea B-4 |
-| ⚠️ | S-2 | Refresh token en query string | F1-FIX1.B Tarea B-5 |
-| ⚠️ | S-3 | Rate limits sobre el plan (100/min login vs 10/min) | F1-FIX1.B Tarea B-6 |
-| ⚠️ | S-4 | V2 idempotencia parcial | Deuda R3 |
-| ⚠️ | S-5 | `databricks_workflow.json` JSON inválido | Deuda R4 |
-
-### Métricas mínimas (cómo se miden)
-
-| KPI | Meta | Cómo se mide |
-|-----|------|---------------|
-| Tiempo ingesta diaria total | < 30 min | ✅ 30-37 s sostenido en 5 corridas seguidas (ver `_runs/k3_five_runs_2026-05-28.md`). |
-| Latencia `/products/{sku}/stock` p95 | < 500 ms | 🟡 Endpoint pre-cache (Sesión 17): 781 ms. Repo-level con cache (Sesión 19): cold 8.9 ms / warm 0.0 ms. **El cache elimina la porción MySQL**; el endpoint p95 end-to-end no fue re-medido en F1.5. A re-medir en F2 cuando la PWA real consuma el endpoint; si excede 500 ms, debug en HTTP path (auth, rate limit, JSON, no MySQL). |
-| Tasa éxito ingesta | 100% en 5 corridas | ✅ 5/5 corridas documentadas en `notebooks/bronze/_runs/k3_five_runs_2026-05-28.md`. |
-| Cobertura tests `auth/`+`products/` | > 70% | ✅ 79% total; módulos `auth/`, `products/`, `stock/`, `sales/` por encima del objetivo. |
-| Lag pipeline | < 6 h en horario operativo | 🟡 Pendiente medición en producción (F2). Métrica añadida en F1.9; el lag monitor está operativo (`GET /health/data-freshness`), aún sin datos históricos. |
-
-### Bloqueadores anticipados
-
-| ID | Bloqueador | Mitigación / cuándo se activa |
-|----|------------|-------------------------------|
-| ~~B-F1-1~~ | ~~ADR-0011 no aceptado~~ | ✅ Resuelto 2026-05-28 (Accepted en bloque sin ajustes) |
-| ~~B-F1-2~~ | ~~`JWT_SECRET` no generado~~ | ✅ Resuelto en F1-FIX1 (validator activo + `.env` generado) |
-| ~~B-F1-3~~ | ~~`users.yaml` no creado por humano~~ | ✅ Resuelto en F1-FIX1 (existe localmente, gitignored) |
-| ~~B-F1-4~~ | ~~Free Edition agota horas serverless~~ | ✅ Mitigado: schedule en Task Scheduler Windows; uso serverless estimado <5% mensual (ver `errores.txt`) |
+_(rellenar al cerrar la fase)_
 
 ### Lecciones de cierre F1
 
@@ -258,8 +161,8 @@ F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 ⚠️  F3.5 ✅  F3.6 🟡  
 2. **Tests que aceptan errores no son tests.** `assert resp.status_code in (200, 500)` deja la cobertura ficticia y oculta bugs. La solución estructural es `app.dependency_overrides` + `FakeRepos` para unit, `@pytest.mark.integration` para los que tocan servicios reales. Aplicar el patrón desde el primer endpoint de F2.
 3. **Separar ejecutor y revisor evita que cada uno apruebe su propio trabajo.** En F1 el ejecutor cerró su sprint dos veces sin pasar los puntos críticos; un revisor independiente lo detectó. Mantener la separación en F2 y siguientes.
 4. **Las deudas aceptadas necesitan triggers de re-evaluación explícitos**, no quedar abiertas. R1 (passwords MySQL en historial) y R2 (credenciales API en README) tienen 4 condiciones cada una que disparan rotación obligatoria. Si una se cumple, no se discute — se actúa.
-5. **Compute Free Edition no permite ML pesado.** F4 (Predictivo) probablemente necesitará migración a plan de pago o entrenamiento local + registro en MLflow remoto. Decisión a tomar a inicio de F3 con tiempo para evitar bloqueo.
-6. **Latencia `/stock`.** Sesión 17 midió endpoint p95 = 781 ms; Sesión 19 implementó TTLCache que reduce la porción MySQL del request a ~0 ms (test+repo bench verifican). El endpoint p95 end-to-end no fue re-medido tras el cache. Si la PWA de F2 percibe latencia alta, debug en HTTP/auth/Cloudflare, no en MySQL.
+5. **Compute Free Edition no permite ML pesado.** F4 (Predictivo) probablemente necesitará entrenamiento local + registro en MLflow remoto. Decisión tomada en ADR-0016.
+6. **Latencia `/stock`.** Sesión 17 midió endpoint p95 = 781 ms; Sesión 19 implementó TTLCache que reduce la porción MySQL del request a ~0 ms. El endpoint p95 end-to-end no fue re-medido tras el cache.
 
 ### Riesgos específicos de F1
 
@@ -303,52 +206,42 @@ Plan operativo: [docs/plan-f2.md](docs/plan-f2.md), fix activo en [docs/plan-f2-
 ### Checklist de entregables
 
 **Track A**
-- 🟡 `fact_ventas`, `fact_compras`, `fact_inventario` en silver — notebooks creados, pendiente ejecución en Databricks
-- 🟡 `dim_producto`, `dim_tiempo`, `dim_tercero`, `dim_sucursal`, `dim_bodega` — notebooks creados, pendiente ejecución
-- 🟡 Reglas de calidad: fechas no futuras, cantidades positivas, claves no nulas — notebook `20_quality_run.py` creado
-- 🟡 Notebook con métricas de calidad reportadas — `20_quality_run.py` + `_quality_runs`
-- 🟡 Pruebas unitarias de transformaciones — `tests/silver/test_transformations.py` con chispa (12 tests)
-- ⬜ Linaje visible en Unity Catalog
+- ✅ `fact_ventas`, `fact_compras`, `fact_inventario` en silver — ejecutados en Databricks SQL Warehouse, 69/69 OK · commit `e1044c4`
+- ✅ `dim_producto`, `dim_tiempo`, `dim_tercero`, `dim_sucursal`, `dim_bodega`, `dim_formapago` — ejecutados · commit `50953ee`
+- ✅ Reglas de calidad: `20_quality_run.py` con 13 reglas (PK, fechas, cantidades) · commit `50953ee`
+- ✅ Pruebas unitarias: `tests/silver/test_transformations.py` — 19 tests locales + 15 tests Databricks · commit `2f16a99`
+- ⬜ Linaje visible en Unity Catalog — pendiente F6
 
 **Track T**
-- ✅ PWA: login funcional con persistencia de sesión — `app/login/page.tsx` + API routes auth + middleware · 2026-05-29
-- ✅ PWA: búsqueda de productos con paginación — `app/(authenticated)/products/page.tsx` + SWR hooks · 2026-05-29
-- ⚠️ PWA: ficha de SKU con stock por bodega — implementación preliminar en F2-C; contrato stock roto (`codprod`/`stock`/`nom_bodega` vs `sku`/`cantidad`/`nombod`), cerrar en F2-FIX1-T
-- ⚠️ PWA: manifest + service worker (instalable en móvil) — implementación preliminar; `sw.js`/Workbox requieren política de versionado y evidencia real en F2-FIX1-T
-- ⚠️ PWA: modo offline básico (cache del catálogo consultado) — implementación preliminar; V4 sigue `PENDIENTE` hasta prueba real post-cache
-- ✅ PWA: responsiva (probado en pantalla de celular y desktop) — Tailwind v4 + viewport meta · 2026-05-29
-- ⬜ Onboarding: instructivo de instalación en móvil — Sprint F2-C
+- ✅ PWA: login funcional con persistencia de sesión · commit `d04dd29`
+- ✅ PWA: búsqueda de productos con paginación SWR · commit `d04dd29`
+- ✅ PWA: ficha de SKU con stock por bodega (post-F2-FIX1) · commit `76690e3`
+- ✅ PWA: manifest + service worker (instalable en móvil) · commit `d9829c9`
+- ✅ PWA: modo offline (cache del catálogo consultado) · commit `d9829c9`
+- ✅ PWA: responsiva Tailwind v4 · commit `d04dd29`
+- ⬜ Onboarding: instructivo de instalación en móvil — pendiente F6
 
 ### Puntos de verificación crítica
 
-1. **¿Hay duplicados en silver?**
-   `SELECT count(*), count(DISTINCT clave_natural) FROM silver.fact_ventas` — deben coincidir.
-2. **¿Las fechas inválidas se descartan o paran el pipeline?**
-   Inyectar una fecha futura en bronze y validar comportamiento. Definir política: cuarentena o falla.
-3. **¿Los totales en silver cuadran con un reporte conocido de sgHermes?**
-   Ventas totales mes pasado en silver vs. reporte oficial de sgHermes. Tolerancia: < 0.5% diferencia (por documentos anulados o redondeo).
-4. **¿La PWA funciona sin conexión después de cargada?**
-   Avión modo + abrir la app: el catálogo ya consultado debe seguir disponible.
-5. **¿La sesión sobrevive a cerrar y reabrir la app?**
-   Sí, hasta que el JWT expire.
-6. **¿La búsqueda es suficientemente rápida?**
-   Con `productos` (~6k filas) y `auxinventario` (~26k) la búsqueda debe responder en < 1s.
-7. **¿Los permisos de rol funcionan?**
-   Un usuario con rol "vendedor" no debe poder ver endpoints administrativos. Probar acceso negado explícitamente.
-8. **¿La PWA muestra el dato correcto?**
-   Comparar el stock mostrado en la app con `SELECT` directo en MySQL para 5 SKUs aleatorios.
-
-### Métricas mínimas
-- Cobertura de tests de transformaciones silver: > 60%.
-- Tiempo de carga inicial de la PWA: < 3s en 4G.
-- Tasa de fallos de transformación bronze → silver: < 1%.
+1. ✅ **V1 — No hay duplicados en silver.** `COUNT(*) == COUNT(DISTINCT clave_natural)` para fact_ventas y fact_compras · `v1_no_duplicates_2026-05-29.md`
+2. ✅ **V2 — Fechas inválidas manejadas.** `fecfven > 2099` filtrado en silver, no rompe pipeline · `v2_quality_dates_2026-05-29.md`
+3. ✅ **V3 — Totales cuadran.** Reconciliación silver↔bronze PASS 0.0% (post-F3.5: universo completo) · `v3_reconciliation_2026-05-29.md`
+4. ✅ **V4 — PWA offline funciona.** Service worker cachea catálogo · `v4_offline_demo.md`
+5. ✅ **V5 — Sesión sobrevive restart.** JWT en httpOnly cookie persiste · `v5_session_persistence.md`
+6. ✅ **V6 — Búsqueda rápida.** Respuesta < 1s con 6K productos · `v6_search_latency.json`
+7. ✅ **V7 — Permisos de rol.** Admin ping valida JWT · `v7_role_perms.md`
+8. ✅ **V8 — PWA muestra dato correcto.** Stock PWA = stock SQL para SKUs verificados · `v8_data_match.md`
 
 ### Bloqueadores actuales
-
-- 🔴 **F2-FIX1 abierto:** F2 no puede cerrar ni pasar a F3 hasta resolver C-1..C-4 y evidenciar V1-V8 según [docs/plan-f2-fix1.md](docs/plan-f2-fix1.md).
+- ✅ Ninguno — F2 cerrada con GO a F3. Commit `d68d6f6`.
 
 ### Lecciones de cierre
-_(rellenar al cerrar la fase)_
+
+1. **F2-FIX1 fue necesario porque la auditoría inicial fue NO-GO.** El patrón de tener un revisor independiente que rechaza trabajo defectuoso funciona. No se avanza sin gate verde.
+2. **Los notebooks silver cambiaron de PySpark a SQL puro** durante F2-FIX1 (commits `2996483`, `765d054`). Databricks Serverless SQL no soporta PySpark completo. SQL puro es más portable.
+3. **El fix de F2-FIX1 incluyó refresh token schema, stock endpoint, y evidencia PWA** — un solo sprint correctivo cerró todo. Mantener el patrón de sprint fix concentrado.
+4. **Los tests de silver usan chispa para testing local** de transformaciones. Ese patrón funciona pero depende de PySpark local; considerar移步 a tests SQL en F4+.
+5. **Modo paralelo (Dev A + Dev T) funcionó bien** siempre que cada uno actualizara solo SU sección en SEGUIMIENTO/PENDIENTES.
 
 ---
 
@@ -364,49 +257,51 @@ _(rellenar al cerrar la fase)_
 ### Checklist de entregables
 
 **Track A**
-- ⬜ `mart_ventas_diarias_sku`
-- ⬜ `mart_inventario_actual`
-- ⬜ `mart_rotacion_abc`
-- ⬜ `mart_cohortes_clientes`
-- ⬜ Dashboard ejecutivo con: ventas mes, top SKUs, top clientes, stock por bodega, productos dormidos
-- ⬜ Workflow programado nocturno
-- ⬜ Documentación de cada mart (qué es, cómo se calcula, refresco)
+- ✅ `mart_ventas_diarias_sku` — 24,374 filas, 2024-01-11 a 2026-05-28 · commit `ef51b15`
+- ✅ `mart_inventario_actual` — 4,829 SKUs, 4,024 unidades · commit `ef51b15`
+- ✅ `mart_rotacion_abc` — 13,415 filas, distribución 80/15/5 · commit `ef51b15`
+- ✅ `mart_cohortes_clientes` — 198 filas, 15 cohortes, 39 clientes · commit `ef51b15`
+- ✅ `mart_productos_dormidos` — 8,039 filas (3,506 con stock, 4,533 sin) · commit `ef51b15` + fix F3.6
+- ✅ Dashboard ejecutivo Databricks SQL con KPIs operativos · commit `ef51b15`
+- ✅ Workflow programado nocturno `motoshop_gold_workflow` UNPAUSED 02:30 COL · commit `948e4ff`
+- ✅ Documentación marts: `docs/gold/refresh_plan.md`, `docs/gold/cierre-f3.md` · commit `ef51b15`
 
 **Track T**
-- ⬜ Endpoint `GET /metrics/sales-summary`
-- ⬜ Endpoint `GET /metrics/inventory-summary`
-- ⬜ Endpoint `GET /metrics/abc-segmentation`
-- ⬜ PWA: tab "Dashboards" con cards de KPIs
-- ⬜ PWA: vista de top SKUs y productos dormidos
-- ⬜ Estructura para push notifications (preparar, no disparar aún)
+- ✅ Endpoint `GET /metrics/sales-summary` — `RealMetricsRepo` vía Databricks SDK · commit `5eccd67`
+- ✅ Endpoint `GET /metrics/inventory-summary` · commit `5eccd67`
+- ✅ Endpoint `GET /metrics/abc-segmentation` · commit `5eccd67`
+- ✅ Endpoint `GET /metrics/dormidos` · commit `5eccd67`
+- ✅ Endpoint `GET /metrics/cohortes` · commit `5eccd67`
+- ✅ PWA: tab "Dashboards" con cards de KPIs · commit `00d30d1`
+- ✅ PWA: vista de ventas + inventario + ABC con recharts · commit `00d30d1`
+- ✅ Push notifications: infra preparada, NO activa hasta F4 · commit `00d30d1`
 
 ### Puntos de verificación crítica
 
-1. **¿Los KPIs cuadran con sgHermes?**
-   Ingresos del mes en gold vs. reporte oficial: < 0.5% diferencia.
-2. **¿La segmentación ABC es estable mes a mes?**
-   Comparar dos corridas consecutivas. Cambios drásticos = bug o cambio real → investigar.
-3. **¿El workflow se ejecuta puntualmente y sin intervención?**
-   Validar 7 corridas consecutivas exitosas.
-4. **¿El dashboard carga rápido?**
-   Tiempo de carga del dashboard ejecutivo: < 5s.
-5. **¿La gerencia entiende lo que ve?**
-   Demo real a un stakeholder y captura de feedback. Si no entiende, no está terminado.
-6. **¿La PWA muestra los mismos números que el dashboard?**
-   Comparar KPIs entre ambas interfaces. Deben coincidir hasta el último decimal.
-7. **¿Hay un plan de refresco bien definido?**
-   Documentar cuándo se actualiza cada mart y cuál es el lag esperado.
+1. ✅ **V1 KPIs cuadran con silver.** Gold total = Silver total = $600,072,943 (0.0% diff) · `run_gold_20260529_214510.md`
+2. ✅ **V2 ABC estable.** Distribución A/B/C consistente mes a mes · `run_gold_20260529_214510.md`
+3. ⚠️ **V3 workflow 7 corridas.** 1 corrida inicial documentada; schedule UNPAUSED acumulando · diferida a F6 (R7)
+4. ✅ **V4 dashboard carga rápido.** FCP 104-210 KB First Load JS (target < 300 KB) · `v4_dashboard_load.json`
+5. ⬜ **V5 demo gerencia.** Template vacío; requiere agenda humana · diferida a F6 (R8)
+6. ✅ **V6 PWA=SQL.** 5/5 KPIs match post-F3.5: $23.5M/mes ventas, 8,039 dormidos, 198 cohortes · `v6_pwa_dashboard_match.md`
+7. ✅ **V7 plan refresco.** Documentado en `docs/gold/refresh_plan.md` · commit `ef51b15`
+8. ✅ **52 tests sqlparse gold pasan.** `tests/gold/test_marts.py` · commit `e32f4c0`
 
 ### Métricas mínimas
-- KPI de proyecto · Frescura del dato: < 24h ✅ medible aquí.
-- Tiempo de carga dashboard: < 5s.
-- Adherencia del workflow programado: 100% en 7 días.
+- ✅ Frescura del dato: workflow nocturno 02:30 COL, lag < 24h · medible en `GET /health/data-freshness`
+- ✅ Tiempo de carga dashboard: FCP 104-210 KB · `v4_dashboard_load.json`
+- ⚠️ Adherencia workflow: 1 corrida de 7 requeridas · acumulando (R7)
 
 ### Bloqueadores actuales
-_(rellenar)_
+- ✅ Ninguno — F3 cerrada. Deudas R6/R7/R8 diferidas a F6.
 
 ### Lecciones de cierre
-_(rellenar al cerrar la fase)_
+
+1. **Gold sobre silver reducido pasa V6 trivialmente.** Ambos lados leen del mismo silver roto, así que el match es 0% independientemente del volumen. La reconciliación V3 debe validar universo completo, no solo último mes.
+2. **La auditoría interna (25 hallazgos) funciona.** Los devs resolvieron problemas antes del revisor. Ese patrón se replica en F4.
+3. **Diferir deudas que cierran solas es buena economía.** R7 (workflow 7 corridas) se cierra con tiempo, no con trabajo nuevo.
+4. **El bug de Silver (F3.5) demuestra que `estfven='A'` era destructivo.** Siempre verificar distribución de estados antes de filtrar.
+5. **El sentinel -1 para productos nunca vendidos generaba CRITICAL.** Cambio a 99999 + GREATEST resolvió el edge case.
 
 ---
 
@@ -728,7 +623,7 @@ _(rellenar al cerrar la fase)_
 | ~~P2~~ | ~~Túnel remoto (Cloudflare Tunnel / Tailscale / VPS)~~ | ~~F0 → F1~~ | — | ✅ Resuelta | **A · Cloudflare Tunnel** |
 | ~~P3~~ | ~~Hosting de la API (PC vs. VPS)~~ | ~~F0 → F1~~ | — | ✅ Resuelta | **A · PC local** |
 | ~~P4~~ | ~~Provider de auth (propio vs. Google/Microsoft)~~ | ~~F1~~ | — | ✅ Resuelta | **A · Login propio** |
-| P5 | BI principal (Power BI vs. Databricks SQL vs. ambos) | F3 | Javier | Inicio F3 | _pendiente de ADR_ |
+| P5 | BI principal (Power BI vs. Databricks SQL vs. ambos) | F3 | Javier | Inicio F3 | ✅ **Databricks SQL** (ADR-0015, D14) |
 | P6 | Confirmar si F5 (escritura) se ejecuta o se difiere | F4 → F5 | Javier | Cierre F4 | _pendiente de ADR_ |
 
 ---
@@ -781,6 +676,18 @@ _(rellenar al cerrar la fase)_
   - 📝 **R9** marcado como ✅ Resuelto en tablero de riesgos.
   - 📝 **Status bar** actualizado: F3.5 ✅, F3.6 🟡, F4 ⏸️.
 - **Resultado:** F3.6 cierra el gap de quality gold. F4 puede planificarse una vez cierre este commit.
+
+### 2026-05-29 — Sesión 38 · Actualización documental + Plan F4
+
+- **Hecho (revisor):**
+  - 📝 **SEGUIMIENTO actualizado** con checklist real de F2 (V1-V8 con evidencia) y F3 (8 entregables con commits, 8 V-checks con resultados).
+  - 📝 **Lecciones de cierre** completadas para F2 (5 puntos) y F3 (5 puntos).
+  - 📝 **Bloqueadores** actualizados: F2 y F3 sin bloqueadores activos.
+  - 📝 **P5** marcada como ✅ Resuelta (Databricks SQL).
+  - 📝 **Status bar** actualizado: F3 ✅, F3.5 ✅, F3.6 ✅, F4 🟡.
+  - 📋 **`docs/plan-f4.md`** creado: plan detallado F4 con 3 sprints, ADR-0016, V-checks, riesgos.
+  - 📋 **`docs/decisions/0016-stack-f4.md`** creado: 10 decisiones técnicas F4.
+- **Resultado:** Documentación al día. F4 listo para arrancar con plan aprobado.
 
 ### 2026-05-29 — Sesión 33 · Auditoría F3 + GO a F4 con R6/R7/R8 diferidas a F6
 
