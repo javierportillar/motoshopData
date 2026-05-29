@@ -8,6 +8,170 @@
 
 ---
 
+## Sesión 2026-05-29 (21) · F1.9 · Robustez del pipeline pre-F2
+
+### Resumen
+Sprint corto antes de F2 que blinda el pipeline contra: PC apagado, sin internet por días, horarios cambiantes. Y decide cómo separar `ingest_date` técnica vs `business_date` de negocio (ADR-0013).
+
+**Plan completo: [`docs/plan-f1-9.md`](docs/plan-f1-9.md)** — leelo antes de actuar. Tiene implementación sugerida para cada tarea.
+
+**Decisiones humanas tomadas en Sesión 21:**
+- Frecuencia del dump: **cada 30 min**.
+- Ventana operativa: **07:00 – 19:30**.
+- Cómo encarar el ADR-0013: **Camino 1** (revisor escribe con 3 opciones DESPUÉS del sondeo, humano aprueba leyéndolo).
+
+Tiempo estimado: **~3 horas del ejecutor**. Después el revisor toma el relevo con tareas 3-4.
+
+---
+
+### Tarea 0 ⬜ · Sondeo de columnas de fecha en BD *(~20 min)*
+
+> **Pre-requisito del ADR-0013.** Sin esto, el ADR sería asunción.
+
+1. PC MotoShop:
+   ```powershell
+   cd C:\Users\MotoShop\Documents\javidevmoto
+   .\.venv-infra\Scripts\Activate.ps1
+   ```
+
+2. Crear `infra/explore_business_dates.py` con el código del plan §Tarea 0 (~50 líneas, introspección read-only de las 12 tablas core).
+
+3. Ejecutar y capturar:
+   ```powershell
+   python infra\explore_business_dates.py | Tee-Object -FilePath notebooks\bronze\_runs\business_date_survey_2026-05-29.md
+   ```
+
+4. **Opcional:** añadir notas al final si encontrás algo raro (ej. "facventas tiene `fecdoc` y `fecven`, son distintas").
+
+**Pasa si:** el `.md` muestra para cada una de las 12 tablas qué columnas de fecha tiene y sus stats (MIN, MAX, NULLs, '0000-*'). Si una tabla no tiene fechas, eso también se registra.
+
+---
+
+### Tarea 1 ⬜ · Lag monitor + endpoint `/health/data-freshness` *(~1 h)*
+
+1. Crear `notebooks/bronze/06_pipeline_health.py` con el código del plan §Tarea 1.
+
+2. En Databricks: ejecutar; debe reportar lag actual.
+
+3. Crear módulo API:
+   - `motoshop-app/api/src/motoshop_api/health/__init__.py`
+   - `motoshop-app/api/src/motoshop_api/health/router.py` (código en plan §Tarea 1)
+
+4. Wire-up en `motoshop-app/api/src/motoshop_api/main.py` (importar y `app.include_router(health_router)`).
+
+5. Test: `motoshop-app/api/tests/test_health_freshness.py` que mockea WorkspaceClient y valida 4 status (OK/WARN/STALE/CRITICAL).
+
+6. ```powershell
+   cd motoshop-app\api
+   .\.venv\Scripts\Activate.ps1
+   pytest -m "not integration" -v
+   ```
+
+7. Restart API.
+
+8. Verificar:
+   ```powershell
+   curl https://api.fragloesja.uk/health/data-freshness
+   # → {"status":"OK","lag_hours":1.3,"last_manifest":"manifest_2026-05-29.json"}
+   ```
+
+9. Evidencia: `notebooks/api/_runs/data_freshness_check_2026-05-29.md` con salida del notebook + curl del endpoint + status.
+
+**Pasa si:** notebook corre, endpoint responde JSON correcto, tests pasan, evidencia versionada.
+
+---
+
+### Tarea 2 ⬜ · Task Scheduler robusto + `--catch-up` *(~45 min)*
+
+#### 2.1 Reconfigurar Task Scheduler (Windows UI)
+
+Editar la tarea actual de dump. **Eliminar los 3 triggers actuales (02:00/12:00/20:00)** y crear uno nuevo:
+
+**Trigger:**
+- Tipo: Diariamente
+- Hora de inicio: **07:00**
+- ✅ Repetir tarea cada: **30 minutos**
+- Por una duración de: **12 horas 30 minutos** (cubre 07:00 → 19:30)
+
+**Settings:**
+- ✅ "Ejecutar la tarea lo antes posible si se omite un inicio programado"
+- ✅ "Si la tarea falla, reiniciar cada: **10 min**, hasta **3** intentos"
+- ✅ "Detener la tarea si se ejecuta más de: **15 min**"
+- ❌ "Iniciar la tarea solo si la red está disponible" — DESACTIVADO (catch-up lo maneja)
+
+**Conditions:**
+- ❌ "Iniciar solo si el equipo está inactivo" — DESACTIVADO
+- ✅ "Reactivar el equipo para ejecutar esta tarea"
+
+Capturar: `schtasks /query /tn "MotoShopDump" /v /fo LIST > infra\logs\task_scheduler_config.txt`.
+
+#### 2.2 Flag `--catch-up` en `dump_to_cloud.py`
+
+Añadir el código del plan §Tarea 2 — antes del bucle de extracción, escanear `_staging/` y subir Parquets pendientes.
+
+#### 2.3 Modificar `run_dump.ps1` para invocar con `--catch-up`
+
+```powershell
+python infra\dump_to_cloud.py --tables-core --catch-up
+```
+
+#### 2.4 (Opcional) Test de robustez
+
+Si el humano puede dedicar 1 h:
+1. Apagar módem 30 min en horario operativo.
+2. Confirmar que Task Scheduler corre pero upload falla.
+3. Reconectar.
+4. Esperar siguiente schedule (≤30 min).
+5. Verificar catch-up subió pendientes.
+
+Evidencia opcional: `notebooks/bronze/_runs/catch_up_test_2026-05-29.md`.
+
+**Pasa si:** Task Scheduler reconfigurado (captura anexada), `dump_to_cloud.py --catch-up` corre sin error (aunque no haya nada), `run_dump.ps1` invoca con `--catch-up`.
+
+---
+
+### Tarea 3 ⬜ · Commit + push *(~10 min)*
+
+```powershell
+git add `
+  infra/explore_business_dates.py `
+  infra/dump_to_cloud.py `
+  infra/run_dump.ps1 `
+  infra/logs/task_scheduler_config.txt `
+  motoshop-app/api/src/motoshop_api/health/__init__.py `
+  motoshop-app/api/src/motoshop_api/health/router.py `
+  motoshop-app/api/src/motoshop_api/main.py `
+  motoshop-app/api/tests/test_health_freshness.py `
+  notebooks/bronze/06_pipeline_health.py `
+  notebooks/bronze/_runs/business_date_survey_2026-05-29.md `
+  notebooks/api/_runs/data_freshness_check_2026-05-29.md
+
+git diff --cached | findstr /R /C:"password.*[:=].*[\"']" | findstr /V "redact_pii\|REDACTED"
+# debería estar vacío
+
+git commit -m "feat(F1.9): robustez pipeline - sondeo BD + lag monitor + Task Scheduler robusto + catch-up"
+git push
+```
+
+---
+
+### Tarea 4 ⬜ · Reportar al revisor
+
+*"F1.9 tareas 0-2 hechas: sondeo en `business_date_survey_*.md`, lag monitor + endpoint, Task Scheduler reconfigurado. Commit `<hash>`. Listo para que escribas ADR-0013 y cierres F1.9."*
+
+Revisor:
+1. Lee evidencia del sondeo.
+2. Escribe ADR-0013 con datos REALES (3 opciones desarrolladas, recomendación argumentada, estado `Proposed`).
+3. Documenta **R5** en SEGUIMIENTO §Tablero de riesgos vivos.
+4. Sincroniza `docs/contexto-proyecto.md`.
+5. Notifica al humano para que apruebe ADR-0013.
+
+Humano:
+- Lee ADR-0013 (~5 min).
+- Aprueba → revisor marca `Accepted` → **GO a F2 · Silver + PWA MVP**.
+
+---
+
 ## Sesión 2026-05-28 (20) · F1.5 validada + arranque F2
 
 ### Resumen

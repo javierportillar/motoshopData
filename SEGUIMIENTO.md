@@ -644,6 +644,31 @@ _(rellenar al cerrar la fase)_
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
 
+### 2026-05-29 — Sesión 21 · Plan F1.9 · Robustez del pipeline pre-F2
+
+- **Hecho:**
+  - 💬 Conversación con humano sobre cómo funcionan los jobs cuando el PC está apagado o sin internet. Identificó 4 problemas reales: (a) PC apagado en ventana fija, (b) ubicación sin internet por días, (c) horario de cierre cambia → 02:00 ya no es anchor válido, (d) `ingest_date` (técnica) no es igual a `business_date` (de negocio) y se pierden trazas históricas.
+  - ✅ Decisiones humanas tomadas:
+    - Frecuencia del dump: **cada 30 min**.
+    - Ventana operativa: **07:00 – 19:30** (padding de 30 min a cada lado del horario de tienda 07:30–19:00).
+    - Cómo encarar el ADR de fechas: **Camino 1** (revisor escribe ADR-0013 con las 3 opciones DESPUÉS del sondeo, humano aprueba leyéndolo).
+  - ✅ [`docs/plan-f1-9.md`](docs/plan-f1-9.md) escrito: 5 tareas (Tarea 0 sondeo BD → ejecutor; Tarea 1 lag monitor + endpoint /health/data-freshness → ejecutor; Tarea 2 Task Scheduler robusto + flag `--catch-up` → ejecutor; Tarea 3 ADR-0013 post-sondeo → revisor; Tarea 4 documentar R5 + sync → revisor). ~3 h ejecutor + ~45 min revisor.
+  - ✅ Plan incluye implementación sugerida de `infra/explore_business_dates.py` con introspección read-only de las 12 tablas core, regex para columnas candidatas a fecha, stats (MIN, MAX, NULLs, '0000-*'). Output a `notebooks/bronze/_runs/business_date_survey_2026-05-29.md`.
+  - ✅ Plan documenta lo que NO entra (implementación silver de business_date, streaming, replicación cloud, auto-deploy, push notifications) con razón en cada caso.
+  - ✅ PENDIENTES sesión 21 con handoff para ejecutor: solo Tareas 0, 1, 2 (las 3 y 4 las hago yo en Sesión 22 tras el sondeo).
+- **Aprendido:**
+  - El instinto del humano de "sondear la BD antes de decidir" es exactamente lo que un buen ADR pide. Sin sondeo, el ADR sería asunción. Con sondeo, el ADR documenta realidad.
+  - Separar **decisión** (ADR) de **implementación** (silver casting) deja F1.9 en ~3 h en lugar de un sprint grande.
+  - Cada 30 min × 12.5 h = ~25 dumps/día. Manejable en Free Edition (vs los 288/día que serían cada 5 min).
+- **Abierto:**
+  - 3 tareas del ejecutor en Sesión 22 (sondeo + lag monitor + Task Scheduler).
+  - 2 tareas del revisor en Sesión 22 (ADR-0013 con info real del sondeo + sync R5).
+  - Humano aprueba ADR-0013 en Sesión 22.5.
+- **Próximo paso:**
+  - Ejecutor arranca Sesión 22 leyendo `docs/plan-f1-9.md` y PENDIENTES sesión 21. Después de su push, revisor toma el relevo con tareas 3-4.
+
+---
+
 ### 2026-05-29 — Sesión 20 · Auditoría F1.5 + GO a F2 + propuesta agent-guides
 
 - **Hecho (revisor):**
