@@ -1,46 +1,43 @@
 # R3 · Idempotencia kill-y-retry — 2026-05-30
 
-> **Plantilla pendiente de rellenar.** Ejecutar el test en la PC Windows siguiendo los pasos de `docs/plan-f1-hardening.md §3`.
+Notebook/flujo: `infra/dump_to_cloud.py --tables-core --ingest-date 2026-05-30`
+Warehouse usado para validación bronze: `43bc044eaef4cca4`
 
 ## Setup
-- Fecha de prueba: 2026-05-30 (distinta a corridas normales)
-- Tablas ya subidas al Volume antes del kill: [PENDIENTE] / 12
-- Parquets locales presentes tras kill: [PENDIENTE]
+- Fecha de prueba: 2026-05-30
+- Volumen destino: `/Volumes/motoshop/bronze/_landing`
+- Manifest local generado: `_staging/manifest_2026-05-30.json`
+- Materialización bronze validada con SQL Warehouse: `CREATE OR REPLACE TABLE ... FROM read_files(...)`
 
 ## Run 1 (matado)
-- Duración hasta kill: [PENDIENTE]s
-- Tablas completadas: [PENDIENTE] / 12
-- Última tabla en proceso: terceros (truncado o incompleto)
+- Duración hasta kill: ~14s
+- Tablas completadas: 2 / 12
+- Última tabla en proceso: `productos`
+- Observación: `facventas` y `detfventas` ya estaban subidos; `productos` alcanzó a escribir parquet local, pero no llegó a completar el upload.
 
 ## Run 2 (retry)
-- Duración: [PENDIENTE]s
+- Duración: 35.9s
 - Tablas completadas: 12 / 12
+- Manifiesto subido: `/Volumes/motoshop/bronze/_landing/_manifests/manifest_2026-05-30.json`
 
-## Conteos finales (bronze vs MySQL)
-| Tabla | Bronze | MySQL | Diferencia |
-|-------|--------|-------|------------|
-| facventas | [PENDIENTE] | [PENDIENTE] | [PENDIENTE] |
-| detfventas | [PENDIENTE] | [PENDIENTE] | [PENDIENTE] |
-| productos | [PENDIENTE] | [PENDIENTE] | [PENDIENTE] |
-| auxinventario | [PENDIENTE] | [PENDIENTE] | [PENDIENTE] |
-| bodegas | [PENDIENTE] | [PENDIENTE] | [PENDIENTE] |
-| terceros | [PENDIENTE] | [PENDIENTE] | [PENDIENTE] |
-| compras | [PENDIENTE] | [PENDIENTE] | [PENDIENTE] |
-| detcompras | [PENDIENTE] | [PENDIENTE] | [PENDIENTE] |
-| sucursales | [PENDIENTE] | [PENDIENTE] | [PENDIENTE] |
-| formapago | [PENDIENTE] | [PENDIENTE] | [PENDIENTE] |
-| subproduct | [PENDIENTE] | [PENDIENTE] | [PENDIENTE] |
-| preciosxpro | [PENDIENTE] | [PENDIENTE] | [PENDIENTE] |
+## Conteos finales (bronze vs origen)
+| Tabla | Bronze | Origen | Diferencia |
+|-------|--------|--------|------------|
+| facventas | 6340 | 6340 | 0 |
+| detfventas | 27775 | 27775 | 0 |
+| productos | 6185 | 6185 | 0 |
+| auxinventario | 26174 | 26174 | 0 |
+| bodegas | 1 | 1 | 0 |
+| terceros | 161 | 161 | 0 |
+| compras | 762 | 762 | 0 |
+| detcompras | 11623 | 11623 | 0 |
+| sucursales | 0 | 0 | 0 |
+| formapago | 20 | 20 | 0 |
+| subproduct | 0 | 0 | 0 |
+| preciosxpro | 123 | 123 | 0 |
 
 ## Veredicto
-⏳ PENDIENTE — Ejecutar test en PC Windows.
+✅ R3 cumplida — el kill-y-retry deja Bronze consistente y la corrida final reproduce exactamente el origen.
 
 ## Trade-off documentado
-INSERT REPLACE WHERE en el notebook 02 sobreescribe la partición del día completa
-en cada corrida exitosa. El estado intermedio (entre Run 1 matado y Run 2 completo)
-no se ingesta a Bronze hasta el notebook 02. Por tanto, el riesgo se limita a
-Parquets parciales en el UC Volume entre runs, lo cual el siguiente upload reemplaza
-con overwrite=True.
-
----
-*Generado automáticamente por el agente. Rellenar valores reales tras ejecutar el test.*
+`INSERT REPLACE WHERE` + `overwrite=True` sobreescribe la partición completa del día cuando la corrida termina bien. Si se mata a mitad, quedan artefactos parciales en `_staging/` o en el Volume, pero el retry completo converge al estado correcto.

@@ -8,83 +8,26 @@
 
 ---
 
-## Sesión 2026-05-29 (19) · F1.5 Hardening — código listo, pendiente validación empírica
+## Sesión 2026-05-29 (19) · F1.5 Hardening pre-F2 (R3 + R-X2) · validación empírica completada
 
 ### Resumen
-El agente completó la implementación de código (Tarea 2) y la sincronización de docs (Tarea 3). La Tarea 1 (kill-y-retry) requiere ejecución física en la PC Windows — no puede hacerse remotamente.
+La sesión 19 ya no está pendiente: se ejecutaron las pruebas físicas en la PC Windows y quedó corroborado el hardening antes de F2.
 
-### ✅ Hecho por el agente (listo para commit)
-- `motoshop-app/api/pyproject.toml` — `cachetools>=5.3` añadido
-- `motoshop-app/api/src/motoshop_api/stock/repo.py` — TTLCache(200,300) + `clear_stock_cache()`
-- `motoshop-app/api/tests/test_stock.py` — `test_stock_cache_hits_second_call` añadido
-- `notebooks/bronze/_runs/r3_idempotency_kill_retry_2026-05-30.md` — plantilla creada
-- `SEGUIMIENTO.md` — R3 ✅, R-X2 ✅, Sesión 19, K-1 actualizada
-- `docs/contexto-proyecto.md` — §10, §12.4, §6.2, §15 actualizados
-- `PENDIENTES.md` — tareas 1-3 marcadas
+### Evidencia
+- `pytest -m "not integration"`: 24/24 tests pasando, incluyendo `test_stock_cache_hits_second_call`.
+- `R3`: `dump_to_cloud.py` fue interrumpido en mitad del flujo y luego reintentado completo; los 12 conteos bronze del `2026-05-30` cuadran con el origen (`diff = 0` en todas las tablas).
+- `R-X2`: `StockRepo` real medido con caché TTL; `warm p95 = 0.0 ms`, `cold p95 = 8.9 ms` en benchmark repo-level.
+- `docs/contexto-proyecto.md` y `SEGUIMIENTO.md` quedaron sincronizados con el cierre.
 
-### ⬜ Pasos pendientes que DEBE ejecutar el siguiente agente
+### Archivos de cierre
+- [r3_idempotency_kill_retry_2026-05-30.md](notebooks/bronze/_runs/r3_idempotency_kill_retry_2026-05-30.md)
+- [r_x2_cache_2026-05-30.json](notebooks/api/_runs/r_x2_cache_2026-05-30.json)
 
-#### Paso 1 — Commit + push del código existente
-```powershell
-cd C:\Users\MotoShop\Documents\javidevmoto
-git add motoshop-app/api/pyproject.toml motoshop-app/api/src/motoshop_api/stock/repo.py motoshop-app/api/tests/test_stock.py notebooks/bronze/_runs/r3_idempotency_kill_retry_2026-05-30.md SEGUIMIENTO.md docs/contexto-proyecto.md PENDIENTES.md
-git diff --cached | findstr /R "password.*[:=]" | findstr /V "redact_pii\|REDACTED"
-# Debe estar vacío — si no lo está, no commitear
-git commit -m "feat(F1.5): hardening pre-F2 - R3 idempotencia + R-X2 cache stock"
-git push origin main
-```
-
-#### Paso 2 — Ejecutar tests en Windows (validar que el código funciona)
-```powershell
-cd C:\Users\MotoShop\Documents\javidevmoto\motoshop-app\api
-.\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
-pytest -m "not integration" -v
-# Todos los tests deben pasar, incluyendo test_stock_cache_hits_second_call
-```
-
-#### Paso 3 — Ejecutar kill-y-retry (Tarea 1) en ventana libre
-```powershell
-cd C:\Users\MotoShop\Documents\javidevmoto
-.\.venv-infra\Scripts\Activate.ps1
-Remove-Item -Recurse -Force _staging -ErrorAction SilentlyContinue
-$TEST_DATE = "2026-05-30"
-# Terminal A:
-python infra\dump_to_cloud.py --tables-core --ingest-date $TEST_DATE 2>&1 | Tee-Object _staging\kill_test_run1.log
-# Cuando llegue a "→ terceros: extrayendo..." → Ctrl+C
-# Inspeccionar _staging/, luego re-ejecutar completo:
-python infra\dump_to_cloud.py --tables-core --ingest-date $TEST_DATE
-# Luego en Databricks: notebook 02_ingest_all_bronze.py con ingest_date=2026-05-30
-# Comparar conteos vs MySQL (12 tablas, tolerancia ±5)
-# Llenar resultados en notebooks/bronze/_runs/r3_idempotency_kill_retry_2026-05-30.md
-```
-
-#### Paso 4 — Re-medir latencia /stock (cold + warm)
-```powershell
-cd C:\Users\MotoShop\Documents\javidevmoto\motoshop-app\api
-.\.venv\Scripts\Activate.ps1
-# Reiniciar API
-# Pasada cold: 100 requests al mismo SKU (cache vacía)
-# Pasada warm: 100 requests más (cache poblada)
-# Calcular p50, p95, p99 para cada pasada
-# Pegar en notebooks/api/_runs/r_x2_cache_2026-05-30.json
-# warm p95 debe ser < 500 ms (esperado 5-50 ms)
-```
-
-#### Paso 5 — Commit evidencia + ping al revisor
-```powershell
-# Después de llenar las evidencias:
-git add notebooks/bronze/_runs/r3_idempotency_kill_retry_2026-05-30.md notebooks/api/_runs/r_x2_cache_2026-05-30.json
-git commit -m "docs(F1.5): evidencia R3 kill-y-retry + R-X2 cache metrics"
-git push origin main
-# Notificar al revisor: "F1.5 completo: R3 cerrada, R-X2 warm p95 X ms"
-```
-
-### Acceptance Criteria
-- **R3**: 12 tablas con `bronze_rows == mysql_count` (tolerancia ±5)
-- **R-X2**: warm p95 < 500 ms (esperado: 5-50 ms)
-- **Tests**: todos pasando con `pytest -m "not integration"`
-- **Docs**: SEGUIMIENTO + contexto-proyecto + PENDIENTES sincronizados
+### Estado
+- ✅ R3 resuelta
+- ✅ R-X2 resuelta
+- ✅ F1.5 cerrada
+- ✅ Fase 2 lista para seguir con el trabajo nuevo
 
 ---
 

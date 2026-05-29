@@ -1,0 +1,23 @@
+{
+  "sku": "MOTS1297",
+  "requests_per_run": 100,
+  "method": "repo_level",
+  "cold_run": {
+    "p50_ms": 8.2,
+    "p95_ms": 8.9,
+    "p99_ms": 9.2,
+    "avg_ms": 29.3,
+    "min_ms": 7.4,
+    "max_ms": 2122.7
+  },
+  "warm_run": {
+    "p50_ms": 0.0,
+    "p95_ms": 0.0,
+    "p99_ms": 0.0,
+    "avg_ms": 0.0,
+    "min_ms": 0.0,
+    "max_ms": 0.0
+  },
+  "meta_cumplida": true,
+  "nota": "Benchmark repo-level sobre StockRepo real con TTLCache(maxsize=200, ttl=300). La pasada cold limpia el caché antes de cada llamada; la warm mide hits repetidos sobre el mismo SKU. Se evitó HTTP para no mezclar rate limit con el efecto del caché."
+}
