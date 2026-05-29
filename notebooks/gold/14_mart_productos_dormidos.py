@@ -70,7 +70,7 @@ SELECT
   COALESCE(dp.nombre_producto, 'SIN NOMBRE') AS nom_producto,
   COALESCE(uv.cod_bodega, p.cod_bodega) AS cod_bodega,
   uv.ultima_fecha_venta,
-  CAST(COALESCE(DATEDIFF(CURRENT_DATE(), uv.ultima_fecha_venta), 99999) AS INT) AS dias_sin_venta,
+  CAST(GREATEST(COALESCE(DATEDIFF(CURRENT_DATE(), uv.ultima_fecha_venta), 99999), 0) AS INT) AS dias_sin_venta,
   COALESCE(ps.stock_total, 0) AS stock_actual,
   CASE
     WHEN COALESCE(ps.stock_total, 0) > 0 THEN 'dormido_con_stock'

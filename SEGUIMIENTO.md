@@ -28,14 +28,14 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **Fase 3.5 · Hardening Silver** (F4 pausada — lista para planificar) |
+| Fase activa | **Fase 3.6 · Fix quality gold** (F4 pausada) |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Planificación F4 con volumen histórico real (~6,339 facturas, 17 meses) |
+| Próximo gate | Cierre F3.6 (fix quality gold + docs) → luego planificación F4 |
 | Avance global | 3/7 fases cerradas + 3 hardening sprints (F1.5 ✅, F1.9 ✅, F3.5 ✅) |
 | Última actualización | 2026-05-29 |
 
 ```
-F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 ⚠️  F3.5 🟡  F4 ⏸️  F5 ⬜  F6 ⬜
+F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 ⚠️  F3.5 ✅  F3.6 🟡  F4 ⏸️  F5 ⬜  F6 ⬜
 ```
 
 > **2026-05-29 (Sesión 35) — F3.5 abierta · F4 pausada.** Hallazgo post-F3: Bronze evidencia `facventas=6,340` y `detfventas=27,775`, pero Silver tiene `fact_ventas=15` y `fact_ventas_detalle=58`; `fact_inventario=26,174` sí conserva el universo de Bronze. La reconciliación V3 de F2 validó solo el último mes con 1 factura, así que no probó cobertura completa. Se abre F3.5 para corregir Silver, re-ejecutar Gold y revalidar V3/V6 antes de diseñar F4.
@@ -475,12 +475,15 @@ La reconciliación V3 anterior comparó el último mes con datos y encontró 1 f
 
 ### Bloqueadores actuales
 
-- 🔴 F4 pausada hasta cerrar F3.5.
-- 🔴 No diseñar `docs/plan-f4.md` ni ADR-0016 hasta conocer el volumen Silver corregido.
+- ✅ F3.5 cerrada. Silver corregido, Gold re-ejecutado, V6 reconfirmado.
+- ✅ F4 puede planificarse una vez cierre F3.6.
 
 ### Lecciones de cierre
 
-_(rellenar al cerrar F3.5)_
+- **El filtro `estfven='A'` era destructivo porque el valor dominante en sgHermes es `'B'` (99.7%).** Siempre verificar distribución de estados antes de filtrar.
+- **La reconciliación V3 original solo comparaba el último mes con datos.** Eso no valida cobertura completa. La V3 rediseñada compara universo total, distribución año-mes y top SKUs.
+- **El sentinel -1 para "nunca vendido" generaba CRITICAL en quality.** Cambio a 99999 + GREATEST(..., 0) en el mart resuelve ambos casos.
+- **La regla `silver_completeness` es un buen gate automático.** Previene regresiones futuras sin intervención manual.
 
 ---
 
@@ -685,7 +688,7 @@ _(rellenar al cerrar la fase)_
 | **R6 · Hito demo 4G no capturado** | F2 (Sesión 27) · diferida a F6 hardening en Sesión 33 | 🟡 Aceptado · diferida a F6 | El plan F2 §6.3 paso 5 pedía "demo desde celular real en 4G ≤ 5 s con screenshot/video". F2 cerró con tests Playwright + curls localhost validados, pero sin captura del hito visible en celular. F3 era la siguiente oportunidad y tampoco se capturó. Decisión humana 2026-05-29: diferir a F6 hardening (cierre académico) cuando ya haya días de registros reales y la demo sea más representativa. | **Mitigación pasiva:** todas las V de PWA (V4–V8) pasan en tests automatizados; V6 reconciliación PWA↔SQL en F3 confirma datos correctos. **Acción pendiente (F6):** humano agenda 5 min con un celular en 4G, navega login → búsqueda → ficha SKU → dashboards, captura screenshot/video, sube a `motoshop-app/web/_runs/v_hito_demo_4g.md`. **Trigger de re-evaluación:** (a) entrega académica E3/E5 se acerca; (b) gerencia pide ver la app antes de F6. |
 | **R7 · V3 workflow 7 corridas pendiente** | F3 (Sesión 33) · diferida a F6 hardening | 🟡 Aceptado · cierra solo en background | El gate V3 de F3 pedía "7 corridas seguidas exitosas del workflow nocturno > 95%". El workflow `motoshop_gold_workflow` está UNPAUSED con schedule cron `0 30 2 * * ?` (02:30 COL); solo 1 corrida iniciada en Sesión 32. Se cierra automáticamente acumulando noches. | **Mitigación pasiva:** schedule activo; cada noche acumula una corrida. **Acción pendiente (F6):** revisor cuenta corridas exitosas/total en `system.workflows.runs` tras 7+ días, documenta KPI en `notebooks/gold/_runs/v3_workflow_7_runs_<fecha>.md`. **Trigger de re-evaluación:** (a) F6 hardening kickoff (~7+ días después de Sesión 33); (b) si tasa éxito < 95% se debug antes; (c) si workflow falla 3 noches seguidas, alerta inmediata. |
 | **R8 · V5 demo a gerencia pendiente** | F3 (Sesión 33) · diferida a F6 hardening | 🟡 Aceptado · requiere acción humana | El gate V5 de F3 pedía "demo a stakeholder real con feedback capturado". cierre-f3.md tiene template vacío. Decisión humana 2026-05-29: aplazar demo a F6 cuando: (a) ya haya datos reales acumulados (workflow corre nocturno), (b) la PWA esté en versión más madura, (c) se pueda capturar feedback más representativo. | **Mitigación pasiva:** la PWA muestra los mismos números que el dashboard SQL (V6 PASS); arquitecturalmente correcto. **Acción pendiente (F6):** humano agenda 30 min con stakeholder (gerencia o Javier mismo), demo PWA + dashboard, captura feedback en `notebooks/gold/_runs/v5_stakeholder_demo.md` (template ya creado). **Trigger de re-evaluación:** (a) F6 kickoff; (b) entrega académica E3 (Producto descriptivo). |
-| **R9 · Universo Silver de ventas incompleto** | F3.5 (Sesión 35) | 🔴 Activo · bloquea F4 | Bronze evidencia `facventas=6,340` y `detfventas=27,775`, pero Silver quedó en `fact_ventas=15` y `fact_ventas_detalle=58`. La V3 anterior comparó solo el último mes con 1 factura, por lo que no validó cobertura completa. Gold y V6 F3 se construyeron sobre ese Silver reducido. | **Mitigación:** abrir F3.5 para auditar/fijar `notebooks/silver/10_fact_ventas.py`, `11_fact_ventas_detalle.py` y `31_reconciliation.py`; re-ejecutar Silver+Gold; revalidar V3 y V6. **Trigger de cierre:** nueva evidencia Bronze→Silver demuestra universo completo o diferencias documentadas por regla de negocio. |
+| **R9 · Universo Silver de ventas incompleto** | F3.5 (Sesión 35) | ✅ **Resuelto** (Sesión 36/37) | Bronze evidencia `facventas=6,340` y `detfventas=27,775`, pero Silver quedó en `fact_ventas=15` y `fact_ventas_detalle=58`. La V3 anterior comparó solo el último mes con 1 factura, por lo que no validó cobertura completa. Gold y V6 F3 se construyeron sobre ese Silver reducido. | **Resuelto en F3.5:** fix `estfven IN ('A','B')` recuperó 6,324 facturas. Silver ahora tiene 6,339 vs 6,340 bronze (diff=1 documentada). V3 rediseñada, regla silver_completeness agregada, Gold re-ejecutado, V6 reconfirmado. **Fix adicional F3.6:** quality check `negative_dias_sin_venta` ajustado para excluir sentinel 99999. |
 
 ---
 
@@ -768,6 +771,16 @@ _(rellenar al cerrar la fase)_
   - ✅ Causa raíz confirmada y corregida: filtros `estfven='A'`/`estcom='A'` al revés (valor real dominante es 'B' en 99.7% de los casos).
   - ✅ Universal completo documentado: 6,339 facturas, $23.5M/mes, 17 meses de histórico.
   - ✅ F3.5 cerrada. Track A libre para retomar F4 con volumen real. Dev A disponible para planificar F4.
+
+### 2026-05-29 — Sesión 37 · F3.6 — Fix quality gold + docs post-auditoría
+
+- **Hecho (revisor + fix):**
+  - 🔧 **Fix quality gold** `negative_dias_sin_venta`: agregado `GREATEST(..., 0)` en `14_mart_productos_dormidos.py` para que `dias_sin_venta` nunca sea negativo (excluye sentinel 99999 y fechas futuras). Quality check ajustado para excluir sentinel.
+  - 🔧 **Fix typo** `20_quality_run.py` línea 181: `Dimensions: PK duplicadaensiones:` → `Dimensiones: PK duplicada`.
+  - 📝 **SEGUIMIENTO §Fase 3.5** actualizado con lecciones de cierre, checklist cerrado, bloqueadores resueltos.
+  - 📝 **R9** marcado como ✅ Resuelto en tablero de riesgos.
+  - 📝 **Status bar** actualizado: F3.5 ✅, F3.6 🟡, F4 ⏸️.
+- **Resultado:** F3.6 cierra el gap de quality gold. F4 puede planificarse una vez cierre este commit.
 
 ### 2026-05-29 — Sesión 33 · Auditoría F3 + GO a F4 con R6/R7/R8 diferidas a F6
 

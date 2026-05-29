@@ -202,12 +202,12 @@ FROM motoshop.gold.mart_productos_dormidos
 WHERE cod_producto IS NULL OR cod_bodega IS NULL
 HAVING COUNT(*) > 0;
 
--- Días sin venta negativos
+-- Días sin venta negativos (excluye sentinel 99999 = nunca vendido)
 INSERT INTO motoshop.gold._quality_runs
 SELECT UUID(),
   'mart_productos_dormidos', 'negative_dias_sin_venta', COUNT(*), 'CRITICAL', CURRENT_TIMESTAMP()
 FROM motoshop.gold.mart_productos_dormidos
-WHERE dias_sin_venta < 0
+WHERE dias_sin_venta < 0 AND dias_sin_venta != 99999
 HAVING COUNT(*) > 0;
 
 -- Stock negativo

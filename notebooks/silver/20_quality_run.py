@@ -178,7 +178,7 @@ WHERE ABS(b.n - s.n) * 1.0 / NULLIF(b.n, 0) > 0.01;
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## Dimensions: PK duplicadaensiones: PK duplicada
+-- MAGIC ## Dimensiones: PK duplicada
 
 -- COMMAND ----------
 
