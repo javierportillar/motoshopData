@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { StockBadge } from "@/lib/ui/Badge";
 
 interface Product {
@@ -10,7 +11,10 @@ interface Product {
 
 export function ProductCard({ product }: { product: Product }): JSX.Element {
   return (
-    <div className="card flex items-start justify-between gap-3">
+    <Link
+      href={`/products/${encodeURIComponent(product.codprod)}`}
+      className="card flex items-start justify-between gap-3 transition-all hover:border-primary/30 hover:shadow-md active:scale-[0.98]"
+    >
       <div className="min-w-0 flex-1">
         <h3 className="truncate text-sm font-semibold text-secondary-dark">
           {product.nomprod}
@@ -30,6 +34,6 @@ export function ProductCard({ product }: { product: Product }): JSX.Element {
       {typeof product.stock === "number" && (
         <StockBadge qty={product.stock} />
       )}
-    </div>
+    </Link>
   );
 }

@@ -29,6 +29,12 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# ─── PWA build artifacts (generados por next-pwa) ──────────
+public/sw.js
+public/sw.js.map
+public/workbox-*.js
+public/workbox-*.js.map
+
 # ─── Variables de entorno / secretos ───────────────────────
 .env
 .env.*
