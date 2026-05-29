@@ -186,3 +186,69 @@ export function useDormidos() {
 export function useCohortes() {
   return useMetrics<CohortesResponse>("/api/metrics/cohortes");
 }
+
+// ── Forecast / Predicciones ────────────────────────────────────────────────
+
+interface ForecastItem {
+  sku: string;
+  forecast_date: string;
+  horizon: number;
+  predicted_qty: number;
+  model_version: string;
+  confidence_lower?: number;
+  confidence_upper?: number;
+}
+
+interface ForecastMetrics {
+  model_version: string;
+  mape?: number;
+  smape?: number;
+  training_date?: string;
+}
+
+interface ForecastResponse {
+  sku: string;
+  forecast: ForecastItem[];
+  metrics?: ForecastMetrics;
+}
+
+const FORECAST_DEDUP = 60_000;
+
+export function useForecast(sku: string | null, horizon: number) {
+  const key = sku ? `/api/forecast/${encodeURIComponent(sku)}?horizon=${horizon}` : null;
+  return useSWR<ForecastResponse>(key, apiFetchJson<ForecastResponse>, {
+    revalidateOnFocus: false,
+    dedupingInterval: FORECAST_DEDUP,
+    refreshInterval: 5 * 60_000,
+  });
+}
+
+// ── Alerts / Alertas ──────────────────────────────────────────────────────
+
+interface AlertItem {
+  sku: string;
+  nom_producto: string;
+  stock_actual: number;
+  demanda_predicha: number;
+  dias_hasta_quiebre: number;
+  urgencia: "alta" | "media" | "baja";
+}
+
+interface AlertsResponse {
+  alerts: AlertItem[];
+  total: number;
+  timestamp: string;
+}
+
+export function useAlerts(urgency?: string) {
+  const qs = urgency ? `?urgency=${urgency}` : "";
+  return useSWR<AlertsResponse>(
+    `/api/alerts/stockout${qs}`,
+    apiFetchJson<AlertsResponse>,
+    {
+      revalidateOnFocus: false,
+      dedupingInterval: FORECAST_DEDUP,
+      refreshInterval: 5 * 60_000,
+    },
+  );
+}

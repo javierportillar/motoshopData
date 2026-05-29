@@ -8,6 +8,9 @@ import os
 os.environ["JWT_SECRET"] = "test-secret-key-for-testing-only-32chars!"
 os.environ["ENV"] = "test"
 os.environ["CORS_ORIGINS"] = "http://localhost:3000,https://api.fragloesja.uk,http://localhost:8000"
+os.environ["DATABRICKS_HTTP_PATH"] = ""  # Force FakeForecastRepo / FakeAlertsRepo
+os.environ["DATABRICKS_HOST"] = ""
+os.environ["DATABRICKS_TOKEN"] = ""
 
 import pytest
 from fastapi.testclient import TestClient
