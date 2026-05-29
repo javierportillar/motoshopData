@@ -9,6 +9,8 @@ F3 cerrada con 5 marts gold funcionales, 24,374 filas diarias-SKU, 29 meses de h
 
 **Constraint principal:** Databricks Free Edition no tiene clusters. Compute limitado a serverless notebooks (tiempo mensual limitado) o training local en Mac.
 
+**Constraint de datos:** MySQL `motoshop2024` (sgHermes) está en PC Windows que no siempre está encendido. F4 NO necesita MySQL en tiempo real — training y serving leen de Gold tables en Databricks. Pero la freshness de los datos depende de que el PC haya corrido el dump recientemente.
+
 **Stack heredado:** FastAPI + Next.js + Databricks SQL + Delta Lake. MLflow disponible en workspace Databricks.
 
 ---

@@ -30,6 +30,29 @@
 - **LightGBM viable** para cola larga: features cross-SKU (categoría, bodega, rotación) compensan poca historia individual.
 - **Constraint principal:** Databricks Free Edition no tiene clusters. Training local en Mac + MLflow remote tracking en workspace Databricks.
 
+### ⚠️ Constraint crítico — PC Windows (sgHermes)
+
+La base de datos MySQL `motoshop2024` (sgHermes) está en el **PC Windows**, que no está encendido todo el tiempo.
+
+**Flujo de datos:**
+```
+PC Windows (MySQL) → dump_to_cloud.py → UC Volume → Databricks Bronze → Silver → Gold
+```
+
+**Implicaciones para F4:**
+- **Training:** ✅ No depende del PC. Lee de `gold.feature_store_sku` que ya está en Databricks.
+- **Serving:** ✅ No depende del PC. API lee de `gold.forecast_demanda_sku` y `gold.alertas_quiebre` en Databricks.
+- **Data freshness:** ⚠️ Si el PC está apagado, no llegan datos nuevos a Bronze. Las predicciones se basan en el último snapshot disponible.
+- **Re-entrenamiento:** ⚠️ Para re-entrenar modelos con datos nuevos, el PC debe estar online y el workflow de dump debe haber corrido.
+
+**Mitigación existente (F1.9):**
+- Dump cada 30 min en ventana 07:00–19:30 COL (25 oportunidades/día)
+- Task Scheduler con `StartWhenAvailable=true` + retry
+- Flag `--catch-up` que sube Parquets pendientes al volver internet
+- Lag monitor: `GET /health/data-freshness`
+
+**Regla para F4:** Los modelos se entrenan con el dataset existente (29 meses, 6,339 facturas). Si el PC está offline > 48h, las predicciones se consideran "stale" y se documenta en la evidencia.
+
 ---
 
 ## 2 · Decisiones técnicas (DT-F4)
@@ -225,6 +248,7 @@ motoship-app/api/tests/test_alerts.py
 | R-F4-3 | Clasificador con muchos falsos positivos | Media | Medio | Umbral ajustable; filtrar urgencia alta en push |
 | R-F4-4 | pywebpush requiere VAPID keys | Baja | Bajo | Generar con `pyvapid` en setup inicial |
 | R-F4-5 | Prophet installation en Mac falla | Baja | Medio | Usar Docker o conda; alternativa: statsforecast |
+| R-F4-6 | PC Windows offline > 48h = datos stale | Media | Medio | Mitigado con F1.9 (dump cada 30min, catch-up). Documentar predicciones como "stale" si PC offline. F4 NO necesita MySQL en tiempo real. |
 
 ---
 
