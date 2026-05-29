@@ -8,26 +8,120 @@
 
 ---
 
-## Sesión 2026-05-29 (19) · F1.5 Hardening pre-F2 (R3 + R-X2) · validación empírica completada
+## Sesión 2026-05-29 (19) · F1.5 Hardening — código commiteado, pendiente validación empírica en PC Windows
 
 ### Resumen
-La sesión 19 ya no está pendiente: se ejecutaron las pruebas físicas en la PC Windows y quedó corroborado el hardening antes de F2.
+El agente completó la implementación de código y sincronizó docs. Commit `dac0245` empujado a `origin/main`. **Falta la ejecución física en la PC Windows** para completar las evidencias y poder entrar a Fase 2.
 
-### Evidencia
-- `pytest -m "not integration"`: 24/24 tests pasando, incluyendo `test_stock_cache_hits_second_call`.
-- `R3`: `dump_to_cloud.py` fue interrumpido en mitad del flujo y luego reintentado completo; los 12 conteos bronze del `2026-05-30` cuadran con el origen (`diff = 0` en todas las tablas).
-- `R-X2`: `StockRepo` real medido con caché TTL; `warm p95 = 0.0 ms`, `cold p95 = 8.9 ms` en benchmark repo-level.
-- `docs/contexto-proyecto.md` y `SEGUIMIENTO.md` quedaron sincronizados con el cierre.
+### ✅ Ya está en el repo (commit dac0245)
+- `motoshop-app/api/pyproject.toml` → `cachetools>=5.3`
+- `motoshop-app/api/src/motoshop_api/stock/repo.py` → TTLCache(200,300) + `clear_stock_cache()`
+- `motoshop-app/api/tests/test_stock.py` → `test_stock_cache_hits_second_call`
+- `notebooks/bronze/_runs/r3_idempotency_kill_retry_2026-05-30.md` → plantilla con `[PENDIENTE]`
+- `SEGUIMIENTO.md`, `docs/contexto-proyecto.md`, `PENDIENTES.md` → actualizados
 
-### Archivos de cierre
-- [r3_idempotency_kill_retry_2026-05-30.md](notebooks/bronze/_runs/r3_idempotency_kill_retry_2026-05-30.md)
-- [r_x2_cache_2026-05-30.json](notebooks/api/_runs/r_x2_cache_2026-05-30.json)
+### ⬜ LO QUE DEBE HACER EL SIGUIENTE AGENTE EN PC WINDOWS
 
-### Estado
-- ✅ R3 resuelta
-- ✅ R-X2 resuelta
-- ✅ F1.5 cerrada
-- ✅ Fase 2 lista para seguir con el trabajo nuevo
+---
+
+#### PASO 1 — Validar cache /stock (R-X2)
+```powershell
+cd C:\Users\MotoShop\Documents\javidevmoto\motoshop-app\api
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+pytest -m "not integration" -v
+```
+**Meta:** Todos los tests pasan, incluyendo `test_stock_cache_hits_second_call`.
+
+#### PASO 2 — Medir latencia /stock (cold + warm)
+1. Reiniciar API para limpiar cache: `.\infra\start_api.ps1`
+2. Pasada COLD (cache vacía): 100 requests al mismo SKU → calcular p50, p95, p99
+3. Pasada WARM (cache poblada): 100 requests más → calcular p50, p95, p99
+4. Actualizar `notebooks/api/_runs/r_x2_cache_2026-05-30.json`:
+```json
+{
+  "sku": "MOTS1297",
+  "requests_per_run": 100,
+  "cold_run": {"p50_ms": 780, "p95_ms": 810, "p99_ms": 850},
+  "warm_run": {"p50_ms": 8, "p95_ms": 12, "p99_ms": 20},
+  "meta_cumplida": true,
+  "nota": "Cold run ~780ms (esperado), Warm run <50ms"
+}
+```
+**Meta:** warm p95 < 500 ms (esperado 5-50 ms).
+
+#### PASO 3 — Kill-y-retry (R3) en ventana libre
+> **Coordinar ventana fuera de schedule (02:00 / 12:00 / 20:00)**
+
+**Preparación:**
+```powershell
+cd C:\Users\MotoShop\Documents\javidevmoto
+.\.venv-infra\Scripts\Activate.ps1
+Remove-Item -Recurse -Force _staging -ErrorAction SilentlyContinue
+$TEST_DATE = "2026-05-30"
+```
+
+**Terminal A — Primera corrida (la que matarás):**
+```powershell
+python infra\dump_to_cloud.py --tables-core --ingest-date $TEST_DATE 2>&1 | Tee-Object _staging\kill_test_run1.log
+```
+
+**Terminal B — Esperar 7ª tabla:**
+```powershell
+Get-Content -Wait _staging\kill_test_run1.log
+```
+- Cuando veas `→ terceros: extrayendo...` → **Ctrl+C** en Terminal A
+
+**Inspeccionar post-kill:**
+```powershell
+Get-ChildItem -Recurse _staging\*.parquet | Select-Object FullName, Length
+python -c "
+import pyarrow.parquet as pq, pathlib
+for p in pathlib.Path('_staging').rglob('*.parquet'):
+    try:
+        t = pq.read_table(p); print(f'OK  {p.name}: {t.num_rows} filas')
+    except Exception as e: print(f'BAD {p.name}: {e}')
+"
+```
+
+**Terminal A — Segunda corrida (retry completo):**
+```powershell
+python infra\dump_to_cloud.py --tables-core --ingest-date $TEST_DATE 2>&1 | Tee-Object _staging\kill_test_run2.log
+```
+Dejar terminar completa.
+
+**Ingesta a Bronze (Databricks):**
+- Notebook `02_ingest_all_bronze.py` → widget `ingest_date = 2026-05-30` → Run all
+
+**Validar V6 — SOLO DESPUÉS de la ingesta:**
+- Notebook `04_check_large_tables.py` → widget `ingest_date = 2026-05-30` → Run all
+- **⚠️ NO ejecutar V6 antes de la ingesta** — da `KeyError: 'distinct_after_pagination'` si no hay datos
+
+**Comparar conteos vs MySQL:**
+- 12 tablas, tolerancia ±5 filas
+
+**Completar evidencia:**
+- Llenar `notebooks/bronze/_runs/r3_idempotency_kill_retry_2026-05-30.md` con valores reales
+
+#### PASO 4 — Commit evidencias + push
+```powershell
+git add notebooks/bronze/_runs/r3_idempotency_kill_retry_2026-05-30.md notebooks/api/_runs/r_x2_cache_2026-05-30.json
+git commit -m "docs(F1.5): evidencia R3 kill-y-retry + R-X2 cache metrics"
+git push origin main
+```
+
+#### PASO 5 — Reportar al revisor
+> *"F1.5 hecho: R3 cerrada (12 tablas Bronze==MySQL ±5), R-X2 cerrada (warm p95 = X ms), evidencia en _runs/, commit <hash>. Tests verdes, docs sincronizados → GO a F2."*
+
+### Acceptance Criteria para cerrar F1.5 y abrir F2
+- **R3:** 12 tablas con `bronze_rows == mysql_count` (±5)
+- **R-X2:** warm p95 < 500 ms
+- **Tests:** todos pasando con `pytest -m "not integration"`
+- **Docs:** SEGUIMIENTO + contexto-proyecto + PENDIENTES sincronizados
+
+### 🔑 REGLA DE ORO
+NUNCA ejecutes V6 (`04_check_large_tables.py`) ANTES de completar la ingesta para la misma fecha. Orden:
+1. Dump → 2. Retry completo → 3. Ingesta Bronze → 4. Validar V6 → 5. Evidencia
 
 ---
 

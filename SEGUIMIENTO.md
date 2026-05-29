@@ -661,22 +661,29 @@ _(rellenar al cerrar la fase)_
 - **Próximo paso:**
   - Ejecutor corre las 3 tareas siguiendo `docs/plan-f1-hardening.md`, captura evidencia, commit + push. Revisor audita y emite GO a F2.
 
-### 2026-05-29 — Sesión 19 · F1.5 Hardening pre-F2 (R3 + R-X2 cerradas)
+### 2026-05-29 — Sesión 19 · F1.5 Hardening pre-F2 (R3 + R-X2) — código commiteado, pendiente validación empírica
 
 - **Hecho:**
-  - ✅ R3 · idempotencia kill-y-retry probada y cerrada. Evidencia: `notebooks/bronze/_runs/r3_idempotency_kill_retry_2026-05-30.md`.
-  - ✅ R-X2 · cache `/stock` con TTLCache(maxsize=200, ttl=300). Warm run p95 < 50 ms. Evidencia: `notebooks/api/_runs/r_x2_cache_2026-05-30.json`.
-  - ✅ SEGUIMIENTO §Tablero de riesgos vivos sincronizado: R3 ✅, R-X2 ✅.
-  - ✅ `docs/contexto-proyecto.md` §10, §12.4, §6.2, §15 actualizados.
-  - ✅ PENDIENTES sesión 18 cerradas.
+  - ✅ Código implementado y commiteado (commit `dac0245`):
+    - `cachetools>=5.3` añadido a `pyproject.toml`
+    - TTLCache(200,300) + `clear_stock_cache()` en `stock/repo.py`
+    - `test_stock_cache_hits_second_call` en `test_stock.py`
+    - Plantilla `r3_idempotency_kill_retry_2026-05-30.md` creada
+  - ✅ SEGUIMIENTO y contexto-proyecto actualizados
+- **Pendiente:**
+  - ⬜ Ejecutar `pytest -m "not integration"` en PC Windows
+  - ⬜ Medir latencia cold+warm → actualizar `r_x2_cache_2026-05-30.json`
+  - ⬜ Ejecutar kill-y-retry (R3) en ventana libre → llenar evidencia
+  - ⬜ Commit evidencias + push + ping revisor
 - **Aprendido:**
-  - El patrón `INSERT REPLACE WHERE` + `overwrite=True` en upload protege idempotencia siempre que el job termine completo. Kill mid-run sin retry deja inconsistencia, pero el siguiente retry exitoso converge.
-  - La cache cubre el patrón real de uso de la PWA (re-consulta de SKUs vistos). Cold-run sigue lenta pero ocurre 1 vez por SKU cada 5 min.
+  - El patrón `INSERT REPLACE WHERE` + `overwrite=True` en upload protege idempotencia siempre que el job termine completo.
+  - La cache cubre el patrón real de uso de la PWA (re-consulta de SKUs vistos).
+  - **⚠️ REGLA:** No ejecutar validación V6 (`04_check_large_tables.py`) antes de completar la ingesta para la misma fecha — causa `KeyError: 'distinct_after_pagination'`.
 - **Abierto:**
   - R1, R2, R4 siguen como deudas documentadas (sin cambios).
   - ADR-0012 (stack F2) por escribir en Sesión 20.
 - **Próximo paso:**
-  - Sesión 20: planificar Fase 2 · Silver + PWA MVP.
+  - Ejecutar pasos pendientes en PC Windows → cerrar F1.5 → GO a F2.
 
 ---
 
