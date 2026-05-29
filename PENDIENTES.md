@@ -8,6 +8,61 @@
 
 ---
 
+## Sesión 2026-05-29 (22) · Auditoría F1.9 + ADR-0013 esperando aprobación
+
+### Resumen
+Revisor auditó F1.9 (commits `c9baa7e`, `75b5727`) y emitió **🟢 GO condicional**. Las 3 tareas del ejecutor están cumplidas con evidencia honesta. Sondeo reveló datos críticos que el plan no asumía bien (no existe `fecdoc` universal — cada tabla usa su propio nombre).
+
+ADR-0013 escrito con la realidad del sondeo y publicado en estado **Proposed**. Una sola acción humana cierra F1.9 y abre F2.
+
+---
+
+### 🚨 Acción humana — 1 cosa
+
+#### ⬜ Leer ADR-0013 y aprobar (o pedir ajustes) — ~5 min
+
+Abrir [`docs/decisions/0013-fecha-tecnica-vs-negocio.md`](docs/decisions/0013-fecha-tecnica-vs-negocio.md).
+
+Lectura recomendada:
+- Sección **§Hallazgos del sondeo** (tabla con cada una de las 12 tablas y su columna real de fecha).
+- Sección **§Opciones consideradas** (A, B, C con pros/contras).
+- Sección **§Recomendación** (C, argumentada).
+- Final: **"Para humano · qué tenés que decidir"**.
+
+Tres caminos:
+- **OK la C (recomendada)** → respondé en chat al revisor, marco ADR como `Accepted`, D12 a fecha, F2 arranca.
+- **Mejor B / A / otra** → me decís cuál y por qué, ajusto ADR.
+- **Necesito más contexto sobre Y** → me decís qué clarificar.
+
+---
+
+### Verificación menor opcional (~30 segundos)
+
+#### ⬜ Curl al endpoint nuevo en vivo
+
+Aprovechás que estás cerca de la API para confirmar que el endpoint que se programó en F1.9 también responde end-to-end (los tests mockeados ya cubren la lógica, esto cierra el círculo):
+
+```powershell
+curl https://api.fragloesja.uk/health/data-freshness
+# Esperado: {"status":"OK","lag_hours":<N>,"last_manifest":"manifest_2026-05-29.json"}
+```
+
+Si devuelve `{"status":"ERROR","error":"..."}` → algo del wire-up necesita ajuste; reportarme el output.
+
+Esto NO bloquea la aprobación del ADR — solo cierra evidencia de F1.9.
+
+---
+
+### Lo que pasa cuando aprobés el ADR
+
+1. Revisor marca ADR-0013 `Accepted` con fecha.
+2. D12 pasa a fecha de aprobación.
+3. SEGUIMIENTO cabecera global: F0 ✅ / F1 ✅ / F1.5 ✅ / F1.9 ✅ / **F2 🟡 abierta**.
+4. Revisor escribe `docs/plan-f2.md` + `docs/decisions/0014-stack-f2.md` (decisiones técnicas F2 con business_date ya decidida).
+5. Sesión 23 abre con el plan F2 listo.
+
+---
+
 ## Sesión 2026-05-29 (21) · F1.9 · Robustez del pipeline pre-F2
 
 ### Resumen

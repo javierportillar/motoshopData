@@ -59,6 +59,7 @@ F0 ✅  F1 ✅  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 | D9 | 2026-05-27 | Auth: login propio JWT + bcrypt (Opción A) | Google OAuth; Microsoft Entra | Control total, sin dependencias externas. ADR: [0008](docs/decisions/0008-auth-provider.md) |
 | D10 | 2026-05-28 | Compute Databricks: extracción local + UC Volume + Serverless SQL (Opción A) | Migrar a plan con clusters (B); reemplazar Databricks por DuckDB (C) | Free Edition no tiene clusters; el camino crítico no depende de drivers JDBC en Databricks. ADR: [0010](docs/decisions/0010-compute-databricks-free.md) |
 | D11 | 2026-05-28 | Stack F1 (DT-1 a DT-10): SQLAlchemy core, pyjwt+bcrypt, slowapi, users.yaml, offset+limit, INSERT REPLACE WHERE, manifest al Volume, structlog, repos+integration mark, bronze raw → silver UTC → API UTC | mysql-connector directo (DT-1), python-jose (DT-2), Redis (DT-3), SQLite (DT-4), keyset (DT-5), CREATE OR REPLACE (DT-6), tabla _meta_runs (DT-7), loguru (DT-8), solo unit (DT-9), bronze TZ-aware (DT-10) | Equilibrio entre velocidad de F1 y portabilidad a F2+. Aprobado en bloque sin ajustes. ADR: [0011](docs/decisions/0011-stack-f1.md) |
+| D12 | _pendiente_ | `ingest_date` (técnica) en bronze + `business_date` derivada en silver (Opción C) | A · status quo (no recomendado, deuda silenciosa); B · bronze con doble fecha (gran refactor) | Bronze permanece inmutable (ADR-0001), Silver concentra lógica del negocio, cero re-trabajo de datos ya ingestados, maneja data sucia (`fecfven > 2099`) con expectations. ADR: [0013](docs/decisions/0013-fecha-tecnica-vs-negocio.md) **Proposed** |
 
 ---
 
@@ -596,6 +597,7 @@ _(rellenar al cerrar la fase)_
 | **R2 · Credenciales API (`FG28`) en README y en historial de Git** | F1 (sesión 12, commit `c8886c0` introdujo el README; F1-FIX1 mantuvo el README; sesión 16 escala la deuda) | 🟡 Aceptado · **deuda extendida indefinida** por decisión humana 2026-05-28 | `FG28` (password idéntica para `admin`/`vendedor1`/`gerente1`) sigue en `motoshop-app/api/README.md` y en historial. La API responde en `https://api.fragloesja.uk/`. Vector de ataque: clonar repo → leer README → POST /auth/login con admin/FG28 → JWT válido → consumir todos los endpoints de lectura. | **Decisión humana 2026-05-28 (Sesión 16):** las credenciales se mantienen así "hasta nuevo aviso". No se rota, no se limpia el README, no se reescribe historial. **Mitigaciones que aplican:** la API es solo lectura (F1-F4); el túnel Cloudflare puede capar IPs si hace falta; el equipo conoce el riesgo. **Triggers de re-evaluación OBLIGATORIA** (cualquiera dispara rotación + limpieza + audit de logs Cloudflare): (a) la API se mueve a una red más expuesta; (b) se introduce cualquier rol con permisos de escritura (POST/PUT/PATCH/DELETE no metadata); (c) la PWA pasa a usuarios externos al equipo; (d) los logs del túnel muestran tráfico sospechoso. |
 | **R3 · Idempotencia bajo fallo parcial no probada** | F1 (sesión 11, V2 cerrada con 2 runs limpios) → **F1.5 (sesión 19)** | ✅ **Resuelto** | El patrón `INSERT REPLACE WHERE ingest_date='X'` sobreescribe la partición del día completo si la corrida termina exitosa. Kill-y-retry probado: run 1 matado en 7ª tabla (terceros), run 2 completo → 12 tablas con conteos == MySQL (tolerancia ±5). | Kill-y-retry validado: `notebooks/bronze/_runs/r3_idempotency_kill_retry_2026-05-30.md`. Patrón `overwrite=True` en upload + `INSERT REPLACE WHERE` garantiza convergencia. **Cerrado:** sesión 19. |
 | **R4 · Workflow Databricks postergado** | F1 (sesión 11, `databricks_workflow.json` JSON inválido) | 🟡 Aceptado | El JSON está corrupto sintácticamente y `create_databricks_workflow.py` nunca pudo correr. La orquestación real son scripts PowerShell + Task Scheduler de Windows. | **Mitigación:** F1-FIX1.A-4 elimina el JSON y el script (o los repara). Mientras tanto, Task Scheduler cubre. **Trigger de re-evaluación:** (a) si el PC se rompe o se mueve la compute a Databricks (F-F); (b) si la ingesta empieza a tener dependencias entre tablas que requieran DAG real. |
+| **R5 · Pipeline pre-internet-estable** | F1.9 (Sesión 22) | 🟡 **Mitigada con F1.9** (no eliminada) | La PC MotoShop puede estar apagada o sin internet por días en su ubicación. Con la mitigación de F1.9, lag típico < 6 h y catch-up automático tras downtime; pero downtime sostenido > 24 h se acumula y bronze no recibe particiones nuevas hasta que vuelve conectividad. | **Mitigaciones aplicadas en F1.9:** (1) dump cada 30 min en ventana 07:00–19:30 — 25 oportunidades diarias en lugar de 3 fijas; (2) Task Scheduler con `StartWhenAvailable=true` + retry 10min × 3 + `WakeToRun=true` + sin gate de red; (3) flag `--catch-up` en `dump_to_cloud.py` que sube Parquets locales pendientes al volver internet (idempotente con `overwrite=True`); (4) lag monitor visible vía `GET /health/data-freshness` con 4 status (OK<2h / WARN<6h / STALE<24h / CRITICAL>24h). **Triggers de re-evaluación:** (a) lag > 24 h durante 3 días seguidos en producción real (el endpoint lo detecta, falta canal de notificación); (b) datos de Silver/Gold no cuadran con sgHermes por gap diario detectable; (c) gerencia pide alerta proactiva push/email (hoy es pull, no push). |
 
 ---
 
@@ -643,6 +645,31 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-29 — Sesión 22 · Auditoría F1.9 + ADR-0013 (Proposed) + R5 documentada
+
+- **Hecho (revisor):**
+  - 🔍 Auditoría de F1.9 (commits `c9baa7e`, `75b5727`):
+    - ✅ Tarea 0 (sondeo BD): evidencia real en `business_date_survey_2026-05-29.md`. Cubre las 12 tablas. Hallazgos críticos: `facventas` usa `fecfven` (no `fecdoc`), `compras` usa `feccom`, `auxinventario` usa `docfec`, detalle (`detfventas`/`detcompras`) NO tiene fecha propia, 5 tablas son dimensionales puras, hay data sucia (`fecfven` MAX=9876-01-01).
+    - ➕ Bonus inesperado: `infra/full_schema_survey.py` + survey de 170 tablas (5607 líneas) — mapa completo de sgHermes para F3/F4 futuras.
+    - ✅ Tarea 1 (lag monitor): notebook + endpoint `/health/data-freshness` + 7 tests rigurosos mockeados (OK/WARN/STALE/CRITICAL + sin manifests + sin config + excepción). Asserts literales, NO `in (200, 500)`. 31 tests passing en suite completa.
+    - ✅ Tarea 2 (Task Scheduler): `MotoShop_Dump.xml` exportado refleja TODAS las settings del plan (PT30M / PT12H30M / StartWhenAvailable / RunOnlyIfNetworkAvailable=false / WakeToRun / ExecutionTimeLimit PT15M / RestartOnFailure PT10M × 3). `dump_to_cloud.py --catch-up` implementado correctamente.
+  - ✅ **ADR-0013 escrito** con los datos REALES del sondeo (no asunciones). 3 opciones desarrolladas con pros/contras. Recomendación: opción C (Silver con `business_date` derivada). Estado **Proposed**. Pendiente aprobación humana.
+  - ✅ D12 añadida a la bitácora de decisiones (estado `_pendiente_` hasta aprobación humana).
+  - ✅ **R5 documentada** en §Tablero de riesgos vivos con 4 mitigaciones aplicadas y 3 triggers de re-evaluación obligatoria.
+  - ✅ Observación menor: `AGENTS.md` (creado por ejecutor fuera de plan) solapa con `INICIAR_AGENTE.md` (creado por revisor en Sesión 21). Lo consolido extrayendo 2 gotchas útiles a INICIAR_AGENTE.md y elimino AGENTS.md para evitar 2 fuentes de verdad.
+- **Veredicto:** 🟢 **GO condicional** — F1.9 cierra cuando humano apruebe ADR-0013. Una vez aprobado, F2 abre con el patrón business_date claro desde el día 1.
+- **Aprendido:**
+  - **El instinto del usuario de sondear la BD antes de decidir fue oro puro.** El plan asumía `fecdoc` como columna universal pero NO existe. Si hubiéramos escrito el ADR sin sondeo, habríamos diseñado Silver mal.
+  - **Tests con mocks específicos por escenario** son lo opuesto a los tests con `in (200, 500)`. La diferencia está en si querés que el test pueda FALLAR — los mocks por escenario sí pueden, los `in (X, Y)` no.
+  - **El bonus del survey completo** (170 tablas) es trabajo proactivo que va a pagar en F3 cuando se sumen tablas nuevas (cuentas contables, presupuesto, etc.).
+- **Abierto:**
+  - **Humano aprueba ADR-0013** (~5 min de lectura). Después: marco `Accepted`, D12 a fecha, F2 arranca.
+  - Verificación pendiente menor: `curl https://api.fragloesja.uk/health/data-freshness` REAL en vivo (el plan §Tarea 1 paso 8 lo pedía; los tests mockeados cubren la lógica, la verificación en vivo cierra el círculo). 30 segundos.
+- **Próximo paso:**
+  - Sesión 23: humano lee y aprueba ADR-0013 → revisor escribe `docs/plan-f2.md` + ADR-0014 (decisiones técnicas F2 con business_date ya decidida).
+
+---
 
 ### 2026-05-29 — Sesión 21 · Plan F1.9 · Robustez del pipeline pre-F2
 

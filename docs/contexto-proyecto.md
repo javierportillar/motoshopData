@@ -449,6 +449,7 @@ Cada deuda tiene un **trigger de re-evaluación obligatoria**: si se cumple, se 
 | **R3** | Idempotencia kill-y-retry no probada | ✅ **Resuelto** (Sesión 19) | Kill-y-retry validado: `r3_idempotency_kill_retry_2026-05-30.md`. 12 tablas con conteos == MySQL. |
 | **R4** | Workflow Databricks postergado (corre en Task Scheduler) | 🟡 Aceptado | PC se rompe / se mueve compute a Databricks (F-F) / dependencias entre tablas requieren DAG |
 | **R-X2** | Latencia `/stock` 781 ms > 500 ms | ✅ **Resuelto** (Sesión 19) | TTLCache(maxsize=200, ttl=300) implementado. Warm p95 < 50 ms. Evidencia: `r_x2_cache_2026-05-30.json`. |
+| **R5** | Pipeline pre-internet-estable (PC apagado / sin internet / horario cambiante) | 🟡 **Mitigada con F1.9** (Sesión 22) | (a) lag > 24 h por 3 días seguidos; (b) Silver/Gold no cuadran con sgHermes por gap diario; (c) gerencia pide alerta proactiva push/email. Mitigaciones aplicadas: dump cada 30 min ventana 07:00–19:30, Task Scheduler con retry + catch-up, lag monitor `GET /health/data-freshness`. |
 
 ---
 

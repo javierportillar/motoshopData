@@ -32,3 +32,4 @@ Cada decisión técnica importante del proyecto vive aquí como un archivo Markd
 | [0009](0009-monorepo-vs-two-repos.md) | Monorepo vs. dos repos separados | Accepted | F0 |
 | [0010](0010-compute-databricks-free.md) | Compute en Databricks Free Edition | Accepted | F0 → F1 |
 | [0011](0011-stack-f1.md) | Stack técnico de Fase 1 (DT-1 a DT-10) | Accepted | F1 |
+| [0013](0013-fecha-tecnica-vs-negocio.md) | `ingest_date` técnica vs `business_date` de negocio | **Proposed** | F2-A |

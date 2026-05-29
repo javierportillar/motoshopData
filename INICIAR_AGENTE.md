@@ -182,7 +182,18 @@ Estas las pagamos caro. No las repitas.
 | `SEGUIMIENTO.md` | Bitácora viva |
 | `PENDIENTES.md` | Tareas humanas entre sesiones |
 
-### 7.2 · URLs y recursos en vivo
+### 7.2 · Gotchas críticas *(incorporadas de AGENTS.md)*
+
+- **MySQL 5.0 NO soporta `utf8mb4`.** Usá `charset="utf8"` en `mysql-connector`. Ya está manejado en `dump_to_cloud.py` y en el engine de la API.
+- **Tres entornos Python separados** — no los mezcles:
+  - `.venv` raíz → Track A (lint, pytest local).
+  - `.venv-infra` → scripts de dump (`dump_to_cloud.py`, `explore_business_dates.py`, etc.). Usa `infra/requirements.txt`.
+  - `motoshop-app/api/.venv` → API. Usa `motoshop-app/api/pyproject.toml`.
+- **`_staging/` está gitignored** — es el área local de Parquet antes de subir al UC Volume.
+- **`users.yaml` está gitignored** — contiene credenciales reales. NUNCA commitearlo.
+- **`.env` está gitignored** — contiene MySQL passwords, Databricks PAT, Cloudflare tokens. Solo `.env.example` se versiona.
+
+### 7.3 · URLs y recursos en vivo
 
 - **Repo:** [github.com/javierportillar/motoshopData](https://github.com/javierportillar/motoshopData)
 - **API pública:** `https://api.fragloesja.uk/` (`/health`, `/demo`, `/docs`)
