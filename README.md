@@ -13,7 +13,8 @@ Aplicación práctica del marco conceptual de **Big Data y Transformación Digit
 
 | Archivo | Para qué |
 |---------|---------|
-| [INICIAR_AGENTE.md](INICIAR_AGENTE.md) | **🚀 Bootstrap de sesión.** Si arrancás como agente nuevo (Dev / Runtime / Reviewer), leelo PRIMERO. Identifica tu rol, qué leer, qué reglas no romper. |
+| [INICIAR_AGENTE.md](INICIAR_AGENTE.md) | **🚀 Bootstrap de sesión.** Si arrancás como Dev Agent o Runtime Agent, leelo PRIMERO. Identifica tu rol, qué leer, qué reglas no romper. |
+| [INICIAR_REVIEWER.md](INICIAR_REVIEWER.md) | **🔍 Bootstrap del rol auditor.** Si te van a usar como Reviewer Agent (auditar commits, GO/NO-GO, escribir planes), empezá acá. NO se mezcla con `INICIAR_AGENTE.md`. |
 | [docs/contexto-proyecto.md](docs/contexto-proyecto.md) | **🧭 Snapshot del proyecto a hoy.** Empieza aquí si volvés al repo después de tiempo o necesitás contexto completo en 5 minutos. |
 | [PLAN.md](PLAN.md) | Fuente de verdad: arquitectura, fases, stack, KPIs, VPC/BMC. |
 | [SEGUIMIENTO.md](SEGUIMIENTO.md) | Estado vivo: checklist de la fase activa, bitácora, riesgos. |

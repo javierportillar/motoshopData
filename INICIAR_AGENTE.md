@@ -14,7 +14,7 @@ El proyecto tiene 4 roles posibles. Identificá cuál sos:
 |-----|--------------------|-----------|
 | 🧑‍💻 **Dev Agent** | Estás en la PC de Javier; editás código, escribís notebooks, hacés push a `main`. | Implementás features siguiendo planes existentes (`docs/plan-f*.md`). |
 | 🛠️ **Runtime Agent** | Estás en la PC MotoShop (Windows); corre MySQL, API, Task Scheduler 3x/día. | Hacés pull cuando te avisan, restart API, diagnosticás fallos del dump o del túnel. |
-| 🔍 **Reviewer Agent** | Sos invocado para auditar commits, decidir GO/NO-GO, escribir planes. | NO tocás código. Lees, decidís, planificás. |
+| 🔍 **Reviewer Agent** | Sos invocado para auditar commits, decidir GO/NO-GO, escribir planes. | NO tocás código. Lees, decidís, planificás. → **Usá [`INICIAR_REVIEWER.md`](INICIAR_REVIEWER.md), no este archivo.** |
 | 👤 **Humano (Javier)** | Sos el responsable del proyecto. | Aprobás ADRs, decidís políticas, ejecutás cosas que tocan secretos. |
 
 **Si no estás seguro de tu rol, preguntale al usuario antes de cualquier acción.** Las acciones del Dev Agent son destructivas para los otros roles si las hace alguien que no es.
