@@ -8,6 +8,32 @@
 
 ---
 
+## Sesión 2026-05-29 (34) · F3 cerrada · 🟢 GO a F4 con deudas diferidas a F6
+
+**Estado:** F3 ✅ aprobada por el revisor. Veredicto y observaciones en `SEGUIMIENTO.md` §Notas de sesión (Sesión 33).
+
+### Acciones humanas pendientes (post-F3, antes/durante F4)
+
+- ⬜ **R6 (demo 4G)** — diferida a F6 hardening. Cuando se acerque E3/E5: grabar video 5 min navegando login → búsqueda → ficha SKU → dashboards desde celular en 4G real. Subir a `motoshop-app/web/_runs/v_hito_demo_4g.md`.
+- ⬜ **R7 (V3 workflow 7 corridas)** — cierra sola en background. Schedule UNPAUSED en cron `0 30 2 * * ?` (02:30 COL). Acción humana: revisar tasa de éxito en F6 (`system.workflows.runs`). Si falla 3 noches seguidas → alerta inmediata.
+- ⬜ **R8 (demo gerencia)** — diferida a F6. Agendar 30 min con stakeholder (gerencia o vos mismo como dueño del negocio); capturar feedback en template `notebooks/gold/_runs/v5_stakeholder_demo.md`.
+- ⬜ **Revisar próxima madrugada (mañana 02:30 COL)** que el workflow gold corrió exitoso. Si la pestaña `Workflows > motoshop_gold_workflow > Run history` no muestra una corrida ✅, debug.
+
+### Próximo paso del revisor (Sesión 35)
+
+1. Escribir `docs/plan-f4.md` (3 sprints ML):
+   - F4-A: baseline naïve por SKU + métricas (MAPE, sMAPE, WAPE) + sandbox MLflow
+   - F4-B: Prophet top-100 + LightGBM cola larga + clasificador quiebre con horizon 7/14/30 días
+   - F4-C: endpoints `/predict/*` + dashboards predictivos en PWA + alertas web-push (recién aquí se activa `push/router.py`)
+2. Escribir `docs/decisions/0016-stack-f4.md` con DT F4 (MLflow tracking, `prophet`, `lightgbm`, `optuna` para HPO, riesgo R-A4 docs/errores.txt sobre compute en Free Edition para train).
+3. Decidir si F4 se hace en paralelo (Dev A entrena, Dev T integra API+PWA predictivo) o secuencial. Mi recomendación: paralelo si Dev A puede aislar el train sin tocar Gold.
+
+### Notas de la decisión humana
+
+- "demos el go dejando eso en detalle, aplazalo a la fase final eso, de pronto a esa fecha ya estén algunos días de registros" — apoya el racional de diferir R6/R7/R8 a F6 cuando ya haya datos reales y la demo sea más representativa.
+
+---
+
 ## Sesión 2026-05-29 (33) · ADR-0015 Accepted · F3 arranca en paralelo
 
 ADR-0015 aprobado · D14 a fecha · **P5 resuelta** (Databricks SQL).

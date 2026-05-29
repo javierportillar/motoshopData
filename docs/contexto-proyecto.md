@@ -450,6 +450,9 @@ Cada deuda tiene un **trigger de re-evaluación obligatoria**: si se cumple, se 
 | **R4** | Workflow Databricks postergado (corre en Task Scheduler) | 🟡 Aceptado | PC se rompe / se mueve compute a Databricks (F-F) / dependencias entre tablas requieren DAG |
 | **R-X2** | Latencia `/stock` 781 ms > 500 ms | ✅ **Resuelto** (Sesión 19) | TTLCache(maxsize=200, ttl=300) implementado. Warm p95 < 50 ms. Evidencia: `r_x2_cache_2026-05-30.json`. |
 | **R5** | Pipeline pre-internet-estable (PC apagado / sin internet / horario cambiante) | 🟡 **Mitigada con F1.9** (Sesión 22) | (a) lag > 24 h por 3 días seguidos; (b) Silver/Gold no cuadran con sgHermes por gap diario; (c) gerencia pide alerta proactiva push/email. Mitigaciones aplicadas: dump cada 30 min ventana 07:00–19:30, Task Scheduler con retry + catch-up, lag monitor `GET /health/data-freshness`. |
+| **R6** | Hito demo 4G no capturado | 🟡 Aceptado · **diferida a F6 hardening** (decisión humana 2026-05-29) | (a) E3/E5 se acerca; (b) gerencia pide ver app antes de F6. Razón del diferimiento: dejar que el workflow acumule datos reales y la demo sea más representativa. |
+| **R7** | V3 workflow gold 7 corridas seguidas pendiente | 🟡 Aceptado · **diferida a F6 hardening** (decisión humana 2026-05-29) | Schedule `0 30 2 * * ?` UNPAUSED; cierra sola en background. Trigger: F6 kickoff con ≥ 7 corridas en `system.workflows.runs`. Si tasa < 95% se debug antes; si falla 3 noches seguidas, alerta inmediata. |
+| **R8** | V5 demo a gerencia pendiente | 🟡 Aceptado · **diferida a F6 hardening** (decisión humana 2026-05-29) | Trigger: (a) F6 kickoff; (b) entrega académica E3. Acción: humano agenda 30 min, captura feedback en `notebooks/gold/_runs/v5_stakeholder_demo.md`. |
 
 ---
 
@@ -602,4 +605,4 @@ Si vas a ejecutar (no planificar):
 
 ## 15 · Resumen ejecutivo en una frase
 
-> **Tres días, dos fases cerradas y dos hardening sprints (F1.5 + F1.9), un repo público con pipeline cada 30 min resiliente a PC apagado / sin internet, API operativa con cache `/stock` y endpoint de lag monitor — con 4 deudas conscientes documentadas (R1, R2, R4, R5), 13 ADRs aceptados, y F2 · Silver + PWA MVP arrancando con `business_date` definida desde el día 1 (ADR-0013 opción C).**
+> **Cuatro días, tres fases cerradas (F1 + F2 + F3) más dos hardening sprints (F1.5 + F1.9): repo público con pipeline cada 30 min resiliente, API operativa con 5 endpoints `/metrics/*` sobre Gold, PWA con 4 dashboards (ventas, inventario, ABC, dormidos) que cuadran 0% contra Databricks SQL, workflow gold nocturno UNPAUSED en cron 02:30 COL — con 7 deudas conscientes documentadas (R1, R2, R4, R5, R6, R7, R8 — las 3 últimas diferidas a F6 hardening), 15 ADRs aceptados, y F4 · Predictivo (ML) arrancando con dataset Gold validado.**

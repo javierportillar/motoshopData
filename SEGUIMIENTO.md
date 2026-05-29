@@ -28,17 +28,17 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **Fase 3 · Gold + Dashboards** (abierta tras cierre F2) |
+| Fase activa | **Fase 4 · Predictivo (ML)** (abierta tras cierre F3) |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Cierre F3 (gold marts + dashboard demo) |
-| Avance global | 2/7 fases cerradas + 2 hardening sprints (F1.5, F1.9) |
+| Próximo gate | Cierre F4 (modelos forecasting + alertas quiebre) |
+| Avance global | 3/7 fases cerradas + 2 hardening sprints (F1.5, F1.9) |
 | Última actualización | 2026-05-29 |
 
 ```
-F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 🟡  F4 ⬜  F5 ⬜  F6 ⬜
+F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 ✅  F4 🟡  F5 ⬜  F6 ⬜
 ```
 
-> **2026-05-29 (Sesión 27) — F2 cerrada · 🟢 GO a F3.** Auditoría F2-FIX1 (commits `50953ee`..`df632c4`) PASS. Track A Silver: 11/11 tablas con 0 duplicados, V1/V2/V3 con datos reales (n=15 facturas por demo parcial — limitación dataset, no código). Track T PWA: V4 offline, V5 sesión persiste, V6 búsqueda p95=45ms, V7 roles validados, V8 5/5 SKUs cuadran 0%. **R6 nueva (menor):** hito demo 4G no capturado — deuda para E3 académico.
+> **2026-05-29 (Sesión 33) — F3 cerrada · 🟢 GO a F4 con deudas R6/R7/R8 diferidas a F6 hardening.** Auditoría F3 PASS sustancia técnica: 5 marts gold (57/57 statements OK), workflow `motoshop_gold_workflow` UNPAUSED 02:30 COL, V6 reconciliación PWA↔Databricks SQL 5/5 KPIs match 0%, V4 dashboard FCP < 5s, V7 refresh plan, 52 tests sqlparse, auto-auditoría interna resolvió 25 hallazgos antes de revisor. **Deudas diferidas a F6 (decisión humana 2026-05-29):** R7 (V3 workflow 7 corridas — se acumula con tiempo), R8 (V5 demo gerencia — humano agenda), R6 (demo 4G heredada F2 — humano captura). Triggers explícitos en §Tablero.
 
 > **2026-05-29 — F1.9 cerrada; F2 abierta.** Humano aprobó ADR-0013 (opción C: Silver con `business_date` derivada) sin ajustes. D12 a fecha. R5 documentada. Pipeline robusto contra PC apagado / sin internet. Próximo paso: revisor escribe `docs/plan-f2.md` + `docs/decisions/0014-stack-f2.md` (decisiones técnicas Sprint F2-A · Silver).
 
@@ -606,7 +606,9 @@ _(rellenar al cerrar la fase)_
 | **R3 · Idempotencia bajo fallo parcial no probada** | F1 (sesión 11, V2 cerrada con 2 runs limpios) → **F1.5 (sesión 19)** | ✅ **Resuelto** | El patrón `INSERT REPLACE WHERE ingest_date='X'` sobreescribe la partición del día completo si la corrida termina exitosa. Kill-y-retry probado: run 1 matado en 7ª tabla (terceros), run 2 completo → 12 tablas con conteos == MySQL (tolerancia ±5). | Kill-y-retry validado: `notebooks/bronze/_runs/r3_idempotency_kill_retry_2026-05-30.md`. Patrón `overwrite=True` en upload + `INSERT REPLACE WHERE` garantiza convergencia. **Cerrado:** sesión 19. |
 | **R4 · Workflow Databricks postergado** | F1 (sesión 11, `databricks_workflow.json` JSON inválido) | 🟡 Aceptado | El JSON está corrupto sintácticamente y `create_databricks_workflow.py` nunca pudo correr. La orquestación real son scripts PowerShell + Task Scheduler de Windows. | **Mitigación:** F1-FIX1.A-4 elimina el JSON y el script (o los repara). Mientras tanto, Task Scheduler cubre. **Trigger de re-evaluación:** (a) si el PC se rompe o se mueve la compute a Databricks (F-F); (b) si la ingesta empieza a tener dependencias entre tablas que requieran DAG real. |
 | **R5 · Pipeline pre-internet-estable** | F1.9 (Sesión 22) | 🟡 **Mitigada con F1.9** (no eliminada) | La PC MotoShop puede estar apagada o sin internet por días en su ubicación. Con la mitigación de F1.9, lag típico < 6 h y catch-up automático tras downtime; pero downtime sostenido > 24 h se acumula y bronze no recibe particiones nuevas hasta que vuelve conectividad. | **Mitigaciones aplicadas en F1.9:** (1) dump cada 30 min en ventana 07:00–19:30 — 25 oportunidades diarias en lugar de 3 fijas; (2) Task Scheduler con `StartWhenAvailable=true` + retry 10min × 3 + `WakeToRun=true` + sin gate de red; (3) flag `--catch-up` en `dump_to_cloud.py` que sube Parquets locales pendientes al volver internet (idempotente con `overwrite=True`); (4) lag monitor visible vía `GET /health/data-freshness` con 4 status (OK<2h / WARN<6h / STALE<24h / CRITICAL>24h). **Triggers de re-evaluación:** (a) lag > 24 h durante 3 días seguidos en producción real (el endpoint lo detecta, falta canal de notificación); (b) datos de Silver/Gold no cuadran con sgHermes por gap diario detectable; (c) gerencia pide alerta proactiva push/email (hoy es pull, no push). |
-| **R6 · Hito demo 4G no capturado** | F2 (Sesión 27) | 🟡 Aceptado | El plan F2 §6.3 paso 5 pedía "demo desde celular real en 4G ≤ 5 s con screenshot/video". F2 cerró con tests Playwright + curls localhost validados, pero sin captura del hito visible en celular. Para el entregable académico E3 esto es importante (Módulo 4 demo a gerencia). | **Mitigación pasiva:** todas las V de PWA (V4–V8) pasan en tests automatizados y localhost; latencia API + cache esperan p95 muy por debajo de 5 s en 4G. **Acción pendiente:** humano agenda 5 min con un celular en 4G, navega login → búsqueda "aceite" → ficha SKU, captura screenshot/video, sube a `motoshop-app/web/_runs/v_hito_demo_4g.md`. **Trigger de re-evaluación:** (a) entrega académica E3 se acerca; (b) gerencia pide ver la app antes de F3 dashboards. |
+| **R6 · Hito demo 4G no capturado** | F2 (Sesión 27) · diferida a F6 hardening en Sesión 33 | 🟡 Aceptado · diferida a F6 | El plan F2 §6.3 paso 5 pedía "demo desde celular real en 4G ≤ 5 s con screenshot/video". F2 cerró con tests Playwright + curls localhost validados, pero sin captura del hito visible en celular. F3 era la siguiente oportunidad y tampoco se capturó. Decisión humana 2026-05-29: diferir a F6 hardening (cierre académico) cuando ya haya días de registros reales y la demo sea más representativa. | **Mitigación pasiva:** todas las V de PWA (V4–V8) pasan en tests automatizados; V6 reconciliación PWA↔SQL en F3 confirma datos correctos. **Acción pendiente (F6):** humano agenda 5 min con un celular en 4G, navega login → búsqueda → ficha SKU → dashboards, captura screenshot/video, sube a `motoshop-app/web/_runs/v_hito_demo_4g.md`. **Trigger de re-evaluación:** (a) entrega académica E3/E5 se acerca; (b) gerencia pide ver la app antes de F6. |
+| **R7 · V3 workflow 7 corridas pendiente** | F3 (Sesión 33) · diferida a F6 hardening | 🟡 Aceptado · cierra solo en background | El gate V3 de F3 pedía "7 corridas seguidas exitosas del workflow nocturno > 95%". El workflow `motoshop_gold_workflow` está UNPAUSED con schedule cron `0 30 2 * * ?` (02:30 COL); solo 1 corrida iniciada en Sesión 32. Se cierra automáticamente acumulando noches. | **Mitigación pasiva:** schedule activo; cada noche acumula una corrida. **Acción pendiente (F6):** revisor cuenta corridas exitosas/total en `system.workflows.runs` tras 7+ días, documenta KPI en `notebooks/gold/_runs/v3_workflow_7_runs_<fecha>.md`. **Trigger de re-evaluación:** (a) F6 hardening kickoff (~7+ días después de Sesión 33); (b) si tasa éxito < 95% se debug antes; (c) si workflow falla 3 noches seguidas, alerta inmediata. |
+| **R8 · V5 demo a gerencia pendiente** | F3 (Sesión 33) · diferida a F6 hardening | 🟡 Aceptado · requiere acción humana | El gate V5 de F3 pedía "demo a stakeholder real con feedback capturado". cierre-f3.md tiene template vacío. Decisión humana 2026-05-29: aplazar demo a F6 cuando: (a) ya haya datos reales acumulados (workflow corre nocturno), (b) la PWA esté en versión más madura, (c) se pueda capturar feedback más representativo. | **Mitigación pasiva:** la PWA muestra los mismos números que el dashboard SQL (V6 PASS); arquitecturalmente correcto. **Acción pendiente (F6):** humano agenda 30 min con stakeholder (gerencia o Javier mismo), demo PWA + dashboard, captura feedback en `notebooks/gold/_runs/v5_stakeholder_demo.md` (template ya creado). **Trigger de re-evaluación:** (a) F6 kickoff; (b) entrega académica E3 (Producto descriptivo). |
 
 ---
 
@@ -654,6 +656,47 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-29 — Sesión 33 · Auditoría F3 + GO a F4 con R6/R7/R8 diferidas a F6
+
+- **Hecho (revisor):**
+  - 🔍 Auditoría de F3 (commits `5eccd67`, `00d30d1`, `ef51b15`, `948e4ff`, `9c43324`, `be02755`, `e32f4c0`, `d2db436`) tras los 6 checks de INICIAR_REVIEWER.md §3.2.
+  - ✅ **Track A · Gold — checks PASS:**
+    - 5 marts creados con datos reales: `mart_ventas_diarias_sku` (57 filas), `mart_inventario_actual` (4,829 SKUs), `mart_rotacion_abc` (distribución A/B/C correcta), `mart_cohortes_clientes` (9 registros), `mart_productos_dormidos` (50 items).
+    - **57/57 statements gold** ejecutados OK en SQL Warehouse.
+    - **52 tests `tests/gold/test_marts.py` con sqlparse** validan estructura SQL real (INSERT OVERWRITE, UUID, particionado, JOINs). NO son tests noop.
+    - **Auto-auditoría interna** (`docs/gold/auditoria-f3.md`): devs detectaron y resolvieron 25 hallazgos propios (4 críticos, 12 importantes, 9 menores) antes de auditoría revisor — disciplina excelente.
+    - V7 refresh plan documentado en `docs/gold/refresh_plan.md`.
+    - Workflow `motoshop_gold_workflow` UNPAUSED con cron 02:30 COL.
+  - ✅ **Track T · PWA Dashboards — checks PASS:**
+    - 5 endpoints `/metrics/*` operativos con `RealMetricsRepo` vía Databricks SDK.
+    - 4 páginas dashboards (landing + ventas + inventario + abc) build static + recharts lazy.
+    - V4 dashboard FCP: 104-210 KB First Load JS (target < 300 KB).
+    - **V6 reconciliación PWA↔Databricks SQL: 5/5 KPIs coinciden hasta el centavo** ($99,200 ↔ $99,200, 4,024 unidades, 50 dormidos, 9 cohortes).
+    - Push module preparado (DT-F3-11: no dispara hasta F4).
+  - 🟡 **6 observaciones honestas registradas:**
+    - O1: V1/V2 sin archivos `_runs/v1_*.md` y `v2_*.md` dedicados (evidencia embebida en `30_validate_gold.py` y `cierre-f3.md`).
+    - O2: V2 (estabilidad ABC) no demuestra `< 30% migración mes a mes` por dataset demo limitado (15 facturas en 1-2 meses).
+    - O3: V3 (workflow 7 corridas) solo 1 corrida; schedule UNPAUSED, cierra solo en background → **R7**.
+    - O4: V5 (demo gerencia) es template vacío; requiere agenda humana → **R8**.
+    - O5: R6 demo 4G sigue abierta (no se aprovechó F3-C).
+    - O6: Falta `tests/dashboards.spec.ts` Playwright (menor).
+  - ✅ **Decisión humana 2026-05-29: GO a F4 con deudas R6/R7/R8 diferidas a F6 hardening.** Razones: la arquitectura está completa y validada end-to-end (gold marts + dashboards + V6 cuadre 0% = sustancia técnica OK); las observaciones son de proceso/medición/dataset, no de funcionalidad; aplazar permite que (a) workflow acumule corridas reales para V3, (b) demo a gerencia sea más representativa con más datos, (c) demo 4G se haga junto con el cierre académico.
+  - ✅ R7 nueva (V3 workflow 7 corridas pendiente) + R8 nueva (V5 demo gerencia pendiente) en §Tablero de riesgos vivos con triggers explícitos: ambas diferidas a F6 hardening kickoff o ante entrega académica E3/E5.
+  - ✅ R6 reafirmada con nota "diferida a F6 en Sesión 33".
+  - ✅ Cabecera global: F0 ✅ / F1 ✅ / F1.5 ✅ / F1.9 ✅ / F2 ✅ / **F3 ✅** / **F4 🟡 abierta**.
+- **Veredicto:** 🟢 **GO a Fase 4 · Predictivo (ML)** con R6/R7/R8 documentadas y diferidas.
+- **Aprendido:**
+  - **La auto-auditoría interna funciona.** Los devs resolvieron 25 hallazgos propios antes del revisor master. Ese patrón conviene replicarlo en F4.
+  - **Diferir deudas que cierran solas en background es buena economía.** R7 (V3) se cierra con tiempo, no con trabajo nuevo. Forzar el cierre antes de F4 sería paralizar 1-2 semanas.
+  - **El dataset demo (15 facturas, 1-2 meses)** limita V2 (estabilidad ABC) — limitación reconocida, no bug. Cuando MotoShop importe el histórico completo, V2 se debe re-correr.
+- **Abierto:**
+  - **R6, R7, R8** deudas diferidas a F6 hardening con triggers explícitos.
+  - **R1, R2, R4, R5** siguen como deudas heredadas con triggers.
+- **Próximo paso:**
+  - Sesión 34: revisor escribe `docs/plan-f4.md` (3 sprints ML: baseline + Prophet/LightGBM + clasificador quiebre + alertas) + `docs/decisions/0016-stack-f4.md` con decisiones técnicas F4 (MLflow tracking, train compute en Free Edition — riesgo R-A4 documentado en errores.txt, librerías de forecasting).
+
+---
 
 ### 2026-05-29 — Sesión 32 · ADR-0015 Accepted · F3 arranca en paralelo
 
