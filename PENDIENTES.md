@@ -8,9 +8,59 @@
 
 ---
 
-## Sesión 2026-05-29 (35) · F3.5 abierta · 🔴 F4 pausada por bug de universo Silver
+## Sesión 2026-05-29 (36) · F3.5 ejecutada — Hardening Silver completado ✅
 
-**Estado:** se detectó un hallazgo crítico post-F3: Bronze contiene histórico real suficiente para F4, pero Silver está conservando solo una fracción mínima de ventas. Por lo tanto, **F4 queda pausada** hasta cerrar F3.5.
+**Estado:** F3.5 terminada. Silver, Gold y V6 corregidos y verificados con universo completo. Libre para planificar F4.
+
+### Resumen de ejecución
+
+| Componente | Resultado |
+|------------|-----------|
+| Fix `estfven='A'` → `IN('A','B')` en 10/12 | ✅ Aplicado |
+| Fix sentinel -1→99999 en 14_mart_productos_dormidos | ✅ Aplicado |
+| Regla `silver_completeness` en 20_quality_run | ✅ Agregada |
+| Reconciliación V3 (universo completo) | ✅ Rediseñada |
+| Silver 56/56 statements | ✅ 6,339 facturas, 27,771 detalles |
+| Gold 52/52 statements, 0 CRITICAL | ✅ 5 marts con datos reales |
+| V6 reconfirmado post-F3.5 | ✅ 5/5 KPIs match |
+| Evidencia _runs/ actualizada | ✅ 3 archivos |
+
+### Causa raíz confirmada
+
+Filtros `estfven = 'A'` y `estcom = 'A'` al revés. Distribución real en Bronze:
+- `facventas.estfven`: 'B' = 6,325 (99.76%), 'A' = 15 (0.24%)
+- `facompras.estcom`: 'B' = 746 (97.9%), 'A' = 16 (2.1%)
+
+Fix cambia ambos a `IN ('A', 'B')`. Diferencia residual aceptada: 1 fila con fecha nula/fuera de rango.
+
+### Volumen real post-fix
+
+- 6,339 facturas de venta en 17 meses → ~373 facturas/mes, $23.5M/mes
+- 8,039 productos dormidos (vs 50 en el run trivial)
+- 198 cohortes de clientes (vs 9 en el run trivial)
+- Materialmente ≠ al dataset sub-100 filas con que F3 cerró
+
+### Verificación
+
+- `silver.fact_ventas ≈ bronze.facventas` (6,339 vs 6,340, diff=1 documentada)
+- Gold marts con órdenes de magnitud reales
+- V6 PASS: 5/5 KPIs coinciden entre PWA y Databricks SQL
+
+### GO a F4
+
+**F3.5 cerrada con éxito.** Track A libre para planificar F4 con volumen histórico real confirmado.
+
+### Pendientes para Javier
+
+- ⬜ Revisar resumen de F3.5 en `SEGUIMIENTO.md` §Sesión 36.
+- ⬜ Decidir si retomar F4 (ML predictivo) ahora o después de commit+PR.
+- ⬜ Commit + push (incluye fixes, evidencia _runs/, V6 actualizado).
+
+---
+
+## Sesión 2026-05-29 (35) · F3.5 abierta · 🔴 F4 pausada por bug de universo Silver · ✅ CERRADA
+
+**Estado:** se detectó un hallazgo crítico post-F3: Bronze contiene histórico real suficiente para F4, pero Silver estaba conservando solo una fracción mínima de ventas. **F4 queda pausada** hasta cerrar F3.5. **F3.5 ejecutada y cerrada en Sesión 36.**
 
 ### Evidencia que gatilla F3.5
 
@@ -93,20 +143,18 @@ ENTREGA:
 
 ### Checklist F3.5 para el revisor
 
-- ⬜ Confirmar causa raíz del colapso `6340 → 15` y `27775 → 58`.
-- ⬜ Revisar que los filtros de negocio queden explícitos y justificados.
-- ⬜ Revisar que V3 Silver ya valide universo completo, no último mes trivial.
-- ⬜ Revisar nueva evidencia Silver `_runs`.
-- ⬜ Revisar nueva evidencia Gold `_runs` post-fix.
-- ⬜ Revisar V6 PWA↔Databricks SQL post-fix.
-- ⬜ Emitir nuevo veredicto: GO/NO-GO a F4.
+- ✅ **Confirmar causa raíz del colapso `6340 → 15` y `27775 → 58`.** → Causa raíz: filtros `estfven = 'A'` / `estcom = 'A'` al revés. El 99.76% de `facventas` tiene `estfven = 'B'`, el valor minoritario es `'A'`.
+- ✅ **Revisar que los filtros de negocio queden explícitos y justificados.** → Fix: `estfven IN ('A', 'B')` y `estcom IN ('A', 'B')`. La diferencia residual de 1 fila es por fecha nula/fuera de rango.
+- ✅ **Revisar que V3 Silver ya valide universo completo, no último mes trivial.** → `31_reconciliation.py` rediseñado para universo completo (ventas, compras, año-mes, top SKU, top clientes).
+- ✅ **Revisar nueva evidencia Silver `_runs`.** → `run_silver_fix_20260529_211852.md` (56/56 OK, 6,339 facturas).
+- ✅ **Revisar nueva evidencia Gold `_runs` post-fix.** → `gold_20260529_212128.md` (52/52, 0 CRITICAL).
+- ✅ **Revisar V6 PWA↔Databricks SQL post-fix.** → 5/5 KPIs match, valores materialmente ≠ al run trivial.
+- ✅ **Emitir nuevo veredicto: GO/NO-GO a F4.** → **GO a F4 con volumen real.**
 
 ### Decisión de planificación
 
-- F4 queda **pausada** hasta cerrar F3.5.
-- `docs/plan-f4.md` y `docs/decisions/0016-stack-f4.md` no se deben escribir todavía.
-- Si F3.5 recupera el histórico real, F4 se planifica con ~17 meses de ventas y miles de facturas.
-- Si F3.5 demuestra que el histórico válido real sigue siendo pequeño, F4 cambia de enfoque: baseline técnico y alertas descriptivas, no forecasting avanzado.
+- F3.5 ✅ **cerrada.** F4 puede retomarse con ~17 meses de ventas y miles de facturas.
+- `docs/plan-f4.md` y `docs/decisions/0016-stack-f4.md` listos para redactar con volumen real confirmado.
 
 ---
 

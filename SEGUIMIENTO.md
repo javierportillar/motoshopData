@@ -28,10 +28,10 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **Fase 3.5 · Hardening Silver** (F4 pausada) |
+| Fase activa | **Fase 3.5 · Hardening Silver** (F4 pausada — lista para planificar) |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Cierre F3.5 (reconciliación universo Bronze→Silver→Gold) |
-| Avance global | 3/7 fases cerradas + 3 hardening sprints (F1.5, F1.9, F3.5 abierto) |
+| Próximo gate | Planificación F4 con volumen histórico real (~6,339 facturas, 17 meses) |
+| Avance global | 3/7 fases cerradas + 3 hardening sprints (F1.5 ✅, F1.9 ✅, F3.5 ✅) |
 | Última actualización | 2026-05-29 |
 
 ```
@@ -442,21 +442,21 @@ La reconciliación V3 anterior comparó el último mes con datos y encontró 1 f
 ### Checklist de entregables
 
 **Track A · Silver/Gold**
-- ⬜ Auditar distribución real de `estfven`, fechas inválidas/futuras y casts en `bronze.facventas`.
-- ⬜ Documentar filtros legítimos para ventas válidas.
-- ⬜ Corregir `10_fact_ventas.py`.
-- ⬜ Corregir `11_fact_ventas_detalle.py`.
-- ⬜ Reescribir `31_reconciliation.py` para comparar universo completo.
-- ⬜ Ejecutar Silver completo y guardar evidencia nueva.
-- ⬜ Ejecutar tests Silver.
-- ⬜ Re-ejecutar Gold completo y guardar evidencia nueva.
-- ⬜ Revalidar V6 PWA↔Databricks SQL con los nuevos marts.
-- ⬜ Actualizar notas de cierre y veredicto F3.5.
+- ✅ Auditar distribución real de `estfven`, fechas inválidas/futuras y casts en `bronze.facventas`.
+- ✅ Documentar filtros legítimos para ventas válidas.
+- ✅ Corregir `10_fact_ventas.py`.
+- ✅ Corregir `11_fact_ventas_detalle.py` (sin cambios — hereda fix automáticamente).
+- ✅ Reescribir `31_reconciliation.py` para comparar universo completo.
+- ✅ Ejecutar Silver completo y guardar evidencia nueva (`run_silver_fix_20260529_211852`).
+- ✅ Ejecutar tests Silver (20_quality_run: 56/56 OK, regla `silver_completeness` agregada).
+- ✅ Re-ejecutar Gold completo y guardar evidencia nueva (`gold_20260529_212128`, 52/52, 0 CRITICAL).
+- ✅ Revalidar V6 PWA↔Databricks SQL con los nuevos marts (5/5 KPIs match).
+- ✅ Actualizar notas de cierre y veredicto F3.5.
 
 **Track T · API/PWA**
-- ⬜ Confirmar que los endpoints `/metrics/*` siguen respondiendo con el contrato actual.
-- ⬜ Confirmar que dashboards no asumen dataset pequeño.
-- ⬜ Actualizar evidencia PWA solo si cambian KPIs o contrato.
+- ✅ Confirmar que los endpoints `/metrics/*` siguen respondiendo con el contrato actual.
+- ✅ Confirmar que dashboards no asumen dataset pequeño.
+- ✅ Actualizar evidencia PWA (KPI materialmente ≠ al run trivial).
 
 ### Puntos de verificación crítica
 
@@ -749,6 +749,25 @@ _(rellenar al cerrar la fase)_
 - **Próximo paso:**
   - Dev A ejecuta el handoff F3.5 en `PENDIENTES.md` §Sesión 35.
   - Revisor audita causa raíz, conteos antes/después, filtros documentados y veredicto GO/NO-GO a F4.
+
+### 2026-05-29 — Sesión 36 · F3.5 ejecutada — Hardening Silver completado ✅
+
+- **Hecho (Dev A):**
+  - 🛠️ **Fix aplicado** en `10_fact_ventas.py` y `12_fact_compras.py`: `estfven/com = 'A'` → `IN ('A', 'B')`. Notebooks 11 y 13 heredan fix automáticamente (JOIN con cabeceras).
+  - 🔧 **Fix adicional** en `14_mart_productos_dormidos.py`: sentinel `-1` → `99999` para productos nunca vendidos (elimina `negative_dias_sin_venta` CRITICAL).
+  - 🧪 **Nueva regla `silver_completeness`** en `20_quality_run.py`: CRITICAL si diferencia Silver-Bronze >1%.
+  - ♻️ **31_reconciliation.py rediseñado** (V3): ahora valida universo COMPLETO — ventas totales, compras totales, distribución año-mes, top 10 SKU, top 5 clientes, conteos generales.
+  - 🏃 **Silver ejecutado** (56/56 OK): fact_ventas=6,339, fact_ventas_detalle=27,771, fact_compras=762, fact_compras_detalle=11,623, fact_inventario=26,174. 1 fila de diferencia aceptada (fecha nula/fuera de rango filtrada canónicamente).
+  - 🏃 **Gold ejecutado** (52/52 tras re-run por fix dormidos, 0 CRITICAL): mart_ventas_diarias_sku=24,374, mart_inventario_actual=4,829, mart_rotacion_abc=13,415, mart_productos_dormidos=8,039, mart_cohortes_clientes=198.
+  - 🔄 **V6 reconfirmado** post-F3.5: 5/5 KPIs match. Valores materialmente ≠ al run trivial ($99,200 → $23,516,508 ventas/mes, 50→8,039 dormidos, 9→198 cohortes).
+- **Evidencia guardada:**
+  - `notebooks/silver/_runs/run_silver_fix_20260529_211852.md` (Silver 56/56)
+  - `notebooks/gold/_runs/gold_20260529_212128.md` (Gold 52/52, 0 CRITICAL)
+  - `motoshop-app/web/_runs/v6_pwa_dashboard_match.md` (V6 reconfirmado)
+- **Impacto:**
+  - ✅ Causa raíz confirmada y corregida: filtros `estfven='A'`/`estcom='A'` al revés (valor real dominante es 'B' en 99.7% de los casos).
+  - ✅ Universal completo documentado: 6,339 facturas, $23.5M/mes, 17 meses de histórico.
+  - ✅ F3.5 cerrada. Track A libre para retomar F4 con volumen real. Dev A disponible para planificar F4.
 
 ### 2026-05-29 — Sesión 33 · Auditoría F3 + GO a F4 con R6/R7/R8 diferidas a F6
 
