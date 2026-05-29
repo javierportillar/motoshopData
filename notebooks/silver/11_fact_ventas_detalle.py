@@ -1,10 +1,46 @@
 -- Databricks notebook source
 -- MAGIC %md
 -- MAGIC # 11 · fact_ventas_detalle — desde bronze.detfventas
+-- MAGIC
+-- MAGIC Patrón idempotente: DELETE + INSERT por `business_date`.
+-- MAGIC JOIN con `fact_ventas` para heredar `business_date`.
 
 -- COMMAND ----------
 
-CREATE OR REPLACE TABLE motoshop.silver.fact_ventas_detalle AS
+CREATE TABLE IF NOT EXISTS motoshop.silver.fact_ventas_detalle (
+  num_documento STRING,
+  cod_clase STRING,
+  cod_producto STRING,
+  nombre_detalle STRING,
+  cantidad DOUBLE,
+  valor_unitario DOUBLE,
+  descuento_porcentaje DOUBLE,
+  descuento_valor DOUBLE,
+  iva_porcentaje DOUBLE,
+  iva_valor DOUBLE,
+  ipo_porcentaje DOUBLE,
+  ipo_valor DOUBLE,
+  total_detalle DOUBLE,
+  costo_producto DOUBLE,
+  num_item INT,
+  cod_bodega STRING,
+  cod_centro_costo STRING,
+  business_date DATE
+) USING DELTA PARTITIONED BY (business_date);
+
+-- COMMAND ----------
+
+DELETE FROM motoshop.silver.fact_ventas_detalle
+WHERE business_date IN (
+  SELECT DISTINCT h.business_date
+  FROM motoshop.bronze.detfventas d
+  INNER JOIN motoshop.silver.fact_ventas h
+    ON TRIM(d.numfven) = h.num_documento AND TRIM(d.codclas) = h.cod_clase
+);
+
+-- COMMAND ----------
+
+INSERT INTO motoshop.silver.fact_ventas_detalle
 SELECT
   TRIM(d.numfven)      AS num_documento,
   TRIM(d.codclas)      AS cod_clase,

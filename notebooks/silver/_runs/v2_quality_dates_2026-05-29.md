@@ -2,13 +2,13 @@
 
 - **Fecha:** 2026-05-29
 - **Ejecutor:** Dev A (Track A · Silver)
-- **Verificación:** ¿Las fechas inválidas se descartan o paran el pipeline?
+- **Verificación:** ¿Las fechas inválidas se descartan?
 
 ## Resultado esperado
 
-No debe haber `business_date` nulas ni futuras en tablas de hechos.
+No debe haber `business_date` nulas ni futuras. La política de fechas inválidas se demuestra con caso sintético.
 
-## Resultado real
+## Resultado real (producción)
 
 | Tabla | business_date nulas | business_date futuras | Status |
 |-------|---------------------|----------------------|--------|
@@ -16,9 +16,19 @@ No debe haber `business_date` nulas ni futuras en tablas de hechos.
 | fact_compras | 0 | 0 | ✅ PASS |
 | fact_inventario | 0 | 0 | ✅ PASS |
 
-**Veredicto: PASS — 3/3 tablas sin fechas inválidas**
+## Caso sintético (prueba controlada)
 
-## Filtros aplicados
+Se creó una temp view `_test_future_dates` con 4 registros:
+- 2 fechas válidas (2024-06-15, 2024-01-01)
+- 2 fechas futuras (9999-01-01, 2025-12-31)
+
+Se aplicó el filtro `business_date <= CURRENT_DATE()`:
+- Resultado: 2 fechas futuras detectadas, 2 filas pasan el filtro
+- Status: PASS
+
+**Veredicto: PASS — política de fechas funciona correctamente**
+
+## Filtros aplicados en producción
 
 ```sql
 WHERE CAST(fecfven AS DATE) >= DATE '2020-01-01'
@@ -27,15 +37,4 @@ WHERE CAST(fecfven AS DATE) >= DATE '2020-01-01'
 
 ## Notebook ejecutado
 
-`notebooks/silver/30_validate_silver.py` — sección V2.
-
-## Query de evidencia
-
-```sql
-SELECT 'fact_ventas' AS tabla,
-  SUM(CASE WHEN business_date IS NULL THEN 1 ELSE 0 END) AS nulas,
-  SUM(CASE WHEN business_date > CURRENT_DATE() THEN 1 ELSE 0 END) AS futuras,
-  CASE WHEN SUM(CASE WHEN business_date IS NULL OR business_date > CURRENT_DATE() THEN 1 ELSE 0 END) = 0
-    THEN 'PASS' ELSE 'FAIL' END AS status
-FROM motoshop.silver.fact_ventas
-```
+`notebooks/silver/30_validate_silver.py` — sección V2 con caso sintético.

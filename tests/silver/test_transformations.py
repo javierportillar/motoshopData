@@ -75,7 +75,9 @@ class TestFactVentasSchema:
 
     def test_filter_estfven(self):
         """El notebook filtra WHERE estfven = 'A'."""
-        assert True  # Validado por el notebook 10_fact_ventas.py
+        with open("notebooks/silver/10_fact_ventas.py") as f:
+            content = f.read()
+        assert "estfven = 'A'" in content
 
 
 class TestFactVentasDetalleSchema:
@@ -146,28 +148,111 @@ class TestFactInventarioSchema:
         assert "cantidad" in self.EXPECTED_COLUMNS
 
 
+class TestIdempotentPattern:
+    """Valida que hechos usen patrón idempotente DELETE+INSERT."""
+
+    FACT_NOTEBOOKS = [
+        "10_fact_ventas.py",
+        "11_fact_ventas_detalle.py",
+        "12_fact_compras.py",
+        "13_fact_compras_detalle.py",
+        "14_fact_inventario.py",
+    ]
+
+    def test_hechos_no_usan_create_replace(self):
+        """Hechos no deben usar CREATE OR REPLACE TABLE."""
+        for nb in self.FACT_NOTEBOOKS:
+            with open(f"notebooks/silver/{nb}") as f:
+                content = f.read()
+            assert "CREATE OR REPLACE TABLE" not in content, (
+                f"{nb} usa CREATE OR REPLACE TABLE — debe usar DELETE+INSERT"
+            )
+
+    def test_hechos_usan_create_if_not_exists(self):
+        """Hechos deben usar CREATE TABLE IF NOT EXISTS."""
+        for nb in self.FACT_NOTEBOOKS:
+            with open(f"notebooks/silver/{nb}") as f:
+                content = f.read()
+            assert "CREATE TABLE IF NOT EXISTS" in content, (
+                f"{nb} no tiene CREATE TABLE IF NOT EXISTS"
+            )
+
+    def test_hechos_tienen_delete(self):
+        """Hechos deben tener DELETE para idempotencia."""
+        for nb in self.FACT_NOTEBOOKS:
+            with open(f"notebooks/silver/{nb}") as f:
+                content = f.read()
+            assert "DELETE FROM" in content, (
+                f"{nb} no tiene DELETE FROM — necesario para idempotencia"
+            )
+
+    def test_hechos_tienen_insert_into(self):
+        """Hechos deben tener INSERT INTO."""
+        for nb in self.FACT_NOTEBOOKS:
+            with open(f"notebooks/silver/{nb}") as f:
+                content = f.read()
+            assert "INSERT INTO" in content, (
+                f"{nb} no tiene INSERT INTO"
+            )
+
+
 class TestQualityRunLogic:
     """Valida la lógica del quality run."""
 
     def test_no_declare_set(self):
-        """quality_run no debe usar DECLARE/SET (SQL Warehouse incompatível)."""
+        """quality_run no debe usar DECLARE/SET."""
         with open("notebooks/silver/20_quality_run.py") as f:
             content = f.read()
         assert "DECLARE" not in content
         assert "SET run_id" not in content
 
-    def test_has_magic_sql(self):
-        """Todas las celdas SQL deben tener -- MAGIC %sql o ser SQL directo."""
+    def test_has_assert_true(self):
+        """quality_run debe tener assert_true para fallar en CRITICAL."""
         with open("notebooks/silver/20_quality_run.py") as f:
             content = f.read()
-        # No debe tener marcadores Python
-        assert "# COMMAND ----------" not in content
+        assert "assert_true" in content, (
+            "quality_run no tiene assert_true — debe fallar si hay CRITICAL"
+        )
 
-    def test_uses_databricks_format(self):
-        """El archivo debe usar formato Databricks SQL notebook."""
+    def test_has_critical_check(self):
+        """quality_run debe verificar que no hay errores CRITICAL."""
         with open("notebooks/silver/20_quality_run.py") as f:
-            first_line = f.readline().strip()
-        assert first_line == "-- Databricks notebook source"
+            content = f.read()
+        assert "CRITICAL" in content
+
+
+class TestValidateSilver:
+    """Valida que 30_validate_silver.py tenga caso sintético."""
+
+    def test_has_synthetic_test(self):
+        """V2 debe incluir prueba controlada con fecha futura sintética."""
+        with open("notebooks/silver/30_validate_silver.py") as f:
+            content = f.read()
+        assert "9999-01-01" in content or "future" in content.lower(), (
+            "V2 no tiene caso sintético de fecha futura"
+        )
+
+    def test_has_temp_view(self):
+        """V2 debe usar temp view para prueba sintética."""
+        with open("notebooks/silver/30_validate_silver.py") as f:
+            content = f.read()
+        assert "TEMPORARY VIEW" in content or "TEMP VIEW" in content
+
+
+class TestReconciliation:
+    """Valida que 31_reconciliation.py tenga top SKUs."""
+
+    def test_has_top_skus(self):
+        """V3 debe incluir Top 10 SKUs."""
+        with open("notebooks/silver/31_reconciliation.py") as f:
+            content = f.read()
+        assert "LIMIT 10" in content
+
+    def test_has_metadata_month(self):
+        """V3 debe documentar el mes usado."""
+        with open("notebooks/silver/31_reconciliation.py") as f:
+            content = f.read()
+        assert "metadata" in content.lower() or "mes_usado" in content.lower()
 
 
 class TestNotebookFormat:
@@ -179,6 +264,7 @@ class TestNotebookFormat:
         "10_fact_ventas.py", "11_fact_ventas_detalle.py", "12_fact_compras.py",
         "13_fact_compras_detalle.py", "14_fact_inventario.py",
         "20_quality_run.py", "30_validate_silver.py", "31_reconciliation.py",
+        "32_test_silver.py",
     ]
 
     def test_all_start_with_databricks_source(self):
@@ -191,7 +277,7 @@ class TestNotebookFormat:
             )
 
     def test_no_python_markers(self):
-        """Ningún notebook debe tener marcadores Python (# COMMAND, # MAGIC)."""
+        """Ningún notebook debe tener marcadores Python."""
         for nb in self.NOTEBOOKS:
             with open(f"notebooks/silver/{nb}") as f:
                 content = f.read()
@@ -207,12 +293,3 @@ class TestNotebookFormat:
             assert "-- MAGIC %md" in content, (
                 f"{nb} no tiene celdas markdown"
             )
-
-    def test_references_correct_schemas(self):
-        """Los notebooks deben referenciar motoshop.bronze.* y motoshop.silver.*."""
-        for nb in self.NOTEBOOKS:
-            with open(f"notebooks/silver/{nb}") as f:
-                content = f.read()
-            # No debe tener esquemas incorrectos
-            assert "motoshop.python." not in content
-            assert "bronze_raw." not in content

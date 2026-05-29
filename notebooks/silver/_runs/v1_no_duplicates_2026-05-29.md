@@ -26,6 +26,10 @@ Cada tabla silver debe tener `count(*) == count(DISTINCT pk)`.
 
 **Veredicto: PASS — 11/11 tablas sin duplicados**
 
+## Patrón idempotente
+
+Hechos usan `DELETE + INSERT` por `business_date` (no `CREATE OR REPLACE TABLE`). Verificar ejecutando dos veces el mismo notebook — el conteo no cambia.
+
 ## Notebook ejecutado
 
 `notebooks/silver/30_validate_silver.py` — sección V1.
@@ -37,7 +41,6 @@ SELECT 'fact_ventas' AS tabla, COUNT(*) AS filas,
   COUNT(DISTINCT STRUCT(num_documento, cod_clase, business_date)) AS distintas,
   COUNT(*) - COUNT(DISTINCT STRUCT(num_documento, cod_clase, business_date)) AS duplicadas
 FROM motoshop.silver.fact_ventas
--- (similar para cada tabla)
 ```
 
 Ejecutado vía SQL Warehouse `43bc044eaef4cca4` (Serverless Starter Warehouse).

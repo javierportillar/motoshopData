@@ -2,11 +2,52 @@
 -- MAGIC %md
 -- MAGIC # 12 · fact_compras — desde bronze.compras
 -- MAGIC
--- MAGIC `business_date` de `feccom`. Solo activos (`estcom = 'A'`).
+-- MAGIC Patrón idempotente: DELETE + INSERT por `business_date`.
+-- MAGIC Solo activos (`estcom = 'A'`).
 
 -- COMMAND ----------
 
-CREATE OR REPLACE TABLE motoshop.silver.fact_compras AS
+CREATE TABLE IF NOT EXISTS motoshop.silver.fact_compras (
+  num_documento STRING,
+  cod_clase STRING,
+  prefijo STRING,
+  fecha_documento_ts TIMESTAMP,
+  business_date DATE,
+  nit_proveedor STRING,
+  nombre_proveedor STRING,
+  cod_sucursal STRING,
+  cod_formapago STRING,
+  subtotal DOUBLE,
+  total_descuentos DOUBLE,
+  total_iva DOUBLE,
+  total_impuesto DOUBLE,
+  retencion_fuente DOUBLE,
+  retencion_iva DOUBLE,
+  retencion_ica DOUBLE,
+  total_compra DOUBLE,
+  observaciones STRING,
+  estado_documento STRING,
+  cod_empresa STRING,
+  cod_empresa_alt STRING,
+  nit_vendedor STRING,
+  ingest_date_silver DATE
+) USING DELTA PARTITIONED BY (business_date);
+
+-- COMMAND ----------
+
+DELETE FROM motoshop.silver.fact_compras
+WHERE business_date IN (
+  SELECT DISTINCT CAST(feccom AS DATE)
+  FROM motoshop.bronze.compras
+  WHERE estcom = 'A'
+    AND feccom IS NOT NULL
+    AND CAST(feccom AS DATE) >= DATE '2020-01-01'
+    AND CAST(feccom AS DATE) <= CURRENT_DATE()
+);
+
+-- COMMAND ----------
+
+INSERT INTO motoshop.silver.fact_compras
 SELECT
   TRIM(numcom)        AS num_documento,
   TRIM(codclas)       AS cod_clase,

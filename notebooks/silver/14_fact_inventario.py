@@ -2,11 +2,56 @@
 -- MAGIC %md
 -- MAGIC # 14 · fact_inventario — desde bronze.auxinventario
 -- MAGIC
+-- MAGIC Patrón idempotente: DELETE + INSERT por `business_date`.
 -- MAGIC `business_date` de `docfec`. `valor3` = cantidad.
 
 -- COMMAND ----------
 
-CREATE OR REPLACE TABLE motoshop.silver.fact_inventario AS
+CREATE TABLE IF NOT EXISTS motoshop.silver.fact_inventario (
+  id_inventario BIGINT,
+  cod_lista STRING,
+  nombre_lista STRING,
+  cod_linea1 STRING,
+  nombre_linea STRING,
+  cod_linea2 STRING,
+  nombre_linea2 STRING,
+  cod_bodega STRING,
+  nombre_bodega STRING,
+  nit_tercero STRING,
+  nombre_tercero STRING,
+  num_documento STRING,
+  nombre_documento STRING,
+  cod_producto STRING,
+  num_serie STRING,
+  nombre_producto STRING,
+  unidad_medida STRING,
+  valor_costo DOUBLE,
+  valor_venta DOUBLE,
+  cantidad DOUBLE,
+  valor4 DOUBLE,
+  valor5 DOUBLE,
+  business_date DATE,
+  num_doc_referencia STRING,
+  nombre_sub STRING,
+  multiplo DOUBLE,
+  cod_centro_costo STRING,
+  nombre_centro_costo STRING
+) USING DELTA PARTITIONED BY (business_date);
+
+-- COMMAND ----------
+
+DELETE FROM motoshop.silver.fact_inventario
+WHERE business_date IN (
+  SELECT DISTINCT CAST(docfec AS DATE)
+  FROM motoshop.bronze.auxinventario
+  WHERE docfec IS NOT NULL
+    AND CAST(docfec AS DATE) >= DATE '2020-01-01'
+    AND CAST(docfec AS DATE) <= CURRENT_DATE()
+);
+
+-- COMMAND ----------
+
+INSERT INTO motoshop.silver.fact_inventario
 SELECT
   monotonically_increasing_id() AS id_inventario,
   TRIM(codlis)         AS cod_lista,

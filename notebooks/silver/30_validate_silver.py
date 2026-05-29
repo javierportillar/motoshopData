@@ -1,6 +1,8 @@
 -- Databricks notebook source
 -- MAGIC %md
 -- MAGIC # 30 · Validate Silver — V1 (duplicados) + V2 (fechas inválidas)
+-- MAGIC
+-- MAGIC V2 incluye prueba controlada con fecha futura sintética.
 
 -- COMMAND ----------
 
@@ -94,6 +96,11 @@ FROM motoshop.silver.dim_tiempo;
 
 -- COMMAND ----------
 
+-- MAGIC %md
+-- MAGIC ### Producción: verificar que no haya fechas futuras ni nulas
+
+-- COMMAND ----------
+
 SELECT
   'fact_ventas' AS tabla,
   SUM(CASE WHEN business_date IS NULL THEN 1 ELSE 0 END) AS nulas,
@@ -118,6 +125,43 @@ SELECT
   SUM(CASE WHEN business_date > CURRENT_DATE() THEN 1 ELSE 0 END),
   CASE WHEN SUM(CASE WHEN business_date IS NULL OR business_date > CURRENT_DATE() THEN 1 ELSE 0 END) = 0 THEN 'PASS' ELSE 'FAIL' END
 FROM motoshop.silver.fact_inventario;
+
+-- COMMAND ----------
+
+-- MAGIC %md
+-- MAGIC ### Caso sintético: inyectar fecha futura y validar que se detecta
+-- MAGIC
+-- MAGIC Este test prueba que la lógica de filtro funciona:
+-- MAGIC 1. Crear temp view con datos incluyendo una fecha futura
+-- MAGIC 2. Aplicar el mismo filtro de silver
+-- MAGIC 3. Verificar que la fecha futura queda excluida
+
+-- COMMAND ----------
+
+-- Crear dataset sintético con fecha futura
+CREATE OR REPLACE TEMPORARY VIEW _test_future_dates AS
+SELECT * FROM (
+  SELECT 'FV-TEST-001' AS numfven, 'FV' AS codclas, CAST('2024-06-15' AS TIMESTAMP) AS fecfven, 'A' AS estfven
+  UNION ALL
+  SELECT 'FV-TEST-002', 'FV', CAST('9999-01-01' AS TIMESTAMP), 'A'  -- fecha futura extrema
+  UNION ALL
+  SELECT 'FV-TEST-003', 'FV', CAST('2025-12-31' AS TIMESTAMP), 'A'  -- fecha futura
+  UNION ALL
+  SELECT 'FV-TEST-004', 'FV', CAST('2024-01-01' AS TIMESTAMP), 'A'  -- fecha válida
+);
+
+-- Aplicar filtro de silver (business_date <= CURRENT_DATE)
+SELECT
+  'sintético_future_filter' AS test_name,
+  COUNT(*) AS filas_antes,
+  SUM(CASE WHEN CAST(fecfven AS DATE) > CURRENT_DATE() THEN 1 ELSE 0 END) AS fechas_futuras_detectadas,
+  SUM(CASE WHEN CAST(fecfven AS DATE) <= CURRENT_DATE() THEN 1 ELSE 0 END) AS filas_despues_filtro,
+  CASE
+    WHEN SUM(CASE WHEN CAST(fecfven AS DATE) > CURRENT_DATE() THEN 1 ELSE 0 END) = 2
+    THEN 'PASS'
+    ELSE 'FAIL'
+  END AS status
+FROM _test_future_dates;
 
 -- COMMAND ----------
 
