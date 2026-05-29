@@ -65,6 +65,7 @@ F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 🟡  F4 ⬜  F5 ⬜  F6 ⬜
 | D11 | 2026-05-28 | Stack F1 (DT-1 a DT-10): SQLAlchemy core, pyjwt+bcrypt, slowapi, users.yaml, offset+limit, INSERT REPLACE WHERE, manifest al Volume, structlog, repos+integration mark, bronze raw → silver UTC → API UTC | mysql-connector directo (DT-1), python-jose (DT-2), Redis (DT-3), SQLite (DT-4), keyset (DT-5), CREATE OR REPLACE (DT-6), tabla _meta_runs (DT-7), loguru (DT-8), solo unit (DT-9), bronze TZ-aware (DT-10) | Equilibrio entre velocidad de F1 y portabilidad a F2+. Aprobado en bloque sin ajustes. ADR: [0011](docs/decisions/0011-stack-f1.md) |
 | D12 | 2026-05-29 | `ingest_date` (técnica) en bronze + `business_date` derivada en silver (Opción C) | A · status quo (no recomendado, deuda silenciosa); B · bronze con doble fecha (gran refactor) | Bronze permanece inmutable (ADR-0001), Silver concentra lógica del negocio, cero re-trabajo de datos ya ingestados, maneja data sucia (`fecfven > 2099`) con expectations. ADR: [0013](docs/decisions/0013-fecha-tecnica-vs-negocio.md). Aprobado en bloque sin ajustes. |
 | D13 | 2026-05-29 | Stack F2 (DT-F2-1..16): INSERT REPLACE WHERE business_date, SCD1, PySpark assert, partición por business_date, naming fact_/dim_, chispa, Next.js (ya), httpOnly cookies, fetch+lock, Zustand+SWR, Tailwind raw, next-pwa+Workbox, idb-keyval, Stock NetworkOnly + Catálogo SWR, TTL+manual | MERGE INTO (DT-F2-1), SCD2 (DT-F2-2), DLT (DT-F2-3), axios (DT-F2-9), Redux (DT-F2-10), shadcn (DT-F2-11), SW manual (DT-F2-12), Dexie (DT-F2-14) | Coherente con Free Edition + arquitectura medallion. Bundle PWA liviano (< 200KB JS inicial). 16 decisiones en bloque. Aprobado tras discutir patrón alternativo rotativo en DT-F2-1; tabla rotativa "hoy + cierres" se resuelve con vista sobre silver sin perder F4. ADR: [0014](docs/decisions/0014-stack-f2.md). |
+| D14 | _pendiente_ | Stack F3 (DT-F3-1..12): **Databricks SQL** (resuelve P5), INSERT REPLACE WHERE business_date/month, naming mart_, workflow 02:30 COL, SCD1 cohortes, ABC 80/15/5, dormido > 90d, recharts, SWR dedup 60s, web-push preparado, Tailwind responsive | Power BI Desktop (DT-F3-1) — requiere Windows; chart.js (DT-F3-9) — bundle más grande; localStorage (DT-F3-10); OneSignal (DT-F3-11) | Mac-friendly, multi-plataforma, coherente con stack medallion ya en uso, bundle PWA controlado. Resuelve P5 pendiente desde F0. ADR: [0015](docs/decisions/0015-stack-f3.md) **Proposed** |
 
 ---
 
@@ -653,6 +654,35 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-29 — Sesión 31 · Plan F3 completo + ADR-0015 (Proposed)
+
+- **Hecho (revisor):**
+  - ✅ [`docs/plan-f3.md`](docs/plan-f3.md) escrito con detalle completo. 3 sprints:
+    - **F3-A · Gold + Workflow + Dashboard SQL** (Track A · ~6-8 h): 5 marts (`mart_ventas_diarias_sku`, `mart_inventario_actual`, `mart_rotacion_abc`, `mart_cohortes_clientes`, `mart_productos_dormidos`), workflow nocturno 02:30 COL, dashboard ejecutivo en Databricks SQL, V1/V2/V3/V7.
+    - **F3-B · API + PWA Dashboards** (Track T · ~5-6 h): 5 endpoints `/metrics/*` con `databricks-sql-connector`, sección Dashboards mobile-first en PWA, `recharts`, estructura push notifications, V4 dashboard < 5 s.
+    - **F3-C · Validación + demo + cierre** (~3-4 h): V5 demo gerencia, V6 PWA=dashboard, captura R6 demo 4G como bonus, lecciones.
+  - ✅ V1-V7 mapeadas a archivos de evidencia esperados.
+  - ✅ KPIs F3 con método de medición (95% automatización, < 24 h frescura, < 5 s dashboard, < 0.5% reconciliación, < 30% ABC migration).
+  - ✅ Modos serial (~12 días) y paralelo (~6-8 días, recomendado) documentados.
+  - ✅ Sección §12 "¿F3 necesita Windows?": casi no — solo restart API después de pushear endpoints `/metrics/*`.
+  - ✅ [`docs/decisions/0015-stack-f3.md`](docs/decisions/0015-stack-f3.md) escrito con 12 decisiones (DT-F3-1..12):
+    - **8 Gold (DT-F3-1..8):** Databricks SQL (resuelve P5), INSERT REPLACE WHERE business_date/business_month, particionado mart-by-mart, naming `mart_*`, workflow 02:30 COL, SCD1 mensual para cohortes, ABC 80/15/5, dormido > 90 días.
+    - **4 PWA Dashboards (DT-F3-9..12):** `recharts`, SWR con dedup 60s, `web-push` preparado sin disparar, layout responsive Tailwind stack→grid.
+  - ✅ ADR-0015 resuelve **P5 pendiente desde F0** (BI tool principal: Databricks SQL; Power BI diferido a F6).
+  - ✅ D14 _pendiente_ en bitácora.
+  - ✅ PENDIENTES sesión 32 con única acción humana (aprobar ADR-0015) + plan F3 a alto nivel + advertencia sobre R6 oportunidad.
+  - ✅ Índice de ADRs actualizado.
+- **Aprendido:**
+  - Después de 2 fases ejecutadas en paralelo, el patrón `INICIAR_AGENTE.md` + `INICIAR_REVIEWER.md` + plan detallado + ADR consolidado escala bien. F3 reusa la misma estructura.
+  - Resolver P5 en F3 (vs diferirlo otra fase) reduce 1 deuda pendiente desde F0.
+- **Abierto:**
+  - Humano aprueba ADR-0015 (~10 min lectura).
+  - **R6** sigue abierta (demo 4G no capturada) — oportunidad bonus durante F3-C.
+- **Próximo paso:**
+  - Humano aprueba ADR-0015 + decide modo (serial/paralelo) → revisor marca `Accepted` + D14 a fecha + P5 resuelta → Sprint(s) F3-A y/o F3-B arrancan.
+
+---
 
 ### 2026-05-29 — Sesión 30 · Auditoría F2-FIX1 + GO definitivo a F3
 

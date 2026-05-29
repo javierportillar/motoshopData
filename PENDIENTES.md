@@ -8,7 +8,90 @@
 
 ---
 
-## Sesión 2026-05-29 (31) · F2 cerrada · 🟢 GO a F3
+## Sesión 2026-05-29 (32) · Plan F3 + ADR-0015 listos · esperando aprobación humana
+
+### Resumen
+F2 cerrada en Sesión 30/31. Revisor escribió plan F3 completo (3 sprints) + ADR-0015 con 12 decisiones técnicas (DT-F3-1..12) que también **resuelve P5 pendiente desde F0** (Power BI vs Databricks SQL).
+
+**Una sola acción humana cierra el gap y arranca Sprints F3-A y F3-B en paralelo:**
+
+---
+
+### 🚨 Acción humana — 1 cosa
+
+#### ⬜ Leer ADR-0015 y aprobar (o ajustar) — ~10 min
+
+Abrir [`docs/decisions/0015-stack-f3.md`](docs/decisions/0015-stack-f3.md).
+
+Lectura recomendada:
+- **DT-F3-1** (BI tool — resuelve P5): recomendado **Databricks SQL** porque tu Mac no corre Power BI Desktop. Si en el futuro gerencia pide Power BI específicamente, se suma en F6.
+- **DT-F3-8** ("producto dormido"): umbral 90 días — ajustable si tu negocio piensa distinto.
+- **DT-F3-11** (push notifications): se prepara la estructura pero NO se dispara hasta F4 alertas.
+
+12 decisiones, 8 Gold + 4 PWA. Tabla resumen al final del ADR.
+
+**Tres caminos:**
+- **"OK todas + modo paralelo"** → marco ADR `Accepted`, D14 a fecha, P5 resuelta. Dev A y Dev T arrancan simultáneo.
+- **"OK pero ajustar X"** → decime qué y ajusto.
+- **"Necesito más contexto sobre Y"** → te detallo.
+
+---
+
+### Plan F3 a alto nivel *(para que sepas qué viene)*
+
+| Sprint | Track | Duración | Cierra qué V/KPI |
+|--------|-------|----------|-------------------|
+| **F3-A · Gold + Workflow + Dashboard SQL** | A · Databricks | ~6-8 h | V1 KPIs cuadran, V2 ABC estable, V3 workflow puntual, V7 plan refresco |
+| **F3-B · API endpoints + PWA Dashboards** | T · Next.js | ~5-6 h | V4 dashboard < 5s, soporta V6 |
+| **F3-C · Demo + validación cruzada** | ambos + humano | ~3-4 h | V5 demo gerencia, V6 PWA=dashboard, captura R6 bonus |
+
+**Modo serial (1 dev):** ~12 días.
+**Modo paralelo (2 devs en tu Mac, recomendado):** ~6-8 días.
+
+Detalle completo en [`docs/plan-f3.md`](docs/plan-f3.md).
+
+---
+
+### ¿F3 necesita PC Windows?
+
+**Casi no.** Detalle en [plan-f3.md §12](docs/plan-f3.md):
+
+| Pieza | Windows? |
+|-------|----------|
+| Notebooks gold | ❌ (Databricks cloud) |
+| Dashboard SQL | ❌ (web) |
+| PWA dashboards | ❌ (Mac) |
+| Endpoints `/metrics/*` API | ❌ para editar; ⚠️ `git pull + restart-api` en Windows después de pushear (5 min vía RDP) |
+| Demo gerencia | ❌ (cualquier dispositivo) |
+
+**Único toque a Windows:** restart de la API después de los commits de Dev T. ~1 minuto. Si tenés script de auto-pull configurado, ni eso.
+
+---
+
+### Acción heredada · R6 (no bloqueante, oportunidad)
+
+#### ⬜ R6 · Capturar demo 4G (~5 min)
+
+Se quedó pendiente de F2. Buena oportunidad: cuando Dev T termine F3-B, vas a tener Dashboards en la PWA. Captura el flujo completo en celular 4G:
+- Login admin/FG28
+- Búsqueda "aceite"
+- Ficha SKU con stock
+- (Bonus) Dashboard
+
+Subí screenshot/video a `motoshop-app/web/_runs/v_hito_demo_4g.md`. Cierra R6.
+
+---
+
+### Lo que pasa cuando aprobés el ADR
+
+1. Revisor marca ADR-0015 `Accepted` con fecha. D14 a fecha. **P5 resuelta** (cierra una decisión pendiente desde F0).
+2. Dev A arranca **Sprint F3-A** (gold marts + workflow + dashboard SQL).
+3. Dev T arranca **Sprint F3-B** (endpoints `/metrics/*` + PWA dashboards).
+4. Sesión 33 abre con el(los) primer(os) commit(s).
+
+---
+
+## ~~Sesión 2026-05-29 (31) · F2 cerrada · 🟢 GO a F3~~ *(histórico — cerrada)*
 
 ✅ Revisor auditó F2-FIX1 (commits `53f888c`..`df632c4`) en Sesión 30. Veredicto: **GO a F3 · Gold + Dashboards.**
 

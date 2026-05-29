@@ -25,7 +25,8 @@ Aplicación práctica del marco conceptual de **Big Data y Transformación Digit
 | [docs/plan-f1-fix2.md](docs/plan-f1-fix2.md) | Plan F1-FIX2 · Cierre limpio de F1 (3 evidencias + sync SEGUIMIENTO). |
 | [docs/plan-f1-hardening.md](docs/plan-f1-hardening.md) | Plan F1.5 · Hardening pre-F2 (R3 idempotencia + R-X2 cache /stock). |
 | [docs/plan-f1-9.md](docs/plan-f1-9.md) | Plan F1.9 · Robustez del pipeline pre-F2 (sondeo BD + lag monitor + Task Scheduler robusto + ADR-0013 fechas). |
-| [docs/plan-f2.md](docs/plan-f2.md) | **Plan F2 · Silver + PWA MVP** (3 sprints: Silver, PWA login+búsqueda, PWA stock+offline). |
+| [docs/plan-f2.md](docs/plan-f2.md) | Plan F2 · Silver + PWA MVP (3 sprints). ✅ Cerrada Sesión 30. |
+| [docs/plan-f3.md](docs/plan-f3.md) | **Plan F3 · Gold + Dashboards** (3 sprints: marts+workflow+SQL dashboard, /metrics+PWA dashboards, demo+validación). |
 | [docs/plan-f2-fix1.md](docs/plan-f2-fix1.md) | **Plan F2-FIX1 · Cierre real F2.** Remedia NO-GO de F2 A/B/C con Dev A y Dev T en paralelo. |
 | [infollm.md](infollm.md) | Conexión a la BD y esquema general. |
 | [AGENT_PROMPT.md](AGENT_PROMPT.md) | Instrucciones del agente de IA que asiste el desarrollo. |
