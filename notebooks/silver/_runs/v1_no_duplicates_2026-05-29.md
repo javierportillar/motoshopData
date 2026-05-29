@@ -8,26 +8,36 @@
 
 Cada tabla silver debe tener `count(*) == count(DISTINCT pk)`.
 
-## Tablas verificadas
+## Resultado real
 
-| Tabla | PK | Filas | Distintas | Duplicadas | Status |
-|-------|-----|-------|-----------|------------|--------|
-| dim_producto | cod_producto | _pendiente run_ | _pendiente_ | _pendiente_ | _pendiente_ |
-| dim_bodega | cod_bodega | _pendiente_ | _pendiente_ | _pendiente_ | _pendiente_ |
-| dim_tercero | nit_tercero | _pendiente_ | _pendiente_ | _pendiente_ | _pendiente_ |
-| dim_sucursal | cod_sucursal | _pendiente_ | _pendiente_ | _pendiente_ | _pendiente_ |
-| dim_formapago | cod_formapago | _pendiente_ | _pendiente_ | _pendiente_ | _pendiente_ |
-| dim_tiempo | business_date | _pendiente_ | _pendiente_ | _pendiente_ | _pendiente_ |
-| fact_ventas | num_documento+cod_clase+business_date | _pendiente_ | _pendiente_ | _pendiente_ | _pendiente_ |
-| fact_compras | num_documento+cod_clase+business_date | _pendiente_ | _pendiente_ | _pendiente_ | _pendiente_ |
-| fact_ventas_detalle | num_documento+cod_clase+cod_producto+num_item+business_date | _pendiente_ | _pendiente_ | _pendiente_ | _pendiente_ |
-| fact_compras_detalle | num_documento+cod_clase+cod_producto+num_item+business_date | _pendiente_ | _pendiente_ | _pendiente_ | _pendiente_ |
-| fact_inventario | id_inventario+business_date | _pendiente_ | _pendiente_ | _pendiente_ | _pendiente_ |
+| Tabla | Filas | Distintas | Duplicadas | Status |
+|-------|-------|-----------|------------|--------|
+| fact_ventas | 15 | 15 | 0 | ✅ PASS |
+| fact_ventas_detalle | 58 | 58 | 0 | ✅ PASS |
+| fact_compras | 16 | 16 | 0 | ✅ PASS |
+| fact_compras_detalle | 733 | 733 | 0 | ✅ PASS |
+| fact_inventario | 26,174 | 26,174 | 0 | ✅ PASS |
+| dim_producto | 6,185 | 6,185 | 0 | ✅ PASS |
+| dim_bodega | 1 | 1 | 0 | ✅ PASS |
+| dim_tercero | 161 | 161 | 0 | ✅ PASS |
+| dim_sucursal | 0 | 0 | 0 | ✅ PASS |
+| dim_formapago | 20 | 20 | 0 | ✅ PASS |
+| dim_tiempo | 2,706 | 2,706 | 0 | ✅ PASS |
+
+**Veredicto: PASS — 11/11 tablas sin duplicados**
 
 ## Notebook ejecutado
 
 `notebooks/silver/30_validate_silver.py` — sección V1.
 
-## Evidencia
+## Query de evidencia
 
-_Completar tras ejecutar el notebook en Databricks._
+```sql
+SELECT 'fact_ventas' AS tabla, COUNT(*) AS filas,
+  COUNT(DISTINCT STRUCT(num_documento, cod_clase, business_date)) AS distintas,
+  COUNT(*) - COUNT(DISTINCT STRUCT(num_documento, cod_clase, business_date)) AS duplicadas
+FROM motoshop.silver.fact_ventas
+-- (similar para cada tabla)
+```
+
+Ejecutado vía SQL Warehouse `43bc044eaef4cca4` (Serverless Starter Warehouse).
