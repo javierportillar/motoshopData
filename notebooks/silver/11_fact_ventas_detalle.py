@@ -1,10 +1,8 @@
-# Databricks notebook source
-# MAGIC %md
-# MAGIC # 11 · fact_ventas_detalle — desde bronze.detfventas
+-- Databricks notebook source
+-- MAGIC %md
+-- MAGIC # 11 · fact_ventas_detalle — desde bronze.detfventas
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 CREATE OR REPLACE TABLE motoshop.silver.fact_ventas_detalle AS
 SELECT
@@ -31,14 +29,10 @@ INNER JOIN motoshop.silver.fact_ventas h
   ON TRIM(d.numfven) = h.num_documento
   AND TRIM(d.codclas) = h.cod_clase;
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 SELECT COUNT(*) AS fact_ventas_detalle_rows FROM motoshop.silver.fact_ventas_detalle;
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 SELECT * FROM motoshop.silver.fact_ventas_detalle LIMIT 10;

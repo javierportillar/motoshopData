@@ -1,10 +1,8 @@
-# Databricks notebook source
-# MAGIC %md
-# MAGIC # 01 · dim_producto — SCD Type 1 desde bronze.productos
+-- Databricks notebook source
+-- MAGIC %md
+-- MAGIC # 01 · dim_producto — SCD Type 1 desde bronze.productos
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 CREATE OR REPLACE TABLE motoshop.silver.dim_producto AS
 SELECT
@@ -33,9 +31,7 @@ SELECT
 FROM motoshop.bronze.productos
 WHERE codprod IS NOT NULL;
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 SELECT
   COUNT(*) AS total,
@@ -43,8 +39,6 @@ SELECT
   COUNT(*) - COUNT(DISTINCT cod_producto) AS duplicados
 FROM motoshop.silver.dim_producto;
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 SELECT COUNT(*) AS dim_producto_rows FROM motoshop.silver.dim_producto;

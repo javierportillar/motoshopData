@@ -1,10 +1,8 @@
-# Databricks notebook source
-# MAGIC %md
-# MAGIC # 04 · dim_sucursal — SCD Type 1 desde bronze.sucursales
+-- Databricks notebook source
+-- MAGIC %md
+-- MAGIC # 04 · dim_sucursal — SCD Type 1 desde bronze.sucursales
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 CREATE OR REPLACE TABLE motoshop.silver.dim_sucursal AS
 SELECT
@@ -26,8 +24,6 @@ SELECT
 FROM motoshop.bronze.sucursales
 WHERE codsuc IS NOT NULL;
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 SELECT COUNT(*) AS dim_sucursal_rows FROM motoshop.silver.dim_sucursal;

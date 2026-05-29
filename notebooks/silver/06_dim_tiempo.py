@@ -1,10 +1,8 @@
-# Databricks notebook source
-# MAGIC %md
-# MAGIC # 06 · dim_tiempo — Calendario con festivos COL
+-- Databricks notebook source
+-- MAGIC %md
+-- MAGIC # 06 · dim_tiempo — Calendario con festivos COL
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 CREATE OR REPLACE TABLE motoshop.silver.dim_tiempo AS
 WITH date_range AS (
@@ -50,9 +48,7 @@ SELECT
 FROM date_range d
 LEFT JOIN festivos f ON d.business_date = f.festivo_date;
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 SELECT
   COUNT(*) AS total,

@@ -1,17 +1,14 @@
-# Databricks notebook source
-# MAGIC %md
-# MAGIC # 30 · Validate Silver — V1 (duplicados) + V2 (fechas inválidas)
-# MAGIC
-# MAGIC Verificaciones críticas V1 y V2 de F2.
+-- Databricks notebook source
+-- MAGIC %md
+-- MAGIC # 30 · Validate Silver — V1 (duplicados) + V2 (fechas inválidas)
 
-# COMMAND ----------
+-- COMMAND ----------
 
 -- MAGIC %md
 -- MAGIC ## V1 · ¿Hay duplicados en silver?
 
-# COMMAND ----------
+-- COMMAND ----------
 
--- V1: Hechos
 SELECT
   'fact_ventas' AS tabla,
   COUNT(*) AS filas,
@@ -23,7 +20,7 @@ FROM motoshop.silver.fact_ventas
 UNION ALL
 
 SELECT
-  'fact_ventas_detalle' AS tabla,
+  'fact_ventas_detalle',
   COUNT(*), COUNT(DISTINCT STRUCT(num_documento, cod_clase, cod_producto, num_item, business_date)),
   COUNT(*) - COUNT(DISTINCT STRUCT(num_documento, cod_clase, cod_producto, num_item, business_date)),
   CASE WHEN COUNT(*) = COUNT(DISTINCT STRUCT(num_documento, cod_clase, cod_producto, num_item, business_date)) THEN 'PASS' ELSE 'FAIL' END
@@ -32,7 +29,7 @@ FROM motoshop.silver.fact_ventas_detalle
 UNION ALL
 
 SELECT
-  'fact_compras' AS tabla,
+  'fact_compras',
   COUNT(*), COUNT(DISTINCT STRUCT(num_documento, cod_clase, business_date)),
   COUNT(*) - COUNT(DISTINCT STRUCT(num_documento, cod_clase, business_date)),
   CASE WHEN COUNT(*) = COUNT(DISTINCT STRUCT(num_documento, cod_clase, business_date)) THEN 'PASS' ELSE 'FAIL' END
@@ -41,7 +38,7 @@ FROM motoshop.silver.fact_compras
 UNION ALL
 
 SELECT
-  'fact_compras_detalle' AS tabla,
+  'fact_compras_detalle',
   COUNT(*), COUNT(DISTINCT STRUCT(num_documento, cod_clase, cod_producto, num_item, business_date)),
   COUNT(*) - COUNT(DISTINCT STRUCT(num_documento, cod_clase, cod_producto, num_item, business_date)),
   CASE WHEN COUNT(*) = COUNT(DISTINCT STRUCT(num_documento, cod_clase, cod_producto, num_item, business_date)) THEN 'PASS' ELSE 'FAIL' END
@@ -50,15 +47,14 @@ FROM motoshop.silver.fact_compras_detalle
 UNION ALL
 
 SELECT
-  'fact_inventario' AS tabla,
+  'fact_inventario',
   COUNT(*), COUNT(DISTINCT STRUCT(id_inventario, business_date)),
   COUNT(*) - COUNT(DISTINCT STRUCT(id_inventario, business_date)),
   CASE WHEN COUNT(*) = COUNT(DISTINCT STRUCT(id_inventario, business_date)) THEN 'PASS' ELSE 'FAIL' END
 FROM motoshop.silver.fact_inventario;
 
-# COMMAND ----------
+-- COMMAND ----------
 
--- V1: Dimensiones
 SELECT
   'dim_producto' AS tabla,
   COUNT(*) AS filas,
@@ -69,48 +65,34 @@ FROM motoshop.silver.dim_producto
 
 UNION ALL
 
-SELECT
-  'dim_bodega',
-  COUNT(*), COUNT(DISTINCT cod_bodega),
-  COUNT(*) - COUNT(DISTINCT cod_bodega),
+SELECT 'dim_bodega', COUNT(*), COUNT(DISTINCT cod_bodega), COUNT(*) - COUNT(DISTINCT cod_bodega),
   CASE WHEN COUNT(*) = COUNT(DISTINCT cod_bodega) THEN 'PASS' ELSE 'FAIL' END
 FROM motoshop.silver.dim_bodega
 
 UNION ALL
 
-SELECT
-  'dim_tercero',
-  COUNT(*), COUNT(DISTINCT nit_tercero),
-  COUNT(*) - COUNT(DISTINCT nit_tercero),
+SELECT 'dim_tercero', COUNT(*), COUNT(DISTINCT nit_tercero), COUNT(*) - COUNT(DISTINCT nit_tercero),
   CASE WHEN COUNT(*) = COUNT(DISTINCT nit_tercero) THEN 'PASS' ELSE 'FAIL' END
 FROM motoshop.silver.dim_tercero
 
 UNION ALL
 
-SELECT
-  'dim_formapago',
-  COUNT(*), COUNT(DISTINCT cod_formapago),
-  COUNT(*) - COUNT(DISTINCT cod_formapago),
+SELECT 'dim_formapago', COUNT(*), COUNT(DISTINCT cod_formapago), COUNT(*) - COUNT(DISTINCT cod_formapago),
   CASE WHEN COUNT(*) = COUNT(DISTINCT cod_formapago) THEN 'PASS' ELSE 'FAIL' END
 FROM motoshop.silver.dim_formapago
 
 UNION ALL
 
-SELECT
-  'dim_tiempo',
-  COUNT(*), COUNT(DISTINCT business_date),
-  COUNT(*) - COUNT(DISTINCT business_date),
+SELECT 'dim_tiempo', COUNT(*), COUNT(DISTINCT business_date), COUNT(*) - COUNT(DISTINCT business_date),
   CASE WHEN COUNT(*) = COUNT(DISTINCT business_date) THEN 'PASS' ELSE 'FAIL' END
 FROM motoshop.silver.dim_tiempo;
 
-# COMMAND ----------
+-- COMMAND ----------
 
 -- MAGIC %md
 -- MAGIC ## V2 · ¿Las fechas inválidas se descartan?
 
-# COMMAND ----------
--- MAGIC %sql
-
+-- COMMAND ----------
 
 SELECT
   'fact_ventas' AS tabla,
@@ -137,14 +119,13 @@ SELECT
   CASE WHEN SUM(CASE WHEN business_date IS NULL OR business_date > CURRENT_DATE() THEN 1 ELSE 0 END) = 0 THEN 'PASS' ELSE 'FAIL' END
 FROM motoshop.silver.fact_inventario;
 
-# COMMAND ----------
+-- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## Resumen V1 + V2
+-- MAGIC ## Conteos por tabla
 
-# COMMAND ----------
+-- COMMAND ----------
 
--- Conteos por tabla
 SELECT 'fact_ventas' AS tabla, COUNT(*) AS rows_silver FROM motoshop.silver.fact_ventas
 UNION ALL SELECT 'fact_ventas_detalle', COUNT(*) FROM motoshop.silver.fact_ventas_detalle
 UNION ALL SELECT 'fact_compras', COUNT(*) FROM motoshop.silver.fact_compras

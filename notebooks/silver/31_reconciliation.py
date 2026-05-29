@@ -1,17 +1,15 @@
-# Databricks notebook source
-# MAGIC %md
-# MAGIC # 31 · Reconciliation — Silver vs Bronze (proxy sgHermes)
-# MAGIC
-# MAGIC V3: Compara totales de silver con bronze. Tolerancia: < 0.5%.
+-- Databricks notebook source
+-- MAGIC %md
+-- MAGIC # 31 · Reconciliation — Silver vs Bronze (proxy sgHermes)
+-- MAGIC
+-- MAGIC V3: Compara totales de silver con bronze. Tolerancia: < 0.5%.
 
-# COMMAND ----------
+-- COMMAND ----------
 
 -- MAGIC %md
 -- MAGIC ## 1 · Reconciliación fact_ventas (mes pasado)
 
-# COMMAND ----------
--- MAGIC %sql
-
+-- COMMAND ----------
 
 WITH params AS (
   SELECT
@@ -50,14 +48,12 @@ SELECT
   END AS status
 FROM bronze_ventas b, silver_ventas s;
 
-# COMMAND ----------
+-- COMMAND ----------
 
 -- MAGIC %md
 -- MAGIC ## 2 · Reconciliación fact_compras (mes pasado)
 
-# COMMAND ----------
--- MAGIC %sql
-
+-- COMMAND ----------
 
 WITH params AS (
   SELECT
@@ -96,14 +92,12 @@ SELECT
   END AS status
 FROM bronze_compras b, silver_compras s;
 
-# COMMAND ----------
+-- COMMAND ----------
 
 -- MAGIC %md
 -- MAGIC ## 3 · Top 10 SKUs por ventas (mes pasado)
 
-# COMMAND ----------
--- MAGIC %sql
-
+-- COMMAND ----------
 
 WITH params AS (
   SELECT
@@ -120,14 +114,12 @@ GROUP BY d.cod_producto
 ORDER BY total_ventas DESC
 LIMIT 10;
 
-# COMMAND ----------
+-- COMMAND ----------
 
 -- MAGIC %md
 -- MAGIC ## 4 · Conteos generales
 
-# COMMAND ----------
--- MAGIC %sql
-
+-- COMMAND ----------
 
 SELECT
   'bronze_facventas' AS tabla, COUNT(*) AS rows FROM motoshop.bronze.facventas WHERE estfven = 'A'

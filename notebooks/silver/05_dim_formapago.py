@@ -1,10 +1,8 @@
-# Databricks notebook source
-# MAGIC %md
-# MAGIC # 05 · dim_formapago — SCD Type 1 desde bronze.formapago
+-- Databricks notebook source
+-- MAGIC %md
+-- MAGIC # 05 · dim_formapago — SCD Type 1 desde bronze.formapago
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 CREATE OR REPLACE TABLE motoshop.silver.dim_formapago AS
 SELECT
@@ -24,9 +22,7 @@ SELECT
 FROM motoshop.bronze.formapago
 WHERE codpag IS NOT NULL;
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 SELECT
   COUNT(*) AS total,
@@ -34,8 +30,6 @@ SELECT
   COUNT(*) - COUNT(DISTINCT cod_formapago) AS duplicados
 FROM motoshop.silver.dim_formapago;
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 SELECT COUNT(*) AS dim_formapago_rows FROM motoshop.silver.dim_formapago;

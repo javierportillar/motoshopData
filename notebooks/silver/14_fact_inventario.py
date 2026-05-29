@@ -1,12 +1,10 @@
-# Databricks notebook source
-# MAGIC %md
-# MAGIC # 14 · fact_inventario — desde bronze.auxinventario
-# MAGIC
-# MAGIC `business_date` de `docfec`. `valor3` = cantidad.
+-- Databricks notebook source
+-- MAGIC %md
+-- MAGIC # 14 · fact_inventario — desde bronze.auxinventario
+-- MAGIC
+-- MAGIC `business_date` de `docfec`. `valor3` = cantidad.
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 CREATE OR REPLACE TABLE motoshop.silver.fact_inventario AS
 SELECT
@@ -43,14 +41,10 @@ WHERE docfec IS NOT NULL
   AND CAST(docfec AS DATE) >= DATE '2020-01-01'
   AND CAST(docfec AS DATE) <= CURRENT_DATE();
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 SELECT COUNT(*) AS fact_inventario_rows FROM motoshop.silver.fact_inventario;
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 SELECT * FROM motoshop.silver.fact_inventario LIMIT 10;

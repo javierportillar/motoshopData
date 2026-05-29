@@ -1,12 +1,10 @@
-# Databricks notebook source
-# MAGIC %md
-# MAGIC # 03 · dim_tercero — SCD Type 1 desde bronze.terceros
-# MAGIC
-# MAGIC PII: SHA2 del nombre para datasets compartidos (Habeas Data Col).
+-- Databricks notebook source
+-- MAGIC %md
+-- MAGIC # 03 · dim_tercero — SCD Type 1 desde bronze.terceros
+-- MAGIC
+-- MAGIC PII: SHA2 del nombre para datasets compartidos (Habeas Data Col).
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 CREATE OR REPLACE TABLE motoshop.silver.dim_tercero AS
 SELECT
@@ -37,9 +35,7 @@ SELECT
 FROM motoshop.bronze.terceros
 WHERE nitter IS NOT NULL;
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 SELECT
   COUNT(*) AS total,
@@ -47,8 +43,6 @@ SELECT
   COUNT(*) - COUNT(DISTINCT nit_tercero) AS duplicados
 FROM motoshop.silver.dim_tercero;
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 SELECT COUNT(*) AS dim_tercero_rows FROM motoshop.silver.dim_tercero;

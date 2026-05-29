@@ -1,12 +1,10 @@
-# Databricks notebook source
-# MAGIC %md
-# MAGIC # 12 · fact_compras — desde bronze.compras
-# MAGIC
-# MAGIC `business_date` de `feccom`. Solo activos (`estcom = 'A'`).
+-- Databricks notebook source
+-- MAGIC %md
+-- MAGIC # 12 · fact_compras — desde bronze.compras
+-- MAGIC
+-- MAGIC `business_date` de `feccom`. Solo activos (`estcom = 'A'`).
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 CREATE OR REPLACE TABLE motoshop.silver.fact_compras AS
 SELECT
@@ -39,15 +37,11 @@ WHERE estcom = 'A'
   AND CAST(feccom AS DATE) >= DATE '2020-01-01'
   AND CAST(feccom AS DATE) <= CURRENT_DATE();
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 SELECT COUNT(*) AS fact_compras_rows FROM motoshop.silver.fact_compras;
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 SELECT
   COUNT(*) AS total,
@@ -55,8 +49,6 @@ SELECT
   COUNT(*) - COUNT(DISTINCT STRUCT(num_documento, cod_clase, business_date)) AS duplicados
 FROM motoshop.silver.fact_compras;
 
-# COMMAND ----------
-
--- MAGIC %sql
+-- COMMAND ----------
 
 SELECT * FROM motoshop.silver.fact_compras LIMIT 10;
