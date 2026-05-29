@@ -1,9 +1,10 @@
 # ADR-0014 · Stack técnico de Fase 2 (DT-F2-1 a DT-F2-16)
 
-- **Estado:** **Proposed** — bloquea inicio de Sprint F2-A
+- **Estado:** **Accepted** — 2026-05-29 (humano aprobó las 16 DT en bloque tras discutir DT-F2-1)
 - **Fecha:** 2026-05-29
 - **Bloquea:** F2 (los 3 sprints)
 - **Decide:** Humano
+- **Nota DT-F2-1:** humano preguntó por patrón alternativo de "tabla rotativa con cierres mensuales". Tras explicar que silver es registros únicos por business_date (no snapshots), que crece ~50 MB en 5 años, y que el comportamiento de "hoy + cierres" se logra con una vista sobre silver sin perder F4 forecasting, aceptó opción B sin ajustes. Patrón documentado para futuro: `CREATE VIEW silver.v_ventas_recientes_y_cierres` con `business_date = current_date() OR last_day_of_month`.
 
 ## Contexto
 

@@ -60,7 +60,7 @@ F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
 | D10 | 2026-05-28 | Compute Databricks: extracción local + UC Volume + Serverless SQL (Opción A) | Migrar a plan con clusters (B); reemplazar Databricks por DuckDB (C) | Free Edition no tiene clusters; el camino crítico no depende de drivers JDBC en Databricks. ADR: [0010](docs/decisions/0010-compute-databricks-free.md) |
 | D11 | 2026-05-28 | Stack F1 (DT-1 a DT-10): SQLAlchemy core, pyjwt+bcrypt, slowapi, users.yaml, offset+limit, INSERT REPLACE WHERE, manifest al Volume, structlog, repos+integration mark, bronze raw → silver UTC → API UTC | mysql-connector directo (DT-1), python-jose (DT-2), Redis (DT-3), SQLite (DT-4), keyset (DT-5), CREATE OR REPLACE (DT-6), tabla _meta_runs (DT-7), loguru (DT-8), solo unit (DT-9), bronze TZ-aware (DT-10) | Equilibrio entre velocidad de F1 y portabilidad a F2+. Aprobado en bloque sin ajustes. ADR: [0011](docs/decisions/0011-stack-f1.md) |
 | D12 | 2026-05-29 | `ingest_date` (técnica) en bronze + `business_date` derivada en silver (Opción C) | A · status quo (no recomendado, deuda silenciosa); B · bronze con doble fecha (gran refactor) | Bronze permanece inmutable (ADR-0001), Silver concentra lógica del negocio, cero re-trabajo de datos ya ingestados, maneja data sucia (`fecfven > 2099`) con expectations. ADR: [0013](docs/decisions/0013-fecha-tecnica-vs-negocio.md). Aprobado en bloque sin ajustes. |
-| D13 | _pendiente_ | Stack F2 (DT-F2-1..16): INSERT REPLACE WHERE business_date, SCD1, PySpark assert, partición por business_date, naming fact_/dim_, chispa, Next.js (ya), httpOnly cookies, fetch+lock, Zustand+SWR, Tailwind raw, next-pwa+Workbox, idb-keyval, Stock NetworkOnly + Catálogo SWR, TTL+manual | MERGE INTO (DT-F2-1), SCD2 (DT-F2-2), DLT (DT-F2-3), axios (DT-F2-9), Redux (DT-F2-10), shadcn (DT-F2-11), SW manual (DT-F2-12), Dexie (DT-F2-14) | Coherente con Free Edition + arquitectura medallion. Bundle PWA liviano (< 200KB JS inicial). 16 decisiones en bloque. ADR: [0014](docs/decisions/0014-stack-f2.md) **Proposed** |
+| D13 | 2026-05-29 | Stack F2 (DT-F2-1..16): INSERT REPLACE WHERE business_date, SCD1, PySpark assert, partición por business_date, naming fact_/dim_, chispa, Next.js (ya), httpOnly cookies, fetch+lock, Zustand+SWR, Tailwind raw, next-pwa+Workbox, idb-keyval, Stock NetworkOnly + Catálogo SWR, TTL+manual | MERGE INTO (DT-F2-1), SCD2 (DT-F2-2), DLT (DT-F2-3), axios (DT-F2-9), Redux (DT-F2-10), shadcn (DT-F2-11), SW manual (DT-F2-12), Dexie (DT-F2-14) | Coherente con Free Edition + arquitectura medallion. Bundle PWA liviano (< 200KB JS inicial). 16 decisiones en bloque. Aprobado tras discutir patrón alternativo rotativo en DT-F2-1; tabla rotativa "hoy + cierres" se resuelve con vista sobre silver sin perder F4. ADR: [0014](docs/decisions/0014-stack-f2.md). |
 
 ---
 
@@ -646,6 +646,19 @@ _(rellenar al cerrar la fase)_
 ## Notas de sesión
 
 > Bitácora cronológica. Cada sesión de trabajo deja una entrada con: qué se hizo, qué se aprendió, qué quedó abierto.
+
+### 2026-05-29 — Sesión 26 · ADR-0014 aprobado · 2 ejecutores listos
+
+- **Hecho:**
+  - 💬 Discusión sobre DT-F2-1: humano propuso patrón "tabla rotativa con cierres mensuales". Revisor explicó que silver es registros únicos por business_date (no snapshots), ~50 MB en 5 años, y que el comportamiento deseado se obtiene con vista sobre silver sin perder F4. Humano aceptó opción B sin ajustes.
+  - ✅ Humano aprobó las 16 DT del ADR-0014 en bloque + modo paralelo (ambos ejecutores en su Mac).
+  - ✅ ADR-0014 marcado `Accepted · 2026-05-29` con nota sobre la discusión DT-F2-1.
+  - ✅ D13 a fecha en bitácora.
+  - ✅ PENDIENTES sesión 23 cerrada como histórico.
+- **Veredicto:** **GO al arranque de Sprints F2-A y F2-B en paralelo.** Ambos ejecutores desde el Mac del humano.
+- **Próximo paso:** humano abre 2 sesiones Claude — una para Dev A (Track A · Silver) y otra para Dev T (Track T · PWA). Cada uno arranca su sprint siguiendo [`docs/plan-f2.md`](docs/plan-f2.md) §4 y §5 respectivamente.
+
+---
 
 ### 2026-05-29 — Sesión 25 · F2 paralelizable (Track A || Track T)
 

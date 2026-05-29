@@ -8,7 +8,15 @@
 
 ---
 
-## Sesión 2026-05-29 (23) · Plan F2 detallado + ADR-0014 esperando aprobación
+## Sesión 2026-05-29 (23) · Plan F2 + ADR-0014 — ✅ CERRADA
+
+✅ Humano aprobó las 16 DT en bloque + modo paralelo (2 agentes en su Mac). Discusión sobre DT-F2-1 cerrada con vista para "hoy + cierres" sin perder F4. ADR-0014 Accepted · 2026-05-29.
+
+**Próximo paso:** Dev A y Dev T pueden arrancar Sprint F2-A y F2-B en paralelo siguiendo [`docs/plan-f2.md`](docs/plan-f2.md).
+
+---
+
+## ~~Sesión 2026-05-29 (23) · Plan F2 detallado + ADR-0014 esperando aprobación~~ *(histórico)*
 
 ### Resumen
 F1.9 cerrada definitivamente. Revisor escribió plan F2 completo (3 sprints, ~18-22 h ejecutor, 12 días naturales) + ADR-0014 con 16 decisiones técnicas (DT-F2-1..16) para Silver y PWA.
