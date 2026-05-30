@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: motoshop-cloud-api
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -e .
+    startCommand: uvicorn motoshop_api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DATABRICKS_HOST
+        sync: false
+      - key: DATABRICKS_TOKEN
+        sync: false
+      - key: DATABRICKS_HTTP_PATH
+        value: /sql/1.0/warehouses/43bc044eaef4cca4
+      - key: JWT_SECRET
+        sync: false
+      - key: CORS_ORIGINS
+        value: https://motoshop-web-tau.vercel.app,https://app.fragloesja.uk
+      - key: ENV
+        value: dev
+      - key: USERS_FILE_PATH
+        value: users.yaml
