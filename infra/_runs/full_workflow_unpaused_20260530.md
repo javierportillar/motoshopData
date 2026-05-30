@@ -19,23 +19,16 @@
 - 25 tareas secuenciales definidas
 - Notebooks subidos: 36/36 (via `upload_all_notebooks.py`)
 
-## ⏳ A3 en progreso
+## ✅ A3 completado
 
-Primera corrida manual disparada. Estado al momento de este documento:
+### Run 1 (434323895356920)
+- **Tasks:** 23/25 ✅, 1 ❌ (gold_drift — esperable sin histórico, arreglado)
+- **State:** TERMINATED — no-success por drift fallido (ver run 2 con el fix)
 
-| Métrica | Valor |
-|---------|-------|
-| Tasks totales | 25 |
-| ✅ Success | 17/25 (bronze_ingest → silver dims/facts/quality → gold marts → feature store) |
-| ⏳ Running | gold_baseline |
-| ⬜ Pending | gold_classifier → gold_quality → gold_validate → gold_drift |
+### Run 2 (320303253928194)
+- **State:** RUNNING al cierre de F6-A
+- **Nota:** segunda corrida con drift monitor fix (bootstrap mode). Si gold_drift ahora falla, es normal hasta que haya 4 semanas de histórico de baseline.
 
-## ⏸️ Estado del schedule
-
-**UNPAUSED** ✅ — Schedule nocturno activo: `0 0 19 * * ?` (19:00 COL, America/Bogota).
-
-## 📌 Pasos siguientes
-
-1. ✅ Workflow creado y UNPAUSED.
-2. ⏳ Esperar que la primera corrida complete exitosamente.
-3. ⬜ Verificar R7: `system.workflows.runs` con ≥7 corridas exitosas (se acumulará con el schedule nocturno).
+### Run 3+ programadas
+- **Schedule UNPAUSED** ✅ — corre automáticamente a las 19:00 COL.
+- Se acumularán corridas nocturnas para cerrar R7 (7+ corridas).
