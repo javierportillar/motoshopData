@@ -625,6 +625,17 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ## Notas de sesión
 
+### 2026-05-30 — Sesión 56 · Dev T2 · F7-C Paso 1 · Home por rol
+
+> 🟢 [F7-C-T2] Paso 1 terminado · home vendedor + gerente con diseño F7-B · commit: `97501cb` · siguiente paso: migrar /ventas + fix tendencia real · sin bloqueo
+
+- **Hecho:** Home page (`/`) completamente reemplazado. Antes: redirect server-side a `/dashboards`. Ahora: `app/(authenticated)/page.tsx` (cliente, 389 líneas) con dos layouts completos:
+  - **Gerente:** Logo + 4 KPI `Stat` cards (ventas mes, facturas, ticket promedio, valor inventario) → gráfico tendencia mensual real via `useSalesTrend(6)` usando `SalesTrendChart` existente → 5 cards de decisiones de compra linkeando a sub-dashboards (ventas, alertas, ABC, forecast, dormidos). Skeleton loading state con 13 bloques animados.
+  - **Vendedor:** Logo compacto + `SearchBar` con autofocus y botón Buscar → 4 cards rápidas en grid 2-col: alertas activas (Badge error + count), dormidos (Badge warning + count), mis acciones, rotación A top. Las cards de alertas/dormidos usan `Card variant="dark"` para destacar.
+  - Hook `useSalesTrend(periods)` agregado a `lib/api/hooks.ts` (19 líneas, tipos SalesTrendItem/SalesTrendResponse).
+- **Aprendido:** Next.js v14 App Router con route groups: `(authenticated)/page.tsx` resuelve a `/` siempre que no haya otro `page.tsx` en la raíz. Al eliminar el redirect viejo, el layout `(authenticated)/layout.tsx` (Header + NavBar) envuelve automáticamente la home. El hook `useMetrics<T>` genérico (ya existente) acepta cualquier response model — solo tuve que definir tipos y la URL parametrizada `sales-trend?periods=N`.
+- **Próximo paso:** Paso 2 — migrar `/dashboards/ventas` con fix del bug semántico "tendencia" (mostrar tendencia real mensual, no top SKUs disfrazado). Requiere el endpoint `sales-trend` (ya existe) y el formatter `formatMoney` (ya arreglado). Sin bloqueo.
+
 ### 2026-05-30 — Sesión 55 · Dev T1 · F7-B COMPLETO ⭐ SPRINT CERRADO
 
 > 🟢 [F7-B-T1] F7-B COMPLETO · design system listo · commit: `c32f47b` · sprint cerrado · ACCIÓN HUMANO: avisar Revisor para audit F7-B
