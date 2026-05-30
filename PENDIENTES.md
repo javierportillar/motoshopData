@@ -8,6 +8,142 @@
 
 ---
 
+## Sesión 2026-05-30 (47) · Diagnosis /alerts y /forecast pre-demo
+
+**Estado:** Runtime Windows y Dev T Vercel cerraron lo suyo:
+- ✅ API arriba (`/health` 200, `/auth/login` 200 con JWT válido, env=dev)
+- ✅ PWA en Vercel (`motoshop-web-tau.vercel.app`) + custom domain (`app.fragloesja.uk` resolviendo, A record 76.76.21.21 ya configurado por humano)
+- ✅ Workflow Databricks UNPAUSED, notebooks subidos
+- ✅ CORS Vercel agregado en API
+- 🟢 F6-001 partition documentado honestamente como "no aplicable MySQL 5.0, diferido F7" — decisión técnica correcta
+
+**🔴 Bloqueante crítico para demo 4G (detectado en audit revisor Sesión 47):**
+
+```
+GET /alerts/stockout    → 500 Internal Server Error
+GET /forecast/health    → 500 Internal Server Error
+```
+
+Tanto `/alerts/*` como `/forecast/*` dependen del Databricks SDK + SQL Warehouse. El smoke test de Dev T ya detectó el 500 honestamente. Causas probables:
+- (a) SQL Warehouse Databricks paused (auto-stop 10 min) y warm-up tarda más que el timeout
+- (b) `DATABRICKS_TOKEN` en `.env` de Windows expirado
+- (c) Tabla `gold.alertas_quiebre` o `gold.forecast_demanda_sku` no accesible
+
+Sin estos endpoints arriba, la demo 4G pierde el punto académico más fuerte (cierre del loop predicción → acción) — las páginas /alerts y /forecast van a mostrar error.
+
+### 🖥️ Handoff · Runtime Dev · Diagnosis Databricks endpoints (~10 min)
+
+Pegá esto en un chat Claude Code corriendo en la PC Windows:
+
+```
+Soy Runtime Dev · Windows del proyecto MotoShop.
+Mi misión es diagnosticar por qué /alerts/stockout y
+/forecast/* devuelven 500.
+
+PRE-FLIGHT:
+1. cd C:\Users\MotoShop\Documents\javidevmoto
+2. git pull --ff-only origin main
+3. Verificar API responde local:
+   curl http://127.0.0.1:8000/health → 200
+
+PASO 1 · Diagnóstico API logs (~3 min)
+Mirar los logs de uvicorn para identificar la causa raíz:
+   Get-Content -Path infra\logs\api.log -Tail 50
+Buscar el stacktrace de las requests /alerts/stockout y
+/forecast/health. Identificar cuál de las 3 causas es:
+  (a) DatabricksError de auth → token expirado
+  (b) Timeout HTTPError → warehouse paused (auto-stop 10 min)
+  (c) Table not found / permission denied → permisos o naming
+
+Si no hay logs útiles en api.log, reiniciar la API y reproducir:
+1. Stop la instancia actual
+2. Start con: $env:LOG_LEVEL="DEBUG"; .\infra\start_api.ps1
+3. Esperar 30s
+4. curl https://api.fragloesja.uk/alerts/stockout → 500
+5. Get-Content -Path infra\logs\api.log -Tail 30
+
+PASO 2 · Verificar SQL Warehouse activo (~3 min)
+1. Abrir Databricks UI → SQL Warehouses
+2. Verificar warehouse 43bc044eaef4cca4 está "Running" o "Starting"
+3. Si está "Stopped", arrancarlo manualmente (botón Start)
+4. Esperar 60-90s a que termine warm-up (state = Running)
+5. Re-probar desde Windows local:
+   $resp = Invoke-RestMethod -Uri "http://127.0.0.1:8000/auth/login" `
+     -Method POST -ContentType "application/json" `
+     -Body '{"username":"admin","password":"FG28"}'
+   $token = $resp.access_token
+   curl http://127.0.0.1:8000/alerts/stockout -H "Authorization: Bearer $token"
+6. Si responde 200 con warehouse warm → la causa era (a) o (b).
+   Documentar tiempo de warm-up.
+
+PASO 3 · Verificar token Databricks (~2 min)
+1. cat motoshop-app\api\.env | findstr DATABRICKS
+2. Verificar que DATABRICKS_TOKEN no esté vacío ni truncado
+3. Si está sospechoso:
+   - Generar nuevo PAT en Databricks UI:
+     User Settings → Developer → Access Tokens → Generate
+   - Lifetime: 90 días
+   - Comment: "motoshop-api-prod"
+   - Actualizar .env con el nuevo token
+   - Reiniciar API (.\infra\start_api.ps1)
+
+PASO 4 · Verificar acceso a tablas gold (~2 min)
+En Databricks SQL Editor:
+   SELECT COUNT(*) FROM motoshop.gold.alertas_quiebre;
+   SELECT COUNT(*) FROM motoshop.gold.forecast_demanda_sku;
+Esperar:
+   - alertas_quiebre: ~46 filas (segun F4-FIX1)
+   - forecast_demanda_sku: ~4,436 filas
+Si una tabla devuelve 0 o error: el job nocturno no corrió o falla
+de permisos. Re-correr manualmente motoshop_full_workflow.
+
+PASO 5 · Smoke test final end-to-end (~2 min)
+1. Probar /forecast desde Windows local:
+   curl http://127.0.0.1:8000/forecast/MOTS1297 -H "Authorization: Bearer $token"
+   → debe devolver 200 con forecast
+2. Repetir desde túnel:
+   curl https://api.fragloesja.uk/alerts/stockout -H "Authorization: Bearer $token"
+   curl https://api.fragloesja.uk/forecast/MOTS1297 -H "Authorization: Bearer $token"
+   → ambos deben devolver 200
+
+PASO 6 · Documentar (~3 min)
+Crear infra/logs/diagnosis_alerts_forecast_<ts>.md con:
+- Causa raíz identificada (a/b/c)
+- Tiempo de warm-up del SQL Warehouse (si aplica)
+- Cambios aplicados (token rotation, warehouse start, etc.)
+- Output del smoke test final (200 OK con datos)
+- Recomendación: ¿el warehouse paused es una deuda para F7?
+  (auto-stop 10 min es agresivo para una PWA de operador
+   que la usa cuando entra un cliente — tal vez 1h sería mejor)
+
+Commit con prefijo: fix(F6-windows-diagnosis): ...
+
+NO TOCO:
+- Código fuente (eso es Dev A si hay bug)
+- users.yaml (R15 diferida)
+- Tablas sgHermes
+- Vercel / DNS Cloudflare
+
+ENTREGABLE FINAL EN CHAT:
+1. Causa raíz (a/b/c)
+2. Status final: /alerts/stockout y /forecast responden 200 desde túnel?
+3. Tiempo warm-up del warehouse si era (b)
+4. Si hay deuda residual (ej. SQL Warehouse auto-stop muy corto)
+```
+
+### Próximo paso del revisor (cuando termine)
+
+Cuando Runtime Dev confirme que `https://api.fragloesja.uk/alerts/stockout` con Bearer responde **200 con datos**:
+
+1. Yo verifico con mi propia probe
+2. Vos arrancás demo 4G (R6) desde celular en `https://app.fragloesja.uk`
+3. Agendás demo gerencia (R8)
+4. Me avisás → arranco E5 memoria final + audit cierre del proyecto
+
+Si la causa era (a) o (b) warehouse paused, agregamos como **R17 nuevo**: SQL Warehouse auto-stop 10 min es muy agresivo para uso interactivo desde PWA. Trigger: F7+ cuando MotoShop tenga uso real continuo, subir a 1h o pasar a serverless siempre-on.
+
+---
+
 ## Sesión 2026-05-30 (46) · F6 completado · 🟢 demo 4G desbloqueada
 
 **Estado:** ✅ Runtime Windows completado. ✅ PWA deployada a Vercel (Dev T). Pendiente humano: agregar A record en Cloudflare DNS para `app.fragloesja.uk`.
