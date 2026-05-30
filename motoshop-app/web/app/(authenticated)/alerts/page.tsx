@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Card } from "@/lib/ui/Card";
 import { useAlerts } from "@/lib/api/hooks";
+import { StaleDataBanner } from "@/components/StaleDataBanner";
 import { registerPushSubscription } from "@/lib/push/setup";
 import Link from "next/link";
 
@@ -76,6 +77,8 @@ export default function AlertsPage(): JSX.Element {
               : "Activar push"}
         </button>
       </div>
+
+      <StaleDataBanner />
 
       {/* Filtros de urgencia */}
       <div className="flex gap-2">

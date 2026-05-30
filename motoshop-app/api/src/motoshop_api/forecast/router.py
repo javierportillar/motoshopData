@@ -1,7 +1,7 @@
 """Router de predicciones de demanda: GET /forecast/{sku}
 
-Cache server-side de 5 min. Conecta a RealForecastRepo cuando hay credenciales
-Databricks; si no, cae a FakeForecastRepo (datos mock).
+Cache server-side de 5 min. Usa RealForecastRepo (gold.forecast_demanda_sku)
+en prod/dev; FakeForecastRepo solo en tests.
 """
 
 from __future__ import annotations
@@ -60,9 +60,10 @@ def _clear_forecast_cache():
 
 
 def get_repo() -> ForecastRepoProtocol:
-    if settings.databricks_http_path:
+    """Inyección de dependencias: RealForecastRepo en prod/dev, Fake solo en tests."""
+    if settings.env != "test":
         w = _get_workspace()
-        wh_id = settings.databricks_http_path.split("/")[-1]
+        wh_id = settings.databricks_http_path.split("/")[-1] if settings.databricks_http_path else ""
         return RealForecastRepo(w, wh_id)
     return FakeForecastRepo()
 

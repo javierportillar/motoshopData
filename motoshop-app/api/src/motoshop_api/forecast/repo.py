@@ -181,8 +181,16 @@ def get_forecast_repo(workspace_client=None, warehouse_id=None) -> ForecastRepoP
     """Devuelve el repo adecuado según configuración.
 
     Si se pasa workspace_client + warehouse_id, usa RealForecastRepo.
-    Si no, cae a FakeForecastRepo (datos mock).
+    Si no, usa env: RealForecastRepo en prod/dev, FakeForecastRepo en test.
     """
     if workspace_client is not None and warehouse_id:
         return RealForecastRepo(workspace_client, warehouse_id)
+    from motoshop_api.config import settings
+
+    if settings.env != "test":
+        from databricks.sdk import WorkspaceClient
+
+        w = WorkspaceClient(host=settings.databricks_host, token=settings.databricks_token)
+        wh_id = settings.databricks_http_path.split("/")[-1] if settings.databricks_http_path else ""
+        return RealForecastRepo(w, wh_id)
     return FakeForecastRepo()

@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { Card } from "@/lib/ui/Card";
 import { useForecast } from "@/lib/api/hooks";
+import { StaleDataBanner } from "@/components/StaleDataBanner";
 import Link from "next/link";
 import {
   LineChart,
@@ -78,6 +79,8 @@ export default function ForecastPage(): JSX.Element {
       <p className="text-sm text-gray-500">
         Demanda estimada por SKU — Prophet / LightGBM
       </p>
+
+      <StaleDataBanner />
 
       {/* Buscador de SKU */}
       <div className="relative">

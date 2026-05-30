@@ -60,9 +60,10 @@ def _clear_alerts_cache():
 
 
 def get_repo() -> AlertsRepoProtocol:
-    if settings.databricks_http_path:
+    """Inyección de dependencias: RealAlertsRepo en prod/dev, Fake solo en tests."""
+    if settings.env != "test":
         w = _get_workspace()
-        wh_id = settings.databricks_http_path.split("/")[-1]
+        wh_id = settings.databricks_http_path.split("/")[-1] if settings.databricks_http_path else ""
         return RealAlertsRepo(w, wh_id)
     return FakeAlertsRepo()
 

@@ -135,7 +135,19 @@ class RealAlertsRepo:
 # ── Factory ────────────────────────────────────────────────────────────────
 
 def get_alerts_repo(workspace_client=None, warehouse_id=None) -> AlertsRepoProtocol:
-    """Devuelve el repo adecuado según configuración."""
+    """Devuelve el repo adecuado según configuración.
+
+    Si se pasa workspace_client + warehouse_id, usa RealAlertsRepo.
+    Si no, usa env: RealAlertsRepo en prod/dev, FakeAlertsRepo en test.
+    """
     if workspace_client is not None and warehouse_id:
         return RealAlertsRepo(workspace_client, warehouse_id)
+    from motoshop_api.config import settings
+
+    if settings.env != "test":
+        from databricks.sdk import WorkspaceClient
+
+        w = WorkspaceClient(host=settings.databricks_host, token=settings.databricks_token)
+        wh_id = settings.databricks_http_path.split("/")[-1] if settings.databricks_http_path else ""
+        return RealAlertsRepo(w, wh_id)
     return FakeAlertsRepo()
