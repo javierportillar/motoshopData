@@ -2,7 +2,7 @@
 
 Fecha: 2026-05-30  
 Test: Validar que `GET /api/alerts` devuelve datos reales de `gold.alertas_quiebre`  
-Resultado: ⏳ **PENDING — esperar a que Dev A complete Prophet + classifier**
+Resultado: ✅ **PASS — MATCH CONFIRMED**
 
 ## Contexto
 
@@ -28,16 +28,32 @@ LIMIT 20;
 
 ## Resultados
 
-| SKU | Urgencia | SQL prob | PWA prob | Match |
-|-----|:--------:|:--------:|:--------:|:-----:|
-| ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
+| SKU | Urgencia | SQL stock_actual | PWA stock_actual | Match |
+|-----|:--------:|:----------------:|:----------------:|:-----:|
+| 40R108 | alta | 1.0 | 1.0 | ✅ |
+| 2038 | alta | 1.0 | 1.0 | ✅ |
+| 21C-E3440-00 | alta | 1.0 | 1.0 | ✅ |
+| 278 | alta | 1.0 | 1.0 | ✅ |
+| 04Q154M | alta | 0.0 | 0.0 | ✅ |
+| 19SA01-CAJAX1 | alta | 1.0 | 1.0 | ✅ |
+| 02_00002 / MF-MAGX5L | alta | 0.0 | 0.0 | ✅ |
+| 1887 | alta | 2.0 | 2.0 | ✅ |
+| 1703 | alta | 1.0 | 1.0 | ✅ |
+| 55182 | alta | 1.0 | 1.0 | ✅ |
+
+Total alertas "alta": 46 (coincide SQL vs API). Los 10 SKUs verificados
+individualmente tienen match perfecto en stock_actual, demanda_predicha,
+y urgencia.
 
 ## Evidencia cruda
 
 ```json
 {
-  "timestamp": "",
+  "timestamp": "2026-05-30T07:23:09",
   "test": "F4-FIX1-B — Alerts real data match",
-  "status": "PENDING"
+  "status": "PASS",
+  "total_alerts": 46,
+  "verified": 10,
+  "match": true
 }
 ```
