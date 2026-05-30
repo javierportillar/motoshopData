@@ -625,6 +625,17 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ## Notas de sesión
 
+### 2026-05-30 — Sesión 52 · Dev D · F7-E Paso D1 terminado
+
+> 🟢 [F7-E-D] Paso D1 terminado · 4 notebooks snapshot (30/31/32/33) · commit: 57df7d6 · siguiente paso: D2 workflow · ACCION HUMANO: avisar Dev W para upload_all_notebooks.py + esperar antes de D2
+
+- **Hecho:** 4 notebooks snapshot creados para balde B: 30_snapshot_abc_mensual.py (mart_rotacion_abc → gold.mart_rotacion_abc_snapshots), 31_snapshot_dormidos_mensual.py (mart_productos_dormidos → gold.mart_productos_dormidos_snapshots), 32_snapshot_alertas_diario.py (alertas_quiebre → gold.alertas_quiebre_snapshots, diario), 33_archive_forecasts.py (forecast_demanda_sku → gold.forecast_demanda_sku_archive, pre-overwrite). Todos con CREATE TABLE IF NOT EXISTS + INSERT INTO con LEFT ANTI JOIN idempotente.
+- **Aprendido:** El patrón LEFT ANTI JOIN con subquery filtrada por partition key (snapshot_month/snapshot_date) es idempotente en Databricks SQL y evita duplicados sin DELETE previo. Los 4 notebooks siguen el mismo formato SQL que los gold marts existentes. El archive de forecasts usa CURRENT_TIMESTAMP() y no necesita guarda idempotente (cada corrida agrega filas nuevas con timestamp distinto).
+- **Abierto:** Esperar confirmación de Dev W que notebooks están en Workspace antes de D2 (modificar workflow).
+- **Próximo paso:** D2 modificar create_full_workflow.py para agregar 4 tasks snapshot con dependencias correctas (archive ANTES de forecast update, snapshots DESPUÉS de marts originales). NO avanzar sin confirmación humana.
+
+---
+
 ### 2026-05-30 — Sesión 46 · Dev B · F6-B Forecasting categoría
 
 - **Hecho:** Notebook `24_forecast_categoria.py` (baseline sobre serie agregada por `cod_grupo`), script `eval_forecast_categoria.py` (Prophet + WAPE comparativa), ADR-0020, lecciones-aprendidas-f6.md, 17 tests sqlparse. Commit `ef3ae8a`.
