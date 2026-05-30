@@ -17,7 +17,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
-  themeColor: "#881337",
+  themeColor: "#C83828",
 };
 
 export default function RootLayout({
@@ -27,7 +27,7 @@ export default function RootLayout({
 }): JSX.Element {
   return (
     <html lang="es">
-      <body className="min-h-screen bg-gray-50 text-secondary-dark antialiased">
+      <body className="min-h-screen bg-background text-text-primary antialiased">
         <ToastProvider>{children}</ToastProvider>
       </body>
     </html>
