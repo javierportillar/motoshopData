@@ -36,7 +36,7 @@ export interface MyActionItem {
 }
 
 interface MyActionsResponse {
-  actions: MyActionItem[];
+  items: MyActionItem[];
   total: number;
 }
 
@@ -58,16 +58,22 @@ export async function submitAlertAction(
 
 /** GET /api/alerts/actions/me */
 export async function fetchMyActions(
-  date?: string,
+  dateFrom?: string,
+  dateTo?: string,
   offset = 0,
   limit = 20,
 ): Promise<MyActionsResponse> {
   const params = new URLSearchParams();
-  if (date) params.set("date", date);
+  if (dateFrom) params.set("date_from", dateFrom);
+  if (dateTo) params.set("date_to", dateTo);
   params.set("offset", String(offset));
   params.set("limit", String(limit));
 
-  return apiFetchJson<MyActionsResponse>(
+  const resp = await apiFetchJson<MyActionsResponse>(
     `/api/alerts/actions/me?${params.toString()}`,
   );
+  return {
+    items: resp.items,
+    total: resp.total,
+  };
 }

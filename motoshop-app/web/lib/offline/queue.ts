@@ -8,6 +8,9 @@ const STORE_KEY = "pending-actions";
 const MAX_RETRIES = 6;
 const MAX_ITEMS = 100;
 
+/** Backoff exponencial entre reintentos: 1s → 5s → 30s → 5min → 30min → 6h */
+const BACKOFF_DELAYS = [1_000, 5_000, 30_000, 300_000, 1_800_000, 21_600_000] as const;
+
 interface PendingAction {
   idempotency_key: string;
   sku: string;
@@ -15,11 +18,13 @@ interface PendingAction {
   attempt: number;
   created_at: string;
   last_error?: string;
+  /** Timestamp (ms) desde el cual se puede reintentar este item. */
+  next_retry_at: number;
 }
 
 export type { PendingAction };
 
-/** Guarda una acción en la cola offline. */
+/** Guarda una acción en la cola offline con backoff inicial. */
 export async function enqueueAction(
   sku: string,
   body: SubmitActionBody,
@@ -35,6 +40,7 @@ export async function enqueueAction(
     body,
     attempt: 0,
     created_at: new Date().toISOString(),
+    next_retry_at: Date.now() + BACKOFF_DELAYS[0],
   });
   await set(STORE_KEY, queue);
 }
@@ -54,15 +60,22 @@ export async function getQueueCount(): Promise<number> {
   return queue.length;
 }
 
-/** Intenta reenviar todas las acciones pendientes. Retorna cuántas sincronizó. */
+/** Intenta reenviar las acciones cuyo next_retry_at ya pasó. Retorna cuántas sincronizó. */
 export async function flushQueue(): Promise<number> {
   const queue = await getQueue();
   if (queue.length === 0) return 0;
 
+  const now = Date.now();
   const remaining: PendingAction[] = [];
   let synced = 0;
 
   for (const item of queue) {
+    // Saltar items cuyo backoff todavía no expiró
+    if (item.next_retry_at > now) {
+      remaining.push(item);
+      continue;
+    }
+
     try {
       await submitAlertAction(item.sku, item.body, item.idempotency_key);
 
@@ -76,11 +89,14 @@ export async function flushQueue(): Promise<number> {
         continue;
       }
 
-      if (item.attempt < MAX_RETRIES - 1) {
+      const nextAttempt = item.attempt + 1;
+      if (nextAttempt < MAX_RETRIES) {
+        const delayIdx = Math.min(nextAttempt, BACKOFF_DELAYS.length - 1);
         remaining.push({
           ...item,
-          attempt: item.attempt + 1,
+          attempt: nextAttempt,
           last_error: msg,
+          next_retry_at: Date.now() + BACKOFF_DELAYS[delayIdx]!,
         });
       }
       // Si llegó a MAX_RETRIES, se descarta silenciosamente

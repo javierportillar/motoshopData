@@ -20,7 +20,7 @@ async function mockEndpoints(page: Page) {
     route.fulfill({ status: 201, json: { id: 1, sku: "MOTS1297", action_type: "ordered", user_id: "admin", created_at: new Date().toISOString() } }),
   );
   await page.route("**/api/alerts/actions/me*", (route: Route) =>
-    route.fulfill({ json: { actions: [], total: 0 } }),
+    route.fulfill({ json: { items: [], total: 0 } }),
   );
   await page.route("**/api/health/data-freshness", (route: Route) =>
     route.fulfill({ json: { status: "OK", lag_hours: 2, last_manifest: "test.parquet" } }),
@@ -29,7 +29,7 @@ async function mockEndpoints(page: Page) {
 
 async function setAuthRole(page: Page, role: string) {
   await page.evaluate((r: string) => {
-    (window as unknown as Record<string, unknown>).__setAuthRole?.(r);
+    (window as { __setAuthRole?: (role: string) => void }).__setAuthRole?.(r);
   }, role);
 }
 
@@ -121,7 +121,7 @@ test.describe("Alert Action UI", () => {
     await page.route("**/api/alerts/actions/me*", (route: Route) =>
       route.fulfill({
         json: {
-          actions: [
+          items: [
             { id: 1, alert_id: "MOTS1297", sku: "MOTS1297", action_type: "ordered", quantity: 50, created_at: new Date().toISOString() },
           ],
           total: 1,

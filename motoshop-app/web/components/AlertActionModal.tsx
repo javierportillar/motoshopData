@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { submitAlertAction, type SubmitActionBody } from "@/lib/api/alertActions";
+import { enqueueAction } from "@/lib/offline/queue";
 import { useAuthStore } from "@/lib/auth/store";
 
 type Tab = "ordered" | "dismissed" | "postponed";
@@ -94,6 +95,9 @@ export function AlertActionModal({ sku, nomProducto, onClose, onSuccess }: Props
       setResult("success");
       setTimeout(onSuccess, 1500);
     } catch {
+      // Encolar offline para reintentar con backoff exponencial
+      const fallbackKey = crypto.randomUUID();
+      enqueueAction(sku, body, fallbackKey);
       setResult("error");
     } finally {
       setSubmitting(false);
@@ -256,8 +260,8 @@ export function AlertActionModal({ sku, nomProducto, onClose, onSuccess }: Props
 
         {/* Error feedback */}
         {result === "error" && (
-          <p className="mt-3 text-center text-xs text-red-500">
-            Error al guardar. Si seguís sin conexión, la acción queda en cola.
+          <p className="mt-3 text-center text-xs text-amber-600">
+            Error de conexión — la acción quedó en cola para reintentar automáticamente.
           </p>
         )}
       </div>

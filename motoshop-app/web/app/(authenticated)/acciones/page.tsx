@@ -32,9 +32,29 @@ export default function MyActionsPage(): JSX.Element {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const dateParam = period === "today" ? new Date().toISOString().slice(0, 10) : undefined;
-      const resp = await fetchMyActions(dateParam);
-      setActions(resp.actions);
+      const today = new Date().toISOString().slice(0, 10);
+      let dateFrom: string | undefined;
+      let dateTo: string | undefined;
+
+      if (period === "today") {
+        dateFrom = today;
+        dateTo = today;
+      } else if (period === "week") {
+        const monday = new Date();
+        const day = monday.getDay();
+        const diff = day === 0 ? 6 : day - 1; // domingo → −6 → lunes anterior
+        monday.setDate(monday.getDate() - diff);
+        dateFrom = monday.toISOString().slice(0, 10);
+        dateTo = today;
+      } else if (period === "month") {
+        const first = new Date();
+        first.setDate(1);
+        dateFrom = first.toISOString().slice(0, 10);
+        dateTo = today;
+      }
+
+      const resp = await fetchMyActions(dateFrom, dateTo);
+      setActions(resp.items);
       setTotal(resp.total);
     } catch {
       // silent
