@@ -8,6 +8,251 @@
 
 ---
 
+## Sesión 2026-05-30 (46) · F6-A/B entregados · bloqueantes para demo 4G
+
+**Estado:** Dev A y Dev B entregaron sus sprints. Audit revisor PASS con observaciones (R7 acumula en background, F1=1.0 walk-forward documentado como leak, partition pendiente Windows). **Bloqueantes para demo 4G:**
+
+1. **API caída** — `https://api.fragloesja.uk` devuelve HTTP 530 (Cloudflare 1033 = origin unreachable). Probable causa: Windows necesita `git pull` + reiniciar API + sync notebooks tras F6-A.
+2. **PWA no desplegada** — solo existe `/demo` (página HTML simple con login + búsqueda + stock + ventas). La PWA completa con dashboards/alerts/acciones NO se puede usar desde 4G hasta que se deploye.
+
+**Decisiones humanas tomadas (2026-05-30):**
+- Hostear PWA en **Vercel + DNS CNAME en Cloudflare** (opción B). Subdominio: `app.fragloesja.uk`.
+- Dejar `Sashita123`/`FG28`/`users.yaml` como están (R1/R2/R15 aceptadas).
+
+**3 trabajos en paralelo para desbloquear demo:**
+
+---
+
+### 🖥️ Handoff #1 · Runtime Dev · PC Windows (~30 min)
+
+Abrí un chat Claude Code corriendo en la PC Windows (o ejecutalo manual). Pegá esto:
+
+```
+Soy Runtime Dev · Windows del proyecto MotoShop.
+Mi rol es operativo: aplicar cambios pendientes en la PC Windows
+que es el servidor de producción.
+
+PRE-FLIGHT obligatorio:
+1. cd C:\Users\MotoShop\Documents\javidevmoto
+2. git pull --ff-only origin main
+3. Verificar versión MySQL local: mysql --version
+4. Verificar que MotoShop_HealthCheck Scheduled Task esté ACTIVO
+
+MI MISIÓN:
+F6-A dejó cambios en código y una migration SQL que requieren
+aplicarse manualmente en Windows. Adicionalmente, la API
+está caída (Cloudflare 530) — hay que diagnosticar y revivir.
+
+ENTREGABLES (en orden):
+
+PASO 1 · Diagnóstico API caída (~5 min)
+1. Get-Process | Where-Object {$_.Name -match "cloudflared|python|uvicorn"}
+2. Si NO hay procesos, ejecutar:
+   .\infra\start_api.ps1
+   .\infra\start_tunnel.ps1
+3. Esperar 30s. curl http://127.0.0.1:8000/health debe responder 200.
+4. Si responde local pero el túnel no, reiniciar cloudflared.
+5. Verificar https://api.fragloesja.uk/health desde fuera (200 OK).
+
+PASO 2 · Aplicar migration F6-001 (~10 min)
+1. Backup primero: mysqldump motoshop2024 app_audit_log > backup_audit_log_pre_f6.sql
+2. Verificar versión MySQL soporta partitioning:
+   mysql -u root motoshop2024 -e "SHOW PLUGINS;" | findstr partition
+3. Si MySQL es 5.0 exacto: NO soporta partitioning real. Documentar
+   en infra/migrations/_runs/f6_partition_<ts>.md como "no aplicable
+   en MySQL 5.0, deuda diferida a F7".
+4. Si MySQL es 5.1+: aplicar migration:
+   mysql -u root motoshop2024 < infra\migrations\F6-001-app_audit_log_partition.sql
+5. Verificar particiones:
+   mysql -u root motoshop2024 -e "SELECT PARTITION_NAME, TABLE_ROWS FROM information_schema.PARTITIONS WHERE TABLE_NAME='app_audit_log';"
+6. Documentar en infra/migrations/_runs/f6_partition_<ts>.md con
+   output completo.
+
+PASO 3 · Reiniciar API con código nuevo (~5 min)
+1. Después del git pull, reiniciar la API para que tome:
+   - ENV guardrail en main.py lifespan
+   - Cualquier nuevo endpoint
+2. Stop API actual + arrancar de nuevo con start_api.ps1
+3. Verificar logs de startup: el ENV guardrail no debe rechazar
+   el arranque (ENV=dev, host=localhost → OK).
+4. Smoke test:
+   curl https://api.fragloesja.uk/health → 200
+
+PASO 4 · Sync notebooks a Databricks (~5 min)
+1. python infra\upload_all_notebooks.py
+   (sube los notebooks F6-B nuevos: 24_forecast_categoria,
+    25_drift_monitor)
+2. Verificar en UI Databricks que están actualizados.
+
+PASO 5 · Workflow nuevo verificación (~5 min)
+1. Verificar que motoshop_full_workflow (ID 272152121206178) esté
+   UNPAUSED en Databricks UI.
+2. Si la corrida nocturna 19:00 COL no arrancó, dispararla manual
+   para validar end-to-end.
+
+PASO 6 · CORS preparación (si Dev T avisa) (~3 min)
+Si Dev T (Vercel) avisa que el browser tira error CORS desde el
+dominio Vercel, agregar a motoshop-app/api/.env en Windows:
+   CORS_ORIGINS=https://api.fragloesja.uk,https://motoshop-web.vercel.app,https://app.fragloesja.uk,http://localhost:3000
+Reiniciar API.
+
+NO TOCO:
+- users.yaml (R15 diferida)
+- start_api.ps1 / start_tunnel.ps1 (operativos, no modificar)
+- Tablas sgHermes (intocable)
+- Código fuente — solo aplicar cambios ya pusheados
+
+CIERRE:
+Cuando los 5 pasos pasen, commit + push:
+- infra/migrations/_runs/f6_partition_<ts>.md (evidencia)
+- Cualquier evidencia adicional en _runs/
+
+Después actualizar PENDIENTES.md con "✅ Windows F6 aplicado".
+```
+
+---
+
+### 🌐 Handoff #2 · Dev T · Deploy PWA a Vercel (~25 min)
+
+**Arrancá DESPUÉS que Runtime Dev confirme `https://api.fragloesja.uk/health` = 200.**
+
+Abrí un chat Claude Code nuevo en tu Mac y pegá esto:
+
+```
+Soy Dev T · Track T · F6-C-PWA-Deploy del proyecto MotoShop.
+Mi misión es desplegar la PWA Next.js 14 a Vercel y dejarla
+lista para apuntar a app.fragloesja.uk (DNS lo configura el
+humano en Cloudflare).
+
+PRE-FLIGHT obligatorio:
+1. cd /Users/javierportillarosero/Documents/personal/dataEmpresas/motoshopData
+2. git pull --ff-only origin main
+3. Leé INICIAR_AGENTE.md completo (rol = Dev Agent · Track T)
+4. Leé motoshop-app/web/package.json + next.config.mjs
+5. Verificá Vercel CLI instalado: npx vercel --version
+6. NO mocks ni FakeRepos — la PWA tiene que apuntar al API real
+   en https://api.fragloesja.uk
+
+MI MISIÓN:
+Build production + deploy Vercel + configurar dominio custom
+(app.fragloesja.uk). El CNAME en Cloudflare lo agrega el humano
+después que Vercel le diga qué valor poner.
+
+ENTREGABLES (en orden):
+
+PASO 1 · Verificar env var en código (~5 min)
+1. grep -rn "localhost:8000\|api.fragloesja" motoshop-app/web/lib/ motoshop-app/web/app/
+2. Verificar que TODOS los fetches usan process.env.NEXT_PUBLIC_API_URL
+3. Si hay hardcoded, arreglar: process.env.NEXT_PUBLIC_API_URL ?? 'https://api.fragloesja.uk'
+4. Verificar motoshop-app/web/.env.example tenga:
+   NEXT_PUBLIC_API_URL=https://api.fragloesja.uk
+5. npm run build local → debe pasar sin errores
+
+PASO 2 · Deploy inicial Vercel (~10 min)
+1. cd motoshop-app/web
+2. npx vercel login (si no estás)
+3. Primera vez:
+   npx vercel
+   - Project name: motoshop-web
+   - Directory: ./
+   - Override settings? N (Next.js detect auto)
+4. Vercel detecta Next.js, hace build, deploya a un URL .vercel.app
+
+PASO 3 · Env var producción (~3 min)
+1. npx vercel env add NEXT_PUBLIC_API_URL
+   - Value: https://api.fragloesja.uk
+   - Environments: Production, Preview, Development
+2. Deploy producción: npx vercel --prod
+3. Capturar URL producción (ej. motoshop-web.vercel.app)
+
+PASO 4 · Agregar dominio custom en Vercel (~5 min)
+1. npx vercel domains add app.fragloesja.uk
+2. Vercel responde con UN CNAME target (típicamente cname.vercel-dns.com)
+3. Capturar EXACTAMENTE el target que devuelve Vercel — el humano
+   lo necesita para Cloudflare.
+
+PASO 5 · Smoke test en .vercel.app (~5 min)
+1. Abrir la URL .vercel.app en navegador
+2. Login con admin/FG28
+3. /alerts debe cargar
+4. Si CORS bloquea: documentar el dominio exacto que hay que
+   agregar a CORS_ORIGINS. Avisar al Runtime Dev Windows.
+5. Documentar smoke test en motoshop-app/web/_runs/v_vercel_smoke_<ts>.md
+
+PASO 6 · Documentación (~5 min)
+1. motoshop-app/web/_runs/v_vercel_deploy_<ts>.md con:
+   - URL .vercel.app producción
+   - CNAME target a configurar en Cloudflare (paste para el humano)
+   - Env vars configuradas
+   - Resultado smoke test
+   - Si CORS bloqueó (dominio a agregar)
+2. Actualizar README.md y docs/contexto-proyecto.md mencionando
+   que la URL final será app.fragloesja.uk una vez DNS configurado.
+
+Commits con prefijo: feat(F6-C-pwa-deploy): ...
+
+NO TOCO:
+- motoshop-app/api/** (Runtime Dev maneja CORS)
+- infra/** (Runtime Dev)
+- DNS Cloudflare (humano)
+
+ARRANQUE:
+Paso 1 (verificar env var). NO empieces deploy sin que el build
+local pase. Si npm run build falla, arreglar primero.
+
+REPORTE FINAL EN CHAT:
+1. URL .vercel.app producción
+2. CNAME target a poner en Cloudflare (literal)
+3. Si CORS bloqueó (y qué dominio agregar a la API)
+```
+
+---
+
+### 👤 Handoff #3 · Acción humana · Configurar CNAME en Cloudflare (~5 min)
+
+**No se puede delegar al agente — requiere login a dash.cloudflare.com.**
+
+Después que Dev T te reporte el CNAME target:
+
+1. Login a https://dash.cloudflare.com
+2. Seleccioná dominio `fragloesja.uk`
+3. Menú `DNS` → `Records` → `Add record`
+4. Configurá:
+   - **Type:** `CNAME`
+   - **Name:** `app` (queda como `app.fragloesja.uk`)
+   - **Target:** *el valor que dio Vercel* (típicamente `cname.vercel-dns.com`)
+   - **Proxy status:** **DNS only** (nube **gris**, NO naranja). Crítico — Vercel maneja TLS; si dejás proxy ON, no puede verificar.
+   - **TTL:** Auto
+5. Save
+6. Esperar 1-5 min para propagación DNS
+7. En Vercel dashboard, el dominio cambia de "Pending" a "Valid"
+
+Después del DNS configurado:
+
+8. Abrir `https://app.fragloesja.uk` desde celular en 4G real
+9. Si carga la PWA → demo 4G es viable, grabar el video según guion DT-F6-9 (en `docs/plan-f6.md` §3)
+10. Agendar demo gerencia (R8) según DT-F6-10
+
+---
+
+### Orden de ejecución
+
+1. **Runtime Dev (Windows)** primero → API arriba (~30 min)
+2. **Dev T (Vercel)** después → URL .vercel.app + CNAME target (~25 min)
+3. **Humano** → CNAME en Cloudflare + demo 4G + demo gerencia (~15 min DNS + 30 min demo + 1 h gerencia)
+4. **Avisame al revisor** cuando todo arriba → arranco E5 memoria + audit cierre = cierre proyecto
+
+### Audit interno F6 (Sesión 46) — para tu información
+
+| Sprint | Resultado |
+|--------|-----------|
+| F6-A Dev A | 🟢 todo entregado · F1=1.0 walk-forward documentado honestamente como leak (aceptable como deuda) · R7 acumula en background |
+| F6-B Dev B | 🟢 hipótesis VALIDADA: Baseline-Categoría WAPE 34.37% vs Baseline-SKU 45.83% (mejora 11pp). Prophet NO supera baseline (38.59% > 32.52%). ADR-0020 Accepted. |
+
+R4 ✅ (workflow managed), R16 ✅ (ENV guardrail), R7 🟡 acumulando con tiempo. Veredicto F6 final cuando bloqueantes operativos cierren + E5 escrita.
+
+---
+
 ## Sesión 2026-05-30 (45) · F5 ✅ cerrada · F6 abierta — el último sprint
 
 **Estado:** F5 cerrada por auditoría revisor fresco (9 V-F5 PASS + F5-FIX1 interna ejecutada). F6 abierta = **último sprint del proyecto académico**. 2 devs en paralelo + revisor + humano.
