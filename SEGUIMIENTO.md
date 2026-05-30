@@ -625,7 +625,15 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ## Notas de sesión
 
-### 2026-05-30 — Sesión 55 · Dev T1 · F7-B Paso T1-1 terminado
+### 2026-05-30 — Sesión 55 · Dev T1 · F7-B T1-2 terminado
+
+> 🟢 [F7-B-T1] Paso T1-2 terminado · Logo component + logo.png asset + story · commit: 9a428b6 · siguiente paso: T1-3 MVP componentes · sin bloqueo
+
+- **Hecho:** `Logo.tsx` con variantes `Logo` (sm 32px / md 48px / lg 64px, link opcional a `/`) y `LogoMark` (isotipo solo, para espacios reducidos). Logo copiado a `public/logo.png`. Story en `docs/f7/components/Logo.md` con 4 variantes + WCAG 13.62:1 AAA. Build 0 errores.
+- **Aprendido:** El logo está diseñado para fondo negro — el texto blanco "MOTOSHOP" es invisible sobre `surface` blanco. Solución: wrapper `bg-surface-dark` automático en el componente. Deuda documentada: SVG vectorial diferido a F8.
+- **Próximo paso:** T1-3 MVP componentes (Card + Stat + Table + Badge). **PARAR al terminar — libera a Dev T2.**
+
+### 2026-05-30 — Sesión 55 (cont) · Dev T1 · F7-B Paso T1-1 terminado
 
 > 🟢 [F7-B-T1] Paso T1-1 terminado · tokens + tailwind + globals operativos · commit: 2fa055e · siguiente paso: T1-2 Logo component · sin bloqueo, puedo continuar
 
