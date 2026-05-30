@@ -625,6 +625,23 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ## Notas de sesión
 
+### 2026-05-30 — Sesión 55 · Dev T1 · F7-B COMPLETO ⭐ SPRINT CERRADO
+
+> 🟢 [F7-B-T1] F7-B COMPLETO · design system listo · commit: `c32f47b` · sprint cerrado · ACCIÓN HUMANO: avisar Revisor para audit F7-B
+
+- **Hecho:** Design system MotoShop completo en 6 pasos:
+  - **T1-1:** `tokens.ts` (286 líneas, tipos estrictos) + `globals.css` @theme paleta real + `layout.tsx` themeColor `#C83828`. Adaptado a Tailwind v4.
+  - **T1-2:** `Logo.tsx` (sm/md/lg + link + LogoMark) + `logo.png` en public/.
+  - **T1-3:** MVP componentes: `Card` (3 variantes), `Stat` (KPI + delta), `Table` (genérica `<T>`), `Badge` (5 variantes + compuestos StockBadge/DeltaBadge/AlertBadge).
+  - **T1-4:** Secundarios con estética industrial: `Chart` (wrapper recharts dark, tooltip diagnóstico), `Skeleton` (shimmer metálico cromado), `ErrorState` (hazard stripes + pulso), `EmptyState` (gradiente atmosférico dual).
+  - **T1-5:** `Navigation` adaptable (bottom nav mobile ≤5 items + sidebar desktop fijo con logo/logout). Icons SVG inline. Helpers `gerenteNavItems()` / `vendedorNavItems()`.
+  - **T1-6:** Cierre — build 0 errores (typecheck pre-existente: `vitest` types en `currency.test.ts`). 9 componentes en `components/ui/` + `Logo` + `tokens.ts` + `globals.css`. Total: ~2,400 líneas nuevas en 14 archivos.
+- **Aprendido:**
+  - Tailwind v4 usa `@theme` CSS-first, no `tailwind.config.ts`. El plan original asumía v3.
+  - Los componentes legacy en `lib/ui/` (Button, Card, Badge, Skeleton, EmptyState) consumen automáticamente los nuevos tokens vía `@theme` — migración visual inmediata sin tocar JSX.
+  - La separación `error ≠ primary` (#B91C1C vs #C83828) evita confusión UX entre "botón confirmar pedido" y "mensaje de error".
+- **Próximo paso:** Nada para Dev T1. Sprint cerrado. **Revisor audita F7-B.** **Dev T2 ya desbloqueado desde T1-3** — humano puede dispararlo cuando quiera.
+
 ### 2026-05-30 — Sesión 55 · Dev T1 · F7-B T1-3 MVP COMPLETO ⭐ HITO
 
 > 🟢 [F7-B-T1] Paso T1-3 MVP COMPLETO · 4 componentes base + tokens + Logo listos · commit: `5aa9929` · siguiente paso: T1-4 componentes secundarios · 🔓 **LIBERA a Dev T2 — humano puede arrancar T2 AHORA**
