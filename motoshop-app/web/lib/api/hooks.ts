@@ -187,6 +187,25 @@ export function useCohortes() {
   return useMetrics<CohortesResponse>("/api/metrics/cohortes");
 }
 
+interface SalesTrendItem {
+  year: number;
+  month: number;
+  total_ventas: number;
+  num_facturas: number;
+  ticket_promedio: number;
+}
+
+interface SalesTrendResponse {
+  periods: number;
+  items: SalesTrendItem[];
+}
+
+export function useSalesTrend(periods = 6) {
+  return useMetrics<SalesTrendResponse>(
+    `/api/metrics/sales-trend?periods=${periods}`,
+  );
+}
+
 // ── Forecast / Predicciones ────────────────────────────────────────────────
 
 interface ForecastItem {

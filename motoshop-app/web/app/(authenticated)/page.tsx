@@ -1,0 +1,389 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useAuthStore } from "@/lib/auth/store";
+import { useSalesSummary, useInventorySummary, useAlerts, useDormidos, useSalesTrend } from "@/lib/api/hooks";
+import { formatMoney } from "@/lib/format/currency";
+import { Card } from "@/components/ui/Card";
+import { Stat } from "@/components/ui/Stat";
+import { Badge } from "@/components/ui/Badge";
+import { Logo } from "@/components/Logo";
+import { SalesTrendChart } from "@/components/SalesTrendChart";
+import { SearchBar } from "@/components/SearchBar";
+import { StaleDataBanner } from "@/components/StaleDataBanner";
+
+// ── Gerente: skeleton para carga ──────────────────────────────────────────
+
+function SkeletonBlock(): JSX.Element {
+  return (
+    <div className="animate-pulse space-y-3 rounded-xl border border-border bg-surface p-4">
+      <div className="h-3 w-20 rounded bg-surface-alt" />
+      <div className="h-7 w-32 rounded bg-surface-alt" />
+      <div className="h-3 w-24 rounded bg-surface-alt" />
+    </div>
+  );
+}
+
+// ── Gerente: error ────────────────────────────────────────────────────────
+
+function ErrorBlock({ message }: { message: string }): JSX.Element {
+  return (
+    <Card>
+      <p className="py-8 text-center text-sm text-text-muted">{message}</p>
+    </Card>
+  );
+}
+
+// ── Gerente: home completo ────────────────────────────────────────────────
+
+function GerenteHome(): JSX.Element {
+  const sales = useSalesSummary();
+  const inventory = useInventorySummary();
+  const alerts = useAlerts();
+  const dormidos = useDormidos();
+  const trend = useSalesTrend(6);
+
+  const loading =
+    sales.isLoading || inventory.isLoading || alerts.isLoading || dormidos.isLoading || trend.isLoading;
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <Logo size="md" />
+          <div>
+            <h1 className="text-xl font-bold text-text-primary">MotoShop</h1>
+            <p className="text-sm text-text-muted">Panel de gerencia</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {[...Array(4)].map((_, i) => (
+            <SkeletonBlock key={i} />
+          ))}
+        </div>
+        <div className="h-60 animate-pulse rounded-xl bg-surface-alt" />
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+          {[...Array(5)].map((_, i) => (
+            <SkeletonBlock key={i} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const hasData = sales.data && inventory.data;
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <Logo size="md" />
+        <div>
+          <h1 className="text-xl font-bold text-text-primary">MotoShop</h1>
+          <p className="text-sm text-text-muted">
+            {sales.data?.business_month
+              ? `Panel de gerencia — ${sales.data.business_month}`
+              : "Panel de gerencia"}
+          </p>
+        </div>
+      </div>
+
+      <StaleDataBanner />
+
+      {/* KPIs principales */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Card>
+          <Stat
+            label="Ventas del mes"
+            value={sales.data ? formatMoney(sales.data.ventas_mes_actual) : "—"}
+            delta={sales.data?.delta_porcentual ?? null}
+            deltaLabel="vs mes anterior"
+            icon={
+              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="22,12 18,12 15,21 9,3 6,12 2,12" />
+              </svg>
+            }
+          />
+        </Card>
+
+        <Card>
+          <Stat
+            label="Facturas"
+            value={sales.data ? sales.data.num_facturas.toLocaleString("es-CO") : "—"}
+            subtitle="este mes"
+            icon={
+              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                <polyline points="14,2 14,8 20,8" />
+              </svg>
+            }
+          />
+        </Card>
+
+        <Card>
+          <Stat
+            label="Ticket promedio"
+            value={sales.data ? formatMoney(sales.data.ticket_promedio) : "—"}
+            subtitle="por factura"
+            icon={
+              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="12" y1="1" x2="12" y2="23" />
+                <path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" />
+              </svg>
+            }
+          />
+        </Card>
+
+        <Card>
+          <Stat
+            label="Valor inventario"
+            value={inventory.data ? formatMoney(inventory.data.valor_total) : "—"}
+            subtitle={`${inventory.data?.num_productos ?? "—"} productos`}
+            icon={
+              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" />
+              </svg>
+            }
+          />
+        </Card>
+      </div>
+
+      {/* Tendencia mensual real */}
+      {trend.data && trend.data.items.length > 0 && (
+        <Card header={<h2 className="font-semibold text-text-primary">Tendencia mensual</h2>}>
+          <SalesTrendChart
+            data={trend.data.items.map((item) => ({
+              label: `${item.year}-${String(item.month).padStart(2, "0")}`,
+              valor: item.total_ventas,
+            }))}
+          />
+        </Card>
+      )}
+
+      {/* Decisiones de compra */}
+      <div>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-text-muted">
+          Decisiones de compra
+        </h2>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+          <Link href="/dashboards/ventas" className="block">
+            <Card hover className="cursor-pointer">
+              <Stat
+                label="Ventas"
+                value={sales.data ? formatMoney(sales.data.ventas_mes_actual) : "—"}
+                subtitle="Ver detalle →"
+              />
+            </Card>
+          </Link>
+
+          <Link href="/alerts" className="block">
+            <Card hover className="cursor-pointer">
+              <div className="flex flex-col gap-1">
+                <p className="text-xs font-medium uppercase tracking-wider text-text-muted">Alertas</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-2xl font-bold text-text-primary">
+                    {alerts.data?.total ?? "—"}
+                  </p>
+                  {alerts.data && alerts.data.total > 0 && (
+                    <Badge variant="error" size="sm">activas</Badge>
+                  )}
+                </div>
+                <p className="text-xs text-text-muted">Gestionar →</p>
+              </div>
+            </Card>
+          </Link>
+
+          <Link href="/dashboards/abc" className="block">
+            <Card hover className="cursor-pointer">
+              <Stat
+                label="ABC"
+                value={hasData ? `${inventory.data!.num_productos}` : "—"}
+                subtitle={`${inventory.data?.num_productos ?? "—"} SKUs →`}
+              />
+            </Card>
+          </Link>
+
+          <Link href="/forecast" className="block">
+            <Card hover className="cursor-pointer">
+              <div className="flex flex-col gap-1">
+                <p className="text-xs font-medium uppercase tracking-wider text-text-muted">Forecast</p>
+                <p className="text-2xl font-bold text-text-primary">Pred.</p>
+                <p className="text-xs text-text-muted">Consultar →</p>
+              </div>
+            </Card>
+          </Link>
+
+          <Link href="/dashboards/dormidos" className="block">
+            <Card hover className="cursor-pointer">
+              <div className="flex flex-col gap-1">
+                <p className="text-xs font-medium uppercase tracking-wider text-text-muted">Dormidos</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-2xl font-bold text-text-primary">
+                    {dormidos.data?.total ?? "—"}
+                  </p>
+                  {dormidos.data && dormidos.data.total > 0 && (
+                    <Badge variant="warning" size="sm">inmovilizado</Badge>
+                  )}
+                </div>
+                <p className="text-xs text-text-muted">Revisar →</p>
+              </div>
+            </Card>
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Vendedor: skeleton ────────────────────────────────────────────────────
+
+function VendedorSkeleton(): JSX.Element {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <div className="h-12 w-20 animate-pulse rounded-lg bg-surface-alt" />
+        <div className="space-y-2">
+          <div className="h-5 w-28 animate-pulse rounded bg-surface-alt" />
+          <div className="h-3 w-40 animate-pulse rounded bg-surface-alt" />
+        </div>
+      </div>
+      <div className="h-12 animate-pulse rounded-xl bg-surface-alt" />
+      <div className="grid grid-cols-2 gap-3">
+        {[...Array(3)].map((_, i) => (
+          <div key={i} className="h-32 animate-pulse rounded-xl bg-surface-alt" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Vendedor: home completo ───────────────────────────────────────────────
+
+function VendedorHome(): JSX.Element {
+  const router = useRouter();
+  const [query, setQuery] = useState("");
+  const alerts = useAlerts();
+  const dormidos = useDormidos();
+
+  const loading = alerts.isLoading || dormidos.isLoading;
+
+  function handleSearch(): void {
+    const q = query.trim();
+    if (q) {
+      router.push(`/products?q=${encodeURIComponent(q)}`);
+    }
+  }
+
+  if (loading) return <VendedorSkeleton />;
+
+  return (
+    <div className="space-y-4">
+      {/* Header compacto */}
+      <div className="flex items-center gap-3">
+        <Logo size="sm" />
+        <div>
+          <h1 className="text-lg font-bold text-text-primary">MotoShop</h1>
+          <p className="text-xs text-text-muted">Búsqueda rápida</p>
+        </div>
+      </div>
+
+      <StaleDataBanner />
+
+      {/* Búsqueda con autofocus */}
+      <div className="flex gap-2">
+        <div className="flex-1">
+          <SearchBar
+            value={query}
+            onChange={setQuery}
+            placeholder="Buscar repuesto por nombre o código..."
+          />
+        </div>
+        <button
+          onClick={handleSearch}
+          className="rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-fg hover:bg-primary-light"
+        >
+          Buscar
+        </button>
+      </div>
+
+      {/* Cards de acción rápida */}
+      <div className="grid grid-cols-2 gap-3">
+        <Link href="/alerts" className="block">
+          <Card variant="dark" hover className="cursor-pointer">
+            <div className="flex flex-col gap-1">
+              <p className="text-xs font-medium uppercase tracking-wider text-text-inverse/60">
+                🚨 Alertas activas
+              </p>
+              <p className="text-3xl font-bold text-text-inverse">
+                {alerts.data?.total ?? "—"}
+              </p>
+              <p className="text-xs text-text-inverse/50">
+                {alerts.data && alerts.data.total > 0
+                  ? "Gestionar ahora →"
+                  : "Sin alertas"}
+              </p>
+            </div>
+          </Card>
+        </Link>
+
+        <Link href="/dashboards/dormidos" className="block">
+          <Card variant="dark" hover className="cursor-pointer">
+            <div className="flex flex-col gap-1">
+              <p className="text-xs font-medium uppercase tracking-wider text-text-inverse/60">
+                💤 Liquidar
+              </p>
+              <p className="text-3xl font-bold text-text-inverse">
+                {dormidos.data?.total ?? "—"}
+              </p>
+              <p className="text-xs text-text-inverse/50">
+                {dormidos.data && dormidos.data.total > 0
+                  ? "Ver dormidos →"
+                  : "Sin productos"}
+              </p>
+            </div>
+          </Card>
+        </Link>
+
+        <Link href="/acciones" className="block">
+          <Card hover className="cursor-pointer">
+            <div className="flex flex-col gap-1">
+              <p className="text-xs font-medium uppercase tracking-wider text-text-muted">
+                📋 Mis acciones
+              </p>
+              <p className="text-2xl font-bold text-text-primary">Hoy</p>
+              <p className="text-xs text-text-muted">Ver registro →</p>
+            </div>
+          </Card>
+        </Link>
+
+        {/* Top 3 rotación A — placeholder hasta tener endpoint */}
+        <Link href="/dashboards/abc" className="block">
+          <Card hover className="cursor-pointer">
+            <div className="flex flex-col gap-1">
+              <p className="text-xs font-medium uppercase tracking-wider text-text-muted">
+                ⭐ Rotación A
+              </p>
+              <p className="text-2xl font-bold text-text-primary">Top</p>
+              <p className="text-xs text-text-muted">Ver ABC →</p>
+            </div>
+          </Card>
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+// ── Página principal: redirige según rol ──────────────────────────────────
+
+export default function HomePage(): JSX.Element {
+  const role = useAuthStore((s) => s.role);
+
+  if (role === "vendedor") {
+    return <VendedorHome />;
+  }
+
+  // admin, gerente, o cualquier otro → vista gerente
+  return <GerenteHome />;
+}
