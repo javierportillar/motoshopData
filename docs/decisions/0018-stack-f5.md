@@ -1,6 +1,6 @@
 # ADR-0018: Stack técnico F5 · Operación bidireccional
 
-**Status**: Proposed (a ratificar al cierre del sprint)
+**Status**: Accepted (ratificado al cierre F5 — Sesión 45)
 **Date**: 2026-05-30
 **Deciders**: Revisor + Dev A + Dev T
 **Sprint**: F5 · Operación bidireccional

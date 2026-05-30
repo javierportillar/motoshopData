@@ -8,6 +8,156 @@
 
 ---
 
+## Sesión 2026-05-30 (45) · F5 ✅ cerrada · F6 abierta — el último sprint
+
+**Estado:** F5 cerrada por auditoría revisor fresco (9 V-F5 PASS + F5-FIX1 interna ejecutada). F6 abierta = **último sprint del proyecto académico**. 2 devs en paralelo + revisor + humano.
+
+**Plan F6 detallado:** [docs/plan-f6.md](docs/plan-f6.md) · ~6 h wall-clock.
+
+### Por qué F6 es especial
+
+F0-F5 entregaron las funcionalidades técnicas. F6 hace **dos cosas en paralelo:**
+1. **Hardening operativo:** cerrar deudas que ya tienen trigger cumplido (R4 workflow, R6 demo 4G, R7 7+ corridas, R8 demo gerencia, R16 ENV guardrail) + producto predictivo robusto (forecasting por categoría — la recomendación honesta de F4-FIX1).
+2. **Entrega académica:** demos capturadas + E5 memoria final + repo defendible ante jurado Maestría UAO 2025-2.
+
+**R1/R2/R15 NO se cierran** (decisión humana 2026-05-30: dejar Sashita123 + FG28 + users.yaml como están). Se documentan en E5 §3 como deudas conscientes con mitigaciones activas.
+
+### 🤖 Handoff Dev A · Sprint F6-A · Hardening operativo (~4-5 h)
+
+Abrí un chat Claude nuevo y pegá esto (también en `docs/plan-f6.md` §8):
+
+```
+Soy Dev A · Track A · Sprint F6-A del proyecto MotoShop.
+Trabajo en paralelo con Dev B (no nos coordinamos en código,
+solo evitamos conflicto en SEGUIMIENTO.md y PENDIENTES.md).
+
+PRE-FLIGHT obligatorio:
+1. cd /Users/javierportillarosero/Documents/personal/dataEmpresas/motoshopData
+2. git pull --ff-only origin main
+3. Leé INICIAR_AGENTE.md completo (rol = Dev Agent · Track A)
+4. Leé docs/plan-f6.md COMPLETO
+5. Leé docs/contexto-proyecto.md §10 (deudas R4, R7, R16)
+6. Leé infra/create_gold_workflow.py (setup actual)
+7. Leé motoshop-app/api/src/motoshop_api/main.py (lifespan actual)
+
+MI MISIÓN:
+Hardening operativo del último sprint del proyecto. Cerrar R4
+(workflow Databricks managed), R7 (7+ corridas exitosas), R16
+(ENV guardrail). Implementar drift monitoring + walk-forward
+classifier como mejoras predictivas. Audit log particionado.
+
+ENTREGABLES (en orden):
+1. ENV guardrail en main.py + tests/api/test_env_guardrail.py
+2. infra/create_full_workflow.py (bronze→silver→gold→drift, cron 19:00)
+3. Re-correr full workflow + UNPAUSE + evidencia
+4. notebooks/gold/_runs/v_r7_workflow_runs_<ts>.md (≥7 runs, >95%)
+5. infra/migrations/F6-001-app_audit_log_partition.sql + evidencia
+6. notebooks/gold/25_drift_monitor.py + tabla gold.alertas_drift
+7. infra/run_classifier_walkforward.py + reporte F1 por semana
+8. docs/decisions/0021-databricks-workflow-managed.md (Proposed)
+
+NO TOCO:
+- motoshop-app/web/** (no aplica F6-A)
+- notebooks/silver/** (estables)
+- users.yaml (R15 diferida sigue)
+- infra/start_api.ps1, start_tunnel.ps1 (operativos)
+
+Commits con prefijo: feat(F6-A-hardening): ...
+
+ARRANQUE:
+Paso A1 (ENV guardrail). Es lo más rápido y desbloquea cualquier
+deploy a Windows con confianza. Después A2 (workflow migration)
+que es lo más largo.
+```
+
+### 🤖 Handoff Dev B · Sprint F6-B · Forecasting categoría/familia (~3-4 h)
+
+Abrí otro chat Claude nuevo y pegá esto:
+
+```
+Soy Dev B · Track A · Sprint F6-B del proyecto MotoShop.
+Trabajo en paralelo con Dev A. Soy un dev nuevo en este sprint
+para trabajo analítico mientras Dev A hace hardening operativo.
+
+PRE-FLIGHT obligatorio:
+1. cd /Users/javierportillarosero/Documents/personal/dataEmpresas/motoshopData
+2. git pull --ff-only origin main
+3. Leé INICIAR_AGENTE.md completo (rol = Dev Agent · Track A · subteam analítico)
+4. Leé docs/plan-f6.md COMPLETO (especial §3 DT-F6-3, DT-F6-4)
+5. Leé docs/lecciones-aprendidas-f4.md (por qué F4 no funcionó)
+6. Leé docs/decisions/0017-split-temporal-metricas-intermitentes.md
+7. Leé notebooks/gold/19_feature_store.py (feature store)
+8. Leé notebooks/silver/01_dim_producto.py (campos categoría/familia)
+
+MI MISIÓN:
+Validar la hipótesis académica de F4-FIX1: forecasting agregado
+por categoría/familia supera al baseline por SKU individual.
+Implementar notebook + evaluación honesta + ADR-0020.
+
+ENTREGABLES (en orden):
+1. notebooks/gold/_runs/v_categoria_schema_<ts>.md con mapping SKU→categoría
+2. notebooks/gold/24_forecast_categoria.py (baseline+Prophet sobre agregado)
+3. Tabla gold.forecast_categoria poblada
+4. notebooks/gold/_runs/v_forecast_categoria_eval_<ts>.md con WAPE
+   comparativa (vs Baseline-SKU 45.83% de F4-FIX1)
+5. docs/decisions/0020-forecasting-agregado.md (Proposed → Accepted
+   si hipótesis se valida)
+6. docs/lecciones-aprendidas-f6.md (resumen findings)
+7. tests/gold/test_forecast_categoria.py (sqlparse)
+
+NO TOCO:
+- motoshop-app/** (Dev A o no aplica)
+- infra/** (Dev A)
+- notebooks/bronze|silver/** (estables)
+- users.yaml (R15 diferida)
+
+HONESTIDAD ACADÉMICA:
+Si la hipótesis NO se valida (Prophet-categoría no supera
+Baseline-SKU), DOCUMÉNTALO igual que F4-FIX1 hizo. Es descubrimiento
+técnico válido, no fracaso. La conclusión real sirve para defensa.
+
+Commits con prefijo: feat(F6-B-analytics): ...
+
+ARRANQUE:
+Paso B1 (esquema de agregación). NO empieces el notebook sin tener
+claro qué nivel usás (línea/categoría/familia) — afecta todo.
+```
+
+### 👤 Acciones humanas · Sprint F6-C (~2 h)
+
+**Paso C1 · Demo 4G (~30 min) — celular con red 4G real:**
+
+1. Abrir https://api.fragloesja.uk en celular
+2. Login como `vendedor` → búsqueda "aceite" → ver SKU + stock
+3. Logout + login como `admin` → ver dashboards (`/ventas`, `/abc`, `/dormidos`)
+4. Ver `/forecast` (notar StaleDataBanner si aplica)
+5. Ver `/alerts` → "Gestionar" → marcar `ordered` con cantidad
+6. Ver `/acciones` → confirmar la acción nueva
+
+Grabar video (~5 min). Subir a `motoshop-app/web/_runs/v_hito_demo_4g.mp4` (o link Drive si > 50 MB). Crear `v_hito_demo_4g.md` con red usada + modelo celular + observaciones. **Cierra R6.**
+
+**Paso C2 · Demo gerencia (~1 h):**
+
+Agendar 30 min con stakeholder (gerencia MotoShop o vos como dueño). Estructura: 10 min walkthrough PWA + 5 min flujo alerta→acción + 5 min dashboards + 10 min preguntas/feedback.
+
+Capturar en `notebooks/gold/_runs/v5_stakeholder_demo.md` con: asistentes + 3 funcionó + 3 mejorar + 1 feature solicitada. **Cierra R8.**
+
+**Paso C3 · Avisarme al revisor:**
+
+Cuando C1 + C2 estén hechos, me avisás. Yo escribo la **E5 memoria final** (~30-50 págs siguiendo plantilla DT-F6-8) + cleanup repo + audit final + veredicto cierre F6 = **cierre del proyecto académico**.
+
+### Próximo paso del revisor (Sesión 46)
+
+Cuando todos los push estén arriba (Dev A + Dev B + humano notifica C1/C2):
+1. Aplicar 9 checks de INICIAR_REVIEWER.md.
+2. Verificar 12 V-F6.
+3. Escribir E5-memoria-final.md (~30-50 págs).
+4. Cleanup final repo + README público actualizado.
+5. Si TODAS PASS → cierre F6 = **cierre del proyecto MotoShop**. 7/7 fases ✅.
+6. Si alguna FAIL → F6-FIX1 corto (estamos contra calendario académico).
+
+---
+
 ## Sesión 2026-05-30 (44) · F5 abierta · Operación bidireccional
 
 **Estado:** F4 ✅ cerrada (FIX1 incluido). F5 con planificación detallada lista. 2 devs en paralelo + revisor.

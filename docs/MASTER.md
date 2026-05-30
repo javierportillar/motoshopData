@@ -9,15 +9,15 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **F5 · Operación bidireccional** (planificación lista) |
+| Fase activa | **F6 · Hardening + entrega académica** (último sprint del proyecto) |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Cierre F5 (POST /alerts/{id}/action + RBAC + offline queue + R14 cleanup) |
-| Avance global | **4/7 fases cerradas** + 4 hardening sprints + F4-FIX1 ✅ · F5 abierta |
-| ADRs aceptados | 17 + ADR-0018 Proposed |
+| Próximo gate | Cierre F6 = **cierre del proyecto académico** (Maestría UAO 2025-2) |
+| Avance global | **5/7 fases cerradas** + 4 hardening sprints + F4-FIX1 ✅ + F5-FIX1 ✅ |
+| ADRs aceptados | 19 (D1-D14 + ADR-0015..0019) — ADR-0020/0021 a redactar en F6 |
 | Riesgos vivos | 9 (R1, R2, R4, R5, R6, R7, R8, R14, R15) — R11/R12/R13 resueltos en F4-FIX1 |
 
 ```
-F0 ✅  F1 ✅ (+F1.5 ✅ +F1.9 ✅)  F2 ✅  F3 ✅ (+F3.5 ✅ +F3.6 ✅)  F4-A ✅  F4-B ✅  F4-C ✅  F4-FIX1 ✅  F5 ⬜  F6 ⬜
+F0 ✅  F1 ✅ (+F1.5 ✅ +F1.9 ✅)  F2 ✅  F3 ✅ (+F3.5 ✅ +F3.6 ✅)  F4-A ✅  F4-B ✅  F4-C ✅  F4-FIX1 ✅  F5 ✅ (+F5-FIX1 ✅)  F6 🟡
 ```
 
 **Documento canónico de tracking:** [`SEGUIMIENTO.md`](../SEGUIMIENTO.md) — bitácora viva por sesión + tablero de riesgos.

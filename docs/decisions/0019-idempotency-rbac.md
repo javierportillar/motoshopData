@@ -1,6 +1,6 @@
 # ADR-0019: Idempotency + RBAC para escrituras PWA → MySQL
 
-**Status**: Proposed
+**Status**: Accepted (ratificado al cierre F5 — Sesión 45)
 **Date**: 2026-05-30
 **Deciders**: Revisor + Dev A + Dev T
 **Sprint**: F5 · Operación bidireccional
