@@ -26,16 +26,6 @@ function SkeletonBlock(): JSX.Element {
   );
 }
 
-// ── Gerente: error ────────────────────────────────────────────────────────
-
-function ErrorBlock({ message }: { message: string }): JSX.Element {
-  return (
-    <Card>
-      <p className="py-8 text-center text-sm text-text-muted">{message}</p>
-    </Card>
-  );
-}
-
 // ── Gerente: home completo ────────────────────────────────────────────────
 
 function GerenteHome(): JSX.Element {

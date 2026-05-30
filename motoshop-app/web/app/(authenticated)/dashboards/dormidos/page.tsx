@@ -1,105 +1,126 @@
 "use client";
 
-import { Card } from "@/lib/ui/Card";
-import { KpiCard } from "@/components/KpiCard";
-import { useDormidos } from "@/lib/api/hooks";
 import Link from "next/link";
+import { useDormidos } from "@/lib/api/hooks";
+import { Card } from "@/components/ui/Card";
+import { Stat } from "@/components/ui/Stat";
+import { Badge } from "@/components/ui/Badge";
 
-function dormancyColor(dias: number): string {
-  if (dias > 180) return "text-red-600 bg-red-50";
-  if (dias >= 90) return "text-orange-600 bg-orange-50";
-  return "text-gray-600 bg-gray-100";
-}
-
-function formatNumber(v: number): string {
-  return v.toLocaleString("es-CO");
+function dormancyVariant(dias: number): "error" | "warning" | "default" {
+  if (dias > 180) return "error";
+  if (dias >= 90) return "warning";
+  return "default";
 }
 
 export default function DormidosPage(): JSX.Element {
   const { data, error, isLoading } = useDormidos();
 
+  // ── Loading ──────────────────────────────────────────────────
+
   if (isLoading) {
     return (
       <div className="space-y-4">
-        <div className="h-5 w-24 animate-pulse rounded bg-gray-200" />
-        <div className="h-40 animate-pulse rounded-xl bg-gray-100" />
-        <div className="h-60 animate-pulse rounded-xl bg-gray-100" />
+        <Link href="/" className="text-sm text-accent hover:underline">
+          ← Volver a inicio
+        </Link>
+        <div className="h-5 w-24 animate-pulse rounded bg-surface-alt" />
+        <div className="grid grid-cols-2 gap-3">
+          {[...Array(2)].map((_, i) => (
+            <div key={i} className="h-24 animate-pulse rounded-xl bg-surface-alt" />
+          ))}
+        </div>
+        <div className="h-60 animate-pulse rounded-xl bg-surface-alt" />
       </div>
     );
   }
 
+  // ── Error ────────────────────────────────────────────────────
+
   if (error || !data) {
     return (
       <div className="space-y-4">
-        <Link href="/dashboards" className="text-sm text-primary hover:underline">
-          ← Volver a Dashboards
+        <Link href="/" className="text-sm text-accent hover:underline">
+          ← Volver a inicio
         </Link>
         <Card>
-          <p className="text-center text-gray-500">Error al cargar datos de productos dormidos</p>
+          <p className="py-8 text-center text-text-muted">
+            Error al cargar datos de productos dormidos
+          </p>
         </Card>
       </div>
     );
   }
 
+  const criticos = data.productos.filter((p) => p.dias_sin_venta > 180).length;
+
+  // ── Render ───────────────────────────────────────────────────
+
   return (
     <div className="space-y-4">
-      <Link href="/dashboards" className="text-sm text-primary hover:underline">
-        ← Volver a Dashboards
+      <Link href="/" className="text-sm text-accent hover:underline">
+        ← Volver a inicio
       </Link>
 
-      <h1 className="text-xl font-bold text-secondary-dark">Productos Dormidos</h1>
-      <p className="text-sm text-gray-500">
-        {data.total > 0
-          ? `${data.total} producto${data.total !== 1 ? "s" : ""} sin venta en los últimos 90 días o más`
-          : "Sin productos dormidos"}
-      </p>
-
-      <div className="grid grid-cols-2 gap-3">
-        <KpiCard
-          title="Total Dormidos"
-          value={String(data.total)}
-          subtitle="> 90 días sin venta"
-        />
-        <KpiCard
-          title="Críticos"
-          value={String(data.productos.filter((p) => p.dias_sin_venta > 180).length)}
-          subtitle="> 180 días sin venta"
-        />
+      <div>
+        <h1 className="text-xl font-bold text-text-primary">Productos dormidos</h1>
+        <p className="text-sm text-text-muted">
+          {data.total > 0
+            ? `${data.total} producto${data.total !== 1 ? "s" : ""} sin venta en 90+ días`
+            : "Sin productos dormidos"}
+        </p>
       </div>
 
-      <Card header={<h2 className="font-semibold text-secondary-dark">Lista de Dormidos</h2>}>
-        <div className="space-y-2">
-          {data.productos.length === 0 && (
-            <p className="py-4 text-center text-sm text-gray-400">
-              No hay productos dormidos en este período
-            </p>
-          )}
-          {data.productos.map((p) => (
-            <div
-              key={p.cod_producto}
-              className="flex items-center justify-between rounded-lg bg-gray-50 p-3"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-secondary-dark">
-                  {p.nom_producto}
-                </p>
-                <p className="text-xs text-gray-400">{p.cod_producto}</p>
-              </div>
-              <div className="ml-2 shrink-0 text-right">
-                <span
-                  className={`inline-block rounded-full px-2.5 py-1 text-xs font-medium ${dormancyColor(p.dias_sin_venta)}`}
-                >
-                  {p.dias_sin_venta}d
-                </span>
-                {p.stock_actual != null && (
-                  <p className="mt-1 text-xs text-gray-400">
-                    Stock: {formatNumber(p.stock_actual)}
+      {/* KPIs */}
+      <div className="grid grid-cols-2 gap-3">
+        <Card>
+          <Stat
+            label="Total dormidos"
+            value={String(data.total)}
+            subtitle="&gt; 90 días sin venta"
+          />
+        </Card>
+        <Card>
+          <Stat
+            label="Críticos"
+            value={String(criticos)}
+            subtitle="&gt; 180 días"
+          />
+        </Card>
+      </div>
+
+      {/* Lista de dormidos */}
+      <Card header={<h2 className="font-semibold text-text-primary">Lista de dormidos</h2>}>
+        {data.productos.length === 0 ? (
+          <p className="py-8 text-center text-sm text-text-muted">
+            No hay productos dormidos en este período
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {data.productos.map((p) => (
+              <div
+                key={p.cod_producto}
+                className="flex items-center justify-between rounded-lg bg-surface-alt p-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-text-primary">
+                    {p.nom_producto}
                   </p>
-                )}
+                  <p className="font-mono text-xs text-text-muted">{p.cod_producto}</p>
+                </div>
+                <div className="ml-2 shrink-0 text-right">
+                  <Badge variant={dormancyVariant(p.dias_sin_venta)} size="md">
+                    {p.dias_sin_venta}d
+                  </Badge>
+                  {p.stock_actual != null && (
+                    <p className="mt-1 text-xs text-text-muted">
+                      Stock: {p.stock_actual.toLocaleString("es-CO")}
+                    </p>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </Card>
     </div>
   );
