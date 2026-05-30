@@ -28,17 +28,26 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **F4-FIX1 · Remediación auditoría F4** (abierta) |
+| Fase activa | **F4-FIX1 · Remediación auditoría F4** (Dev A completado, Dev T + Revisor pendientes) |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Cierre F4-FIX1 (Prophet honest metrics + Classifier audit + PWA real repos + Stale banner + reviewer rulebook) |
+| Próximo gate | Cierre F4-FIX1 (Prophet honest metrics ✅ + Classifier audit ✅ + PWA real repos 🟡 + Stale banner 🟡 + reviewer rulebook 🟡) |
 | Avance global | 3/7 fases cerradas + 3 hardening sprints (F1.5 ✅, F1.9 ✅, F3.5 ✅, F3.6 ✅) · F4-A/B/C revierten a 🟡 hasta cierre FIX1 |
 | Última actualización | 2026-05-30 |
 
 ```
-F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 ✅  F3.5 ✅  F3.6 ✅  F4-A 🟡  F4-B 🟡  F4-C 🟡  F4-FIX1 🟡  F5 ⬜  F6 ⬜
+F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 ✅  F3.5 ✅  F3.6 ✅  F4-A 🟡  F4-B 🟡  F4-C 🟡  F4-FIX1 🟡 (A✅, T🟡, R🟡)  F5 ⬜  F6 ⬜
 ```
 
 > **2026-05-30 (Sesión 42) — F4-FIX1 abierta tras auditoría revisor fresco.** Auditoría con contexto independiente sobre el cierre F4-B/F4-C levantó 2 bloqueantes + 4 observaciones: (B1) **Prophet MAPE 3540%** no es "peor que baseline" sino modelo/métrica rota — probable división por cero en demanda intermitente y SKUs con <30 puntos; (B2) **Classifier F1=0.9924** sospechoso de data leakage o desbalance — reporte sin target distribution, split temporal explícito ni top features; (O3) F4-C cerró con FakeRepos en lugar de validar contra Gold real; (O4) R10 PC Windows offline "se documenta", no se alerta al usuario; (O5) sin ADR de split temporal; (O6) lección F3.5 §10 nunca se propagó a `INICIAR_REVIEWER.md` (que de hecho no existía). Plan correctivo: [docs/plan-f4-fix1.md](docs/plan-f4-fix1.md). **3 agentes paralelos:** Dev A (ML diagnosis + ADR-0017 + lecciones), Dev T (PWA real repos + StaleDataBanner + E2E), Revisor (INICIAR_REVIEWER.md + tracking docs). Wall-clock ~3 h.
+
+> **2026-05-30 (Sesión 43) — F4-FIX1 ejecutada por Dev A.** Correcciones completadas. Commit `81d6bd5`. Resultados clave:
+> - 🔴 **Prophet WAPE 864%** en 31 SKUs elegibles (0.7% del total). Modelo inservible para demanda intermitente de autopartes. Baseline gana 97.9%.
+> - 🔴 **Classifier F1 real = 0.54** (vs 0.99 falso). Causa raíz: target leakage (`stock_actual` era feature y también definía el target) + random split sin separación temporal.
+> - ✅ **WAPE es ahora métrica primaria.** MAPE se infla cuando `actual=1, pred=36` → 3500%. WAPE agrega errores antes de dividir.
+> - ✅ **Split temporal** en classifier: train ≤ 2026-04-01, test ≥ 2026-04-02. Sin solapamiento de fechas.
+> - ✅ **ADR-0017** creado con decisión + alternativas + rationale.
+> - ✅ **Lecciones-aprendidas-f4.md** con 6 lecciones documentadas.
+> - Pendiente: Dev T (RealForecastRepo + StaleDataBanner) y Revisor (INICIAR_REVIEWER.md).
 
 > **2026-05-30 (Sesión 41) — F4-B cerrada.** Sprint de modelos ML completado: Prophet, LightGBM (no superan baseline — documentado), classifier con F1=0.99, 69 alertas de quiebre. Evaluación consolidada: 4,343 SKUs con forecast (93.6% baseline, 4.9% Prophet, 1.5% LightGBM). Tests 97/97. F4-C (PWA predicciones + alertas) implementado pero pendiente de integración con datos reales. Pendiente: validar forecast en PWA, push notifications funcionales.
 
@@ -393,8 +402,8 @@ La reconciliación V3 anterior comparó el último mes con datos y encontró 1 f
 MySQL `motoshop2024` (sgHermes) está en el PC Windows, que no siempre está encendido. **F4 no necesita MySQL en tiempo real:** training y serving leen de Gold tables en Databricks. Pero la freshness de los datos depende del dump periódico. Regla: si PC offline > 48h, predicciones se consideran "stale". Ver `docs/plan-f4.md` §Constraint crítico para detalle.
 
 ### Definition of Done
-- ✅ Modelo de forecasting registrado en MLflow — aunque no superó al baseline, se documentó y dejó la estructura.
-- ✅ Clasificador de quiebre con F1 > 0.7 en validación (F1=0.99).
+- ✅ Modelo de forecasting registrado en MLflow — baseline gana 97.9% de predicciones.
+- ❌ Clasificador de quiebre con F1 > 0.7 — **F1 real 0.54 tras corregir target leakage y split temporal**. No pasa el gate.
 - 🟡 Alertas funcionando: push en la PWA implementado, correo pendiente.
 - 🟡 Predicciones visibles en la PWA por SKU (interfaz lista, falta conectar con datos reales).
 
@@ -402,14 +411,15 @@ MySQL `motoshop2024` (sgHermes) está en el PC Windows, que no siempre está enc
 
 **Track A**
 - ✅ Feature store: lags, medias móviles, day-of-week, mes, categoría ABC — 34,838 filas, 4,392 SKUs
-- ✅ Baseline naïve estacional registrado en MLflow (MAPE 43.72%, WAPE 45.83%)
-- ✅ Modelo Prophet top-100 registrado en MLflow (MAPE 3540% — no supera baseline, documentado)
-- ✅ Modelo LightGBM global registrado en MLflow (MAPE 72.76% — no supera baseline, documentado)
+- ✅ Baseline naïve estacional registrado en MLflow (WAPE 45.83%)
+- ✅ Modelo Prophet top-100 registrado en MLflow (WAPE 864% — **modelo inservible**, documentado en FIX1)
+- ✅ Modelo LightGBM global registrado en MLflow (WAPE 57% — no supera baseline, documentado en FIX1)
 - ✅ Backtest documentado con MAPE/SMAPE/WAPE por modelo en `_runs/v_model_evaluation_*`
-- ✅ Tabla `gold.forecast_demanda_sku` creada con 4,343 SKUs (mejor modelo por SKU)
-- ✅ Clasificador de quiebre entrenado — F1=0.9924, precision=0.9848, recall=1.0
-- ✅ Tabla `gold.alertas_quiebre` creada con 69 alertas (alta/media/baja)
+- ⚠️ Tabla `gold.forecast_demanda_sku` creada con 4,343 SKUs — **97.9% baseline**, Prophet gana solo 1.8%
+- ⚠️ Clasificador de quiebre — F1=0.536 corregido (vs 0.99 falso pre-FIX1). **Target leakage corregido: `stock_actual` excluido de features. Split temporal estricto.**
+- ⚠️ Tabla `gold.alertas_quiebre` — 46 alertas (vs 69 pre-FIX1). Menos alertas pero honestas.
 - ⬜ Notificación por correo desde Workflows cuando hay alertas críticas
+- ⚠️ **Solo 31/4392 SKUs (0.7%) son elegibles para modelos ML.** El 99.3% restante recibe baseline por falta de datos.
 
 **Track T**
 - ✅ Endpoint `GET /forecast/{sku}?horizon=N` con FakeForecastRepo/RealForecastRepo
@@ -442,9 +452,14 @@ MySQL `motoshop2024` (sgHermes) está en el PC Windows, que no siempre está enc
 10. **¿Hay un mecanismo de feedback humano?**
     El usuario debe poder marcar una alerta como "falsa" o "atendida" → input para reentrenamiento.
 
-### Métricas mínimas
-- MAPE SKUs top-100: < 25% (KPI de negocio) → ❌ Prophet 3540%, LightGBM 72.76%. Baseline 43.72% gana.
-- F1 clasificador quiebre: > 0.7 → ✅ F1=0.9924, precision=0.9848, recall=1.0.
+### Métricas mínimas (FIX1 actualizado)
+- MAPE SKUs top-100: < 25% → ❌ **WAPE baseline 45.83%, Prophet 864%, LightGBM 57%**. Ningún modelo ML supera baseline.
+- **WAPE es métrica primaria** desde FIX1. MAPE se reporta como secundaria para demanda intermitente.
+- F1 clasificador quiebre: > 0.7 → ❌ **F1=0.536 corregido** (0.99 era falso por target leakage).
+- Filtro elegibilidad: 31/4392 SKUs (0.7%) con >= 90d + >= 30 ventas para modelos ML.
+- Baseline gana 97.9% de predicciones. Los modelos ML no justifican su complejidad.
+- Cobertura: 4343 SKUs con predicción (100% de los SKUs con forecast, 97.9% baseline).
+- Prophet **inservible** para este dataset (WAPE 864% en elegibles, gana solo 1.8%).
 - Latencia inferencia: < 2s → 🟡 Sin medir aún (precalculado, debería cumplir).
 - Tiempo de reentrenamiento end-to-end: < 2 horas → ✅ Prophet ~50 min, LightGBM ~30 min, Classifier ~10 min.
 
@@ -453,11 +468,15 @@ MySQL `motoshop2024` (sgHermes) está en el PC Windows, que no siempre está enc
 - Push notifications dependen de VAPID keys y service worker registrado en producción.
 - El baseline sigue siendo el mejor modelo. Los modelos ML no lo superan; no se liberan según regla #5.
 
-### Lecciones de cierre (parcial — se completa al cerrar F4)
+### Lecciones de cierre (F4 + FIX1)
 1. **Demanda intermitente mata a los modelos.** Con autopartes donde el SKU promedio vende < 1 unidad/día, Prophet y LightGBM no pueden competir contra el promedio histórico. El problema no es de tuning, es de naturaleza del dato.
-2. **El clasificador de quiebre salva el sprint.** F1=0.99 con features simples (medias móviles + stock actual). Ahí está el valor real para el negocio: saber qué SKU se va a quedar sin stock antes de que pase.
-3. **Portabilidad Mac/Windows funcionó.** Los scripts corren igual en ambas plataformas con solo `pip install`. La apuesta de training local + Databricks SQL connector dio resultado.
-4. **MLflow file:mlruns unificó el tracking.** Migrar de MLflow remoto en Databricks a `file:mlruns` local eliminó dependencias y unificó experimentos.
+2. **⚠️ [FIX1] El clasificador de quiebre NO salva el sprint.** F1=0.99 era falso por target leakage: el target usaba `stock_actual < media_movil_7d * 0.5` y `stock_actual` era feature. Al corregirlo, F1 cayó a 0.54. La lección real: **si features + target pueden expresar una relación determinística, el modelo no está aprendiendo — está memorizando una fórmula.**
+3. **⚠️ [FIX1] MAPE miente en demanda intermitente.** `actual=1, pred=36` → 3500% MAPE aunque el error absoluto sea 35 unidades. **WAPE agrega errores antes de dividir.** WAPE es la métrica correcta para este dominio.
+4. **⚠️ [FIX1] Split aleatorio en datos temporales = data leakage.** El classifier usaba `train_test_split(stratify=y)` mezclando fechas entre train y test. **Split temporal estricto es obligatorio.** Sin él, las métricas no representan performance en producción.
+5. **⚠️ [FIX1] Prophet no sirve para demanda de motocicletas.** WAPE 864% en SKUs elegibles. Prophet está diseñado para series con estacionalidad fuerte (tráfico web, supermercados). La demanda de repuestos es demasiado intermitente y esporádica.
+6. **✅ Los fixes de FIX1 demuestran que las métricas honestas valen más que las lindas.** Preferimos F1=0.54 con split temporal a F1=0.99 con leakage. El baseline (97.9%) es la opción correcta hasta que tengamos features que agreguen señal.
+7. **Portabilidad Mac/Windows funcionó.** Los scripts corren igual en ambas plataformas con solo `pip install`. La apuesta de training local + Databricks SQL connector dio resultado.
+8. **MLflow file:mlruns unificó el tracking.** Migrar de MLflow remoto en Databricks a `file:mlruns` local eliminó dependencias y unificó experimentos.
 
 ---
 

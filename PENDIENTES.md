@@ -8,70 +8,44 @@
 
 ---
 
-## Sesión 2026-05-30 (42) · F4-FIX1 abierta tras auditoría revisor fresco
+## Sesión 2026-05-30 (43) · F4-FIX1 Dev A completado · Pendiente Dev T + Revisor
 
-**Estado:** F4-B/F4-C revierten a 🟡 hasta cerrar F4-FIX1. 3 agentes en paralelo (Dev A + Dev T + Revisor).
+**Estado:** F4-B/F4-C revierten a 🟡 hasta cerrar F4-FIX1. Dev A ✅ completado. Dev T 🟡 y Revisor 🟡 pendientes.
 
-**Plan detallado:** [docs/plan-f4-fix1.md](docs/plan-f4-fix1.md)
+### Dev A · Sprint F4-FIX1-A ✅ Completado
 
-### Por qué F4-FIX1
+**Commit:** `81d6bd5` — `fix(f4): corregir métricas forecasting y data leakage en classifier`
 
-Auditoría con contexto fresco levantó **2 bloqueantes**:
-- **B1 · Prophet MAPE 3,540%** no es "peor que baseline" — es modelo o métrica rota (probable división por cero en demanda intermitente; SKUs con < 30 puntos en cola larga).
-- **B2 · Classifier F1 0.9924** sospechoso de data leakage o desbalance no manejado. Reporte sin target distribution, split temporal explícito ni top features.
+**Resultados clave:**
 
-Y **4 observaciones**:
-- O3 · F4-C cerró con FakeRepos en lugar de validar contra Gold real (repite problema de F3).
-- O4 · R10 (PC Windows offline) "se documenta como stale", no se alerta al usuario.
-- O5 · Sin ADR del split temporal — métricas indefendibles ante jurado académico.
-- O6 · Lección F3.5 §10 nunca se propagó a `INICIAR_REVIEWER.md` (que de hecho no existía como archivo).
+| Bloqueante | Hallazgo | Fix | Métrica antes → después |
+|------------|----------|-----|------------------------|
+| B1 · Prophet MAPE | MAPE 3540% por demanda intermitente + SKUs < 30 ventas | WAPE primaria + filtro SKU elegibles (>=90d + >=30 ventas) | MAPE 3540% → WAPE 864% (realista, sigue siendo malo) |
+| B2 · Classifier F1 | Target leakage: `stock_actual` era feature y estaba en la fórmula del target | Sacar `stock_actual` de features + split temporal | F1 0.99 → F1 0.54 (honesto) |
+| O5 · Sin ADR | No existía ADR de split temporal | ADR-0017 creado | — |
 
-### 🤖 Handoff Dev A · Sprint F4-FIX1-A (~2-3 h)
+**Entregables:**
+1. ✅ Diagnóstico Prophet con query real Databricks: `v_fix1_prophet_diagnostico_*.md`
+2. ✅ Fix `run_evaluate_models.py`: WAPE primaria, filtro SKU, cobertura
+3. ✅ Nueva evaluación: `v_model_evaluation_20260530_113116.md`
+4. ✅ Classifier audit + fix: `v_classifier_stockout_20260530_113711.md`
+5. ✅ ADR-0017: `docs/decisions/0017-split-temporal-metricas-intermitentes.md`
+6. ✅ Lecciones: `docs/lecciones-aprendidas-f4.md`
 
-Abrí un chat Claude nuevo y pegá esto (también está en `docs/plan-f4-fix1.md` §8):
+**Métrica final post-fix:**
+- Prophet WAPE 864% (inservible, gana 1.8%)
+- LightGBM WAPE 57% (borderline, gana 0.3%)
+- Baseline WAPE 45.83% (gana 97.9%)
+- Classifier F1 0.536 (honesto)
+- SKUs elegibles: 31/4392 (0.7%)
 
-```
-Soy Dev A · Track A · Sprint F4-FIX1 del proyecto MotoShop.
-Trabajo en paralelo con Dev T (no nos coordinamos en código,
-solo evitamos conflicto en SEGUIMIENTO.md y PENDIENTES.md).
+### ⬜ Próximo paso · Revisor
 
-PRE-FLIGHT obligatorio:
-1. cd /Users/javierportillarosero/Documents/personal/dataEmpresas/motoshopData
-2. git pull --ff-only origin main
-3. Leé INICIAR_AGENTE.md completo (rol = Dev Agent · Track A)
-4. Leé docs/plan-f4-fix1.md COMPLETO
-5. Leé notebooks/gold/_runs/v_model_evaluation_20260530_013855.md
-   (entender el "antes" con Prophet MAPE 3540%)
-6. Leé infra/run_forecast_prophet.py + infra/run_evaluate_models.py +
-   infra/run_classifier_stockout.py + notebooks/gold/22_classifier_stockout.py
+Auditar cambios Dev A, verificar V-FIX1-1 a V-FIX1-4. Cuando Dev T también termine, cerrar F4-FIX1.
 
-MI MISIÓN:
-Auditar Prophet (MAPE 3540% = modelo o métrica rota) y Classifier
-(F1 0.9924 sospechoso de leakage), aplicar fixes, re-evaluar con
-métricas honestas, escribir ADR-0017 (split temporal + métricas
-intermitentes) y lecciones-aprendidas-f4.md.
+---
 
-ENTREGABLES (en orden):
-1. notebooks/gold/_runs/v_fix1_prophet_diagnostico_<ts>.md con causa raíz
-2. Fix de run_evaluate_models.py: WAPE primaria + sMAPE + MAPE
-   condicional + cobertura. Filtro SKU elegible (90d+30 ventas).
-3. notebooks/gold/_runs/v_fix1_model_evaluation_<ts>.md con métricas nuevas
-4. notebooks/gold/_runs/v_fix1_classifier_auditoria_<ts>.md con las
-   3 secciones obligatorias (target dist, split temporal, top-10 features)
-5. Si H-B2 confirma leakage: fix + re-train + nueva evidence
-6. docs/decisions/0017-split-temporal-y-metricas-forecasting.md (Accepted)
-7. docs/predict/lecciones-aprendidas-f4.md (insufficient data hypothesis)
-
-NO TOCO: motoshop-app/**, notebooks/bronze|silver/**, credenciales.
-
-COORDINACIÓN: solo SEGUIMIENTO.md/PENDIENTES.md en mi sección.
-Commits con prefijo: fix(F4-FIX1-A-ml): ...
-
-ARRANQUE: Paso A1 (Diagnóstico Prophet). NO toques
-run_evaluate_models.py sin diagnóstico escrito antes.
-```
-
-### 🤖 Handoff Dev T · Sprint F4-FIX1-B (~1.5-2 h)
+## ~~Sesión 2026-05-30 (42) · F4-FIX1 abierta tras auditoría revisor fresco~~ *(histórico — reemplazado por Sesión 43)*
 
 Abrí otro chat Claude nuevo y pegá esto:
 
