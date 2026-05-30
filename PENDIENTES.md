@@ -8,9 +8,79 @@
 
 ---
 
+## Sesión 2026-05-30 (40) · F4-B cerrada ✅ · Prophet/LightGBM/Classifier completados
+
+**Estado:** F4-B terminada. Todos los scripts corren, tablas gold pobladas, V-Checks implementados. Modelos ML (Prophet, LightGBM) no superan baseline — documentado como lección aprendida para feature engineering en fase siguiente.
+
+### Resultados F4-B
+
+| Componente | Resultado |
+|------------|-----------|
+| Prophet top-100 | ✅ 94 SKUs, 543 predicciones, holdout predictions guardadas en tabla |
+| LightGBM global | ✅ 10.533 predicciones, 82 evaluaciones con match vs demanda real |
+| Evaluación comparativa | ✅ Baseline gana 93.6% — Prophet 4.9%, LightGBM 1.5% |
+| Classifier quiebre | ✅ 69 alertas, F1=0.9924 |
+| `forecast_demanda_sku` | ✅ 4.642 filas, 4.343 SKUs |
+| `alertas_quiebre` | ✅ 69 registros (urgencia alta) |
+| MLflow | ✅ 3 runs (prophet, lightgbm, classifier) en `file:mlruns` |
+| Evidencia | ✅ Prophet, LightGBM, Evaluation, Classifier |
+
+### V-Checks F4-B
+
+| ID | Criterio | Resultado | Nota |
+|----|----------|-----------|------|
+| V-M1 | Prophet < Baseline (43.7%) | ❌ 3.540% | Modelo no apto para demanda intermitente |
+| V-M2 | LightGBM < Baseline (43.7%) | ❌ 72.76% | One-step MAPE 31.49% (no guardado en tabla) |
+| V-M3 | Classifier F1 > 0.7 | ✅ 0.9924 | |
+| V-M4 | forecast_demanda_sku ≥ 100 SKUs | ✅ 4.343 | |
+| V-M5 | alertas_quiebre tiene registros | ✅ 69 alta | |
+| V-M6 | Sanity (0 negativos, 0 nulls) | ✅ PASS | Fix: 100 predicted_qty negativos corregidos |
+| V-M7 | Tests gold | ✅ 97/97 | |
+| V-M8 | MLflow experiments | ✅ 3 runs | |
+
+### Fixes aplicados durante la sesión
+
+1. **Classifier**: `write_alerts_table(full_results, ...)` → `write_alerts_table(alerts, ...)` — insertaba TODOS los SKUs como alertas
+2. **Classifier**: `INSERT OVERWRITE PARTITION VALUES` → `DELETE + INSERT INTO` (Databricks SQL Warehouse no soporta el patrón anterior)
+3. **MLflow**: 3 scripts con tracking URI distinta → unificados a `file:mlruns`
+4. **Prophet**: Holdout predictions ahora se guardan en tabla (antes solo se calculaba MAPE sin persistir)
+5. **V-M6**: Implementado sanity check automatizado (negativos, nulls)
+6. **Predicciones negativas**: `max(0.0, predicted)` en materialización
+
+### Lecciones aprendidas — F4-B
+
+**Sobre modelos para demanda intermitente:**
+- **Prophet NO funciona** para autopartes con demanda irregular. MAPE 3.540% vs baseline 43.7%. La estacionalidad anual no aplica con < 2 años de datos y weekly_pattern es débil en ventas B2B con mucho 0.
+- **LightGBM recursivo** pierde precisión exponencialmente. El one-step MAPE (31.49%) SÍ supera baseline, pero la predicción recursiva a 7/14/30 días degrada a 72.76%. Para la próxima fase: implementar direct multi-step (un modelo por horizonte).
+- **Baseline naive** gana 93.6% de los SKUs porque la mejor predicción para demanda intermitente es el promedio histórico. No es un fracaso de los modelos ML — es que los features actuales (lags, medias móviles) no agregan señal sobre la media histórica.
+
+**Sobre el pipeline:**
+- Databricks SQL Warehouse (serverless) no soporta `INSERT OVERWRITE PARTITION VALUES`. Workaround: `DELETE FROM + INSERT INTO`.
+- MODELS de Prophet exportan `yhat` que puede ser negativo para demanda baja. Forzar `max(0, predicted_qty)`.
+- MLflow remote tracking vía `set_tracking_uri("databricks")` no funciona desde Mac sin Databricks Runtime. Usar `file:mlruns` local.
+- El `wait_timeout` máximo de Databricks SQL Warehouse es 50s, no 60s.
+
+**Para la próxima fase (F5):**
+1. Feature engineering: incorporar features externos (estacionalidad, promociones, precio) para que los modelos ML agreguen valor sobre baseline
+2. Direct multi-step: un modelo por horizonte en vez de recursivo
+3. Evaluación con WAPE como métrica principal (no infla errores en demanda baja)
+4. Considerar si Prophet tiene sentido en fases futuras o si se descarta definitivamente
+
+### Pendientes para Javier
+
+- ✅ Aprobar plan F4-B v2 (`docs/plan-f4-b.md`)
+- ✅ Ejecutar `pip install prophet lightgbm` en la Mac
+- ✅ Confirmar label sintético del classifier
+- ⬜ Revisar feature engineering para F5: ¿qué features externos están disponibles? (promociones, precio, días de entrega proveedor)
+- ⬜ Decidir si Prophet se descarta o se re-intenta con más datos en F6
+- ⬜ Planificar F5: unified training dataset + direct multi-step
+- ⬜ Cerrar F4 en el sistema de tracking (gh project, etc.)
+
+---
+
 ## Sesión 2026-05-29 (39) · F4-B arrancada · 2 devs paralelos
 
-**Estado:** F4-A cerrada (feature store + baseline + MLflow). F4-B abierta con 2 devs en paralelo. FIX de baseline es PRIORITARIO.
+**Estado:** ✅ F4-B cerrada. F4-A y F4-B completados. Pendiente: F5 (feature engineering + direct multi-step).
 
 ### Evidencia F4-A
 
@@ -31,9 +101,9 @@
 
 ### Pendientes para Javier
 
-- ⬜ Aprobar plan F4-B v2 (`docs/plan-f4-b.md`)
-- ⬜ Ejecutar `pip install prophet lightgbm` en la Mac (si Dev A va en Mac)
-- ⬜ Confirmar si label sintético del classifier es aceptable
+- ✅ Aprobar plan F4-B v2
+- ✅ `pip install prophet lightgbm`
+- ✅ Label sintético del classifier OK (F1=0.99)
 - ⬜ Verificar que Windows PC tenga `.env` con DATABRICKS_HOST/TOKEN actualizados
 
 ---

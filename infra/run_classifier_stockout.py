@@ -439,6 +439,11 @@ def write_alerts_table(
         print("   ⚠️ No hay alertas para escribir")
         return True
 
+    # Databricks SQL Warehouse no soporta INSERT OVERWRITE PARTITION VALUES
+    # Usamos DELETE + INSERT INTO como workaround
+    stmt_delete = f"DELETE FROM motoshop.gold.alertas_quiebre WHERE business_date = DATE '{business_date}'"
+    execute_statement(stmt_delete, "Delete old alerts")
+
     # Preparar INSERT
     rows_sql = []
     for _, row in alerts.iterrows():
@@ -451,11 +456,16 @@ def write_alerts_table(
             f"{row['dias_hasta_quiebre']}, '{row['urgencia']}', DATE '{business_date}')"
         )
 
-    insert_sql = f"""
-    INSERT OVERWRITE motoshop.gold.alertas_quiebre PARTITION (business_date)
-    VALUES
-    {',\n'.join(rows_sql)}
-    """
+    if not rows_sql:
+        print("   ⚠️ No hay alertas para insertar luego de filtrar")
+        return True
+
+    insert_sql = (
+        "INSERT INTO motoshop.gold.alertas_quiebre "
+        "(sku, nom_producto, stock_actual, demanda_predicha, "
+        "dias_hasta_quiebre, urgencia, business_date) "
+        "VALUES\n" + ',\n'.join(rows_sql)
+    )
 
     success = execute_statement(insert_sql, "INSERT alertas_quiebre")
     if success:
@@ -477,8 +487,8 @@ def log_mlflow(metrics: dict, alerts_count: dict, model=None) -> str | None:
         import mlflow
         import mlflow.tracking
 
-        mlflow.set_tracking_uri("databricks")
-        mlflow.set_experiment("/Users/javierportillar/motoshop_forecast")
+        mlflow.set_tracking_uri(f"file:{REPO_ROOT}/mlruns")
+        mlflow.set_experiment("motoshop_forecast")
 
         with mlflow.start_run() as run:
             mlflow.set_tags({
@@ -627,7 +637,7 @@ def main():
 
     # 5. Escribir a gold
     latest_date = df["business_date"].max()
-    write_alerts_table(full_results, product_names, latest_date)
+    write_alerts_table(alerts, product_names, latest_date)
 
     # 6. MLflow
     if results["f1"] >= 0.7:
@@ -638,7 +648,7 @@ def main():
     mlflow_run_id = log_mlflow(results, alerts_count, results.get("model"))
 
     # 7. Evidencia
-    write_evidence(results, full_results, mlflow_run_id)
+    write_evidence(results, alerts, mlflow_run_id)
 
     # 8. Resumen final
     print()
