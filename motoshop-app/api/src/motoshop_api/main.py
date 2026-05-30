@@ -11,7 +11,7 @@ import sqlalchemy.exc
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -137,6 +137,12 @@ class HealthResponse(BaseModel):
 def health() -> HealthResponse:
     """Endpoint de salud usado por el túnel y el monitoreo."""
     return HealthResponse(status="ok", version=__version__, env=settings.env)
+
+
+@app.head("/health", tags=["meta"])
+def health_head() -> Response:
+    """HEAD para monitoreo externo (UptimeRobot, Render health check)."""
+    return Response(status_code=200)
 
 
 @app.get("/demo", response_class=HTMLResponse, tags=["meta"])
