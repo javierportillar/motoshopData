@@ -1,7 +1,7 @@
 # MASTER · Índice maestro del proyecto MotoShop
 
 > Entry point para revisar el proyecto end-to-end. Si abrís este archivo, vas a poder navegar a cualquier parte del proyecto sin tener que cazar archivos.  
-> Última actualización: 2026-05-30 (Sesión 42).
+> Última actualización: 2026-05-30 (Sesión 47).
 
 ---
 
@@ -14,7 +14,7 @@
 | Próximo gate | Cierre F6 = **cierre del proyecto académico** (Maestría UAO 2025-2) |
 | Avance global | **5/7 fases cerradas** + 4 hardening sprints + F4-FIX1 ✅ + F5-FIX1 ✅ |
 | ADRs aceptados | 19 (D1-D14 + ADR-0015..0019) — ADR-0020/0021 a redactar en F6 |
-| Riesgos vivos | 9 (R1, R2, R4, R5, R6, R7, R8, R14, R15) — R11/R12/R13 resueltos en F4-FIX1 |
+| Riesgos vivos | 10 (R1, R2, R4, R5, R6, R7, R8, R14, R15, R16) — R11/R12/R13 resueltos en F4-FIX1 |
 
 ```
 F0 ✅  F1 ✅ (+F1.5 ✅ +F1.9 ✅)  F2 ✅  F3 ✅ (+F3.5 ✅ +F3.6 ✅)  F4-A ✅  F4-B ✅  F4-C ✅  F4-FIX1 ✅  F5 ✅ (+F5-FIX1 ✅)  F6 🟡
@@ -41,7 +41,7 @@ F0 ✅  F1 ✅ (+F1.5 ✅ +F1.9 ✅)  F2 ✅  F3 ✅ (+F3.5 ✅ +F3.6 ✅)  F4-A
 | **F4-C · API forecast + PWA + push** | ✅ | Endpoints `/forecast/*` + `/alerts/*` con Real repos verificados contra Databricks SQL. PWA pages + StaleDataBanner + push sender. |
 | **F4-FIX1 · Remediación auditoría F4** | ✅ | 8/8 V-FIX1 PASS. R11/R12/R13 cerrados. R14 (remover Prophet/LightGBM en F5) + R15 (users.yaml diferido F6) abiertos. ADR-0017 Accepted. Plan [docs/plan-f4-fix1.md](plan-f4-fix1.md). |
 | **F5 · Operación bidireccional** | ⬜ | App tables InnoDB, escritura PWA→sgHermes vía staging tables. |
-| **F6 · Hardening + entrega** | ⬜ | Cierre R6/R7/R8/R11/R12/R13, demo gerencia, monitoring, entrega académica E5. |
+| **F6 · Hardening + entrega** | 🟡 | Tunnel revive, notebooks upload, workflow UNPAUSED, PWA Vercel deploy, CORS fijo, diagnosis alerts/forecast (warehouse start + vars Databricks). Descubrimiento crítico: Windows = SPOF (API offline si PC se apaga). Demo 4G funcional con PC encendida. |
 
 ---
 
@@ -110,6 +110,7 @@ Resumen — detalle en [`SEGUIMIENTO.md`](../SEGUIMIENTO.md) §Tablero y [`docs/
 | **R13** | R10 sin alerta al usuario en PWA | ✅ Resuelto F4-FIX1 | — |
 | **R14** | Prophet/LightGBM en pipeline inservibles | 🟡 Diferido F5 | Kickoff F5 — remover scripts |
 | **R15** | `users.yaml` con FG28 propagada (gitignored pero force-added) | 🟡 Diferido F6 | F6 hardening — rotación + cleanup |
+| **R16** | Windows SPOF: API offline si PC se apaga | 🔴 Descubierto en F6 | F7 — migrar API a Render/VPS |
 
 ---
 

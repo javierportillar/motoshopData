@@ -8,6 +8,29 @@
 
 ---
 
+## Sesión 2026-05-30 (47b) · Descubrimiento arquitectónico: Windows = SPOF
+
+**Estado:** La API vive SOLO en Windows. Si la PC se apaga, la web no funciona.
+
+**🔴 Problema arquitectónico descubierto durante smoke test:**
+- Frontend en Vercel ✅ (siempre arriba)
+- API en Windows + Cloudflare Tunnel ❌ (solo si la PC está encendida)
+- MySQL en Windows ❌ (igual)
+- Workflow Databricks ✅ (en la nube, corre igual)
+- **Conclusión: la demo depende de que esta PC esté prendida. Si se apaga, `https://api.fragloesja.uk` no responde y la PWA no sirve datos.**
+
+**Opciones para F7 (a evaluar por revisor):**
+
+| Opción | Costo | Qué implica |
+|--------|-------|-------------|
+| **1. Render gratis + Databricks** | $0 | API en Render.com free tier, lee todo de Databricks SQL Warehouse (gold tables), Windows solo para workflow nocturno |
+| **2. VPS ($5-10/mes)** | $5-10/mes | DigitalOcean / Hetzner, migrar MySQL 5.0→8.0, deploy API ahí |
+| **3. Híbrido (recomendada)** | $0 | API en Render, catálogo/historial vía Databricks SQL, Windows solo para ingesta nocturna. Lo más práctico para demo y entrega académica. |
+
+**Próximo paso:** Revisor evalúa opciones y decide si F7 = migración API a la nube.
+
+---
+
 ## Sesión 2026-05-30 (47) · Diagnosis /alerts y /forecast pre-demo
 
 **Estado:** Runtime Windows y Dev T Vercel cerraron lo suyo:
