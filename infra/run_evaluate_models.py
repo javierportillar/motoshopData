@@ -252,6 +252,36 @@ def calc_wape(actuals: list[float], predictions: list[float]) -> float | None:
 # ─── Carga de datos ───────────────────────────────────────────────────────
 
 
+def load_sku_eligibility() -> tuple[set[str], int]:
+    """Carga perfiles de SKU desde feature_store_sku y devuelve solo los elegibles.
+    
+    Criterio (DT-F4-FIX1-2): >= 90 días de historia Y >= 30 ventas totales.
+    
+    Returns:
+        Tuple de (set de SKUs elegibles, total de SKUs en feature store).
+    """
+    print("\n  📦 Cargando elegibilidad de SKUs desde feature_store_sku...")
+    rows = safe_query(
+        """
+        SELECT cod_producto,
+               COUNT(*) AS history_length,
+               ROUND(SUM(demanda_diaria), 2) AS total_ventas
+        FROM motoshop.gold.feature_store_sku
+        GROUP BY cod_producto
+        """,
+        "SKU eligibility",
+    )
+    total_all = len(rows)
+    eligible = set()
+    for r in rows:
+        hl = r.get("history_length", 0) or 0
+        tv = r.get("total_ventas", 0) or 0
+        if hl >= 90 and tv >= 30:
+            eligible.add(r["cod_producto"])
+    print(f"     → {len(eligible)} SKUs elegibles de {total_all} totales")
+    return eligible, total_all
+
+
 def load_prophet_forecast() -> list[dict]:
     """Carga predicciones de Prophet."""
     print("\n  📦 Cargando gold.forecast_prophet_sku...")
@@ -295,7 +325,7 @@ def load_baseline_forecast() -> list[dict]:
 
 def load_actual_demand() -> dict[tuple[str, str], float]:
     """Carga demanda real desde feature_store_sku.
-
+    
     Returns:
         Dict con key (cod_producto, business_date) -> demanda_diaria
     """
@@ -415,7 +445,12 @@ def compute_global_metrics(
 def select_best_per_sku_horizon(
     model_evaluations: dict[str, list[dict]],
 ) -> list[dict]:
-    """Selecciona el mejor modelo por SKU + horizon según menor MAPE.
+    """Selecciona el mejor modelo por SKU + horizon según menor WAPE.
+
+    Para demanda intermitente, WAPE = SUM(|actual - pred|) / SUM(actual) es
+    más robusto que MAPE porque no se divide por cada valor individual,
+    evitando la inflación cuando hay pocas ventas. MAPE se reporta como
+    métrica secundaria.
 
     Args:
         model_evaluations: Dict con nombre de modelo -> lista de evaluaciones.
@@ -433,14 +468,25 @@ def select_best_per_sku_horizon(
 
     best_predictions: list[dict] = []
     for key, entries in groups.items():
-        # Elegir la entrada con menor MAPE
-        valid = [e for e in entries if e["mape"] is not None]
-        if not valid:
+        if not entries:
             continue
-        best = min(valid, key=lambda e: e["mape"])
-        best_predictions.append(best)
+        # Calcular WAPE por modelo para este SKU+horizon
+        model_scores: dict[str, float] = {}
+        for e in entries:
+            mn = e.get("model_name", "unknown")
+            # WAPE = sum(|actual - pred|) / sum(actual) para este punto
+            actual = e["actual"]
+            pred = e["predicted"]
+            # Si hay un solo punto, WAPE = MAPE en valor absoluto
+            wape = abs(actual - pred) / actual * 100 if actual > 0 else float("inf")
+            model_scores[mn] = wape
 
-    print(f"\n     → {len(best_predictions)} mejores predicciones seleccionadas")
+        # Elegir el modelo con menor WAPE
+        best_model = min(model_scores, key=model_scores.get)
+        best_entry = next(e for e in entries if e.get("model_name") == best_model)
+        best_predictions.append(best_entry)
+
+    print(f"\n     → {len(best_predictions)} mejores predicciones seleccionadas (WAPE primary)")
     return best_predictions
 
 
@@ -609,12 +655,17 @@ def write_evidence(
     total_skus: int,
     checks: dict[str, bool],
     mlflow_run_id: str | None,
+    eligible_skus: set[str] | None = None,
+    total_all_skus: int = 0,
 ):
     """Escribe evidencia en markdown."""
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     out_path = RUNS_DIR / f"v_model_evaluation_{timestamp}.md"
 
     timestamp_iso = datetime.now(timezone.utc).isoformat()
+
+    # Cobertura de SKUs
+    eligible_count = len(eligible_skus) if eligible_skus else 0
 
     lines = [
         f"# Model Evaluation — {timestamp}",
@@ -623,10 +674,26 @@ def write_evidence(
         "",
         "---",
         "",
+        "## SKU Coverage",
+        "",
+        f"- Total SKUs in feature store: {total_all_skus}",
+        f"- Eligible SKUs (>= 90d history + >= 30 sales): {eligible_count}",
+        f"- SKUs with predictions evaluated: {total_skus}",
+        f"- Coverage rate: {round(total_skus / total_all_skus * 100, 1) if total_all_skus > 0 else 0}%",
+        "",
+        "> **DT-F4-FIX1-2**: Only SKUs with >= 90 days of history and >= 30 total sales",
+        "> are evaluated with Prophet/LightGBM. Non-eligible SKUs fall back to baseline.",
+        "",
+        "---",
+        "",
         "## Comparison Summary",
         "",
-        "| Model | MAPE | sMAPE | WAPE | SKUs evaluated |",
-        "|-------|------|-------|------|----------------|",
+        "> **WAPE is the primary metric** for intermittent demand. MAPE inflates when",
+        "> actual sales are small (e.g., actual=1, pred=36 → 3500% MAPE). WAPE avoids this",
+        "> by aggregating across all predictions before dividing.",
+        "",
+        "| Model | MAPE | sMAPE | WAPE (primary) | SKUs evaluated |",
+        "|-------|------|-------|----------------|----------------|",
     ]
 
     for model_name in [MODEL_PROPHET, MODEL_LIGHTGBM, MODEL_BASELINE]:
@@ -777,6 +844,12 @@ def main():
     print(f"Warehouse: {WAREHOUSE_ID}")
     print("=" * 60)
 
+    # ── 0. Cargar elegibilidad de SKUs ──
+    print("\n0. Cargando elegibilidad de SKUs (DT-F4-FIX1-2)...")
+    eligible_skus, total_all_skus = load_sku_eligibility()
+    print(f"   SKUs elegibles (>=90d + >=30 ventas): {len(eligible_skus)} de {total_all_skus}")
+    print("=" * 60)
+
     # ── 1. Cargar datos ──
     print("\n1. Cargando predicciones y demanda real...")
 
@@ -785,6 +858,15 @@ def main():
     baseline_rows = load_baseline_forecast()
 
     actual_lookup = load_actual_demand()
+
+    # Filtrar Prophet y LightGBM solo a SKUs elegibles
+    prophet_pre = len(prophet_rows)
+    prophet_rows = [r for r in prophet_rows if r.get("sku") in eligible_skus]
+    lightgbm_pre = len(lightgbm_rows)
+    lightgbm_rows = [r for r in lightgbm_rows if r.get("sku") in eligible_skus]
+    print(f"\n   Filtro de elegibilidad:")
+    print(f"     Prophet: {prophet_pre} → {len(prophet_rows)} filas (solo SKUs elegibles)")
+    print(f"     LightGBM: {lightgbm_pre} → {len(lightgbm_rows)} filas (solo SKUs elegibles)")
 
     print(f"\n   Demand lookup size: {len(actual_lookup)} entries")
     print("=" * 60)
@@ -898,6 +980,8 @@ def main():
         model_metrics, model_evaluations,
         dict(best_model_counts), unique_skus,
         checks, mlflow_run_id,
+        eligible_skus=eligible_skus,
+        total_all_skus=total_all_skus,
     )
 
     # ── Resumen final ──

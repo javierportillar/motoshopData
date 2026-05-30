@@ -21,6 +21,8 @@ htmlcov/
 node_modules/
 .next/
 out/
+test-results/
+playwright-report/
 .turbo/
 .pnpm-store/
 *.tsbuildinfo

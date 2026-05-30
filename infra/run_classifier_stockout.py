@@ -278,38 +278,90 @@ def prepare_features(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, dict]:
     df_feat = pd.get_dummies(df, columns=["categoria_abc"], prefix="cat")
 
     # Label: quiebre si stock insuficiente para cubrir media_movil_7d * 0.5
+    # WARNING (ADR-0017): Este es un proxy. El target real es stock=0 AND demanda>0.
     df_feat["quiebre"] = (
         (df_feat["stock_actual"] < df_feat["media_movil_7d"] * 0.5)
     ).astype(int)
 
     # Features para entrenamiento
+    # NOTA: stock_actual NO se incluye porque el target se define con él (target leakage).
+    # Si stock_actual estuviera como feature, el modelo aprende la regla aritmética
+    # en lugar de patrones predictivos reales. Ver ADR-0017 §4.
     feature_cols = [
         "demanda_diaria", "lag_7d", "lag_14d", "lag_28d",
         "media_movil_7d", "media_movil_14d", "media_movil_28d",
-        "dia_semana", "mes", "stock_actual", "dias_sin_venta",
+        "dia_semana", "mes", "dias_sin_venta",
     ] + [c for c in df_feat.columns if c.startswith("cat_")]
 
     X = df_feat[feature_cols].copy()
     y = df_feat["quiebre"]
 
-    print(f"   Features: {len(feature_cols)} columnas")
-    print(f"   Clases: 0={sum(y==0)}, 1={sum(y==1)} ({sum(y==1)/len(y)*100:.1f}%)")
+    # Conservar business_date para split temporal
+    dates = pd.to_datetime(df_feat["business_date"])
+
+    print(f"   Features: {len(feature_cols)} columnas (stock_actual excluido por target leakage)")
+    quiebre_count = sum(y == 1)
+    no_quiebre_count = sum(y == 0)
+    print(f"   Clases: 0={no_quiebre_count}, 1={quiebre_count} ({quiebre_count/len(y)*100:.1f}%)")
     print(f"   Columnas: {feature_cols}")
 
-    metadata = {"feature_cols": feature_cols}
-    return X, y, metadata
+    metadata = {
+        "feature_cols": feature_cols,
+        "n_total": len(df_feat),
+        "n_quiebre": int(quiebre_count),
+        "n_no_quiebre": int(no_quiebre_count),
+        "date_min": str(dates.min()),
+        "date_max": str(dates.max()),
+    }
+    return X, y, dates, metadata
 
 
 # ─── 3. Entrenar clasificador ────────────────────────────────────────────────
 
 
-def train_classifier(X: pd.DataFrame, y: pd.Series) -> dict:
-    """Entrena LGBMClassifier con stratified 70/30 split."""
-    print("\n🏋️ Entrenando LGBMClassifier...")
+def train_classifier(
+    X: pd.DataFrame, y: pd.Series, dates: pd.Series,
+    split_date: str = "2026-04-01",
+) -> dict:
+    """Entrena LGBMClassifier con split temporal (ADR-0017 §3).
+    
+    Args:
+        X: Features.
+        y: Target binario.
+        dates: Series de fechas alineada con X/y.
+        split_date: Fecha de corte. Train <= split_date, Test > split_date.
+    
+    Returns:
+        Dict con modelo, métricas, feature importance.
+    """
+    print("\n🏋️ Entrenando LGBMClassifier (split temporal)...")
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.3, random_state=42, stratify=y,
-    )
+    split_dt = pd.Timestamp(split_date)
+
+    # Split temporal: train = pasado, test = futuro
+    train_mask = dates <= split_dt
+    test_mask = dates > split_dt
+
+    X_train = X[train_mask].copy()
+    y_train = y[train_mask].copy()
+    X_test = X[test_mask].copy()
+    y_test = y[test_mask].copy()
+
+    # Verificar que no hay leakage
+    train_dates = dates[train_mask]
+    test_dates = dates[test_mask]
+
+    print(f"   Train: {len(X_train)} filas ({train_dates.min().date()} → {train_dates.max().date()})")
+    print(f"   Test:  {len(X_test)} filas ({test_dates.min().date()} → {test_dates.max().date()})")
+
+    train_overlap = set(train_dates.unique()) & set(test_dates.unique())
+    if train_overlap:
+        print(f"   ⚠️  DATA LEAKAGE: {len(train_overlap)} fechas en común entre train y test")
+    else:
+        print(f"   ✅ Sin data leakage — fechas disjoint")
+
+    print(f"   Train clases: 0={sum(y_train==0)}, 1={sum(y_train==1)} ({sum(y_train==1)/len(y_train)*100:.1f}%)")
+    print(f"   Test clases:  0={sum(y_test==0)}, 1={sum(y_test==1)} ({sum(y_test==1)/len(y_test)*100:.1f}%)")
 
     params = {
         "objective": "binary",
@@ -363,6 +415,13 @@ def train_classifier(X: pd.DataFrame, y: pd.Series) -> dict:
         "feature_importance": importance[:10],
         "n_train": len(X_train),
         "n_test": len(X_test),
+        "n_train_quiebre": int(sum(y_train == 1)),
+        "n_test_quiebre": int(sum(y_test == 1)),
+        "test_date_min": str(test_dates.min().date()),
+        "test_date_max": str(test_dates.max().date()),
+        "train_date_min": str(train_dates.min().date()),
+        "train_date_max": str(train_dates.max().date()),
+        "no_leakage": len(train_overlap) == 0,
     }
 
 
@@ -544,6 +603,20 @@ def write_evidence(metrics: dict, alerts: pd.DataFrame, mlflow_run_id: str | Non
         "",
         "---",
         "",
+        "## Split temporal (ADR-0017)",
+        "",
+        f"| | Train | Test |",
+        f"|---|-------|------|",
+        f"| Fechas | {metrics.get('train_date_min', '?')} → {metrics.get('train_date_max', '?')} | {metrics.get('test_date_min', '?')} → {metrics.get('test_date_max', '?')} |",
+        f"| Filas | {metrics['n_train']} | {metrics['n_test']} |",
+        f"| Quiebres | {metrics.get('n_train_quiebre', '?')} | {metrics.get('n_test_quiebre', '?')} |",
+        f"| No leakage | {'✅' if metrics.get('no_leakage', False) else '❌'} | — |",
+        "",
+        "> **ADR-0017**: Split estrictamente temporal. Train y test NO comparten fechas.",
+        "> `stock_actual` excluido de features para evitar target leakage.",
+        "",
+        "---",
+        "",
         "## Métricas",
         "",
         f"| Métrica | Valor |",
@@ -624,10 +697,10 @@ def main():
     product_names = load_product_names()
 
     # 2. Features + label
-    X, y, metadata = prepare_features(df)
+    X, y, dates, metadata = prepare_features(df)
 
-    # 3. Entrenar clasificador
-    results = train_classifier(X, y)
+    # 3. Entrenar clasificador con split temporal
+    results = train_classifier(X, y, dates, split_date="2026-04-01")
 
     # 4. Clasificar urgencia
     alerts, full_results = classify_urgency(df, results["model"], metadata["feature_cols"])
