@@ -1,6 +1,6 @@
 # ADR-0020: Forecasting agregado por categoría
 
-**Status**: Proposed → **Accepted** (si hipótesis se valida: baseline-categoría WAPE < 45.83%)
+**Status**: **Accepted** (hipótesis validada: baseline-categoría WAPE 34.37% < 45.83%)
 **Date**: 2026-05-30
 **Deciders**: F6 Team (Dev B · Track A · Analítica Robusta)
 **Sprint**: F6-B

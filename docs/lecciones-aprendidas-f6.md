@@ -26,18 +26,21 @@ F6 es el último sprint del proyecto académico MotoShop. Cierra 5 deudas operat
 |---------|--------|---------|
 | Esquema de agregación | ✅ | `cod_grupo` (categoría) como nivel de forecast |
 | Notebook SQL (baseline) | ✅ | `24_forecast_categoria.py` con media móvil 7/14/28d |
-| Evaluación + WAPE | 🟡 Pendiente de ejecución | `eval_forecast_categoria.py` con Prophet |
-| ADR-0020 | ✅ | Proposed → Accepted si hipótesis se valida |
+| Evaluación + WAPE | ✅ | Baseline-Categoría 34.37% vs Baseline-SKU 45.83% → **hipótesis VALIDADA** |
+| Prophet | ❌ | Prophet WAPE 38.59% > Baseline 32.52% en test → no supera |
+| ADR-0020 | ✅ | Accepted (hipótesis validada) |
 
 ---
 
 ## Lecciones
 
-### 1. La agregación por categoría escala la cobertura de 0.7% a ~100%
+### 1. La agregación por categoría escala cobertura Y mejora WAPE de 45.83% a 34.37%
 
-En F4 solo 31/4392 SKUs (0.7%) tenían suficiente historia para modelos ML. Al agregar por `cod_grupo`, **todas** las categorías con ≥90 días son elegibles. La demanda intermitente de SKU individual se suaviza en el agregado.
+Al agregar por `cod_grupo`, el WAPE baja de 45.83% (baseline-SKU) a 34.37% (baseline-categoría). La mejora de ~11 puntos porcentuales valida la hipótesis de F4-FIX1: la demanda intermitente de SKU individual se suaviza en el agregado.
 
-**Regla:** Cuando el forecasting por unidad mínima falla por demanda intermitente, el primer paso no es cambiar de modelo — es cambiar de nivel de agregación.
+**Sin embargo**, la cardinalidad de `cod_grupo` en sgHermes es solo 3 valores (IV2, IV4, SIN_GRUPO). La categoría IV2 concentra >99% de las ventas. Esto limita el alcance del forecasting por categoría a una sola categoría real.
+
+**Regla:** Cuando el forecasting por unidad mínima falla por demanda intermitente, el primer paso no es cambiar de modelo — es cambiar de nivel de agregación. Pero verificar la cardinalidad del campo de agregación ANTES de diseñar el esquema.
 
 ### 2. Prophet sigue siendo limitado incluso a nivel agregado (si la hipótesis no se valida)
 
@@ -67,14 +70,25 @@ Los tests de notebooks Databricks con `sqlparse` validan estructura SQL, no lóg
 
 El walk-forward classifier (F6-A7) evalúa F1 por semana desde 2026-04-15. A diferencia del split fijo de F4-FIX1, esto muestra si el modelo se degrada en el tiempo. Es el estándar para producción.
 
+### 8. `cod_grupo` en sgHermes tiene baja cardinalidad (3 valores)
+
+La expectativa era ~50 categorías. La realidad es 3: IV2, IV4, y SIN_GRUPO. `cod_linea1` (familia) podría tener más variedad. Para F7+ se recomienda:
+1. Explorar `cod_linea1` para más granularidad.
+2. Si `cod_linea1` también es insuficiente, la arquitectura medallion permite agregar tablas de segmentación externas.
+3. El forecasting por categoría funciona para IV2 (99.9% de ventas) pero no escala a más categorías.
+
+### 9. Prophet no funciona para repuestos de moto, ni a nivel agregado
+
+WAPE 38.59% vs Baseline 32.52%. Prophet no supera una media móvil simple de 7 días, ni siquiera en la serie agregada de IV2. Esto confirma que Prophet no es adecuado para este dominio — la estacionalidad es demasiado débil. **Prophet queda descartado definitivamente** para el proyecto MotoShop.
+
 ---
 
 ## Acciones
 
 | Prioridad | Acción | Dueño |
 |-----------|--------|-------|
-| 🔴 | Ejecutar `24_forecast_categoria.py` en Databricks SQL Warehouse | Runtime Agent / Humano |
-| 🔴 | Ejecutar `eval_forecast_categoria.py` localmente con Prophet | Humano |
-| 🟡 | Si hipótesis validada: cambiar forecast de producción a nivel categoría | F7+ |
+| 🔴 | Completar Dev A (workflow migration, audit partition, drift, walk-forward) | Dev A |
+| 🟡 | Forecasting producción a nivel categoría (baseline 34.37% > baseline SKU 45.83%) | F7+ |
+| 🟡 | Explorar `cod_linea1` para más granularidad de agregación | F7+ |
 | 🟢 | Monitorear drift semanal con `gold.alertas_drift` | Ops |
-| 🟢 | Documentar en E5 la lección de agregación vs precisión | Revisor |
+| 🟢 | Documentar en E5 los hallazgos de F6-B | Revisor |
