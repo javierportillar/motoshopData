@@ -75,6 +75,11 @@ $env:MYSQL_APP_WRITER_PASSWORD = (Get-Content "$ProjectRoot\.env" | Where-Object
 if (-not $env:MYSQL_APP_WRITER_PASSWORD) { Write-Log "ERROR: MYSQL_APP_WRITER_PASSWORD no encontrada en .env"; exit 1 }
 $env:CORS_ORIGINS = "http://localhost:3000,https://api.fragloesja.uk,https://motoshop-web-tau.vercel.app,https://app.fragloesja.uk,http://localhost:8000"
 
+# Databricks (Track A) — leer del .env de la API
+$env:DATABRICKS_HOST = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^DATABRICKS_HOST=(.+)$'} | ForEach-Object {$matches[1]})
+$env:DATABRICKS_TOKEN = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^DATABRICKS_TOKEN=(.+)$'} | ForEach-Object {$matches[1]})
+$env:DATABRICKS_HTTP_PATH = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^DATABRICKS_HTTP_PATH=(.+)$'} | ForEach-Object {$matches[1]})
+
 $proc = Start-Process -FilePath "$ApiDir\.venv\Scripts\python.exe" `
     -ArgumentList "-m","uvicorn","motoshop_api.main:app","--port","$Port" `
     -WindowStyle Hidden -PassThru -WorkingDirectory $ApiDir
