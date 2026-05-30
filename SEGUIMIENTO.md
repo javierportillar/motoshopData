@@ -625,6 +625,14 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ## Notas de sesión
 
+### 2026-05-30 — Sesión 55 · Dev T1 · F7-B T1-3 MVP COMPLETO ⭐ HITO
+
+> 🟢 [F7-B-T1] Paso T1-3 MVP COMPLETO · 4 componentes base + tokens + Logo listos · commit: `5aa9929` · siguiente paso: T1-4 componentes secundarios · 🔓 **LIBERA a Dev T2 — humano puede arrancar T2 AHORA**
+
+- **Hecho:** 4 componentes base creados en `components/ui/`: **Card** (3 variantes: default/dark/bordered, header/footer, hover toggle), **Stat** (KPI standalone con delta coloreado tokens delta-positive/negative), **Table** (genérica `<T>` con columnas, striped, hover, empty state), **Badge** (5 variantes semánticas + 2 tamaños + compuestos StockBadge/DeltaBadge/AlertBadge). Stories en `docs/f7/components/`. Build: 0 errores.
+- **Aprendido:** Los componentes existentes en `lib/ui/` (Button, Card legacy, Badge legacy, etc.) ya consumen los tokens MotoShop automáticamente vía `@theme` — no requieren migración urgente. Los nuevos `components/ui/` son la capa tokenizada para que Dev T2 construya las pages de F7-C.
+- **Próximo paso:** T1-4 componentes secundarios (Chart, Skeleton, ErrorState, EmptyState). Sin bloqueo.
+
 ### 2026-05-30 — Sesión 55 · Dev T1 · F7-B T1-2 terminado
 
 > 🟢 [F7-B-T1] Paso T1-2 terminado · Logo component + logo.png asset + story · commit: 9a428b6 · siguiente paso: T1-3 MVP componentes · sin bloqueo
