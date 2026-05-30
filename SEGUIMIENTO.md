@@ -28,9 +28,9 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **F4 cerrada · listos para F5 · Operación bidireccional** |
+| Fase activa | **F5 · Operación bidireccional** (abierta, planificación lista) |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Apertura F5 (planificación stack F5 + ADR-0018 + remover Prophet/LightGBM del pipeline — R14) |
+| Próximo gate | Cierre F5 (POST /alerts/{id}/action + RBAC + offline queue + R14 cleanup) |
 | Avance global | **4/7 fases cerradas** + 4 hardening sprints (F1.5 ✅, F1.9 ✅, F3.5 ✅, F3.6 ✅) + F4-FIX1 ✅ |
 | Última actualización | 2026-05-30 |
 
@@ -39,6 +39,8 @@ F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 ✅  F3.5 ✅  F3.6 ✅  F4-A
 ```
 
 > **2026-05-30 (Sesión 42) — F4-FIX1 abierta tras auditoría revisor fresco.** Auditoría con contexto independiente sobre el cierre F4-B/F4-C levantó 2 bloqueantes + 4 observaciones: (B1) **Prophet MAPE 3540%** no es "peor que baseline" sino modelo/métrica rota — probable división por cero en demanda intermitente y SKUs con <30 puntos; (B2) **Classifier F1=0.9924** sospechoso de data leakage o desbalance — reporte sin target distribution, split temporal explícito ni top features; (O3) F4-C cerró con FakeRepos en lugar de validar contra Gold real; (O4) R10 PC Windows offline "se documenta", no se alerta al usuario; (O5) sin ADR de split temporal; (O6) lección F3.5 §10 nunca se propagó a `INICIAR_REVIEWER.md` (que de hecho no existía). Plan correctivo: [docs/plan-f4-fix1.md](docs/plan-f4-fix1.md). **3 agentes paralelos:** Dev A (ML diagnosis + ADR-0017 + lecciones), Dev T (PWA real repos + StaleDataBanner + E2E), Revisor (INICIAR_REVIEWER.md + tracking docs). Wall-clock ~3 h.
+
+> **2026-05-30 (Sesión 44) — F5 abierta · planificación detallada lista.** Plan [docs/plan-f5.md](docs/plan-f5.md): 3 sprints paralelos (Dev A backend + R14 cleanup, Dev T frontend + offline queue, Revisor ADRs + audit). Scope mínimo viable: 1 acción de negocio ("gestionar alerta de quiebre" con ordered/dismissed/postponed), 2 tablas InnoDB (`app_alert_actions`, `app_audit_log`), RBAC fino por role en JWT (`admin`/`gerente` write, `vendedor` read), idempotency-key obligatorio, audit dual structlog+DB, offline queue idb-keyval con retry exponencial 1s→6h (cap 6). [ADR-0018](docs/decisions/0018-stack-f5.md) Proposed con DT-F5-1..10. ADR-0019 (idempotency + RBAC pattern) pendiente. **R14 cleanup** parte de F5-A: archivar Prophet/LightGBM a `docs/archive/`. R15 sigue diferida F6. Wall-clock estimado ~4.5 h.
 
 > **2026-05-30 (Sesión 43) — F4-FIX1 cerrada · 🟢 GO a F5.** Auditoría revisor fresco PASS las 8 V-FIX1:
 > - **V1 ✅** WAPE primaria + filtro SKU elegible (31/4,392 = 0.7%). Métricas honestas finales: Prophet WAPE 864% / LightGBM WAPE 57% / **Baseline WAPE 45.83% (champion 97.9% SKUs)**.

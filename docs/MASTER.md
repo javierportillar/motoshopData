@@ -9,11 +9,11 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **F4 cerrada · listos para F5 · Operación bidireccional** |
+| Fase activa | **F5 · Operación bidireccional** (planificación lista) |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Apertura F5 (planificación stack F5 + ADR-0018 + remover Prophet/LightGBM — R14) |
-| Avance global | **4/7 fases cerradas** + 4 hardening sprints + F4-FIX1 ✅ |
-| ADRs aceptados | 17 (D1-D14 + ADR-0015, 0016, 0017) |
+| Próximo gate | Cierre F5 (POST /alerts/{id}/action + RBAC + offline queue + R14 cleanup) |
+| Avance global | **4/7 fases cerradas** + 4 hardening sprints + F4-FIX1 ✅ · F5 abierta |
+| ADRs aceptados | 17 + ADR-0018 Proposed |
 | Riesgos vivos | 9 (R1, R2, R4, R5, R6, R7, R8, R14, R15) — R11/R12/R13 resueltos en F4-FIX1 |
 
 ```

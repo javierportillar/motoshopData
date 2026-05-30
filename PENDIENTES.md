@@ -8,6 +8,140 @@
 
 ---
 
+## Sesión 2026-05-30 (44) · F5 abierta · Operación bidireccional
+
+**Estado:** F4 ✅ cerrada (FIX1 incluido). F5 con planificación detallada lista. 2 devs en paralelo + revisor.
+
+**Plan detallado:** [docs/plan-f5.md](docs/plan-f5.md) · **ADR-0018 Proposed:** [docs/decisions/0018-stack-f5.md](docs/decisions/0018-stack-f5.md).
+
+### Por qué F5 ahora
+
+F4-FIX1 dejó las predicciones y alertas operativas en la PWA pero el operador NO puede actuar desde móvil — vuelve al PC con sgHermes. F5 cierra el loop: **alerta → acción → registro persistido** sin tocar sgHermes (escribe a tablas `app_*` InnoDB nuevas).
+
+### Scope mínimo viable (acotado a propósito)
+
+- 1 acción de negocio: gestionar alerta de quiebre (`ordered`/`dismissed`/`postponed`)
+- 2 tablas nuevas: `app_alert_actions` + `app_audit_log` (InnoDB)
+- RBAC: admin/gerente write, vendedor read
+- Idempotency-key obligatorio
+- Offline queue PWA con retry exponencial
+- R14 cleanup (archivar Prophet/LightGBM)
+
+Otras acciones (notas venta, follow-up clientes, ajustes inventario) → F6/F7.
+
+### 🤖 Handoff Dev A · Sprint F5-A · Backend + R14 (~3-4 h)
+
+Abrí un chat Claude nuevo y pegá esto (también está en `docs/plan-f5.md` §7):
+
+```
+Soy Dev A · Track A · Sprint F5-A del proyecto MotoShop.
+Trabajo en paralelo con Dev T (no nos coordinamos en código,
+solo evitamos conflicto en SEGUIMIENTO.md y PENDIENTES.md).
+
+PRE-FLIGHT obligatorio:
+1. cd /Users/javierportillarosero/Documents/personal/dataEmpresas/motoshopData
+2. git pull --ff-only origin main
+3. Leé INICIAR_AGENTE.md completo (rol = Dev Agent · Track A)
+4. Leé docs/plan-f5.md COMPLETO
+5. Leé motoshop-app/api/src/motoshop_api/auth/deps.py (patrón JWT actual)
+6. Leé motoshop-app/api/src/motoshop_api/alerts/router.py (contrato actual)
+7. Verificá versión MySQL: mysql --version (debería ser 5.0)
+
+MI MISIÓN:
+Primer canal de escritura PWA → MySQL con tablas app_* en InnoDB.
+Acción única: gestionar alerta (ordered/dismissed/postponed) con
+idempotency + RBAC + audit log. Adicionalmente: R14 cleanup
+(archivar Prophet/LightGBM).
+
+ENTREGABLES (en orden):
+1. infra/migrations/F5-001-app_alert_actions.sql (InnoDB, idempotency_key UNIQUE)
+2. infra/migrations/F5-002-app_audit_log.sql
+3. infra/migrations/F5-003-grant_app_writer.sql (MySQL user nuevo)
+4. infra/migrations/_runs/migration_f5_<ts>.md (evidencia)
+5. motoshop-app/api/src/motoshop_api/app_writes/* (models, repo, router, schemas)
+6. require_role(*roles) en auth/deps.py
+7. AuditMiddleware en logging.py o audit_middleware.py
+8. Tests: tests/api/test_alert_actions.py (8+ casos) + tests/integration/
+9. R14: git mv infra/run_forecast_*.py + notebooks/gold/2{0,1}_*
+   a docs/archive/
+10. docs/archive/infra/README.md explicando R14
+11. Re-correr motoshop_gold_workflow y confirmar skip Prophet/LightGBM
+
+NO TOCO:
+- motoshop-app/web/** (Dev T)
+- notebooks/bronze|silver/** (estables)
+- Tablas sgHermes (ADR-0002)
+- users.yaml (R15 diferida)
+
+Commits con prefijo: feat(F5-A-backend): ...
+
+ARRANQUE:
+Paso A1 (Migration scripts). Verificá compatibilidad MySQL 5.0
+con DECIMAL, ENUM, JSON antes de tirar schema. Adaptá si falla.
+```
+
+### 🤖 Handoff Dev T · Sprint F5-B · Frontend + Offline queue (~3-4 h)
+
+Abrí otro chat Claude nuevo y pegá esto:
+
+```
+Soy Dev T · Track T · Sprint F5-B del proyecto MotoShop.
+Trabajo en paralelo con Dev A (no nos coordinamos en código).
+
+PRE-FLIGHT obligatorio:
+1. cd /Users/javierportillarosero/Documents/personal/dataEmpresas/motoshopData
+2. git pull --ff-only origin main
+3. Leé INICIAR_AGENTE.md completo (rol = Dev Agent · Track T)
+4. Leé docs/plan-f5.md COMPLETO (especial §3 DT-F5-5, DT-F5-10)
+5. Leé motoshop-app/web/app/(authenticated)/alerts/page.tsx
+6. Leé motoshop-app/web/lib/* (patrón actual)
+7. Leé motoshop-app/web/components/StaleDataBanner.tsx (patrón flotante)
+
+MI MISIÓN:
+UI para gestionar alertas desde PWA: botón "Gestionar" en lista,
+modal con 3 tabs (Pedir/Descartar/Posponer), offline queue,
+página "Mis acciones del día". RBAC: vendedor NO ve botón.
+
+ENTREGABLES (en orden):
+1. motoshop-app/web/components/AlertActionModal.tsx (3 tabs, validación)
+2. motoshop-app/web/lib/offlineQueue.ts (idb-keyval + retry 1s→6h
+   con cap 6 intentos)
+3. motoshop-app/web/components/OfflineQueueBadge.tsx
+4. motoshop-app/web/app/(authenticated)/acciones/page.tsx
+5. Modificar alerts/page.tsx para botón "Gestionar" solo si
+   user.role in ['admin', 'gerente']
+6. motoshop-app/web/tests/alert-action.spec.ts (5+ casos E2E)
+7. motoshop-app/web/_runs/v_f5_e2e_<ts>.md con screenshots + log
+
+NO TOCO:
+- motoshop-app/api/** (Dev A)
+- infra/** (Dev A)
+- notebooks/** (Dev A)
+
+DEPENDENCIA con Dev A:
+El endpoint POST /alerts/{id}/action lo crea Dev A en F5-A.
+Mientras Dev A trabaja, podés:
+1. Hacer UI con mock local (fetch que devuelva 201 simulado)
+2. Integrar cuando Dev A push el endpoint
+
+Commits con prefijo: feat(F5-B-frontend): ...
+
+ARRANQUE:
+Paso B1 (botón Gestionar en alerts/page.tsx). Antes de tocar
+offlineQueue, asegurate que el modal funciona en happy path.
+```
+
+### Próximo paso del revisor (Sesión 45)
+
+Cuando ambos devs pongan push final:
+1. Aplicar 9 checks de INICIAR_REVIEWER.md.
+2. Verificar 9 V-F5.
+3. Especial atención a Check 4 (nuevo MySQL user `app_writer` sin password en código) y Check 9 (Real vs Fake en `app_writes/router.py`).
+4. Si TODAS PASS → cerrar F5 verde + planificar F6 hardening.
+5. Si alguna FAIL → F5-FIX1.
+
+---
+
 ## Sesión 2026-05-30 (43) · F4-FIX1 Dev A completado · Pendiente Dev T + Revisor
 
 **Estado:** F4-B/F4-C revierten a 🟡 hasta cerrar F4-FIX1. Dev A ✅ completado. Dev T 🟡 y Revisor 🟡 pendientes.
