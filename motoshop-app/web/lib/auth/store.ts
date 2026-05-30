@@ -17,3 +17,10 @@ export const useAuthStore = create<AuthState>((set) => ({
   setUser: (u, r) => set({ user: u, role: r, isAuthenticated: true }),
   logout: () => set({ user: null, role: null, isAuthenticated: false }),
 }));
+
+// E2E bridge — se activa solo en dev para inyectar role sin pasar por login
+if (process.env.NODE_ENV === "development" && typeof window !== "undefined") {
+  (window as unknown as Record<string, unknown>).__setAuthRole = (role: string | null) => {
+    useAuthStore.setState({ role, isAuthenticated: role !== null, loading: false });
+  };
+}

@@ -4,7 +4,9 @@ import { useState } from "react";
 import { Card } from "@/lib/ui/Card";
 import { useAlerts } from "@/lib/api/hooks";
 import { StaleDataBanner } from "@/components/StaleDataBanner";
+import { AlertActionModal } from "@/components/AlertActionModal";
 import { registerPushSubscription } from "@/lib/push/setup";
+import { useAuthStore } from "@/lib/auth/store";
 import Link from "next/link";
 
 const URGENCY_COLORS: Record<string, string> = {
@@ -28,8 +30,12 @@ const URGENCY_LABEL: Record<string, string> = {
 export default function AlertsPage(): JSX.Element {
   const [filter, setFilter] = useState<string | undefined>(undefined);
   const [pushStatus, setPushStatus] = useState<"idle" | "loading" | "active" | "error">("idle");
+  const [manageSku, setManageSku] = useState<string | null>(null);
 
-  const { data, error, isLoading } = useAlerts(filter);
+  const role = useAuthStore((s) => s.role);
+  const canManage = role === "admin" || role === "gerente";
+
+  const { data, error, isLoading, mutate } = useAlerts(filter);
 
   async function handleEnablePush() {
     setPushStatus("loading");
@@ -148,12 +154,22 @@ export default function AlertsPage(): JSX.Element {
                 {alert.nom_producto}
               </p>
             </div>
-            <Link
-              href={`/products/${alert.sku}`}
-              className="ml-2 shrink-0 text-xs text-primary hover:underline"
-            >
-              Ver SKU
-            </Link>
+            <div className="ml-2 flex shrink-0 items-center gap-2">
+              {canManage && (
+                <button
+                  onClick={() => setManageSku(alert.sku)}
+                  className="text-xs font-medium text-primary hover:underline"
+                >
+                  Gestionar
+                </button>
+              )}
+              <Link
+                href={`/products/${alert.sku}`}
+                className="text-xs text-primary hover:underline"
+              >
+                Ver SKU
+              </Link>
+            </div>
           </div>
 
           <div className="mt-3 grid grid-cols-3 gap-2">
@@ -193,6 +209,19 @@ export default function AlertsPage(): JSX.Element {
         <p className="text-center text-xs text-red-500">
           No se pudieron activar las notificaciones. Probá desde otro navegador.
         </p>
+      )}
+
+      {/* Modal de gestión */}
+      {manageSku && (
+        <AlertActionModal
+          sku={manageSku}
+          nomProducto={data?.alerts.find((a) => a.sku === manageSku)?.nom_producto ?? ""}
+          onClose={() => setManageSku(null)}
+          onSuccess={() => {
+            setManageSku(null);
+            mutate();
+          }}
+        />
       )}
     </div>
   );
