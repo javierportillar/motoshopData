@@ -571,7 +571,7 @@ Cada deuda tiene un **trigger de re-evaluación obligatoria**: si se cumple, se 
 
 [github.com/javierportillar/motoshopData](https://github.com/javierportillar/motoshopData) · 39 commits · 121 archivos.
 
-### 12.2 API en vivo
+### 12.2 API en vivo (Windows + Cloudflare Tunnel)
 
 `https://api.fragloesja.uk/`
 
@@ -582,6 +582,16 @@ Cada deuda tiene un **trigger de re-evaluación obligatoria**: si se cumple, se 
 - `GET /products/MOTS1297/stock` → `{"total": 691.0, ...}`
 - `GET /sales/recent?limit=10` → últimas facturas activas
 - `GET /docs` → Swagger interactivo
+
+### 12.2b API cloud 24/7 (Render free, F6-D)
+
+`https://motoshop-cloud-api.onrender.com/`
+
+- Mitigación SPOF Windows. Endpoints Databricks (`/alerts`, `/forecast`, `/metrics`) disponibles 24/7.
+- Endpoints MySQL (`/products`, `/stock`, `/sales`, `/alerts/{id}/action`) devuelven 503 graceful con JSON de degradación.
+- UptimeRobot pingea `/health` cada 5 min para evitar sleep de free tier.
+- Dominio custom pendiente: `cloud-api.fragloesja.uk` (CNAME en Cloudflare).
+- Evidencia: [`motoshop-app/api/_runs/v_render_deploy_20260530.md`](../motoshop-app/api/_runs/v_render_deploy_20260530.md).
 
 ### 12.2b PWA en producción (F6-C)
 
