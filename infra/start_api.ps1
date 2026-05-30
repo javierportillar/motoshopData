@@ -63,7 +63,7 @@ $env:CORS_ORIGINS = "http://localhost:3000,https://api.fragloesja.uk,http://loca
 
 $proc = Start-Process -FilePath "$ApiDir\.venv\Scripts\python.exe" `
     -ArgumentList "-m","uvicorn","motoshop_api.main:app","--port","$Port" `
-    -NoNewWindow -PassThru -WorkingDirectory $ApiDir
+    -WindowStyle Hidden -PassThru -WorkingDirectory $ApiDir
 
 Start-Sleep -Seconds 5
 

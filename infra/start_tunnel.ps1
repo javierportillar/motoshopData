@@ -55,7 +55,7 @@ if (!(Test-Path $credFile)) {
 Write-Log "Arrancando túnel $TunnelId..."
 $proc = Start-Process -FilePath $Cloudflared `
     -ArgumentList "tunnel","run","$TunnelId" `
-    -NoNewWindow -PassThru
+    -WindowStyle Hidden -PassThru
 
 Start-Sleep -Seconds 10
 
