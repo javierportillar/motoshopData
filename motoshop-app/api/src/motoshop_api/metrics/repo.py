@@ -201,9 +201,9 @@ class RealMetricsRepo:
             FROM motoshop.gold.mart_inventario_actual
         """)
         valor = self._query("""
-            SELECT ROUND(SUM(cantidad_actual * ultimo_costo), 2) AS valor_total
+            SELECT COALESCE(ROUND(SUM(cantidad_actual * costo_promedio), 2), 0) AS valor_total
             FROM motoshop.gold.mart_inventario_actual
-            WHERE ultimo_costo IS NOT NULL AND ultimo_costo > 0
+            WHERE costo_promedio IS NOT NULL AND costo_promedio > 0
         """)
         bodegas = self._query("""
             SELECT
@@ -217,7 +217,7 @@ class RealMetricsRepo:
         if not rows:
             raise RuntimeError("No inventory data found in gold mart")
         r = rows[0]
-        valor_total = float(valor[0]["valor_total"]) if valor else 0.0
+        valor_total = float(valor[0]["valor_total"])
         return InventorySummary(
             stock_total=float(r["stock_total"]),
             valor_total=valor_total,
