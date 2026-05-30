@@ -201,9 +201,15 @@ class RealMetricsRepo:
             FROM motoshop.gold.mart_inventario_actual
         """)
         valor = self._query("""
-            SELECT COALESCE(ROUND(SUM(cantidad_actual * costo_promedio), 2), 0) AS valor_total
-            FROM motoshop.gold.mart_inventario_actual
-            WHERE costo_promedio IS NOT NULL AND costo_promedio > 0
+            WITH latest_cost AS (
+                SELECT cod_producto, costo_producto,
+                       ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_date DESC) AS rn
+                FROM motoshop.silver.fact_compras_detalle
+                WHERE costo_producto > 0
+            )
+            SELECT COALESCE(ROUND(SUM(i.cantidad_actual * COALESCE(lc.costo_producto, 0)), 2), 0) AS valor_total
+            FROM motoshop.gold.mart_inventario_actual i
+            LEFT JOIN latest_cost lc ON i.cod_producto = lc.cod_producto AND lc.rn = 1
         """)
         bodegas = self._query("""
             SELECT
