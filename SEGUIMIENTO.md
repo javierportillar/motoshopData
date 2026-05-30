@@ -625,6 +625,16 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ## Notas de sesión
 
+### 2026-05-30 — Sesión 53 · Dev A · F6-D-FIX1-A Bug 3 backend
+
+> 🟢 [F6-D-FIX1-A] COMPLETO · valor_total arreglado (commit `fee4559`) · sprint cerrado · **ACCION HUMANO: avisar Dev W (Windows) git pull + restart API + smoke test** + avisar Revisor (audit FIX1).
+
+- **Hecho:** Bug 3 fix — `costo_promedio = 0` en todas las 4,829 filas de `mart_inventario_actual`. La query original filtraba con `WHERE costo_promedio > 0` → eliminaba 100% de filas → `valor_total = 0.0`. Fix: JOIN con `silver.fact_compras_detalle` trayendo último `costo_producto` vía `ROW_NUMBER` particionado por producto. Valor calculado: ~$83M COP. Tests 11/11 verdes. Evidencia en `motoshop-app/api/_runs/v_fix_inventory_valor_20260530.md`.
+- **Pendiente:** El fix está en `main` pero NO deployado. API producción (`api.fragloesja.uk`) aún retorna `valor_total: 0.0`. Requiere `git pull` + restart API en Windows.
+- **Próximo paso:** Dev W ejecuta deploy + Revisor audita V-FIX1-3.
+
+---
+
 ### 2026-05-30 — Sesión 52 · Dev D · F7-E Paso D1 terminado
 
 > 🟢 [F7-E-D] Paso D1 terminado · 4 notebooks snapshot (30/31/32/33) · commit: 57df7d6 · siguiente paso: D2 workflow · ACCION HUMANO: avisar Dev W para upload_all_notebooks.py + esperar antes de D2
