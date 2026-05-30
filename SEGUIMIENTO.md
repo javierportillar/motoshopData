@@ -625,6 +625,30 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ## Notas de sesión
 
+### 2026-05-30 — Sesión 56b · Dev T2 · F7-C 8 pages migradas + 4 dashboards nuevos ⭐ HITO
+
+> 🟢 [F7-C-T2] Migración 8 pages COMPLETA + 4 dashboards nuevos creados · commit: `c328eae` · siguiente paso: esperar endpoints Dev A2 para reemplazar mocks + tests E2E · sin bloqueo
+
+- **Hecho (8 pages migradas):**
+  - Home por rol (`app/(authenticated)/page.tsx`): gerente (4 KPI Stat cards + SalesTrendChart real + 5 cards decisiones) y vendedor (SearchBar autofocus + 4 cards alertas/dormidos/acciones/rotación). Eliminado redirect server-side.
+  - `/dashboards/ventas`: fix bug semántico — el chart ahora usa `useSalesTrend(9)` con tendencia mensual REAL, no top 5 SKUs. Stat cards + Table\<T\> para top 10.
+  - `/dashboards/inventario`: Stat cards + Badge de porcentaje por bodega.
+  - `/dashboards/dormidos`: Badge semántico por días (error>180d, warning>90d, default<90d). Stat para KPIs.
+  - `/dashboards/abc`: Badge para buckets (success/warning/error). Card+AbcChart.
+  - `/dashboards/` (landing): 6 Stat cards con links, grid responsive md:2col lg:3col.
+  - `/forecast`: Badge para métricas, chart usa accent (#0EA5E9) en vez de azul hardcodeado.
+  - `/alerts`: AlertBadge compuesto, Badge para counts. Link "Ver SKU" usa accent.
+  - `/acciones`: Badge por tipo (success=ordered, info=postponed, default=dismissed). KPIs 3-col.
+- **Hecho (4 dashboards nuevos):**
+  - `/cohortes`: usa `useCohortes()` real (endpoint existe de F3). 3 KPI + tabla con recurrencia Badge.
+  - `/vendedores`: mock con 3 vendedores. Ranking + DeltaBadge + tabla con 6 columnas.
+  - `/drift`: mock con 3 alertas. Badge estado + tabla con acción recomendada.
+  - `/plan-compras`: mock con 5 SKUs. Filtros ABC+urgencia+dormidos. Tabla 8 columnas (StockBadge, cantidad, ABC, urgencia, dormido, supplier). Resumen 3 KPI.
+- **Dependencias pendientes:** Endpoints Dev A2 faltantes para reemplazar mocks en /vendedores, /drift, /plan-compras. `/cohortes` ya usa endpoint real.
+- **Stats:** 23 pages estáticas compilando (↑ de 19). 5 commits en esta sesión. ~1,860 líneas nuevas. Build 0 errores. 3/4 dashboards mockeados con TODO visibles.
+- **Aprendido:** `useMetrics<T>` genérico acepta cualquier response model — solo se define la interfaz y la URL. El patrón mock→real con datos hardcoded permite desbloquear el frontend mientras backend termina. Las pages mockeadas llevan marca visible "datos de muestra" para auditoría.
+- **Próximo paso:** Tests E2E Playwright en 3 viewports (375/768/1280px) + Lighthouse audit. Reemplazar mocks cuando Dev A2 pushee endpoints. Agregar link de Navegación a los 4 nuevos dashboards en el layout.
+
 ### 2026-05-30 — Sesión 56 · Dev T2 · F7-C Paso 1 · Home por rol
 
 > 🟢 [F7-C-T2] Paso 1 terminado · home vendedor + gerente con diseño F7-B · commit: `97501cb` · siguiente paso: migrar /ventas + fix tendencia real · sin bloqueo
