@@ -70,11 +70,11 @@ mysql -u root < infra\migrations\F5-001-app_alert_actions.sql
 mysql -u root < infra\migrations\F5-002-app_audit_log.sql
 
 # 2. Crear usuario app_writer (ANTES editar el archivo y reemplazar
-#    <PASTE_APP_WRITER_PASSWORD> por Sashita123)
+#    <PASTE_APP_WRITER_PASSWORD> por <APP_WRITER_PASSWORD>)
 mysql -u root < infra\migrations\F5-003-grant_app_writer.sql
 
 # 3. Agregar al .env del API
-echo MYSQL_APP_WRITER_PASSWORD=Sashita123 >> motoshop-app\api\.env
+echo MYSQL_APP_WRITER_PASSWORD=<APP_WRITER_PASSWORD> >> motoshop-app\api\.env
 
 # 4. Verificar tablas
 mysql -u root -e "SHOW TABLES LIKE 'app_%'" motoshop2024

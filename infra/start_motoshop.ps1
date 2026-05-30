@@ -20,7 +20,11 @@ Write-Log "========================================"
 Write-Log ""
 Write-Log "--- Verificando MySQL ---"
 try {
-    $env:MYSQL_PWD = "Sashita123"
+    $env:MYSQL_PWD = (Get-Content "$ProjectRoot\.env" | Where-Object {$_ -match '^MYSQL_ROOT_PASSWORD=(.+)$'} | ForEach-Object {$matches[1]})
+    if (-not $env:MYSQL_PWD) {
+        Write-Log "MySQL: ERROR - MYSQL_ROOT_PASSWORD no encontrada en .env"
+        $mysqlStatus = "ERROR"
+    }
     $result = & "C:\Program Files (x86)\MySQL\MySQL Server 5.0\bin\mysqladmin.exe" ping -u root 2>&1
     if ($LASTEXITCODE -eq 0) {
         $mysqlStatus = "OK"

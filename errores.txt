@@ -36,7 +36,7 @@ El endpoint devuelve total: 0 y by_bodega con cantidad: 0. Voy a verificar qué 
 # Check auxinventario data for stock in Users\MotoShop\Documents\javidevmoto
 $ .\.venv-infra\Scripts\Activate.ps1; python -c "
 import mysql.connector
-conn = mysql.connector.connect(host='localhost',port=3306,user='api_read',password='Sashita123',database='motoshop2024',charset='utf8')
+conn = mysql.connector.connect(host='localhost',port=3306,user='api_read',password='<REDACTED>',database='motoshop2024',charset='utf8')
 cursor = conn.cursor()
 # Check MOTS1297 in auxinventario
 cursor.execute(\"SELECT codprod, codbod, valor3 FROM auxinventario WHERE codprod = 'MOTS1297'\")
@@ -66,7 +66,7 @@ En l�nea: 19 Car�cter: 40
 + Thought: 3.3s
 # Wrote Users\MotoShop\Documents\javidevmoto\infra\debug_stock.py
 import mysql.connector
-conn = mysql.connector.connect(host='localhost',port=3306,user='api_read',password='Sashita123',database='motoshop2024',charset='utf8')
+conn = mysql.connector.connect(host='localhost',port=3306,user='api_read',password='<REDACTED>',database='motoshop2024',charset='utf8')
 cursor = conn.cursor()
 # Check MOTS1297
 cursor.execute("SELECT codprod, codbod, valor3 FROM auxinventario WHERE codprod = 'MOTS1297'")
@@ -122,7 +122,7 @@ from dotenv import load_dotenv
 from sqlalchemy import Engine, create_engine, select, func
 load_dotenv(pathlib.Path(__file__).resolve().parent.parent / ".env")
 engine = create_engine(
-    f"mysql+pymysql://api_read:Sashita123@localhost:3306/motoshop2024?charset=utf8",
+    f"mysql+pymysql://api_read:<REDACTED>@localhost:3306/motoshop2024?charset=utf8",
     pool_pre_ping=True,
     connect_args={"autocommit": True},
 )
@@ -171,7 +171,7 @@ La consulta SQL funciona: SUM(valor3) = 691.0. El problema debe estar en el cód
 + Thought: 14.9s
 El problema está claro: la consulta SQL funciona (SUM=691), pero el código está devolviendo 0. Necesito reiniciar la API para que cargue los cambios y probar:
 Restart API and test stock endpoint in Users\MotoShop\Documents\javidevmoto
-$ Get-Process python | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2; $apiDir = "C:\Users\MotoShop\Documents\javidevmoto\motoshop-app\api"; $env:JWT_SECRET = "test-secret-key-for-testing-only-32chars!"; $env:ENV = "test"; $env:MYSQL_HOST = "localhost"; $env:MYSQL_PORT = "3306"; $env:MYSQL_DATABASE = "motoshop2024"; $env:MYSQL_USER = "api_read"; $env:MYSQL_PASSWORD = "Sashita123"; $env:CORS_ORIGINS = "http://localhost:3000,https://api.fragloesja.uk,http://localhost:8000"; Start-Process -FilePath "$apiDir\.venv\Scripts\python.exe" -ArgumentList "-m","uvicorn","motoshop_api.main:app","--port","8000" -NoNewWindow -WorkingDirectory $apiDir; Start-Sleep -Seconds 5; Write-Host "API reiniciada"; $token = (Invoke-RestMethod -Uri http://localhost:8000/auth/login -Method POST -ContentType "application/json" -Body '{"username":"admin","password":"FG28"}').access_token; Write-Host "`n=== Test stock MOTS1297 ==="; Invoke-RestMethod -Uri "http://localhost:8000/products/MOTS1297/stock" -Headers @{"Authorization"="Bearer $token"} | ConvertTo-Json -Depth 4; Write-Host "`n=== Test stock MOTS1011 ==="; Invoke-RestMethod -Uri "http://localhost:8000/products/MOTS1011/stock" -Headers @{"Authorization"="Bearer $token"} | ConvertTo-Json -Depth 4
+$ Get-Process python | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2; $apiDir = "C:\Users\MotoShop\Documents\javidevmoto\motoshop-app\api"; $env:JWT_SECRET = "test-secret-key-for-testing-only-32chars!"; $env:ENV = "test"; $env:MYSQL_HOST = "localhost"; $env:MYSQL_PORT = "3306"; $env:MYSQL_DATABASE = "motoshop2024"; $env:MYSQL_USER = "api_read"; $env:MYSQL_PASSWORD = "<REDACTED>"; $env:CORS_ORIGINS = "http://localhost:3000,https://api.fragloesja.uk,http://localhost:8000"; Start-Process -FilePath "$apiDir\.venv\Scripts\python.exe" -ArgumentList "-m","uvicorn","motoshop_api.main:app","--port","8000" -NoNewWindow -WorkingDirectory $apiDir; Start-Sleep -Seconds 5; Write-Host "API reiniciada"; $token = (Invoke-RestMethod -Uri http://localhost:8000/auth/login -Method POST -ContentType "application/json" -Body '{"username":"admin","password":"FG28"}').access_token; Write-Host "`n=== Test stock MOTS1297 ==="; Invoke-RestMethod -Uri "http://localhost:8000/products/MOTS1297/stock" -Headers @{"Authorization"="Bearer $token"} | ConvertTo-Json -Depth 4; Write-Host "`n=== Test stock MOTS1011 ==="; Invoke-RestMethod -Uri "http://localhost:8000/products/MOTS1011/stock" -Headers @{"Authorization"="Bearer $token"} | ConvertTo-Json -Depth 4
 INFO:     Started server process [9316]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.

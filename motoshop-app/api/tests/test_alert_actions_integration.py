@@ -11,6 +11,7 @@ y app_audit_log en una DB de test, y las destruye al finalizar.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -31,7 +32,7 @@ from motoshop_api.app_writes.schemas import AlertActionRequest
 
 DOCKER_MYSQL_HOST = "127.0.0.1"
 DOCKER_ROOT_PASS = "12345"
-DOCKER_APP_WRITER_PASS = "Sashita123"
+DOCKER_APP_WRITER_PASS = os.getenv("MYSQL_APP_WRITER_PASSWORD", "app_writer_test_pass")
 TEST_DB = "motoshop_test"
 
 

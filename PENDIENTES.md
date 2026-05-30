@@ -146,7 +146,7 @@ offlineQueue, asegurate que el modal funciona en happy path.
 **Dev A ejecutó en Mac las migrations y el código. En Windows hay que APLICARLO manualmente.**
 
 **✅ Aplicado en esta sesión (2026-05-30):**
-1. `.env` actualizado con `MYSQL_APP_WRITER_PASSWORD=Sashita123`
+1. `.env` actualizado con `MYSQL_APP_WRITER_PASSWORD=<APP_WRITER_PASSWORD>`
 2. `infra\start_api.ps1` actualizado con `$env:MYSQL_APP_WRITER_USER` y `$env:MYSQL_APP_WRITER_PASSWORD`
 3. Migraciones SQL ejecutadas: F5-001 (app_alert_actions), F5-002 (app_audit_log), F5-003 (user app_writer)
 4. `app_writer` verificado: conecta y ve ambas tablas
