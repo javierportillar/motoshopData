@@ -1,24 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import { Card } from "@/lib/ui/Card";
+import Link from "next/link";
 import { useAlerts } from "@/lib/api/hooks";
+import { useAuthStore } from "@/lib/auth/store";
+import { Card } from "@/components/ui/Card";
+import { Badge, AlertBadge } from "@/components/ui/Badge";
 import { StaleDataBanner } from "@/components/StaleDataBanner";
 import { AlertActionModal } from "@/components/AlertActionModal";
 import { registerPushSubscription } from "@/lib/push/setup";
-import { useAuthStore } from "@/lib/auth/store";
-import Link from "next/link";
 
-const URGENCY_COLORS: Record<string, string> = {
-  alta: "border-red-500 bg-red-50",
-  media: "border-orange-400 bg-orange-50",
-  baja: "border-yellow-400 bg-yellow-50",
-};
-
-const URGENCY_BADGE: Record<string, string> = {
-  alta: "bg-red-500 text-white",
-  media: "bg-orange-400 text-white",
-  baja: "bg-yellow-400 text-yellow-900",
+const URGENCY_BG: Record<string, string> = {
+  alta: "border-l-error bg-error/5",
+  media: "border-l-warning bg-warning/5",
+  baja: "border-l-warning bg-warning/5",
 };
 
 const URGENCY_LABEL: Record<string, string> = {
@@ -54,26 +49,25 @@ export default function AlertsPage(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <Link href="/dashboards" className="text-sm text-primary hover:underline">
-        ← Volver a Dashboards
+      <Link href="/" className="text-sm text-accent hover:underline">
+        ← Volver a inicio
       </Link>
 
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-secondary-dark">Alertas</h1>
-          <p className="text-sm text-gray-500">
+          <h1 className="text-xl font-bold text-text-primary">Alertas</h1>
+          <p className="text-sm text-text-muted">
             {data ? `${data.total} SKU${data.total !== 1 ? "s" : ""} en riesgo` : "Cargando..."}
           </p>
         </div>
 
-        {/* Push toggle */}
         <button
           onClick={handleEnablePush}
           disabled={pushStatus === "loading"}
           className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
             pushStatus === "active"
-              ? "bg-green-100 text-green-700"
-              : "bg-primary text-white hover:bg-primary-dark"
+              ? "bg-success/10 text-success"
+              : "bg-primary text-primary-fg hover:bg-primary-light"
           }`}
         >
           {pushStatus === "loading"
@@ -86,14 +80,14 @@ export default function AlertsPage(): JSX.Element {
 
       <StaleDataBanner />
 
-      {/* Filtros de urgencia */}
+      {/* Filtros */}
       <div className="flex gap-2">
         <button
           onClick={() => setFilter(undefined)}
           className={`rounded-lg px-3 py-1.5 text-xs font-medium ${
             filter === undefined
-              ? "bg-gray-800 text-white"
-              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              ? "bg-surface-dark text-text-inverse"
+              : "bg-surface-alt text-text-secondary hover:bg-surface-dark/10"
           }`}
         >
           Todas {data ? `(${data.total})` : ""}
@@ -104,13 +98,13 @@ export default function AlertsPage(): JSX.Element {
             onClick={() => setFilter(u)}
             className={`flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium ${
               filter === u
-                ? "bg-gray-800 text-white"
-                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                ? "bg-surface-dark text-text-inverse"
+                : "bg-surface-alt text-text-secondary hover:bg-surface-dark/10"
             }`}
           >
             {URGENCY_LABEL[u]}
             {counts[u] > 0 && (
-              <span className={`ml-1 rounded-full px-1.5 py-0.5 text-[10px] ${URGENCY_BADGE[u]}`}>
+              <span className="ml-1 rounded-full bg-error px-1.5 py-0.5 text-[10px] text-error-fg">
                 {counts[u]}
               </span>
             )}
@@ -122,7 +116,7 @@ export default function AlertsPage(): JSX.Element {
       {isLoading && (
         <div className="space-y-3">
           {[...Array(3)].map((_, i) => (
-            <div key={i} className="h-24 animate-pulse rounded-xl bg-gray-100" />
+            <div key={i} className="h-24 animate-pulse rounded-xl bg-surface-alt" />
           ))}
         </div>
       )}
@@ -130,27 +124,33 @@ export default function AlertsPage(): JSX.Element {
       {/* Error */}
       {error && (
         <Card>
-          <p className="text-center text-sm text-red-500">
+          <p className="py-8 text-center text-sm text-error">
             Error al cargar alertas
           </p>
         </Card>
       )}
 
       {/* Lista de alertas */}
-      {data && data.alerts.map((alert) => (
+      {data?.alerts.map((alert) => (
         <div
           key={alert.sku}
-          className={`rounded-xl border-l-4 p-4 ${URGENCY_COLORS[alert.urgencia]}`}
+          className={`rounded-xl border-l-4 bg-surface p-4 shadow-sm ${URGENCY_BG[alert.urgencia]}`}
         >
           <div className="flex items-start justify-between">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <span className="font-mono text-xs text-gray-400">{alert.sku}</span>
-                <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${URGENCY_BADGE[alert.urgencia]}`}>
-                  {URGENCY_LABEL[alert.urgencia]}
-                </span>
+                <span className="font-mono text-xs text-text-muted">{alert.sku}</span>
+                <AlertBadge
+                  severity={
+                    alert.urgencia === "alta"
+                      ? "critical"
+                      : alert.urgencia === "media"
+                        ? "warning"
+                        : "info"
+                  }
+                />
               </div>
-              <p className="mt-1 text-sm font-medium text-secondary-dark truncate">
+              <p className="mt-1 text-sm font-medium text-text-primary truncate">
                 {alert.nom_producto}
               </p>
             </div>
@@ -165,7 +165,7 @@ export default function AlertsPage(): JSX.Element {
               )}
               <Link
                 href={`/products/${alert.sku}`}
-                className="text-xs text-primary hover:underline"
+                className="text-xs text-accent hover:underline"
               >
                 Ver SKU
               </Link>
@@ -173,21 +173,25 @@ export default function AlertsPage(): JSX.Element {
           </div>
 
           <div className="mt-3 grid grid-cols-3 gap-2">
-            <div className="rounded-lg bg-white/60 px-2 py-1.5 text-center">
-              <p className="text-xs text-gray-400">Stock</p>
-              <p className="text-sm font-semibold text-secondary-dark">
+            <div className="rounded-lg bg-surface-alt px-2 py-1.5 text-center">
+              <p className="text-xs text-text-muted">Stock</p>
+              <p className="text-sm font-semibold text-text-primary">
                 {alert.stock_actual.toFixed(0)}
               </p>
             </div>
-            <div className="rounded-lg bg-white/60 px-2 py-1.5 text-center">
-              <p className="text-xs text-gray-400">Demanda</p>
-              <p className="text-sm font-semibold text-secondary-dark">
+            <div className="rounded-lg bg-surface-alt px-2 py-1.5 text-center">
+              <p className="text-xs text-text-muted">Demanda</p>
+              <p className="text-sm font-semibold text-text-primary">
                 {alert.demanda_predicha.toFixed(0)}
               </p>
             </div>
-            <div className="rounded-lg bg-white/60 px-2 py-1.5 text-center">
-              <p className="text-xs text-gray-400">Días rest.</p>
-              <p className={`text-sm font-semibold ${alert.dias_hasta_quiebre <= 5 ? "text-red-600" : "text-secondary-dark"}`}>
+            <div className="rounded-lg bg-surface-alt px-2 py-1.5 text-center">
+              <p className="text-xs text-text-muted">Días rest.</p>
+              <p
+                className={`text-sm font-semibold ${
+                  alert.dias_hasta_quiebre <= 5 ? "text-error" : "text-text-primary"
+                }`}
+              >
                 {alert.dias_hasta_quiebre}
               </p>
             </div>
@@ -198,20 +202,18 @@ export default function AlertsPage(): JSX.Element {
       {/* Empty state */}
       {data && data.alerts.length === 0 && (
         <Card>
-          <p className="py-8 text-center text-sm text-gray-400">
+          <p className="py-8 text-center text-sm text-text-muted">
             No hay alertas de quiebre
           </p>
         </Card>
       )}
 
-      {/* Push error feedback */}
       {pushStatus === "error" && (
-        <p className="text-center text-xs text-red-500">
+        <p className="text-center text-xs text-error">
           No se pudieron activar las notificaciones. Probá desde otro navegador.
         </p>
       )}
 
-      {/* Modal de gestión */}
       {manageSku && (
         <AlertActionModal
           sku={manageSku}

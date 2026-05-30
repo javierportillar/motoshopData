@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { Card } from "@/lib/ui/Card";
-import { useForecast } from "@/lib/api/hooks";
-import { StaleDataBanner } from "@/components/StaleDataBanner";
 import Link from "next/link";
+import { useForecast } from "@/lib/api/hooks";
+import { Card } from "@/components/ui/Card";
+import { Badge } from "@/components/ui/Badge";
+import { StaleDataBanner } from "@/components/StaleDataBanner";
 import {
   LineChart,
   Line,
@@ -16,6 +17,7 @@ import {
   Area,
   AreaChart,
 } from "recharts";
+import { formatMoney } from "@/lib/format/currency";
 
 const HORIZON_OPTIONS = [7, 14, 30] as const;
 
@@ -24,11 +26,6 @@ const MOCK_SUGGESTIONS = [
   { sku: "MOTS0412", label: "FILTRO ACEITE YAMAHA YBR125" },
   { sku: "MOTS0834", label: "PASTILLAS FRENO DELANTERAS" },
 ];
-
-function formatNumber(v: number): string {
-  if (v >= 1000) return `${(v / 1000).toFixed(1)}K`;
-  return v.toFixed(1);
-}
 
 export default function ForecastPage(): JSX.Element {
   const [sku, setSku] = useState("");
@@ -49,7 +46,7 @@ export default function ForecastPage(): JSX.Element {
   const chartData = useMemo(() => {
     if (!data?.forecast) return [];
     return data.forecast.map((f) => ({
-      date: f.forecast_date.slice(5), // MM-DD
+      date: f.forecast_date.slice(5),
       predicted: f.predicted_qty,
       lower: f.confidence_lower ?? f.predicted_qty * 0.8,
       upper: f.confidence_upper ?? f.predicted_qty * 1.2,
@@ -71,14 +68,16 @@ export default function ForecastPage(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <Link href="/dashboards" className="text-sm text-primary hover:underline">
-        ← Volver a Dashboards
+      <Link href="/" className="text-sm text-accent hover:underline">
+        ← Volver a inicio
       </Link>
 
-      <h1 className="text-xl font-bold text-secondary-dark">Predicciones</h1>
-      <p className="text-sm text-gray-500">
-        Demanda estimada por SKU — Prophet / LightGBM
-      </p>
+      <div>
+        <h1 className="text-xl font-bold text-text-primary">Predicciones</h1>
+        <p className="text-sm text-text-muted">
+          Demanda estimada por SKU
+        </p>
+      </div>
 
       <StaleDataBanner />
 
@@ -100,20 +99,20 @@ export default function ForecastPage(): JSX.Element {
               onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
               onKeyDown={(e) => e.key === "Enter" && handleSearch()}
               placeholder="Ej: MOTS1297"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
             />
             {showSuggestions && suggestions.length > 0 && (
-              <div className="absolute z-10 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg">
+              <div className="absolute z-10 mt-1 w-full rounded-lg border border-border bg-surface shadow-lg">
                 {suggestions.map((s) => (
                   <button
                     key={s.sku}
                     onMouseDown={() => handleSelect(s.sku)}
-                    className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-gray-50"
+                    className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-surface-alt"
                   >
                     <span className="font-mono text-xs font-medium text-primary">
                       {s.sku}
                     </span>
-                    <span className="truncate text-gray-600">{s.label}</span>
+                    <span className="truncate text-text-secondary">{s.label}</span>
                   </button>
                 ))}
               </div>
@@ -121,7 +120,7 @@ export default function ForecastPage(): JSX.Element {
           </div>
           <button
             onClick={handleSearch}
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark"
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-fg hover:bg-primary-light"
           >
             Buscar
           </button>
@@ -137,8 +136,8 @@ export default function ForecastPage(): JSX.Element {
               onClick={() => setHorizon(h)}
               className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
                 horizon === h
-                  ? "bg-primary text-white"
-                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  ? "bg-primary text-primary-fg"
+                  : "bg-surface-alt text-text-secondary hover:bg-surface-alt/80"
               }`}
             >
               {h} días
@@ -150,15 +149,15 @@ export default function ForecastPage(): JSX.Element {
       {/* Loading */}
       {isLoading && (
         <div className="space-y-3">
-          <div className="h-5 w-48 animate-pulse rounded bg-gray-200" />
-          <div className="h-60 animate-pulse rounded-xl bg-gray-100" />
+          <div className="h-5 w-48 animate-pulse rounded bg-surface-alt" />
+          <div className="h-60 animate-pulse rounded-xl bg-surface-alt" />
         </div>
       )}
 
       {/* Error */}
       {error && (
         <Card>
-          <p className="text-center text-sm text-red-500">
+          <p className="py-8 text-center text-sm text-error">
             {error.message?.includes("404")
               ? `SKU "${selectedSku}" no encontrado`
               : "Error al cargar predicciones"}
@@ -172,13 +171,11 @@ export default function ForecastPage(): JSX.Element {
           <Card
             header={
               <div className="flex items-center justify-between">
-                <h2 className="font-semibold text-secondary-dark">
-                  {data.sku}
-                </h2>
+                <h2 className="font-semibold text-text-primary">{data.sku}</h2>
                 {data.metrics && (
-                  <span className="text-xs text-gray-400">
+                  <Badge variant="default" size="sm">
                     MAPE: {data.metrics.mape?.toFixed(1)}% · v{data.metrics.model_version}
-                  </span>
+                  </Badge>
                 )}
               </div>
             }
@@ -186,67 +183,65 @@ export default function ForecastPage(): JSX.Element {
             <ResponsiveContainer width="100%" height={240}>
               <AreaChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#9ca3af" />
-                <YAxis tick={{ fontSize: 11 }} stroke="#9ca3af" tickFormatter={formatNumber} />
+                <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#a3a3a3" />
+                <YAxis tick={{ fontSize: 11 }} stroke="#a3a3a3" tickFormatter={(v: number) => Math.round(v).toString()} />
                 <Tooltip
-                  formatter={(value) => [formatNumber(Number(value ?? 0)), "unidades"]}
+                  formatter={(value) => [Math.round(Number(value ?? 0)).toString(), "unidades"]}
                   contentStyle={{
                     borderRadius: "8px",
-                    border: "1px solid #e5e7eb",
+                    border: "1px solid #d4d4d4",
                     fontSize: "12px",
                   }}
                 />
-                {/* Confidence interval */}
                 <Area
                   type="monotone"
                   dataKey="upper"
                   stroke="none"
-                  fill="#3b82f6"
+                  fill="#0EA5E9"
                   fillOpacity={0.1}
                 />
                 <Area
                   type="monotone"
                   dataKey="lower"
                   stroke="none"
-                  fill="#ffffff"
+                  fill="#FFFFFF"
                   fillOpacity={0.3}
                 />
-                {/* Predicted line */}
                 <Line
                   type="monotone"
                   dataKey="predicted"
-                  stroke="#3b82f6"
+                  stroke="#0EA5E9"
                   strokeWidth={2}
-                  dot={{ r: 3, fill: "#3b82f6" }}
+                  dot={{ r: 3, fill: "#0EA5E9" }}
                   activeDot={{ r: 5 }}
                 />
               </AreaChart>
             </ResponsiveContainer>
-            <div className="mt-2 flex items-center gap-4 text-xs text-gray-400">
+            <div className="mt-2 flex items-center gap-4 text-xs text-text-muted">
               <span className="flex items-center gap-1">
-                <span className="inline-block h-2 w-4 rounded bg-blue-500" /> Predicción
+                <span className="inline-block h-2 w-4 rounded bg-accent" /> Predicción
               </span>
               <span className="flex items-center gap-1">
-                <span className="inline-block h-2 w-4 rounded bg-blue-100" /> IC 80%
+                <span className="inline-block h-2 w-4 rounded bg-accent/10" /> IC 80%
               </span>
             </div>
           </Card>
 
           {/* Tabla de valores */}
-          <Card header={<h2 className="font-semibold text-secondary-dark">Valores</h2>}>
+          <Card header={<h2 className="font-semibold text-text-primary">Valores</h2>}>
             <div className="space-y-1">
               {data.forecast.map((f, i) => (
                 <div
                   key={i}
-                  className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2"
+                  className="flex items-center justify-between rounded-lg bg-surface-alt px-3 py-2"
                 >
-                  <span className="text-xs text-gray-500">{f.forecast_date}</span>
+                  <span className="text-xs text-text-muted">{f.forecast_date}</span>
                   <div className="text-right">
-                    <span className="text-sm font-medium text-secondary-dark">
+                    <span className="text-sm font-medium text-text-primary">
                       {f.predicted_qty.toFixed(1)} u.
                     </span>
-                    {f.confidence_lower && (
-                      <span className="ml-2 text-xs text-gray-400">
+                    {f.confidence_lower != null && (
+                      <span className="ml-2 text-xs text-text-muted">
                         ({f.confidence_lower.toFixed(1)}–{f.confidence_upper?.toFixed(1)})
                       </span>
                     )}
@@ -261,7 +256,7 @@ export default function ForecastPage(): JSX.Element {
       {/* Estado vacío */}
       {!selectedSku && !isLoading && (
         <Card>
-          <p className="py-8 text-center text-sm text-gray-400">
+          <p className="py-8 text-center text-sm text-text-muted">
             Buscá un SKU para ver sus predicciones de demanda
           </p>
         </Card>
