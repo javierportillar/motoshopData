@@ -31,6 +31,203 @@
 
 ---
 
+## Sesión 2026-05-30 (48) · F6-D · Mitigación SPOF Windows con API cloud (Fly.io)
+
+**Estado:** Runtime Windows reportó SPOF crítico — API + MySQL solo viven en la PC, si se apaga toda la web cae. Vos decidiste mitigarlo HOY con **Fly.io** (free tier sin sleep).
+
+**Estrategia híbrida cloud + on-premise:**
+
+| Endpoint | Servido por | Disponibilidad |
+|----------|-------------|----------------|
+| `/health`, `/auth/login` | Fly.io (users.yaml en el deploy) | 24/7 ☁️ |
+| `/metrics/*`, `/alerts/*`, `/forecast/*` | Fly.io (lee Databricks) | 24/7 ☁️ |
+| `/products`, `/stock`, `/sales/recent` | Devuelven 503 desde Fly | Solo via Windows API |
+| `/alerts/{id}/action` (write MySQL) | Devuelve 503 desde Fly | Solo via Windows API |
+
+**Defensa académica:** "El producto predictivo (F4) está siempre disponible en cloud. El catálogo operativo depende del PC de la tienda — limitación arquitectónica conscientemente aceptada por ADR-0007 (mitigación completa en F7 post-curso)."
+
+### 🌐 Handoff #1 · Dev T · Deploy API a Fly.io (~45 min)
+
+Pegá esto en un chat Claude Code nuevo en tu Mac:
+
+```
+Soy Dev T · Track T · Sprint F6-D del proyecto MotoShop.
+Mi misión es desplegar la API FastAPI a Fly.io como mitigación
+del SPOF Windows. La API en Fly solo servirá endpoints que
+leen de Databricks (analíticos). Endpoints MySQL devolverán
+503 graceful.
+
+PRE-FLIGHT obligatorio:
+1. cd /Users/javierportillarosero/Documents/personal/dataEmpresas/motoshopData
+2. git pull --ff-only origin main
+3. Leé INICIAR_AGENTE.md completo
+4. Leé docs/plan-f6.md (contexto F6)
+5. Leé motoshop-app/api/pyproject.toml + src/motoshop_api/config.py
+6. Leé motoshop-app/api/src/motoshop_api/main.py (lifespan)
+7. Verificá flyctl: brew install flyctl (si no está)
+
+MI MISIÓN:
+Deploy API analítica a Fly.io. Endpoints Databricks funcionan 24/7,
+endpoints MySQL devuelven 503 graceful. Setup DNS subdomain
+cloud-api.fragloesja.uk para que el humano lo configure en
+Cloudflare después.
+
+ENTREGABLES (en orden):
+
+PASO 1 · Dockerfile (~10 min)
+Crear motoshop-app/api/Dockerfile multi-stage:
+- Base: python:3.11-slim
+- Install deps con uv (no pip)
+- Copy src + users.yaml (ya está en repo, force-added en F5)
+- EXPOSE 8000
+- CMD uvicorn motoshop_api.main:app --host 0.0.0.0 --port 8000
+
+Verificar build local:
+   cd motoshop-app/api
+   docker build -t motoshop-api:test .
+   docker run -p 8000:8000 -e DATABRICKS_HOST=... motoshop-api:test
+   curl http://localhost:8000/health → 200
+
+Crear motoshop-app/api/.dockerignore con:
+   __pycache__
+   *.pyc
+   .pytest_cache
+   .env
+   tests/
+   .venv/
+
+PASO 2 · fly.toml (~5 min)
+Crear motoshop-app/api/fly.toml:
+   app = "motoshop-cloud-api"
+   primary_region = "mia"  # Miami, cerca de Colombia
+
+   [build]
+
+   [http_service]
+     internal_port = 8000
+     force_https = true
+     auto_stop_machines = "stop"
+     auto_start_machines = true
+     min_machines_running = 1  # CRITICO: evita sleep
+
+   [[vm]]
+     size = "shared-cpu-1x"
+     memory = "256mb"
+
+PASO 3 · Fly.io setup + deploy (~15 min)
+1. flyctl auth login (abre browser)
+2. cd motoshop-app/api
+3. flyctl launch --no-deploy --name motoshop-cloud-api
+4. Configurar secrets Databricks (copiar valores REALES del
+   motoshop-app/api/.env de Windows; vos los tenés):
+   flyctl secrets set \
+     DATABRICKS_HOST="..." \
+     DATABRICKS_TOKEN="..." \
+     DATABRICKS_HTTP_PATH="/sql/1.0/warehouses/43bc044eaef4cca4" \
+     JWT_SECRET="<mismo que Windows>" \
+     CORS_ORIGINS="https://motoshop-web-tau.vercel.app,https://app.fragloesja.uk" \
+     ENV="dev"
+
+   IMPORTANTE JWT_SECRET tiene que ser EL MISMO que Windows
+   para que tokens funcionen entre ambos.
+
+5. flyctl deploy
+
+6. Capturar URL final (ej. https://motoshop-cloud-api.fly.dev)
+
+PASO 4 · Smoke test (~5 min)
+1. curl https://motoshop-cloud-api.fly.dev/health → 200
+2. Login y captura token
+3. curl /alerts/stockout con Bearer → 200 con 46 alertas
+4. curl /products?q=aceite con Bearer → 500/503 esperable
+   (MySQL no configurado, comportamiento correcto)
+
+PASO 5 · Update PWA con fallback inteligente (~10 min)
+Editar motoshop-app/web/lib/api/* para:
+- Try Fly primary
+- Si 5xx en endpoints MySQL (/products, /stock, /sales, /alerts/{id}/action):
+  mostrar UI fallback "Esta funcionalidad requiere el sistema
+  operativo encendido. Predicciones y alertas están disponibles 24/7."
+- Endpoints Databricks (/metrics, /alerts/stockout, /forecast):
+  errores normales
+
+Actualizar NEXT_PUBLIC_API_URL en Vercel:
+   npx vercel env rm NEXT_PUBLIC_API_URL production
+   npx vercel env add NEXT_PUBLIC_API_URL production
+   → Pegar: https://motoshop-cloud-api.fly.dev
+   (cuando humano configure CNAME, cambiar a cloud-api.fragloesja.uk)
+   npx vercel --prod
+
+PASO 6 · Smoke test PWA (~5 min)
+1. Abrir https://motoshop-web-tau.vercel.app
+2. Login admin/FG28 → debe entrar
+3. /forecast → carga
+4. /alerts → 46 alertas
+5. /products → UI fallback elegante
+6. Documentar en motoshop-app/web/_runs/v_fly_smoke_<ts>.md
+
+PASO 7 · Documentación (~5 min)
+Crear motoshop-app/api/_runs/v_fly_deploy_<ts>.md con:
+- URL Fly producción
+- Secrets configurados (lista, NO valores)
+- Region (mia)
+- IPv4 dedicado (flyctl ips list) — humano necesita para CNAME
+- Resultado smoke test (200 vs 503 esperables)
+
+Commits con prefijo: feat(F6-D-cloud-api): ...
+
+NO TOCO:
+- infra/** (Runtime Windows)
+- Notebooks
+- DNS Cloudflare (humano)
+
+REPORTE FINAL EN CHAT:
+1. URL Fly producción
+2. IPv4 dedicado para A record en Cloudflare (flyctl ips list)
+3. Endpoints que funcionan 200: lista
+4. Endpoints que devuelven 503: lista (esperable, no son bug)
+5. ¿PWA Vercel ya apunta a Fly?
+```
+
+### 👤 Handoff #2 · Acción humana · CNAME `cloud-api.fragloesja.uk` (~5 min)
+
+Después que Dev T te dé el IPv4:
+
+1. Login `dash.cloudflare.com` → `fragloesja.uk` → DNS → Add record
+2. Type: **A** (Fly da IP dedicada)
+3. Name: `cloud-api`
+4. Value: el IPv4 que dio `flyctl ips list`
+5. Proxy: **DNS only** (gris)
+6. Save → esperar 1-5 min
+7. `dig cloud-api.fragloesja.uk` debe apuntar al IP de Fly
+8. En tu Mac: `flyctl certs add cloud-api.fragloesja.uk` (genera TLS Let's Encrypt)
+
+Después actualizar PWA env var:
+```
+npx vercel env rm NEXT_PUBLIC_API_URL production
+npx vercel env add NEXT_PUBLIC_API_URL production
+→ https://cloud-api.fragloesja.uk
+npx vercel --prod
+```
+
+### 🔁 Handoff #3 · Runtime Windows · NO tocar (esperar)
+
+Runtime Windows NO necesita hacer nada en este sprint. La API Windows queda corriendo como respaldo "operativo" para cuando el dueño esté en la tienda con PC encendida.
+
+### Próximo paso del revisor (Sesión 49)
+
+Cuando Dev T reporte `https://motoshop-cloud-api.fly.dev/alerts/stockout` → 200:
+
+1. Yo verifico con probe propia
+2. Yo escribo:
+   - **ADR-0022** (deployment híbrido cloud + on-premise)
+   - **R17 actualizada**: "SPOF mitigado parcialmente. Analíticos 24/7. Operativos siguen on-premise (ADR-0007). Migración completa F7 post-curso."
+3. Vos grabás demo 4G **con la PC apagada** (test REAL del SPOF mitigation)
+4. Agendás demo gerencia
+5. Avisás → E5 + audit cierre
+
+---
+
 ## Sesión 2026-05-30 (47) · Diagnosis /alerts y /forecast pre-demo
 
 **Estado:** Runtime Windows y Dev T Vercel cerraron lo suyo:
