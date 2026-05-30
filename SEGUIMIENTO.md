@@ -635,6 +635,17 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ---
 
+### 2026-05-30 — Sesión 54 · Dev T · F6-D-FIX1-B Bug 1+2 frontend
+
+> 🟢 [F6-D-FIX1-B] COMPLETO · pagina dormidos + formatter K/M · commit: `20542a0` · Vercel auto-deploya · sprint cerrado · **ACCION HUMANO: avisar Revisor para audit FIX1**.
+
+- **Hecho:** Bug 1 — creada pagina `/dashboards/dormidos` (`page.tsx`) usando `useDormidos()` SWR hook (ya existía). Layout consistente con inventario. Color coding: >180d rojo, 90-180d naranja, <90d gris. Bug 2 — creado `lib/format/currency.ts` con `formatMoney(value)`: >=1M → $1.2M, >=1K → $1.2K, <1K → $847. Reemplazados 7 lugares con definiciones duplicadas (ventas, inventario, abc, dashboards/page, TopList, SalesTrendChart). 5/5 tests unit verdes. Build 0 errores, Vercel deployado en `app.fragloesja.uk`.
+- **Aprendido:** El bug `$0.0M` para ticket_promedio=25813 era puramente frontend — la API devolvía el valor correcto pero el formatter siempre dividía por 1M. 7 archivos tenían la misma función `formatMoney(v / 1_000_000)` copiada localmente — DRY violado. Extraída a `lib/format/currency.ts`.
+- **Pendiente:** Bug 3 (`valor_total: 0.0`) es Dev A — fixado en commit `fee4559` pero no deployado en Windows aún.
+- **Próximo paso:** Nada. Sprint cerrado. Esperar audit revisor.
+
+---
+
 ### 2026-05-30 — Sesión 52 · Dev D · F7-E Paso D1 terminado
 
 > 🟢 [F7-E-D] Paso D1 terminado · 4 notebooks snapshot (30/31/32/33) · commit: 57df7d6 · siguiente paso: D2 workflow · ACCION HUMANO: avisar Dev W para upload_all_notebooks.py + esperar antes de D2
