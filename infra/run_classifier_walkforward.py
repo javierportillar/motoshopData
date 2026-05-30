@@ -77,14 +77,14 @@ WAREHOUSE_ID = os.getenv("DATABRICKS_WAREHOUSE_ID", "43bc044eaef4cca4")
 HEADERS = {"Authorization": f"Bearer {DATABRICKS_TOKEN}"}
 SESSION = requests.Session()
 SESSION.headers.update(HEADERS)
-TIMEOUT = 300  # 5 min por query
+TIMEOUT = 50  # max 50s, requery if pending
 
 START_DATE = date(2026, 4, 15)  # primera fecha de walk-forward
 FEATURE_COLS = [
-    "ventas_7d", "ventas_14d", "ventas_28d",
-    "stock_actual", "stock_minimo", "stock_maximo",
-    "dias_ultima_venta", "frecuencia_ventas_28d",
-    "promedio_diario_28d", "coef_variacion_7d",
+    "lag_7d", "lag_14d", "lag_28d",
+    "media_movil_7d", "media_movil_14d", "media_movil_28d",
+    "stock_actual", "demanda_diaria",
+    "dia_semana", "dias_sin_venta",
 ]
 
 
@@ -100,7 +100,7 @@ def sql_query(sql: str, description: str = "") -> pd.DataFrame:
         "wait_timeout": f"{TIMEOUT}s",
     }
     try:
-        resp = SESSION.post(url, json=payload, timeout=TIMEOUT + 10)
+        resp = SESSION.post(url, json=payload, timeout=60)
         if resp.status_code not in (200, 201, 202):
             print(f"  ❌ {description}: HTTP {resp.status_code} - {resp.text[:200]}")
             return pd.DataFrame()
@@ -148,10 +148,10 @@ def load_training_data() -> pd.DataFrame:
         SELECT
           f.cod_producto,
           f.business_date,
-          f.ventas_7d, f.ventas_14d, f.ventas_28d,
-          f.stock_actual, f.stock_minimo, f.stock_maximo,
-          f.dias_ultima_venta, f.frecuencia_ventas_28d,
-          f.promedio_diario_28d, f.coef_variacion_7d
+          f.lag_7d, f.lag_14d, f.lag_28d,
+          f.media_movil_7d, f.media_movil_14d, f.media_movil_28d,
+          f.stock_actual, f.demanda_diaria,
+          f.dia_semana, f.dias_sin_venta
         FROM motoshop.gold.feature_store_sku f
         WHERE f.business_date >= '2025-01-01'
         ORDER BY f.cod_producto, f.business_date
@@ -159,31 +159,16 @@ def load_training_data() -> pd.DataFrame:
         "feature_store_sku",
     )
     if features.empty:
-        print("⚠️  No se pudieron cargar features. Usando datos de forecast_baseline_sku como fallback.")
+        print("⚠️  No se pudieron cargar features. Usando forecast_baseline_sku como fallback.")
         return load_baseline_data()
 
-    # Labels: stockout = stock_actual <= stock_minimo * 0.5
-    inventory = sql_query(
-        """
-        SELECT
-          i.cod_producto,
-          i.business_date,
-          i.stock_actual,
-          i.stock_minimo
-        FROM motoshop.gold.mart_inventario_actual i
-        WHERE i.business_date >= '2025-01-01'
-        """,
-        "inventario_actual",
-    )
-    if inventory.empty:
-        print("⚠️  No se pudieron cargar labels de inventario.")
-        return load_baseline_data()
-
-    df = features.merge(inventory, on=["cod_producto", "business_date"], how="inner")
-    # Label: 1 si stock_actual <= 0.5 * stock_minimo, else 0
-    df["stock_minimo"] = pd.to_numeric(df["stock_minimo"], errors="coerce").fillna(0)
+    # Labels: stockout = stock_actual < 0.5 (casi agotado)
+    # Usamos stock_actual desde feature_store (no hay stock_minimo aparte)
+    df = features.copy()
     df["stock_actual"] = pd.to_numeric(df["stock_actual"], errors="coerce").fillna(0)
-    df["label"] = ((df["stock_actual"] <= df["stock_minimo"] * 0.5) & (df["stock_minimo"] > 0)).astype(int)
+    df["demanda_diaria"] = pd.to_numeric(df["demanda_diaria"], errors="coerce").fillna(0)
+    # Label: 1 si stock_actual < demanda_diaria * 7 (menos de 1 semana de stock) y stock_actual > 0
+    df["label"] = ((df["stock_actual"] < df["demanda_diaria"] * 7) & (df["demanda_diaria"] > 0)).astype(int)
     df["business_date"] = pd.to_datetime(df["business_date"])
 
     for col in FEATURE_COLS:
