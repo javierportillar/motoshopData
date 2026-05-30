@@ -8,6 +8,117 @@
 
 ---
 
+## Sesión 2026-05-30 (42) · F4-FIX1 abierta tras auditoría revisor fresco
+
+**Estado:** F4-B/F4-C revierten a 🟡 hasta cerrar F4-FIX1. 3 agentes en paralelo (Dev A + Dev T + Revisor).
+
+**Plan detallado:** [docs/plan-f4-fix1.md](docs/plan-f4-fix1.md)
+
+### Por qué F4-FIX1
+
+Auditoría con contexto fresco levantó **2 bloqueantes**:
+- **B1 · Prophet MAPE 3,540%** no es "peor que baseline" — es modelo o métrica rota (probable división por cero en demanda intermitente; SKUs con < 30 puntos en cola larga).
+- **B2 · Classifier F1 0.9924** sospechoso de data leakage o desbalance no manejado. Reporte sin target distribution, split temporal explícito ni top features.
+
+Y **4 observaciones**:
+- O3 · F4-C cerró con FakeRepos en lugar de validar contra Gold real (repite problema de F3).
+- O4 · R10 (PC Windows offline) "se documenta como stale", no se alerta al usuario.
+- O5 · Sin ADR del split temporal — métricas indefendibles ante jurado académico.
+- O6 · Lección F3.5 §10 nunca se propagó a `INICIAR_REVIEWER.md` (que de hecho no existía como archivo).
+
+### 🤖 Handoff Dev A · Sprint F4-FIX1-A (~2-3 h)
+
+Abrí un chat Claude nuevo y pegá esto (también está en `docs/plan-f4-fix1.md` §8):
+
+```
+Soy Dev A · Track A · Sprint F4-FIX1 del proyecto MotoShop.
+Trabajo en paralelo con Dev T (no nos coordinamos en código,
+solo evitamos conflicto en SEGUIMIENTO.md y PENDIENTES.md).
+
+PRE-FLIGHT obligatorio:
+1. cd /Users/javierportillarosero/Documents/personal/dataEmpresas/motoshopData
+2. git pull --ff-only origin main
+3. Leé INICIAR_AGENTE.md completo (rol = Dev Agent · Track A)
+4. Leé docs/plan-f4-fix1.md COMPLETO
+5. Leé notebooks/gold/_runs/v_model_evaluation_20260530_013855.md
+   (entender el "antes" con Prophet MAPE 3540%)
+6. Leé infra/run_forecast_prophet.py + infra/run_evaluate_models.py +
+   infra/run_classifier_stockout.py + notebooks/gold/22_classifier_stockout.py
+
+MI MISIÓN:
+Auditar Prophet (MAPE 3540% = modelo o métrica rota) y Classifier
+(F1 0.9924 sospechoso de leakage), aplicar fixes, re-evaluar con
+métricas honestas, escribir ADR-0017 (split temporal + métricas
+intermitentes) y lecciones-aprendidas-f4.md.
+
+ENTREGABLES (en orden):
+1. notebooks/gold/_runs/v_fix1_prophet_diagnostico_<ts>.md con causa raíz
+2. Fix de run_evaluate_models.py: WAPE primaria + sMAPE + MAPE
+   condicional + cobertura. Filtro SKU elegible (90d+30 ventas).
+3. notebooks/gold/_runs/v_fix1_model_evaluation_<ts>.md con métricas nuevas
+4. notebooks/gold/_runs/v_fix1_classifier_auditoria_<ts>.md con las
+   3 secciones obligatorias (target dist, split temporal, top-10 features)
+5. Si H-B2 confirma leakage: fix + re-train + nueva evidence
+6. docs/decisions/0017-split-temporal-y-metricas-forecasting.md (Accepted)
+7. docs/predict/lecciones-aprendidas-f4.md (insufficient data hypothesis)
+
+NO TOCO: motoshop-app/**, notebooks/bronze|silver/**, credenciales.
+
+COORDINACIÓN: solo SEGUIMIENTO.md/PENDIENTES.md en mi sección.
+Commits con prefijo: fix(F4-FIX1-A-ml): ...
+
+ARRANQUE: Paso A1 (Diagnóstico Prophet). NO toques
+run_evaluate_models.py sin diagnóstico escrito antes.
+```
+
+### 🤖 Handoff Dev T · Sprint F4-FIX1-B (~1.5-2 h)
+
+Abrí otro chat Claude nuevo y pegá esto:
+
+```
+Soy Dev T · Track T · Sprint F4-FIX1 del proyecto MotoShop.
+Trabajo en paralelo con Dev A (no nos coordinamos en código).
+
+PRE-FLIGHT obligatorio:
+1. cd /Users/javierportillarosero/Documents/personal/dataEmpresas/motoshopData
+2. git pull --ff-only origin main
+3. Leé INICIAR_AGENTE.md completo (rol = Dev Agent · Track T)
+4. Leé docs/plan-f4-fix1.md COMPLETO
+5. Leé motoshop-app/api/src/motoshop_api/forecast/* y alerts/*
+6. Leé motoshop-app/api/src/motoshop_api/health/router.py
+   (contrato /health/data-freshness existente)
+
+MI MISIÓN:
+Reemplazar FakeForecastRepo y FakeAlertsRepo por Real en prod
+(F4-C cerró con fakes — repite problema F3). Crear StaleDataBanner
+para que la PWA alerte cuando los datos están viejos (R10).
+
+ENTREGABLES (en orden):
+1. RealForecastRepo en forecast/repo.py (Databricks SDK → gold.forecast_demanda_sku)
+2. RealAlertsRepo en alerts/repo.py (→ gold.alertas_quiebre)
+3. Dependency injection elige Real cuando env != 'test'
+4. motoshop-app/web/_runs/v_fix1_forecast_real.md (top 10 SKUs SQL vs PWA match)
+5. motoshop-app/web/_runs/v_fix1_alertas_real.md (69 alertas SQL vs PWA match)
+6. motoshop-app/web/components/StaleDataBanner.tsx según DT-FIX1-6
+7. Banner integrado en /forecasts y /alertas
+8. motoshop-app/web/tests/forecasts.spec.ts con E2E del banner
+9. motoshop-app/web/_runs/v_fix1_stale_banner.md (screenshot + log)
+
+NO TOCO: infra/**, notebooks/**, credenciales.
+
+COORDINACIÓN: solo SEGUIMIENTO.md/PENDIENTES.md en mi sección.
+Commits con prefijo: fix(F4-FIX1-B-pwa): ...
+
+ARRANQUE: Paso B1 (RealForecastRepo). Patrón de referencia en
+motoshop-app/api/src/motoshop_api/metrics/repo.py (Sprint F3-B).
+```
+
+### Próximo paso del revisor (Sesión 43)
+
+Cuando Dev A y Dev T pongan push, auditar las 8 V-FIX1. Si TODAS PASS → cerrar F4-FIX1 verde, F4-B/F4-C vuelven a ✅, planificar F5. Si alguna FAIL → F4-FIX2.
+
+---
+
 ## Sesión 2026-05-30 (40) · F4-B cerrada ✅ · Prophet/LightGBM/Classifier completados
 
 **Estado:** F4-B terminada. Todos los scripts corren, tablas gold pobladas, V-Checks implementados. Modelos ML (Prophet, LightGBM) no superan baseline — documentado como lección aprendida para feature engineering en fase siguiente.

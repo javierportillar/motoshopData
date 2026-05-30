@@ -153,6 +153,68 @@ Para cada R-X en §Tablero de riesgos vivos:
 
 Una deuda sin trigger se olvida. Una deuda nueva sin documentar es un riesgo invisible.
 
+#### Check 7 · ¿El universo silver cuadra con bronze? *(bloqueante para fases que tocan Silver)*
+
+**Heredado de F3.5 §10 — propagado el 2026-05-30 tras audit F4.**
+
+F3 cerró verde con `fact_ventas` teniendo 15 filas cuando bronze tenía 6,340 (99.76% de pérdida). El gate V3 de F2 y V6 de F3 pasaron trivialmente porque comparaban "último mes" sobre un universo ya reducido por el bug. Esto se detectó solo en F3.5 a las semanas. **Nunca más sin este sub-check.**
+
+Para cada tabla `fact_*` en silver que toque la fase auditada:
+
+```sql
+SELECT
+  (SELECT COUNT(*) FROM motoshop.bronze.<tabla_origen>
+   WHERE <filtros documentados en ADR>) AS universo_bronze,
+  (SELECT COUNT(*) FROM motoshop.silver.<tabla_silver>) AS universo_silver,
+  ABS(universo_bronze - universo_silver) AS diff,
+  ROUND(ABS(universo_bronze - universo_silver) * 100.0 / universo_bronze, 4) AS diff_pct;
+```
+
+**Pass criterion:** `diff_pct < 1%`.
+
+**NO-GO automático si:** `diff_pct > 1%` sin que un ADR documente filtros de negocio explícitos que justifiquen la diferencia.
+
+Verificá también que `motoshop.silver._quality_runs` tenga registros con `rule = 'silver_completeness'` para cada tabla `fact_*` y que ninguno haya quedado en `severity = 'CRITICAL'` el día de la corrida.
+
+#### Check 8 · Sniff test de métricas ML *(bloqueante para fases con modelos)*
+
+**Heredado de F4-B audit (Sesión 42) — Prophet MAPE 3540% + Classifier F1 0.9924 aceptados sin investigación.**
+
+Cualquier evidencia de modelo ML debe pasar este filtro. **NO-GO automático sin investigación documentada si aparece:**
+
+| Señal | Umbral | Causa habitual |
+|-------|--------|----------------|
+| **MAPE** | `> 100%` | División por cero (demanda intermitente con `actual=0`), outliers extremos, modelo mal especificado |
+| **sMAPE** | `> 100%` (máximo teórico 200%) | Mismo |
+| **WAPE** | `> 100%` | Predicciones en escala incorrecta |
+| **F1 (binario)** | `> 0.97` | Data leakage (feature derivada del target) o desbalance no manejado |
+| **Accuracy (binario)** | `> 0.99` | Desbalance extremo (99% clase mayoritaria + classifier dummy) |
+| **AUC-ROC** | `> 0.99` | Data leakage o target en features |
+| **R² (regresión)** | `> 0.99` | Overfit obvio o target leakage |
+| **MAPE Prophet/LightGBM > 10× baseline** | — | Modelo no entrenó correctamente, no es "peor" — está roto |
+
+**Investigación mínima requerida** en el evidence file para aceptar la métrica:
+
+1. **Split temporal documentado:** `min/max(business_date)` en train y test con tolerancia 0 días de overlap.
+2. **Distribución del target:** `value_counts(target)` en train y test.
+3. **Top-10 feature importances** (classifiers/LightGBM) con descripción semántica de cada feature.
+4. **% de filas con `actual=0`** (para forecasting de demanda intermitente).
+5. **Tamaño efectivo de serie por entidad evaluada** (SKUs con < 30 puntos NO son evaluables por Prophet).
+
+Si alguno de los 5 puntos no está documentado → NO-GO con instrucción al ejecutor de agregarlo antes de re-audit.
+
+**Métricas válidas para demanda intermitente:** WAPE primario + sMAPE + cobertura (`% días con venta predichos correctamente`). MAPE solo si `% días con actual=0 < 5%`.
+
+#### Check 9 · ¿Producción consume Real repos o FakeRepos? *(bloqueante)*
+
+**Heredado de F4-C audit (Sesión 42) — F4-C cerró con FakeForecastRepo activo en prod.**
+
+- Buscar imports de `Fake*` fuera de `tests/`: `rg "from .*\.fake_" --type py -g '!tests/'`
+- Buscar dependency injection: el binding por `Depends()` en FastAPI debe elegir `Real*` cuando `settings.env != 'test'`.
+- Buscar evidence files que mencionen "FakeRepo" como fuente de datos del sprint.
+
+Si producción usa Fakes: 🔴 NO-GO. El sprint NO está validado contra Gold/Silver real.
+
 ### 3.3 · Emitir veredicto
 
 Después de los 6 checks, decidís:

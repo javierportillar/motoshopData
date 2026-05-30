@@ -28,15 +28,17 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **Fase 4 · Predictivo (ML)** (abierta tras cierre F3.6) |
+| Fase activa | **F4-FIX1 · Remediación auditoría F4** (abierta) |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Cierre F4 (modelos forecasting + alertas quiebre) |
-| Avance global | 3/7 fases cerradas + 3 hardening sprints (F1.5 ✅, F1.9 ✅, F3.5 ✅, F3.6 ✅) |
+| Próximo gate | Cierre F4-FIX1 (Prophet honest metrics + Classifier audit + PWA real repos + Stale banner + reviewer rulebook) |
+| Avance global | 3/7 fases cerradas + 3 hardening sprints (F1.5 ✅, F1.9 ✅, F3.5 ✅, F3.6 ✅) · F4-A/B/C revierten a 🟡 hasta cierre FIX1 |
 | Última actualización | 2026-05-30 |
 
 ```
-F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 ✅  F3.5 ✅  F3.6 ✅  F4-A ✅  F4-B ✅  F4-C 🟡  F5 ⬜  F6 ⬜
+F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 ✅  F3.5 ✅  F3.6 ✅  F4-A 🟡  F4-B 🟡  F4-C 🟡  F4-FIX1 🟡  F5 ⬜  F6 ⬜
 ```
+
+> **2026-05-30 (Sesión 42) — F4-FIX1 abierta tras auditoría revisor fresco.** Auditoría con contexto independiente sobre el cierre F4-B/F4-C levantó 2 bloqueantes + 4 observaciones: (B1) **Prophet MAPE 3540%** no es "peor que baseline" sino modelo/métrica rota — probable división por cero en demanda intermitente y SKUs con <30 puntos; (B2) **Classifier F1=0.9924** sospechoso de data leakage o desbalance — reporte sin target distribution, split temporal explícito ni top features; (O3) F4-C cerró con FakeRepos en lugar de validar contra Gold real; (O4) R10 PC Windows offline "se documenta", no se alerta al usuario; (O5) sin ADR de split temporal; (O6) lección F3.5 §10 nunca se propagó a `INICIAR_REVIEWER.md` (que de hecho no existía). Plan correctivo: [docs/plan-f4-fix1.md](docs/plan-f4-fix1.md). **3 agentes paralelos:** Dev A (ML diagnosis + ADR-0017 + lecciones), Dev T (PWA real repos + StaleDataBanner + E2E), Revisor (INICIAR_REVIEWER.md + tracking docs). Wall-clock ~3 h.
 
 > **2026-05-30 (Sesión 41) — F4-B cerrada.** Sprint de modelos ML completado: Prophet, LightGBM (no superan baseline — documentado), classifier con F1=0.99, 69 alertas de quiebre. Evaluación consolidada: 4,343 SKUs con forecast (93.6% baseline, 4.9% Prophet, 1.5% LightGBM). Tests 97/97. F4-C (PWA predicciones + alertas) implementado pero pendiente de integración con datos reales. Pendiente: validar forecast en PWA, push notifications funcionales.
 
