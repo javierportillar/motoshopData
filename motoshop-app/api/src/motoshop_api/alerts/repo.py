@@ -94,7 +94,7 @@ class RealAlertsRepo:
                 nom_producto=str(r["nom_producto"]),
                 stock_actual=float(r["stock_actual"]),
                 demanda_predicha=float(r["demanda_predicha"]),
-                dias_hasta_quiebre=int(r["dias_hasta_quiebre"]),
+                dias_hasta_quiebre=int(float(r["dias_hasta_quiebre"])),
                 urgencia=str(r["urgencia"]),
             )
             for r in rows

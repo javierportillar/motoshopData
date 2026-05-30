@@ -131,16 +131,19 @@ class RealForecastRepo:
             for r in rows
         ]
 
-        metrics_row = self._query(_REAL_METRICS_SQL, {"sku": sku})
         metrics = None
-        if metrics_row:
-            m = metrics_row[0]
-            metrics = ForecastMetrics(
-                model_version=str(m["model_version"]),
-                mape=float(m["mape"]) if m.get("mape") else None,
-                smape=float(m["smape"]) if m.get("smape") else None,
-                training_date=str(m["training_date"]) if m.get("training_date") else None,
-            )
+        try:
+            metrics_row = self._query(_REAL_METRICS_SQL, {"sku": sku})
+            if metrics_row:
+                m = metrics_row[0]
+                metrics = ForecastMetrics(
+                    model_version=str(m["model_version"]),
+                    mape=float(m["mape"]) if m.get("mape") else None,
+                    smape=float(m["smape"]) if m.get("smape") else None,
+                    training_date=str(m["training_date"]) if m.get("training_date") else None,
+                )
+        except Exception as e:
+            logger.warning("Metrics table not available for sku=%s: %s", sku, e)
 
         return ForecastResponse(sku=sku, forecast=items, metrics=metrics)
 

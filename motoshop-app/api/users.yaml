@@ -1,0 +1,17 @@
+# Usuarios del sistema MotoShop
+# Generado: 2026-05-30 con python infra/hash_password.py 'FG28'
+# Password compartida: FG28 (deuda R2 aceptada — ver SEGUIMIENTO.md)
+
+users:
+  - username: admin
+    hashed_password: "$2b$12$SSskGR9W0sGtAEjlXycX4uxdBrOK/LZ/jLBIYmh0CnhtmFFyhHU2S"
+    email: admin@motoshop.local
+    role: admin
+  - username: vendedor1
+    hashed_password: "$2b$12$SSskGR9W0sGtAEjlXycX4uxdBrOK/LZ/jLBIYmh0CnhtmFFyhHU2S"
+    email: vendedor1@motoshop.local
+    role: vendedor
+  - username: gerente1
+    hashed_password: "$2b$12$SSskGR9W0sGtAEjlXycX4uxdBrOK/LZ/jLBIYmh0CnhtmFFyhHU2S"
+    email: gerente1@motoshop.local
+    role: gerente
