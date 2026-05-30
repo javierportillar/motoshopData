@@ -583,6 +583,16 @@ Cada deuda tiene un **trigger de re-evaluación obligatoria**: si se cumple, se 
 - `GET /sales/recent?limit=10` → últimas facturas activas
 - `GET /docs` → Swagger interactivo
 
+### 12.2b PWA en producción (F6-C)
+
+`https://motoshop-web-tau.vercel.app/`
+
+- Deployado en Vercel (Next.js 14 + next-pwa).
+- Dominio custom pendiente de DNS: `app.fragloesja.uk` (A → `76.76.21.21` en Cloudflare).
+- Proxy Next.js API routes → FastAPI backend.
+- Env var: `NEXT_PUBLIC_API_URL=https://api.fragloesja.uk`.
+- Evidencia: [`motoshop-app/web/_runs/v_vercel_deploy_20260530.md`](../motoshop-app/web/_runs/v_vercel_deploy_20260530.md).
+
 ### 12.3 Databricks workspace
 
 - Catálogo `motoshop` con esquemas `bronze`, `silver`, `gold`.

@@ -152,3 +152,5 @@ Para probar la demo desde el celu:
 | Estado en vivo | [SEGUIMIENTO.md](SEGUIMIENTO.md) |
 | Mis pendientes | [PENDIENTES.md](PENDIENTES.md) |
 | Plan maestro | [PLAN.md](PLAN.md) |
+| **PWA producción** | [motoshop-web-tau.vercel.app](https://motoshop-web-tau.vercel.app) |
+| **PWA dominio custom (pendiente DNS)** | app.fragloesja.uk |
