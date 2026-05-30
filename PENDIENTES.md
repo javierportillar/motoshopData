@@ -8,15 +8,20 @@
 
 ---
 
-## Sesión 2026-05-30 (46) · F6-A/B entregados · bloqueantes para demo 4G
+## Sesión 2026-05-30 (46) · F6 completado · 🟢 demo 4G desbloqueada
 
-**Estado:** Dev A y Dev B entregaron sus sprints. Audit revisor PASS con observaciones (R7 acumula en background, F1=1.0 walk-forward documentado como leak, partition pendiente Windows). **Bloqueantes para demo 4G:**
+**Estado:** ✅ Runtime Windows completado. ✅ PWA deployada a Vercel (Dev T). Pendiente humano: agregar A record en Cloudflare DNS para `app.fragloesja.uk`.
 
-1. **API caída** — `https://api.fragloesja.uk` devuelve HTTP 530 (Cloudflare 1033 = origin unreachable). Probable causa: Windows necesita `git pull` + reiniciar API + sync notebooks tras F6-A.
-2. **PWA no desplegada** — solo existe `/demo` (página HTML simple con login + búsqueda + stock + ventas). La PWA completa con dashboards/alerts/acciones NO se puede usar desde 4G hasta que se deploye.
+**Bloqueantes resueltos:**
+
+1. ✅ **API revivida** — túnel Cloudflare operativo (`api.fragloesja.uk` → 200). API con `ENV=dev`, `CORS_ORIGINS` actualizado con Vercel.
+2. ✅ **PWA deployada** — en `https://motoshop-web-tau.vercel.app` (Dev T). Falta DNS: agregar A record `app` → `76.76.21.21` en Cloudflare para el dominio custom.
+3. ✅ **Workflow Databricks** — `motoshop_full_workflow` scheduleado a 19:00 COL, UNPAUSED. Corrida manual en progreso.
+4. ✅ **Notebooks** — 36 notebooks subidos a Databricks Workspace.
+5. ⚠️ **F6-001 partition** — MySQL 5.0 no soporta. Diferido a F7.
 
 **Decisiones humanas tomadas (2026-05-30):**
-- Hostear PWA en **Vercel + DNS CNAME en Cloudflare** (opción B). Subdominio: `app.fragloesja.uk`.
+- Hostear PWA en **Vercel + DNS A record en Cloudflare** (opción B). Subdominio: `app.fragloesja.uk`.
 - Dejar `Sashita123`/`FG28`/`users.yaml` como están (R1/R2/R15 aceptadas).
 
 **3 trabajos en paralelo para desbloquear demo:**
@@ -550,6 +555,11 @@ offlineQueue, asegurate que el modal funciona en happy path.
 5. API reiniciada post-fix (PID 13608 → nueva instancia con `ENV=dev`)
 6. `ENV=test` → `ENV=dev` corregido (antes usaba FakeAlertActionsRepo, no escribía a MySQL)
 7. Test end-to-end verificado: POST 201 + idempotency 200 + datos en MySQL + audit log
+8. Túnel revivido (`cloudflared` PID 12792), ruta corregida en `start_tunnel.ps1`
+9. 36 notebooks subidos a Databricks Workspace
+10. Workflow `motoshop_full_workflow` UNPAUSED schedule 19:00 COL
+11. F6-001 documentado como no aplicable (MySQL 5.0 sin partitioning)
+12. `CORS_ORIGINS` actualizado con Vercel + `app.fragloesja.uk`
 
 **Regla para el revisor:** cuando audites F5, acordate que Windows = producción. Verificar que `start_api.ps1` y `.env` tengan las env vars de `app_writer`, y que las migrations se aplicaron en MySQL local (no solo en el repo).
 

@@ -73,7 +73,7 @@ $env:MYSQL_APP_WRITER_USER = "app_writer"
 
 $env:MYSQL_APP_WRITER_PASSWORD = (Get-Content "$ProjectRoot\.env" | Where-Object {$_ -match '^MYSQL_APP_WRITER_PASSWORD=(.+)$'} | ForEach-Object {$matches[1]})
 if (-not $env:MYSQL_APP_WRITER_PASSWORD) { Write-Log "ERROR: MYSQL_APP_WRITER_PASSWORD no encontrada en .env"; exit 1 }
-$env:CORS_ORIGINS = "http://localhost:3000,https://api.fragloesja.uk,http://localhost:8000"
+$env:CORS_ORIGINS = "http://localhost:3000,https://api.fragloesja.uk,https://motoshop-web-tau.vercel.app,https://app.fragloesja.uk,http://localhost:8000"
 
 $proc = Start-Process -FilePath "$ApiDir\.venv\Scripts\python.exe" `
     -ArgumentList "-m","uvicorn","motoshop_api.main:app","--port","$Port" `

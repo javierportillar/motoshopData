@@ -2,7 +2,7 @@
 $ErrorActionPreference = "Continue"
 $ProjectRoot = "C:\Users\MotoShop\Documents\javidevmoto"
 $LogDir = "$ProjectRoot\logs"
-$Cloudflared = "C:\Users\MotoShop\.cloudflared\cloudflared.exe"
+$Cloudflared = "C:\Users\MotoShop\AppData\Local\Microsoft\WinGet\Links\cloudflared.exe"
 $TunnelId = "38e6118f-4d8e-43cb-8990-fa7e71039c12"
 $TunnelUrl = "https://api.fragloesja.uk"
 
