@@ -31,6 +31,124 @@
 
 ---
 
+## Sesión 2026-05-30 (50) · F6-D-FIX1 hot bugs + F7 reestructuración UX
+
+**Estado:** F6-D cerrada ✅ (audit Sesión 49 PASS). Humano hizo smoke test en `https://app.fragloesja.uk` y detectó 3 bugs visibles + pidió fase nueva de UX/mobile.
+
+**Bugs detectados (audit revisor confirmó):**
+
+| # | Bug | Causa raíz |
+|---|-----|-----------|
+| 1 | `/dashboards/dormidos` → 404 | Frontend: la ruta no existe en filesystem Next.js. Solo hay abc/, inventario/, ventas/. El endpoint `/metrics/dormidos` SÍ funciona. |
+| 2 | Ticket promedio "$0.0M" con 911 facturas | Frontend formatter: API devuelve `ticket_promedio: 25813.95`. PWA divide siempre por 1M y trunca a 1 decimal → "$0.0M". |
+| 3 | Valor inventario "$0.0M" | Backend real: API devuelve `valor_total: 0.0` literal. Query `inventory-summary` no hace `SUM(cantidad × costo)`. |
+
+**Plan correctivo:** [`docs/plan-f6-d-fix1.md`](docs/plan-f6-d-fix1.md) — 2 sprints micro paralelos (~1h wall-clock).
+
+**Fase nueva agregada al roadmap:** [`docs/plan-f7.md`](docs/plan-f7.md) — F7 · Reestructuración UX + Mobile-first. Arranca DESPUÉS de cerrar F6-D-FIX1.
+
+### 🤖 Handoff #1 · Dev A · Sprint F6-D-FIX1-A · Backend (~30 min)
+
+Pegá esto en un chat Claude Code nuevo en tu Mac:
+
+```
+Soy Dev A · Sprint F6-D-FIX1-A del proyecto MotoShop.
+
+PRE-FLIGHT:
+1. cd /Users/javierportillarosero/Documents/personal/dataEmpresas/motoshopData
+2. git pull --ff-only origin main
+3. Leé docs/plan-f6-d-fix1.md COMPLETO
+
+MI MISIÓN:
+Fix Bug 3: /metrics/inventory-summary devuelve valor_total = 0.0.
+La query no está multiplicando cantidad × costo. Hay que arreglarla
+para que retorne el valor monetario real del inventario.
+
+ENTREGABLES:
+1. Audit query en motoshop-app/api/src/motoshop_api/metrics/repo.py
+2. Fix con SUM(stock_actual * COALESCE(costo_promedio, 0))
+3. Verificar campo correcto en mart_inventario_actual (puede ser
+   costo_promedio, ultimo_costo, costo, etc — usar lo que exista)
+4. Tests pasan
+5. Smoke test local: curl /metrics/inventory-summary → valor_total > 0
+6. Evidencia en motoshop-app/api/_runs/v_fix_inventory_valor_<ts>.md
+
+NO TOCO:
+- motoshop-app/web/** (Dev T)
+- notebooks/** (no aplica)
+- infra/** (no aplica)
+
+Commits: fix(F6-D-FIX1-A-backend): ...
+
+ARRANQUE: Paso A1 (audit query). Si la columna costo no existe en
+el mart, NO inventes — proponé en lecciones o pedí intervención
+humana para definir qué campo usar.
+```
+
+### 🤖 Handoff #2 · Dev T · Sprint F6-D-FIX1-B · Frontend (~45-60 min)
+
+Pegá esto en otro chat Claude Code nuevo:
+
+```
+Soy Dev T · Sprint F6-D-FIX1-B del proyecto MotoShop.
+
+PRE-FLIGHT:
+1. cd /Users/javierportillarosero/Documents/personal/dataEmpresas/motoshopData
+2. git pull --ff-only origin main
+3. Leé docs/plan-f6-d-fix1.md COMPLETO
+4. Leé motoshop-app/web/app/(authenticated)/dashboards/ventas/page.tsx
+   como referencia de estructura
+
+MI MISIÓN:
+Fix Bug 1: crear página /dashboards/dormidos (404 hoy).
+Fix Bug 2: refactor formatter para que NO muestre "$0.0M" para
+valores < $1M. Usar sufijo K/M según magnitud.
+
+ENTREGABLES:
+1. motoshop-app/web/app/(authenticated)/dashboards/dormidos/page.tsx
+   consumiendo GET /metrics/dormidos via SWR
+2. Layout consistente con ventas/inventario/abc
+3. motoshop-app/web/lib/format/currency.ts con formatMoney(value):
+   - >=1M → "1.2M"
+   - >=1K → "1.2K"
+   - <1K → "$847" con thousand separator
+4. Reemplazar formateo viejo en todas las pages de dashboards
+5. Tests unit del formatter
+6. Smoke local (npm run dev) + smoke producción (vercel --prod)
+7. Evidencia en motoshop-app/web/_runs/v_fix_dashboards_<ts>.md
+
+NO TOCO:
+- motoshop-app/api/** (Dev A)
+- infra/** (no aplica)
+
+Commits: fix(F6-D-FIX1-B-frontend): ...
+
+ARRANQUE: Paso B1 (página dormidos). Antes de tocar el formatter,
+verificá que la página dormidos carga con datos. Después refactor
+formatter.
+```
+
+### Próximo paso del revisor (después de cerrar F6-D-FIX1)
+
+Cuando Dev A y Dev T pushen final:
+
+1. Yo audito 5 V-FIX1 (smoke test endpoints + páginas)
+2. Si PASS → F6-D-FIX1 ✅ cerrada
+3. **Arranco Sprint F7-A Discovery con vos** — sesión conjunta para:
+   - Audit visual actual con screenshots
+   - Definir personas + KPIs prioritarios
+   - Branding (¿hay logo? ¿colores existentes?)
+   - Cronograma F7-B/C
+4. Vos decidís: ¿F7 antes o después de la defensa académica? (impacta urgencia)
+
+### Pendiente humano antes de F7
+
+- **Decidir cuándo va F7**: antes o después de defensa académica
+- **¿Hay logo MotoShop / branding existente?** O empezamos desde cero
+- **Demos R6 (4G) + R8 (gerencia)** siguen pendientes — pueden agendarse en paralelo a F6-D-FIX1
+
+---
+
 ## Sesión 2026-05-30 (48b) · F6-D · Mitigación SPOF con Render free + UptimeRobot
 
 **Corrección Sesión 48b:** El handoff original (48a) proponía Fly.io. Verificación posterior reveló que Fly.io ya no tiene "always free" tier (solo 7 días trial). Decisión humana revisada: **Render free + UptimeRobot** (gratis siempre, sin tarjeta).
