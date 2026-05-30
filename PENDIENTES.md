@@ -31,9 +31,11 @@
 
 ---
 
-## Sesión 2026-05-30 (48) · F6-D · Mitigación SPOF Windows con API cloud (Fly.io)
+## Sesión 2026-05-30 (48b) · F6-D · Mitigación SPOF con Render free + UptimeRobot
 
-**Estado:** Runtime Windows reportó SPOF crítico — API + MySQL solo viven en la PC, si se apaga toda la web cae. Vos decidiste mitigarlo HOY con **Fly.io** (free tier sin sleep).
+**Corrección Sesión 48b:** El handoff original (48a) proponía Fly.io. Verificación posterior reveló que Fly.io ya no tiene "always free" tier (solo 7 días trial). Decisión humana revisada: **Render free + UptimeRobot** (gratis siempre, sin tarjeta).
+
+**Estado:** Runtime Windows reportó SPOF crítico — API + MySQL solo viven en la PC, si se apaga toda la web cae. Vos decidiste mitigarlo HOY con **Render free** (gratis siempre) + **UptimeRobot** (pinga cada 5 min para evitar sleep).
 
 **Estrategia híbrida cloud + on-premise:**
 
@@ -46,15 +48,15 @@
 
 **Defensa académica:** "El producto predictivo (F4) está siempre disponible en cloud. El catálogo operativo depende del PC de la tienda — limitación arquitectónica conscientemente aceptada por ADR-0007 (mitigación completa en F7 post-curso)."
 
-### 🌐 Handoff #1 · Dev T · Deploy API a Fly.io (~45 min)
+### 🌐 Handoff #1 · Dev T · Deploy API a Render free (~35 min)
 
 Pegá esto en un chat Claude Code nuevo en tu Mac:
 
 ```
 Soy Dev T · Track T · Sprint F6-D del proyecto MotoShop.
-Mi misión es desplegar la API FastAPI a Fly.io como mitigación
-del SPOF Windows. La API en Fly solo servirá endpoints que
-leen de Databricks (analíticos). Endpoints MySQL devolverán
+Mi misión es desplegar la API FastAPI a Render free como
+mitigación del SPOF Windows. La API en Render solo servirá
+endpoints que leen de Databricks. Endpoints MySQL devolverán
 503 graceful.
 
 PRE-FLIGHT obligatorio:
@@ -64,87 +66,107 @@ PRE-FLIGHT obligatorio:
 4. Leé docs/plan-f6.md (contexto F6)
 5. Leé motoshop-app/api/pyproject.toml + src/motoshop_api/config.py
 6. Leé motoshop-app/api/src/motoshop_api/main.py (lifespan)
-7. Verificá flyctl: brew install flyctl (si no está)
 
 MI MISIÓN:
-Deploy API analítica a Fly.io. Endpoints Databricks funcionan 24/7,
-endpoints MySQL devuelven 503 graceful. Setup DNS subdomain
-cloud-api.fragloesja.uk para que el humano lo configure en
-Cloudflare después.
+Deploy API analítica a Render free. Endpoints Databricks funcionan
+24/7 (con UptimeRobot evitando el sleep). Endpoints MySQL devuelven
+503 graceful. Setup subdomain cloud-api.fragloesja.uk para que el
+humano lo configure en Cloudflare después.
+
+CONTEXTO Render free:
+- Gratis siempre (Hobby plan, sin tarjeta requerida)
+- 750 horas/mes (suficiente para 1 web service 24/7 = ~744 hrs)
+- Se duerme tras 15 min sin requests
+- Cold start ~1 minuto cuando se duerme
+- Mitigación: UptimeRobot pingea cada 5 min para mantenerla viva
 
 ENTREGABLES (en orden):
 
-PASO 1 · Dockerfile (~10 min)
-Crear motoshop-app/api/Dockerfile multi-stage:
-- Base: python:3.11-slim
-- Install deps con uv (no pip)
-- Copy src + users.yaml (ya está en repo, force-added en F5)
-- EXPOSE 8000
-- CMD uvicorn motoshop_api.main:app --host 0.0.0.0 --port 8000
+PASO 1 · render.yaml (~10 min)
+Crear motoshop-app/api/render.yaml (Infrastructure as Code):
 
-Verificar build local:
-   cd motoshop-app/api
-   docker build -t motoshop-api:test .
-   docker run -p 8000:8000 -e DATABRICKS_HOST=... motoshop-api:test
-   curl http://localhost:8000/health → 200
+   services:
+     - type: web
+       name: motoshop-cloud-api
+       runtime: python
+       plan: free
+       region: oregon  # closest free region (Virginia/Oregon)
+       buildCommand: pip install -e .
+       startCommand: uvicorn motoshop_api.main:app --host 0.0.0.0 --port $PORT
+       healthCheckPath: /health
+       envVars:
+         - key: PYTHON_VERSION
+           value: 3.11.9
+         - key: DATABRICKS_HOST
+           sync: false  # humano lo setea en dashboard
+         - key: DATABRICKS_TOKEN
+           sync: false
+         - key: DATABRICKS_HTTP_PATH
+           value: /sql/1.0/warehouses/43bc044eaef4cca4
+         - key: JWT_SECRET
+           sync: false
+         - key: CORS_ORIGINS
+           value: https://motoshop-web-tau.vercel.app,https://app.fragloesja.uk
+         - key: ENV
+           value: dev
 
-Crear motoshop-app/api/.dockerignore con:
-   __pycache__
-   *.pyc
-   .pytest_cache
-   .env
-   tests/
-   .venv/
+Verificar que motoshop-app/api/pyproject.toml tiene los entry points
+correctos (uvicorn como dependencia).
 
-PASO 2 · fly.toml (~5 min)
-Crear motoshop-app/api/fly.toml:
-   app = "motoshop-cloud-api"
-   primary_region = "mia"  # Miami, cerca de Colombia
+PASO 2 · Verificar setup local (~5 min)
+1. cd motoshop-app/api
+2. pip install -e .
+3. uvicorn motoshop_api.main:app --port 8000 → debe arrancar
+4. curl http://localhost:8000/health → 200
+5. Stop
 
-   [build]
+PASO 3 · Render dashboard setup (~10 min)
+NOTA: Render se configura desde su UI web, NO CLI.
 
-   [http_service]
-     internal_port = 8000
-     force_https = true
-     auto_stop_machines = "stop"
-     auto_start_machines = true
-     min_machines_running = 1  # CRITICO: evita sleep
+1. Login https://dashboard.render.com (signup con GitHub)
+2. New + → Web Service
+3. Connect GitHub repo: javierportillar/motoshopData
+4. Configurar:
+   - Name: motoshop-cloud-api
+   - Root Directory: motoshop-app/api
+   - Runtime: Python
+   - Build Command: pip install -e .
+   - Start Command: uvicorn motoshop_api.main:app --host 0.0.0.0 --port $PORT
+   - Plan: Free
+   - Region: Oregon (o Virginia, ambos tienen free)
 
-   [[vm]]
-     size = "shared-cpu-1x"
-     memory = "256mb"
+5. En Environment Variables (CRITICO copiar de Windows):
+   - DATABRICKS_HOST = (de motoshop-app/api/.env Windows)
+   - DATABRICKS_TOKEN = (de motoshop-app/api/.env Windows)
+   - DATABRICKS_HTTP_PATH = /sql/1.0/warehouses/43bc044eaef4cca4
+   - JWT_SECRET = (DEBE ser el mismo que Windows!)
+   - CORS_ORIGINS = https://motoshop-web-tau.vercel.app,https://app.fragloesja.uk
+   - ENV = dev
 
-PASO 3 · Fly.io setup + deploy (~15 min)
-1. flyctl auth login (abre browser)
-2. cd motoshop-app/api
-3. flyctl launch --no-deploy --name motoshop-cloud-api
-4. Configurar secrets Databricks (copiar valores REALES del
-   motoshop-app/api/.env de Windows; vos los tenés):
-   flyctl secrets set \
-     DATABRICKS_HOST="..." \
-     DATABRICKS_TOKEN="..." \
-     DATABRICKS_HTTP_PATH="/sql/1.0/warehouses/43bc044eaef4cca4" \
-     JWT_SECRET="<mismo que Windows>" \
-     CORS_ORIGINS="https://motoshop-web-tau.vercel.app,https://app.fragloesja.uk" \
-     ENV="dev"
-
-   IMPORTANTE JWT_SECRET tiene que ser EL MISMO que Windows
-   para que tokens funcionen entre ambos.
-
-5. flyctl deploy
-
-6. Capturar URL final (ej. https://motoshop-cloud-api.fly.dev)
+6. Click "Create Web Service"
+7. Render deploya automáticamente desde main. ~3-5 min build + deploy.
+8. Capturar URL final (ej. https://motoshop-cloud-api.onrender.com)
 
 PASO 4 · Smoke test (~5 min)
-1. curl https://motoshop-cloud-api.fly.dev/health → 200
+1. curl https://motoshop-cloud-api.onrender.com/health → 200
 2. Login y captura token
 3. curl /alerts/stockout con Bearer → 200 con 46 alertas
 4. curl /products?q=aceite con Bearer → 500/503 esperable
    (MySQL no configurado, comportamiento correcto)
 
-PASO 5 · Update PWA con fallback inteligente (~10 min)
+PASO 5 · Setup UptimeRobot anti-sleep (~5 min)
+1. Signup https://uptimerobot.com (free, sin tarjeta)
+2. New Monitor:
+   - Type: HTTP(s)
+   - URL: https://motoshop-cloud-api.onrender.com/health
+   - Interval: 5 minutes (cada 5 min)
+   - Name: motoshop-cloud-api-keepalive
+3. Save
+4. Documentar URL + interval en evidencia
+
+PASO 6 · Update PWA con fallback inteligente (~10 min)
 Editar motoshop-app/web/lib/api/* para:
-- Try Fly primary
+- Try Render primary
 - Si 5xx en endpoints MySQL (/products, /stock, /sales, /alerts/{id}/action):
   mostrar UI fallback "Esta funcionalidad requiere el sistema
   operativo encendido. Predicciones y alertas están disponibles 24/7."
@@ -154,25 +176,27 @@ Editar motoshop-app/web/lib/api/* para:
 Actualizar NEXT_PUBLIC_API_URL en Vercel:
    npx vercel env rm NEXT_PUBLIC_API_URL production
    npx vercel env add NEXT_PUBLIC_API_URL production
-   → Pegar: https://motoshop-cloud-api.fly.dev
-   (cuando humano configure CNAME, cambiar a cloud-api.fragloesja.uk)
+   → Pegar: https://motoshop-cloud-api.onrender.com
    npx vercel --prod
 
-PASO 6 · Smoke test PWA (~5 min)
+PASO 7 · Smoke test PWA (~5 min)
 1. Abrir https://motoshop-web-tau.vercel.app
 2. Login admin/FG28 → debe entrar
 3. /forecast → carga
 4. /alerts → 46 alertas
 5. /products → UI fallback elegante
-6. Documentar en motoshop-app/web/_runs/v_fly_smoke_<ts>.md
+6. Documentar en motoshop-app/web/_runs/v_render_smoke_<ts>.md
 
-PASO 7 · Documentación (~5 min)
-Crear motoshop-app/api/_runs/v_fly_deploy_<ts>.md con:
-- URL Fly producción
-- Secrets configurados (lista, NO valores)
-- Region (mia)
-- IPv4 dedicado (flyctl ips list) — humano necesita para CNAME
+PASO 8 · Documentación (~5 min)
+Crear motoshop-app/api/_runs/v_render_deploy_<ts>.md con:
+- URL Render producción
+- Env vars configuradas (lista, NO valores)
+- Region (Oregon/Virginia)
+- UptimeRobot monitor URL + interval
 - Resultado smoke test (200 vs 503 esperables)
+- Build time
+- Para humano: tiene que agregar CNAME cloud-api.fragloesja.uk
+  → motoshop-cloud-api.onrender.com en Cloudflare
 
 Commits con prefijo: feat(F6-D-cloud-api): ...
 
@@ -182,25 +206,26 @@ NO TOCO:
 - DNS Cloudflare (humano)
 
 REPORTE FINAL EN CHAT:
-1. URL Fly producción
-2. IPv4 dedicado para A record en Cloudflare (flyctl ips list)
+1. URL Render producción
+2. URL UptimeRobot monitor
 3. Endpoints que funcionan 200: lista
 4. Endpoints que devuelven 503: lista (esperable, no son bug)
-5. ¿PWA Vercel ya apunta a Fly?
+5. ¿PWA Vercel ya apunta a Render?
 ```
 
 ### 👤 Handoff #2 · Acción humana · CNAME `cloud-api.fragloesja.uk` (~5 min)
 
-Después que Dev T te dé el IPv4:
+Después que Dev T te dé la URL Render:
 
 1. Login `dash.cloudflare.com` → `fragloesja.uk` → DNS → Add record
-2. Type: **A** (Fly da IP dedicada)
+2. Type: **CNAME** (Render usa hostnames, no IPs fijas)
 3. Name: `cloud-api`
-4. Value: el IPv4 que dio `flyctl ips list`
+4. Target: `motoshop-cloud-api.onrender.com` (la URL que dio Render sin https://)
 5. Proxy: **DNS only** (gris)
 6. Save → esperar 1-5 min
-7. `dig cloud-api.fragloesja.uk` debe apuntar al IP de Fly
-8. En tu Mac: `flyctl certs add cloud-api.fragloesja.uk` (genera TLS Let's Encrypt)
+7. `dig cloud-api.fragloesja.uk` debe apuntar a Render
+8. En Render dashboard: Settings → Custom Domain → Add `cloud-api.fragloesja.uk`
+9. Render valida el dominio y emite TLS Let's Encrypt automáticamente
 
 Después actualizar PWA env var:
 ```
