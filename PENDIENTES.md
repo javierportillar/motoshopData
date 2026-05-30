@@ -31,6 +31,385 @@
 
 ---
 
+## Sesión 2026-05-30 (51) · F7 arranca · 3 devs en paralelo + F6-D-FIX1 en paralelo
+
+**Estado:** discovery F7 cerrado (`docs/f7/personas_kpis.md` + `dashboards_content.md` + `team_allocation.md` + `branding.md`). Branding aprobado por revisor (logo PNG real + paleta expandida con error/accent separados). **GO arranque devs.**
+
+**5 sprints en paralelo HOY:**
+
+| Sprint | Owner | Trabajo | Duración |
+|--------|-------|---------|----------|
+| F6-D-FIX1-A | Dev A backend | Fix `valor_total` MySQL query | 30 min |
+| F6-D-FIX1-B | Dev T frontend | Página dormidos + formatter K/M | 45-60 min |
+| F7-B | **Dev T1 NUEVO** | Design system (tokens + 8 componentes + nav + Logo) | 5-7 días |
+| F7-D | **Dev A NUEVO** | 5+ endpoints + tabla `app_purchase_plans` | 7-10 días |
+| F7-E | **Dev D NUEVO** | Snapshot jobs PRIORIDAD #1 + analytics | 7-10 días |
+
+**Coordinación:**
+- F6-D-FIX1 (A+T) NO comparte archivos con F7 (T1/A/D). Cero conflicto.
+- F7-A Dev A es DIFERENTE de F6-D-FIX1-A Dev A. Si vos solo tenés "un Dev A", usalo primero para F6-D-FIX1-A (30 min) y después arrancalo en F7-D. O abrí 2 chats Dev A distintos en paralelo.
+- Dev W (Runtime Windows) se dispara cada vez que A o D pushean (vos pegás handoff Sesión 49 conocido).
+
+---
+
+### 🤖 Handoff #1 · Dev T1 · F7-B Design System (~5-7 días)
+
+Pegá esto en un chat Claude Code NUEVO:
+
+```
+Soy Dev T1 · Sprint F7-B Design System del proyecto MotoShop.
+
+PRE-FLIGHT obligatorio:
+1. cd /Users/javierportillarosero/Documents/personal/dataEmpresas/motoshopData
+2. git pull --ff-only origin main
+3. Leé INICIAR_AGENTE.md (rol = Dev Agent · Track T)
+4. Leé docs/f7/personas_kpis.md (qué necesitan los componentes que voy a construir)
+5. Leé docs/f7/branding/colors.md COMPLETO (tokens listos para copy-paste)
+6. Mirá docs/f7/branding/logo.png (es el logo real, PNG 1200×470)
+7. Leé docs/f7/team_allocation.md §"Dev T1" (mis dependencias y a quién bloqueo)
+
+MI MISIÓN:
+Construir design system completo para F7. Tokens, 8 componentes
+base, Logo, Navigation adaptable. Habilito que Dev T2 migre 8
+pages + cree 4 nuevas en F7-C.
+
+CRITICO: yo BLOQUEO a Dev T2 — no puede arrancar sin mis
+componentes mínimos (Card, Stat, Table, Badge). Avisar en
+SEGUIMIENTO cuando esos 4 estén listos para liberar T2.
+
+ENTREGABLES (en orden de prioridad para desbloquear T2):
+
+PASO 1 · Tokens (~45 min)
+1. motoshop-app/web/lib/design/tokens.ts
+   - Copy-paste exacto la sección "Tokens semánticos" de
+     docs/f7/branding/colors.md
+   - TypeScript estricto, tipos exportados
+2. motoshop-app/web/tailwind.config.ts actualizado consumiendo
+   tokens (extend theme)
+3. motoshop-app/web/app/globals.css con CSS variables
+   (copy-paste de colors.md §"CSS variables base")
+
+PASO 2 · Logo component (~30 min)
+1. cp docs/f7/branding/logo.png motoshop-app/web/public/logo.png
+2. motoshop-app/web/components/Logo.tsx con:
+   - Props: variant (full/mark/text), size (sm/md/lg), theme (auto/light/dark)
+   - Usa <Image> de next/image con sizes responsive
+   - Fallback: wrap en surfaceDark si fondo no compatible
+3. Stories en docs/f7/components/Logo.md
+
+PASO 3 · Componentes base prioritarios (~2 h, DESBLOQUEAN T2)
+Crear en motoshop-app/web/components/ui/:
+
+a) Card.tsx — props: variant (default/elevated/outlined), padding, header opcional
+b) Stat.tsx — KPI con value, label, delta opcional, sparkline opcional, icon opcional
+   - Reemplaza KpiCard ad-hoc actual con uno bien diseñado
+   - Usa formatMoney de lib/format/currency.ts (post-FIX1)
+c) Table.tsx — responsive: desktop = tabla, mobile = card stack
+   - Props: columns config, rows, empty state, loading state, onRowClick
+d) Badge.tsx — variants (primary/accent/success/warning/error/neutral),
+   sizes (sm/md), with icon opcional
+
+Cada uno con stories markdown en docs/f7/components/<name>.md.
+
+CUANDO ESTOS 4 ESTÉN LISTOS:
+1. Commit con prefix: feat(F7-B-design-mvp): tokens + Logo + Card + Stat + Table + Badge
+2. Actualizá SEGUIMIENTO.md sección Dev T1 con: "✅ MVP T1 listo,
+   Dev T2 puede arrancar F7-C"
+3. SEGUÍ con paso 4 mientras T2 arranca en paralelo
+
+PASO 4 · Componentes base secundarios (~2 h)
+e) Chart.tsx — wrapper recharts con <ResponsiveContainer> SIEMPRE
+   - Props: type (line/bar/area/pie), data, colors (de chart tokens)
+   - Tooltip uniforme con tokens
+f) Skeleton.tsx — loading reusable (card/line/circle variants)
+g) ErrorState.tsx — error reusable con CTA "Reintentar"
+h) EmptyState.tsx — lista vacía con mensaje + ilustración opcional
+
+PASO 5 · Navigation adaptable (~1 h)
+motoshop-app/web/components/Navigation.tsx:
+- Mobile (< 768px): bottom navigation con 4-5 items principales
+- Desktop (>= 768px): sidebar left con sub-items expandibles
+- Items se configuran por rol (vendedor vs gerente — leer user.role)
+- Touch targets ≥ 44px en mobile
+
+PASO 6 · Cierre (~30 min)
+1. npm run typecheck → 0 errors
+2. npm run build → 0 errors
+3. Capturas de cada componente en docs/f7/components/_screenshots/
+4. Commit final: feat(F7-B-design-complete): ...
+5. SEGUIMIENTO.md sección Dev T1 con "✅ F7-B cerrado"
+
+NO TOCO:
+- motoshop-app/web/app/(authenticated)/dashboards/** (Dev T2 migra)
+- motoshop-app/web/app/(authenticated)/alerts/page.tsx (Dev T2)
+- motoshop-app/api/** (Dev A backend)
+- notebooks/** (Dev D)
+- infra/** (Dev D / Dev W)
+
+Commits prefix: feat(F7-B-design-*):
+
+ARRANQUE: Paso 1 (tokens). Antes de tocar componentes asegurate
+que tailwind.config.ts consume bien tokens. Smoke test:
+crear un <div className="bg-primary text-primaryFg p-4"> y
+verificar render.
+```
+
+---
+
+### 🤖 Handoff #2 · Dev A · F7-D Backend FastAPI (~7-10 días)
+
+Pegá esto en un chat Claude Code NUEVO (separado del F6-D-FIX1-A si es el mismo dev):
+
+```
+Soy Dev A · Sprint F7-D Backend FastAPI del proyecto MotoShop.
+
+PRE-FLIGHT obligatorio:
+1. cd /Users/javierportillarosero/Documents/personal/dataEmpresas/motoshopData
+2. git pull --ff-only origin main
+3. Leé INICIAR_AGENTE.md (rol = Dev Agent · Track A)
+4. Leé docs/f7/dashboards_content.md COMPLETO (que endpoints necesita cada feature)
+5. Leé docs/f7/team_allocation.md §"Dev A" (mi rol, dependencias con Dev D)
+6. Mirá motoshop-app/api/src/motoshop_api/metrics/router.py + repo.py
+   como referencia de patrón existente
+7. Verificá que F6-D-FIX1-A esté cerrada (fix valor_total) antes de
+   tocar metrics. Si no, esperá 30 min o coordiná con quien lo hace.
+
+MI MISIÓN:
+Construir 5+ endpoints nuevos que el F7-C va a consumir + tabla
+nueva app_purchase_plans + binding repos. Trabajo en paralelo con
+Dev D — si necesito una tabla/vista que D produce, la mockeo con
+SQL temporal hasta que D pushee.
+
+ENTREGABLES (en orden de prioridad para desbloquear T2):
+
+PASO 1 · GET /metrics/sales-trend?periods=6 (~1.5 h) [PRIORIDAD para HG2/V1]
+1. motoshop-app/api/src/motoshop_api/metrics/router.py — agregar endpoint
+2. metrics/repo.py — query Databricks SQL agregando por mes:
+   SELECT YEAR(business_date) AS y, MONTH(business_date) AS m,
+          SUM(total_factura) AS total, COUNT(*) AS num_facturas,
+          AVG(total_factura) AS ticket_promedio
+   FROM motoshop.silver.fact_ventas
+   WHERE business_date >= ADD_MONTHS(CURRENT_DATE(), -6)
+   GROUP BY y, m ORDER BY y, m
+3. metrics/schemas.py — SalesTrendResponse, SalesTrendItem
+4. Tests en tests/api/test_metrics_trend.py
+5. Smoke local: curl con Bearer → 200 con 6 meses
+
+PASO 2 · GET /metrics/vendedores-summary (~1 h) [VE1-VE5]
+Query:
+   SELECT nit_vendedor, nombre_vendedor,
+          COUNT(*) AS facturas, SUM(total_factura) AS total,
+          AVG(total_factura) AS ticket_promedio
+   FROM motoshop.silver.fact_ventas
+   WHERE business_date >= DATE_TRUNC('MONTH', CURRENT_DATE())
+   GROUP BY nit_vendedor, nombre_vendedor
+   ORDER BY total DESC LIMIT 10
+Schema + tests + smoke.
+
+PASO 3 · GET /metrics/cohortes-detail (~1 h) [CO1-CO5]
+Consumir gold.mart_cohortes_clientes existente.
+Schema con: cohort_month, retention_by_month, ltv, total_clientes.
+
+PASO 4 · GET /metrics/drift-summary (~1 h) [DR1-DR4]
+Consumir gold.alertas_drift existente (F6-A).
+Schema con: alerts, threshold, recommended_action.
+
+PASO 5 · GET /metrics/forecast-categoria (~1 h) [F1]
+Consumir gold.forecast_categoria existente (F6-B).
+
+PASO 6 · Migration + endpoint app_purchase_plans (~1.5 h) [PC6]
+1. infra/migrations/F7-001-app_purchase_plans.sql:
+   CREATE TABLE app_purchase_plans (
+     id BIGINT AUTO_INCREMENT PRIMARY KEY,
+     created_by VARCHAR(64) NOT NULL,
+     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+     plan_name VARCHAR(255),
+     total_skus INT,
+     total_value DECIMAL(15,2),
+     items JSON,
+     status ENUM('draft','approved','sent','received'),
+     INDEX idx_user_created (created_by, created_at)
+   ) ENGINE=InnoDB;
+2. Endpoints CRUD en app_writes/purchase_plans.py:
+   - POST /purchase-plans (create)
+   - GET /purchase-plans (list paginated)
+   - GET /purchase-plans/{id}
+   - PATCH /purchase-plans/{id}/status
+3. Dev W debe aplicar migration en Windows después de mi push.
+
+PASO 7 · GET /metrics/plan-compras (~2 h) [PC1-PC5]
+Endpoint complejo que combina:
+- gold.alertas_quiebre (urgencia)
+- gold.forecast_demanda_sku (demanda predicha)
+- mart_rotacion_abc (categoría ABC)
+- mart_productos_dormidos (excluir o flag)
+- mart_inventario_actual (stock actual)
+
+Output: lista de SKUs con cantidad_a_comprar calculada +
+recomendación supplier.
+
+Si Dev D NO ha producido gold.mart_abc_xyz aún, mockeo el join.
+
+PASO 8 · Cierre (~30 min)
+1. pytest tests/api/ → 100% pass
+2. uvicorn local smoke test
+3. Commit final: feat(F7-D-backend-complete): ...
+4. SEGUIMIENTO.md sección Dev A con "✅ F7-D cerrado"
+
+NO TOCO:
+- motoshop-app/web/** (Dev T1 / T2)
+- notebooks/** (Dev D)
+- infra/migrations/F5-* o F6-* (ya cerradas)
+- Tablas sgHermes (intocable)
+- users.yaml (R15 diferida)
+
+COORDINACIÓN:
+- Si necesito tabla nueva de Dev D (ej. mart_abc_xyz, snapshots):
+  mockeo con SQL temporal y dejo TODO en código. Reemplazo cuando
+  D pushee.
+- Cada push avisa a Dev W para que reinicie API en Windows.
+
+Commits prefix: feat(F7-D-backend-*):
+
+ARRANQUE: Paso 1 (sales-trend) — es el endpoint que más
+desbloquea a T2 (lo usan HG2 home gerente y V1 ventas page).
+```
+
+---
+
+### 🤖 Handoff #3 · Dev D · F7-E Databricks + Snapshots (~7-10 días)
+
+Pegá esto en un chat Claude Code NUEVO:
+
+```
+Soy Dev D · Sprint F7-E Databricks + Snapshots del proyecto MotoShop.
+
+PRE-FLIGHT obligatorio:
+1. cd /Users/javierportillarosero/Documents/personal/dataEmpresas/motoshopData
+2. git pull --ff-only origin main
+3. Leé INICIAR_AGENTE.md (rol = Dev Agent · Track A · subteam analítico)
+4. Leé docs/f7/dashboards_content.md §"Balde B" (mi trabajo crítico)
+5. Leé docs/f7/team_allocation.md §"Dev D" (mi rol, prioridad #1)
+6. Leé infra/create_full_workflow.py (estructura actual del workflow)
+7. Leé notebooks/gold/19_feature_store.py + 24_forecast_categoria.py
+   como referencia de patrón
+
+MI MISIÓN:
+PRIORIDAD #1: activar snapshot jobs balde B HOY MISMO. Cuanto
+antes empiecen a acumular, más datos para la defensa académica
+(en ~30 días). Cada día perdido = 1 día menos de historia.
+
+Después: cálculos analíticos nuevos (rotación, cobertura, ABC×XYZ)
+y soporte a endpoints de Dev A.
+
+ENTREGABLES (PRIORIDAD ESTRICTA):
+
+PASO 1 · Snapshot jobs balde B (DÍA 1-2 — PRIORIDAD MÁXIMA)
+
+a) notebooks/gold/30_snapshot_abc_mensual.py:
+   - Cada 1ro del mes (o trigger manual), guarda copy de
+     mart_rotacion_abc en gold.mart_rotacion_abc_snapshots
+   - Agrega columna snapshot_month = DATE_FORMAT(CURRENT_DATE(), 'yyyy-MM')
+   - INSERT INTO snapshots ... SELECT FROM mart_rotacion_abc
+
+b) notebooks/gold/31_snapshot_dormidos_mensual.py:
+   - Mismo patrón para mart_productos_dormidos
+   - Tabla destino: gold.mart_productos_dormidos_snapshots
+
+c) notebooks/gold/32_snapshot_alertas_diario.py:
+   - Snapshot diario de gold.alertas_quiebre
+   - Tabla destino: gold.alertas_quiebre_snapshots
+   - Agrega columna snapshot_date
+
+d) notebooks/gold/33_archive_forecasts.py:
+   - ANTES de que forecast_demanda_sku se sobrescriba, guardar
+     versión actual en gold.forecast_demanda_sku_archive
+   - Permite backtesting visual (F3 feature)
+
+PASO 2 · Modificar workflow (DÍA 2)
+infra/create_full_workflow.py:
+- Agregar 4 tasks nuevas al workflow:
+  * Snapshot ABC (mensual: solo corre si DAY(CURRENT_DATE())=1)
+  * Snapshot dormidos (mensual: idem)
+  * Snapshot alertas (diario: siempre)
+  * Archive forecasts (diario: corre ANTES de que se sobrescriba)
+- Dependencias correctas entre tasks
+- Avisar a Dev W para re-deploy workflow
+
+PASO 3 · Verificar primera corrida snapshots (DÍA 2-3)
+- Disparar workflow manual desde Databricks UI
+- Verificar tablas snapshots tienen al menos 1 fila
+- Documentar en notebooks/gold/_runs/v_f7e_snapshots_arrancan_<ts>.md
+
+PASO 4 · Cálculo rotación promedio (DÍA 3-4)
+notebooks/gold/22_rotacion_promedio.py:
+- Calcular: SUM(cantidad_vendida_ultimos_90d) / 90 = venta_diaria_promedio
+- Para cada SKU: stock_actual / venta_diaria_promedio = días_de_cobertura
+- Output: gold.mart_rotacion_sku
+- Para I3 (inventario) e I6 (cobertura)
+
+PASO 5 · Cálculo ABC × XYZ (DÍA 5-6)
+notebooks/gold/23_abc_xyz.py:
+- ABC ya existe en mart_rotacion_abc
+- XYZ calcular: coeficiente de variación (CV) de ventas diarias
+  por SKU últimos 90 días
+  * X = CV < 0.5 (predictivo)
+  * Y = 0.5 ≤ CV < 1 (medio)
+  * Z = CV >= 1 (errático)
+- Output: gold.mart_abc_xyz con columnas: cod_producto, abc, xyz, bucket
+- Para A1 (ABC × XYZ matrix)
+
+PASO 6 · Soporte a Dev A (DÍA 6-7)
+- Si Dev A pide vistas específicas para sus endpoints, generarlas
+- Validar que tablas que A consume están actualizadas
+- Coordinar via SEGUIMIENTO
+
+PASO 7 · Cierre (DÍA 7)
+1. Re-correr workflow completo y verificar 0 fails
+2. Documentar en notebooks/gold/_runs/v_f7e_complete_<ts>.md
+3. Commit: feat(F7-E-databricks-complete): ...
+4. SEGUIMIENTO.md sección Dev D con "✅ F7-E cerrado, snapshots
+   acumulando, primer dato útil en 30 días"
+
+NO TOCO:
+- motoshop-app/** (Dev T / Dev A)
+- notebooks/bronze|silver/** (estables)
+- infra/migrations/F5-* o F6-* (cerradas)
+- infra/start_*.ps1 (Dev W)
+
+COORDINACIÓN:
+- Cada push a notebooks/** → avisar a Dev W para
+  upload_all_notebooks.py
+- Cada modificación a create_full_workflow.py → Dev W debe
+  re-deploy workflow
+- Si Dev A necesita una tabla nueva mía, priorizarla
+
+Commits prefix: feat(F7-E-databricks-*) o feat(F7-E-snapshot-*)
+
+ARRANQUE: Paso 1 (snapshot jobs). NO empieces analytics
+antes que los snapshots estén corriendo en producción.
+Snapshots = prioridad #1 porque acumulan tiempo.
+```
+
+---
+
+### Próximo paso del revisor (yo)
+
+Cuando los devs pushen incrementalmente:
+
+1. **Dev T1 reporta MVP listo** (Card+Stat+Table+Badge) → yo redacto handoff Dev T2
+2. **Dev A pushea endpoint** → vos disparás Dev W para restart API
+3. **Dev D pushea snapshot job** → vos disparás Dev W para sync notebooks + workflow re-deploy
+4. **Audit incremental:** cuando cada uno cierre, yo audito
+5. **E5 memoria:** empezar con capturas continuas cuando T2 vaya migrando pages
+
+### Pendiente humano transversal
+
+- Demo 4G (R6): grabar desde celular en `app.fragloesja.uk`
+- Demo gerencia (R8): agendar 30 min con stakeholder
+
+---
+
 ## Sesión 2026-05-30 (50) · F6-D-FIX1 hot bugs + F7 reestructuración UX
 
 **Estado:** F6-D cerrada ✅ (audit Sesión 49 PASS). Humano hizo smoke test en `https://app.fragloesja.uk` y detectó 3 bugs visibles + pidió fase nueva de UX/mobile.
