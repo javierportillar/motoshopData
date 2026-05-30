@@ -24,7 +24,7 @@
 Al iniciar (2026-05-27, antes del primer commit propio), el repo tenía:
 
 - `PLAN.md` v1 (sketch inicial).
-- `infollm.md` (guía de conexión a MySQL).
+- `infollm.md` (guía de conexión a MySQL — hoy en `infra/infollm.md`).
 - `README.md` mínimo.
 - `.gitignore` básico.
 - Una captura `.heic`.
@@ -327,20 +327,28 @@ Camino paralelo (solo cuando se valida F1):
 | `PLAN.md` | Fuente de verdad (arquitectura, fases, KPIs, VPC/BMC) |
 | `SEGUIMIENTO.md` | Bitácora viva (estado, decisiones, verificaciones, KPIs, riesgos, notas de sesión) |
 | `PENDIENTES.md` | Tareas humanas entre sesiones (historial por sesión) |
-| `AGENT_PROMPT.md` | Briefing del agente IA |
-| `infollm.md` | Conexión MySQL + esquema general |
+| `INICIAR_AGENTE.md` | Bootstrap rol Dev Agent |
+| `INICIAR_REVIEWER.md` | Bootstrap rol Reviewer Agent |
+| `infra/infollm.md` | Conexión MySQL + esquema general (movido desde raíz en Sesión 42) |
+| `docs/archive/AGENT_PROMPT.md` | Bootstrap legacy (archivado en Sesión 42) |
 
 ### 8.2 `docs/`
 
+> **Nota:** los planes históricos `plan-f1.md`...`plan-f4-b.md` y handoffs `handoff-f1.md`/`handoff-f2.md` fueron movidos a `docs/archive/` en Sesión 42 para reducir clutter. Siguen versionados — solo cambiaron de ruta.
+
 | Archivo | Rol |
 |---------|-----|
-| `contexto-proyecto.md` | Este documento. Snapshot 2026-05-28. |
-| `plan-f1.md` | Plan operativo de F1 (3 sprints, archivos, V1–V7, KPIs, riesgos). |
-| `plan-f1-fix1.md` | Remediación tras auditoría sesión 14 (resolvió 11/13). |
-| `plan-f1-fix2.md` | Cierre limpio (3 evidencias + sync). |
-| `handoff-f1.md` | Punto de entrada para el ejecutor de F1. |
+| `docs/MASTER.md` | **Entry point: índice maestro de navegación** (NUEVO Sesión 42) |
+| `contexto-proyecto.md` | Este documento. Snapshot ejecutivo del proyecto. |
+| `plan-f4-fix1.md` | Plan de la fase activa. |
 | `decisions/README.md` | Índice de ADRs. |
-| `decisions/0001-…0011-…` | 12 ADRs (ver tabla §9 abajo). |
+| `decisions/0001-…0016-…` | 16 ADRs aceptados (ver tabla §9 abajo) + 0017 pendiente. |
+| `entregable/E1..E5.md` | Entregables académicos consolidados para Maestría UAO 2025-2 (NUEVO Sesión 42). |
+| `archive/plan-f1...plan-f4-b.md` | Planes históricos cerrados — útiles como audit trail. |
+| `archive/handoff-f1.md`, `handoff-f2.md` | Handoffs históricos. |
+| `archive/gold/auditoria-f3.md`, `cierre-f3.md`, `refresh_plan.md` | Reports F3. |
+| `archive/prompt-dev-a-f4b.md`, `prompt-dev-b-f4b.md` | Prompts handoff F4-B. |
+| `archive/v6_forecast_match.md` | Report puntual. |
 
 ### 8.3 Track A · Notebooks Databricks (`notebooks/bronze/`)
 

@@ -17,19 +17,19 @@ Son dos tracks paralelos:
 motoshopData/
 ├── PLAN.md                      El plan maestro con la visión general
 ├── SEGUIMIENTO.md               Bitácora viva: sesiones, avances, checklist
-├── INICIAR_AGENTE.md            Para cuando arranco una sesión con IA
-├── INICIAR_REVIEWER.md          Para cuando alguien viene a auditar
 ├── PENDIENTES.md                Lo que yo (Javier) tengo que hacer entre sesiones
-├── infollm.md                   Datos de conexión a la BD y esquema
-├── AGENT_PROMPT.md              Cómo está configurado el agente de IA
+├── INICIAR_AGENTE.md            Para cuando arranco una sesión con IA (rol Dev)
+├── INICIAR_REVIEWER.md          Para cuando arranco una sesión con IA (rol Revisor)
 ├── pyproject.toml               Python (Track A — tests, lint)
 ├── .env.example                 Template de variables de entorno
 │
-├── docs/                        Documentación del proyecto
-│   ├── decisiones/              ADRs — cada decisión técnica justificada
-│   ├── plan-f1.md, plan-f2.md…  Planes detallados por fase
-│   ├── contexto-proyecto.md     Snapshot del proyecto para ponerse al día
-│   └── handoff-f1.md, …         Handoffs para arranque de fase
+├── docs/
+│   ├── MASTER.md                ★ Entry point — índice maestro de navegación
+│   ├── contexto-proyecto.md     Snapshot ejecutivo del proyecto
+│   ├── plan-f4-fix1.md          Plan de la fase activa
+│   ├── decisions/               ADRs — cada decisión técnica justificada (0001-0017)
+│   ├── entregable/              E1-E5 consolidados para Maestría UAO 2025-2
+│   └── archive/                 Planes históricos cerrados (F1-F4), handoffs, prompts
 │
 ├── notebooks/                   Track A — Notebooks Databricks
 │   ├── bronze/                  Ingesta de datos crudos
@@ -39,7 +39,9 @@ motoshopData/
 ├── src/motoshop/                Código Python reusable
 ├── tests/                       Tests de transformaciones y lógica
 ├── infra/                       Scripts de infraestructura
+│   ├── infollm.md               Conexión a la BD MySQL (host, puerto, driver)
 │   ├── backup_mysql.sh/.ps1     Backups de la BD
+│   ├── setup_*.md               Procedimientos de setup (Cloudflare, SQL Warehouse, UC Volume)
 │   └── run_*.py                 Scripts portables de ML (corren en Mac o Windows)
 │
 ├── motoshop-app/                Track T — API + PWA

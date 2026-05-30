@@ -44,9 +44,10 @@
 | `docs/plan-f*.md`, `docs/plan-f*-fix*.md`, `docs/plan-f*-hardening.md` | Planes operativos. |
 | `docs/decisions/*.md` | ADRs (como `Proposed` hasta que humano apruebe). |
 | `docs/contexto-proyecto.md` | Snapshot del proyecto. |
-| `docs/handoff-*.md` | Onboarding para ejecutores. |
+| `docs/archive/handoff-*.md` | Onboarding histórico para ejecutores (archivado). |
 | `INICIAR_*.md`, `README.md` | Prompts de bootstrap y entrada al repo. |
-| `AGENT_PROMPT.md` | Solo si necesitás actualizar reglas de oro globales (raro). |
+| `docs/MASTER.md` | Índice maestro de navegación — punto de entrada al proyecto. |
+| `docs/archive/AGENT_PROMPT.md` | Bootstrap legacy archivado (reemplazado por INICIAR_AGENTE.md). |
 
 Pequeñas correcciones administrativas (sync de cifras, corrección de inconsistencias entre docs) sí podés hacerlas tú. Lo más grande, o cualquier cosa que cambie semántica del proyecto, pasa por el humano.
 

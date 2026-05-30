@@ -48,7 +48,7 @@ En este orden:
 
 **Solo si tu rol lo requiere:**
 
-6. **[AGENT_PROMPT.md](AGENT_PROMPT.md)** §3 (reglas de oro) y §5 (estándares técnicos) — si vas a escribir código.
+6. **[docs/MASTER.md](docs/MASTER.md)** — índice maestro para navegar planes, ADRs, riesgos vivos y entregables. (Bootstrap legacy en `docs/archive/AGENT_PROMPT.md` si necesitás contexto histórico.)
 7. **`docs/decisions/0011-stack-f1.md`** (o el ADR de la fase activa) — si vas a tomar decisiones técnicas.
 
 Tiempo total: 10-15 min. **No saltees** este paso. Las consecuencias de no leer SEGUIMIENTO son: re-discutir decisiones, no respetar deudas con triggers, marcar ✅ sin evidencia.
