@@ -5,6 +5,7 @@ from __future__ import annotations
 from sqlalchemy import Engine, create_engine
 
 _engine: Engine | None = None
+_writer_engine: Engine | None = None
 
 
 def get_engine(database_url: str | None = None) -> Engine:
@@ -28,9 +29,32 @@ def get_engine(database_url: str | None = None) -> Engine:
     return _engine
 
 
+def get_writer_engine() -> Engine:
+    """Engine separado para escritura a tablas app_* con usuario app_writer.
+
+    InnoDB sí soporta transacciones, pero mantenemos autocommit para
+    compatibilidad con el patrón actual. Cada INSERT es atómico.
+    """
+    global _writer_engine
+    if _writer_engine is None:
+        from motoshop_api.config import settings
+
+        _writer_engine = create_engine(
+            settings.writer_database_url,
+            pool_pre_ping=True,
+            pool_size=2,
+            max_overflow=4,
+            connect_args={"autocommit": True},
+        )
+    return _writer_engine
+
+
 def reset_engine() -> None:
     """Reset para tests."""
-    global _engine
+    global _engine, _writer_engine
     if _engine is not None:
         _engine.dispose()
-    _engine = None
+        _engine = None
+    if _writer_engine is not None:
+        _writer_engine.dispose()
+        _writer_engine = None

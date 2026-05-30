@@ -27,6 +27,7 @@ from motoshop_api.metrics.router import router as metrics_router
 from motoshop_api.push.router import router as push_router
 from motoshop_api.forecast.router import router as forecast_router
 from motoshop_api.alerts.router import router as alerts_router
+from motoshop_api.app_writes.router import router as app_writes_router
 
 
 @asynccontextmanager
@@ -48,7 +49,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="MotoShop API",
     version=__version__,
-    description="API de consulta remota para MotoShop (Track T). Solo lectura en F1-F4.",
+    description="API de consulta remota para MotoShop (Track T). Lectura en F1-F4, escritura app_* desde F5.",
     lifespan=lifespan,
 )
 
@@ -62,7 +63,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -79,6 +80,7 @@ app.include_router(metrics_router)
 app.include_router(push_router)
 app.include_router(forecast_router)
 app.include_router(alerts_router)
+app.include_router(app_writes_router)
 
 
 class HealthResponse(BaseModel):

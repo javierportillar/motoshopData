@@ -55,6 +55,8 @@ secrets/
 *.dump
 # Notebooks SQL del proyecto (excepción a *.sql) — sí se versionan.
 !notebooks/**/*.sql
+# Migrations SQL (executables, no son dumps) — sí se versionan.
+!infra/migrations/*.sql
 
 # ─── Databricks ────────────────────────────────────────────
 .databricks/

@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     mysql_user: str = Field(default="api_read")
     mysql_password: str = Field(default="")
 
+    mysql_app_writer_user: str = Field(default="app_writer")
+    mysql_app_writer_password: str = Field(default="")
+
     cors_origins: str = Field(default="http://localhost:3000")
 
     jwt_secret: str = Field(default="")
@@ -53,6 +56,15 @@ class Settings(BaseSettings):
     def database_url(self) -> str:
         return (
             f"mysql+pymysql://{self.mysql_user}:{self.mysql_password}"
+            f"@{self.mysql_host}:{self.mysql_port}/{self.mysql_database}"
+            f"?charset=utf8"
+        )
+
+    @property
+    def writer_database_url(self) -> str:
+        """URL de conexión para el usuario app_writer (escritura a app_*)."""
+        return (
+            f"mysql+pymysql://{self.mysql_app_writer_user}:{self.mysql_app_writer_password}"
             f"@{self.mysql_host}:{self.mysql_port}/{self.mysql_database}"
             f"?charset=utf8"
         )
