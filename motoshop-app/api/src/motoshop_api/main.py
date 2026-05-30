@@ -7,10 +7,11 @@ import socket
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import sqlalchemy.exc
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -81,6 +82,25 @@ app = FastAPI(
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# ── MySQL offline → 503 graceful (mitigación SPOF Windows, F6-D) ──────
+@app.exception_handler(sqlalchemy.exc.OperationalError)
+async def mysql_offline_handler(request: Request, _exc: sqlalchemy.exc.OperationalError) -> JSONResponse:
+    """Endpoints que dependen de MySQL devuelven 503 elegante cuando la PC está apagada."""
+    logger = structlog.get_logger("motoshop")
+    logger.warning("mysql_unavailable", path=str(request.url.path))
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": (
+                "Funcionalidad no disponible en cloud. "
+                "Requiere el sistema operativo encendido. "
+                "Predicciones y alertas están disponibles 24/7."
+            ),
+            "status": "degraded",
+            "available_endpoints": ["/health", "/auth/*", "/alerts/*", "/forecast/*", "/metrics/*"],
+        },
+    )
 
 # CORS
 app.add_middleware(
