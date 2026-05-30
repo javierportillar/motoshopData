@@ -53,12 +53,14 @@ Write-Log ".env: OK"
 # 4. Arrancar uvicorn
 Write-Log "Arrancando uvicorn en puerto $Port..."
 $env:JWT_SECRET = "test-secret-key-for-testing-only-32chars!"
-$env:ENV = "test"
+$env:ENV = "dev"
 $env:MYSQL_HOST = "localhost"
 $env:MYSQL_PORT = "3306"
 $env:MYSQL_DATABASE = "motoshop2024"
 $env:MYSQL_USER = "api_read"
 $env:MYSQL_PASSWORD = "Sashita123"
+$env:MYSQL_APP_WRITER_USER = "app_writer"
+$env:MYSQL_APP_WRITER_PASSWORD = "Sashita123"
 $env:CORS_ORIGINS = "http://localhost:3000,https://api.fragloesja.uk,http://localhost:8000"
 
 $proc = Start-Process -FilePath "$ApiDir\.venv\Scripts\python.exe" `

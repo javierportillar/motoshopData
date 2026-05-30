@@ -131,14 +131,42 @@ Paso B1 (botón Gestionar en alerts/page.tsx). Antes de tocar
 offlineQueue, asegurate que el modal funciona en happy path.
 ```
 
+### 🔴 REGLA DE PRODUCCIÓN — Windows es el PC de producción
+
+⚠️ **LA PC WINDOWS ES EL SERVIDOR DE PRODUCCIÓN.** Todo lo que toque motoshop-app/api corre acá.
+
+**Stack productivo en Windows:**
+| Componente | Cómo arranca |
+|---|---|
+| MySQL 5.0 | Servicio Windows (`services.msc` → MySQL) |
+| API (uvicorn) | `infra\start_api.ps1` — vía `Start-Process -WindowStyle Hidden`, reinicio automático desde `MotoShop_HealthCheck` (cada ~5 min via Scheduled Task) |
+| Túnel Cloudflare | `infra\start_tunnel.ps1` — cloudflared→ `https://api.fragloesja.uk` |
+| Health Check | Scheduled Task `\MotoShop_HealthCheck` → `check_health_wrapper.vbs` → `check_health.ps1` (auto-reinicia API si caída) |
+
+**Dev A ejecutó en Mac las migrations y el código. En Windows hay que APLICARLO manualmente.**
+
+**✅ Aplicado en esta sesión (2026-05-30):**
+1. `.env` actualizado con `MYSQL_APP_WRITER_PASSWORD=Sashita123`
+2. `infra\start_api.ps1` actualizado con `$env:MYSQL_APP_WRITER_USER` y `$env:MYSQL_APP_WRITER_PASSWORD`
+3. Migraciones SQL ejecutadas: F5-001 (app_alert_actions), F5-002 (app_audit_log), F5-003 (user app_writer)
+4. `app_writer` verificado: conecta y ve ambas tablas
+
+**✅ Aplicado en esta misma sesión (Windows):**
+5. API reiniciada post-fix (PID 13608 → nueva instancia con `ENV=dev`)
+6. `ENV=test` → `ENV=dev` corregido (antes usaba FakeAlertActionsRepo, no escribía a MySQL)
+7. Test end-to-end verificado: POST 201 + idempotency 200 + datos en MySQL + audit log
+
+**Regla para el revisor:** cuando audites F5, acordate que Windows = producción. Verificar que `start_api.ps1` y `.env` tengan las env vars de `app_writer`, y que las migrations se aplicaron en MySQL local (no solo en el repo).
+
 ### Próximo paso del revisor (Sesión 45)
 
 Cuando ambos devs pongan push final:
 1. Aplicar 9 checks de INICIAR_REVIEWER.md.
 2. Verificar 9 V-F5.
-3. Especial atención a Check 4 (nuevo MySQL user `app_writer` sin password en código) y Check 9 (Real vs Fake en `app_writes/router.py`).
-4. Si TODAS PASS → cerrar F5 verde + planificar F6 hardening.
-5. Si alguna FAIL → F5-FIX1.
+3. **Check de producción (Windows):** verificar que el `.env` y `start_api.ps1` en Windows tengan `MYSQL_APP_WRITER_PASSWORD`, y que las migrations F5-001/002/003 estén aplicadas en MySQL local.
+4. Especial atención a Check 4 (nuevo MySQL user `app_writer` sin password en código) y Check 9 (Real vs Fake en `app_writes/router.py`).
+5. Si TODAS PASS → cerrar F5 verde + planificar F6 hardening.
+6. Si alguna FAIL → F5-FIX1.
 
 ---
 
