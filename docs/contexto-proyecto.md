@@ -1,4 +1,4 @@
-# Contexto del Proyecto MotoShop · Snapshot 2026-05-29
+# Contexto del Proyecto MotoShop · Snapshot 2026-05-30
 
 > **Para qué sirve este documento.** Capturar en un solo archivo todo lo que se ha hecho desde el inicio hasta hoy, el pipeline operativo actual, los archivos clave y el estado de cada deuda. Es el "estado del arte" del proyecto al cierre de Fase 1. Útil para retomar contexto, presentar al curso, o hacer auditoría externa.
 >
@@ -135,7 +135,7 @@ Sin reemplazar sgHermes: la BD operativa sigue siendo la fuente de verdad; nosot
 └────────┬────────┘
          ▼
 ┌─────────────────────────────────────────┐
-│ infra/run_dump.ps1                      │  wrapper PowerShell
+│ infra/motoshop_dump_to_cloud.ps1        │  wrapper PowerShell
 └────────┬────────────────────────────────┘
          ▼
 ┌─────────────────────────────────────────┐
@@ -169,6 +169,28 @@ Sin reemplazar sgHermes: la BD operativa sigue siendo la fuente de verdad; nosot
 │  • Compara rows manifest vs bronze      │
 │  • Falla si hay mismatch                │
 └─────────────────────────────────────────┘
+         ▼
+┌───────────────────────────────────────────────────┐
+│ ▲  Job: motoshop_bronze_silver (14 tasks)      ▲  │
+│ │  Cron: 0 0 9-18 * * ? (cada hora, 09-18)    │  │
+│ │                                              │  │
+│ │  02_ingest_all_bronze.py ← auto-detect date  │  │
+│ │    → salta si ya procesó esa fecha (skip)    │  │
+│ │  03 → ... → 15→16→20→30→31                   │  │
+│ │  Bronce → Silver dims → facts → quality      │  │
+│ │  → validate → slack notification             │  │
+│ └──────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────┘
+         ▼
+┌───────────────────────────────────────────────────┐
+│ ▲  Job: motoshop_gold_workflow (7 tasks)       ▲  │
+│ │  Cron: 0 0 19 * * ? (19:00)                 │  │
+│ │                                              │  │
+│ │  10→11→12→13→14 (gold marts)                │  │
+│ │  20_quality_gold                             │  │
+│ │  30_validate_gold                            │  │
+│ └──────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────┘
 
 Camino paralelo (solo cuando se valida F1):
 04_check_large_tables.py  → V6 paginación
@@ -204,14 +226,43 @@ Camino paralelo (solo cuando se valida F1):
 └──────────────────────────────────────────┘
 ```
 
-### 5.2 Periodicidad y volúmenes reales
+### 5.2 ⚠️  Regla crítica: upload a Databricks tras cambios locales
+
+Los jobs de Databricks (`motoshop_bronze_silver`, `motoshop_gold_workflow`)
+ejecutan **notebooks que viven en el Workspace**, no en el repo de GitHub.
+Cuando se modifican notebooks localmente, hay que subirlos al Workspace
+para que los jobs tomen los cambios.
+
+**Flujo correcto tras cambiar notebooks:**
+
+```bash
+# 1. Editar notebooks localmente (git)
+# 2. Subir al Workspace Databricks
+python3 infra/upload_all_notebooks.py
+
+# 3. Si cambian schedules o config de jobs
+python3 infra/create_gold_workflow.py
+
+# 4. Commit + push a git (los notebooks en repo y workspace quedan en sync)
+```
+
+Sin este paso, el job Databricks ejecuta la **versión vieja** del notebook
+que está en el Workspace, no la del repo. Esto es fuente #1 de bugs raros
+("pero yo ya lo arreglé y el job sigue fallando").
+
+> **Automatización futura (F5+):** idealmente un GitHub Action que corra
+> `upload_all_notebooks.py` al hacer push a `main`, o conectar el repo
+> al Workspace Databricks via Repos para sync automático.
+
+### 5.3 Periodicidad y volúmenes reales
 
 | Pieza | Frecuencia | Duración real | Volumen |
 |-------|------------|----------------|---------|
 | Dump local de las 12 tablas | c/30 min (07:00–19:30) + catch-up | 30-37 s | ~80k filas, ~6 MB Parquet |
-| Subida UC Volume | c/30 min (07:00–19:30) | <5 s | 12 Parquets + 1 manifest |
-| Ingesta Bronze (Databricks) | A demanda (no automatizado todavía) | 1-2 min | 12 Delta tables |
-| Validación V1 (conteos) | A demanda | <1 min | 12 comparaciones |
+| Subida UC Volume | c/30 min (07:30–18:00) | <5 s | 12 Parquets + 1 manifest |
+| Bronze→Silver (Databricks) | Cada hora 09:00–18:00 | ~5 min | Bronze → Silver dims + facts |
+| Gold (Databricks) | 19:00 | ~3 min | Gold marts + quality + validate |
+| Upload notebooks a Databricks | Manual tras cambios locales | ~10 s | Sincroniza 35 notebooks al Workspace |
 | API `/health` | Por request | ~5 ms p95 | — |
 | API `/products/{sku}/stock` | Por request | Endpoint pre-cache: 781 ms p95. Repo cold con cache: 8.9 ms. Warm: 0.0 ms. Endpoint p95 con cache no re-medido — pendiente para F2 con PWA real. | — |
 
@@ -371,7 +422,7 @@ Camino paralelo (solo cuando se valida F1):
 | Script | Rol |
 |--------|-----|
 | `dump_to_cloud.py` | Extractor MySQL → Parquet → UC Volume (con manifest) |
-| `run_dump.ps1` | Wrapper Task Scheduler |
+| `motoshop_dump_to_cloud.ps1` | Wrapper Task Scheduler |
 | `backup_mysql.{ps1,sh}` | mysqldump comprimido |
 | `create_uc_volume.py` | Crea/verifica el UC Volume vía SDK |
 | `create_sql_warehouse.py` | Crea/verifica el SQL Warehouse con auto-stop 10 min |
@@ -504,9 +555,9 @@ Cada deuda tiene un **trigger de re-evaluación obligatoria**: si se cumple, se 
 | ID | Estado | Soporte en el repo |
 |----|--------|---------------------|
 | **E1** Diagnóstico + arquitectura | ✅ | `PLAN.md` + `docs/decisions/` + `docs/contexto-proyecto.md` |
-| **E2** Pipeline operativo | 🟡 Bronze listo, falta Silver (F2) | `notebooks/bronze/` + `infra/` |
-| **E3** Producto descriptivo | ⬜ F3 | PWA actual es scaffold; dashboard pendiente |
-| **E4** Producto predictivo | ⬜ F4 | — |
+| **E2** Pipeline operativo | ✅ Bronze + Silver + Gold schedulados | `notebooks/` (bronze+silver+gold) + `infra/` |
+| **E3** Producto descriptivo | ✅ F3 cerrada | PWA con 4 dashboards + API `/metrics/*` |
+| **E4** Producto predictivo | 🟡 F4-FIX1-B cerrado, faltan F4-C | Forecast + clasificador en gold, match SQL↔API confirmado |
 | **E5** Memoria final | ⬜ Cierre | Este documento + SEGUIMIENTO son la base |
 
 ---
@@ -532,10 +583,20 @@ Cada deuda tiene un **trigger de re-evaluación obligatoria**: si se cumple, se 
 ### 12.3 Databricks workspace
 
 - Catálogo `motoshop` con esquemas `bronze`, `silver`, `gold`.
-- Bronze poblada con 12 tablas (~80k filas).
+- Bronze poblada con 12 tablas (~80k filas). Silver + Gold con dims, facts, marts.
 - SQL Warehouse Serverless Starter con auto-stop 10 min.
 - UC Volume `motoshop.bronze._landing` con Parquets y `_manifests/`.
-- Los notebooks viven en `Repos/javierportillar/motoshopData`; si la UI no muestra un Pull claro, el fallback operativo es sincronizar el notebook remoto por API al path del Git folder antes de relanzar el job.
+
+**⚠️  Sincronización repo → workspace (regla crítica):**
+Los jobs Databricks ejecutan notebooks del Workspace, no del repo.
+Después de cualquier cambio local en `notebooks/`, hay que correr:
+
+```bash
+python3 infra/upload_all_notebooks.py    # sube notebooks al Workspace
+python3 infra/create_gold_workflow.py    # actualiza jobs si cambió config
+```
+
+Sin este paso el job corre la versión vieja. Ver §5.2 para detalle.
 
 ### 12.4 Métricas
 
@@ -616,4 +677,4 @@ Si vas a ejecutar (no planificar):
 
 ## 15 · Resumen ejecutivo en una frase
 
-> **Cuatro días, tres fases cerradas (F1 + F2 + F3) más dos hardening sprints (F1.5 + F1.9): repo público con pipeline cada 30 min resiliente, API operativa con 5 endpoints `/metrics/*` sobre Gold, PWA con 4 dashboards (ventas, inventario, ABC, dormidos) que cuadran 0% contra Databricks SQL, workflow gold nocturno UNPAUSED en cron 02:30 COL — con 7 deudas conscientes documentadas (R1, R2, R4, R5, R6, R7, R8 — las 3 últimas diferidas a F6 hardening), 15 ADRs aceptados, y F4 · Predictivo (ML) arrancando con dataset Gold validado.**
+> **Cinco días, F4-FIX1-B cerrado con match confirmado (SQL = PWA): repo público con pipeline cada 30 min resiliente + jobs Databricks schedulados (bronze_silver c/hora 9-18, gold 19:00) con auto-detect y skip de fechas ya procesadas, 35 notebooks en Workspace, API operativa con forecast real + alertas + stale banner, 156 tests PASS, y 3 entregas académicas (E2/E3/E4) completas — con 4 deudas conscientes documentadas y upload manual a Databricks como regla operativa crítica documentada.**

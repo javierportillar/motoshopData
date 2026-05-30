@@ -1,14 +1,14 @@
 ﻿
 Carpeta: \
 Nombre de host:                                        SERVER
-Nombre de tarea:                                       \MotoShop_Dump
+Nombre de tarea:                                       \motoshop_dump_to_cloud
 Hora próxima ejecución:                                29/05/2026 8:30:00 a. m.
 Estado:                                                Listo
 Modo de inicio de sesión:                              Solo interactivo
 Último tiempo de ejecución:                            29/05/2026 8:00:00 a. m.
 Último resultado:                                      0
 Autor:                                                 N/A
-Tarea que se ejecutará:                                powershell -ExecutionPolicy Bypass -File C:\Users\MotoShop\Documents\javidevmoto\infra\run_dump.ps1
+Tarea que se ejecutará:                                powershell -ExecutionPolicy Bypass -File C:\Users\MotoShop\Documents\javidevmoto\infra\motoshop_dump_to_cloud.ps1
 Iniciar en:                                            N/A
 Comentario:                                            Dump MySQL â┼' Parquet â┼' UC Volume cada 30min en ventana 07:00â?"19:30
 Estado de tarea programada:                            Habilitado

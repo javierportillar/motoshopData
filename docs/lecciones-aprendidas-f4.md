@@ -70,6 +70,40 @@ La segunda versión es fea pero útil: sabemos que Prophet no sirve, que el clas
 
 ---
 
+### 7. Los notebooks en Databricks se ejecutan desde el Workspace, no desde el repo
+
+**Problema**: El job `motoshop_gold_workflow` falló porque los notebooks silver/bronze **nunca se subieron** al Workspace Databricks. Los archivos `.py` estaban en el repo de GitHub, pero Databricks Jobs ejecuta notebooks desde `Repos/` o desde import directo. El error `Unable to access the notebook… does not exist` aparecía sin que el código tuviera un bug.
+
+**Solución**: `infra/upload_all_notebooks.py` sube los 35 notebooks (bronze PYTHON, silver/gold SQL) al Workspace. También se agregó un skip-check al bronze notebook para no re-procesar fechas ya ingeridas.
+
+**Regla operativa**: después de **cualquier cambio** en `notebooks/`:
+
+```bash
+python3 infra/upload_all_notebooks.py
+```
+
+Si además cambió la configuración de jobs (schedules, tareas):
+
+```bash
+python3 infra/create_gold_workflow.py
+```
+
+Luego commit + push normal.
+
+**Automatización futura (F5+)**: un GitHub Action que corra `upload_all_notebooks.py` al hacer push a `main`, o conectar el repo al Workspace Databricks via Repos (la UI no siempre muestra un Pull claro, pero el agente puede sincronizar por API).
+
+### 8. Los jobs Databricks no soportan múltiples cron schedules
+
+**Problema**: Queríamos un solo job que corra bronze_silver cada hora **y** gold una vez al día. Databricks Jobs solo permite **un** schedule por job.
+
+**Solución**: Dividir en 2 jobs independientes:
+- `motoshop_bronze_silver` (14 tasks) → cron `0 0 9-18 * * ?` (cada hora)
+- `motoshop_gold_workflow` (7 tasks) → cron `0 0 19 * * ?` (19:00)
+
+El bronze notebook además auto-detecta la última partición disponible (`MAX(ingest_date)` del Volume) para no hardcodear la fecha de ingesta, y salta si la fecha ya fue procesada.
+
+---
+
 ## Acciones
 
 | Prioridad | Acción | Dueño |
@@ -79,3 +113,4 @@ La segunda versión es fea pero útil: sabemos que Prophet no sirve, que el clas
 | 🟡 | Walk-forward validation en lugar de split fijo | F6 |
 | 🟢 | Monitorear WAPE en producción, no MAPE | Ops |
 | 🟢 | Agregar alerta cuando cobertura de SKUs elegibles < 0.5% | Ops |
+| 🟢 | Documentar upload manual a Databricks como paso obligatorio tras cambios de notebooks | Ops |

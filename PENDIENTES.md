@@ -1127,7 +1127,7 @@ Capturar: `schtasks /query /tn "MotoShopDump" /v /fo LIST > infra\logs\task_sche
 
 Añadir el código del plan §Tarea 2 — antes del bucle de extracción, escanear `_staging/` y subir Parquets pendientes.
 
-#### 2.3 Modificar `run_dump.ps1` para invocar con `--catch-up`
+#### 2.3 Modificar `motoshop_dump_to_cloud.ps1` para invocar con `--catch-up`
 
 ```powershell
 python infra\dump_to_cloud.py --tables-core --catch-up
@@ -1144,7 +1144,7 @@ Si el humano puede dedicar 1 h:
 
 Evidencia opcional: `notebooks/bronze/_runs/catch_up_test_2026-05-29.md`.
 
-**Pasa si:** Task Scheduler reconfigurado (captura anexada), `dump_to_cloud.py --catch-up` corre sin error (aunque no haya nada), `run_dump.ps1` invoca con `--catch-up`.
+**Pasa si:** Task Scheduler reconfigurado (captura anexada), `dump_to_cloud.py --catch-up` corre sin error (aunque no haya nada), `motoshop_dump_to_cloud.ps1` invoca con `--catch-up`.
 
 ---
 
@@ -1154,7 +1154,7 @@ Evidencia opcional: `notebooks/bronze/_runs/catch_up_test_2026-05-29.md`.
 git add `
   infra/explore_business_dates.py `
   infra/dump_to_cloud.py `
-  infra/run_dump.ps1 `
+  infra/motoshop_dump_to_cloud.ps1 `
   infra/logs/task_scheduler_config.txt `
   motoshop-app/api/src/motoshop_api/health/__init__.py `
   motoshop-app/api/src/motoshop_api/health/router.py `
