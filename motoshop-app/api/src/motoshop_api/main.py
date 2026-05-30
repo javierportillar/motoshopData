@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import socket
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -30,11 +32,33 @@ from motoshop_api.alerts.router import router as alerts_router
 from motoshop_api.app_writes.router import router as app_writes_router
 
 
+def _is_localhost() -> bool:
+    """Detecta si la máquina actual es localhost."""
+    try:
+        hostname = socket.gethostname()
+        ip = socket.gethostbyname(hostname)
+        return ip.startswith("127.") or ip == "::1" or hostname in ("localhost", "127.0.0.1")
+    except Exception:
+        return False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Carga usuarios al iniciar la API."""
+    """Startup: valida ENV guardrail, carga usuarios."""
     setup_logging()
     log = structlog.get_logger("motoshop")
+
+    # ── ENV guardrail (R16) ──────────────────────────────────────────
+    if settings.env == "test":
+        allow_test = os.getenv("ALLOW_TEST_ENV_IN_PROD") == "true"
+        if not _is_localhost() and not allow_test:
+            raise RuntimeError(
+                "ENV=test detected on a non-localhost host. "
+                "Set ALLOW_TEST_ENV_IN_PROD=true to override (NOT RECOMMENDED)."
+            )
+    log.info("env_guardrail_ok", env=settings.env)
+
+    # ── Cargar usuarios ──────────────────────────────────────────────
     users_path = Path(settings.users_file_path)
     if not users_path.is_absolute():
         users_path = Path(__file__).resolve().parent.parent.parent / users_path
