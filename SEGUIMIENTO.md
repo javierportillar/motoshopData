@@ -657,6 +657,17 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ---
 
+### 2026-05-30 — Sesión 53 · Dev A2 · F7-D Paso A2-1 terminado
+
+> 🟢 [F7-D-A2] Paso A2-1 terminado · sales-trend operativo · commit: ec9c30f · siguiente paso: A2-2 vendedores-summary · ACCIÓN HUMANO: avisar Dev W (restart API + smoke) + LIBERA a Dev T2 para usar endpoint en HG2/V1
+
+- **Hecho:** Endpoint `GET /metrics/sales-trend?periods=6` implementado: router (validación periods 1-24 con 422, Bearer auth, cache 5 min TTL, rate limit 30/min), repo (Fake con datos mock realistas de N meses, Real con query a `silver.fact_ventas` usando `ADD_MONTHS` dinámico), schemas (`SalesTrendItem` + `SalesTrendResponse`), tests (8/8 pasan: happy path, custom periods, límites 1 y 24, inválidos 0 y 100, orden cronológico), cobertura de auth agregada a `test_all_metrics_require_auth`. Total 19/19 tests pasan en metrics (11 existentes + 8 nuevos).
+- **Aprendido:** El patrón `_cached_or_fetch` con clave compuesta `sales-trend:{periods}` permite cache separado por valor del parámetro sin lógica condicional extra. La validación en la capa router (no repo) es más limpia porque el 422 es responsabilidad HTTP.
+- **Abierto:** Pendiente smoke test en producción con Databricks real (requiere Dev W restart API en Windows). El endpoint desbloquea a Dev T2 para HG2 (gráfico tendencia home gerente) y V1 (tendencia ventas page).
+- **Próximo paso:** A2-2 vendedores-summary. NO avanzar sin confirmación humana tras paso A2-1.
+
+---
+
 ### 2026-05-30 — Sesión 46 · Dev B · F6-B Forecasting categoría
 
 - **Hecho:** Notebook `24_forecast_categoria.py` (baseline sobre serie agregada por `cod_grupo`), script `eval_forecast_categoria.py` (Prophet + WAPE comparativa), ADR-0020, lecciones-aprendidas-f6.md, 17 tests sqlparse. Commit `ef3ae8a`.
