@@ -40,6 +40,8 @@ F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 ✅  F3.5 ✅  F3.6 ✅  F4-A
 
 > **2026-05-30 (Sesión 42) — F4-FIX1 abierta tras auditoría revisor fresco.** Auditoría con contexto independiente sobre el cierre F4-B/F4-C levantó 2 bloqueantes + 4 observaciones: (B1) **Prophet MAPE 3540%** no es "peor que baseline" sino modelo/métrica rota — probable división por cero en demanda intermitente y SKUs con <30 puntos; (B2) **Classifier F1=0.9924** sospechoso de data leakage o desbalance — reporte sin target distribution, split temporal explícito ni top features; (O3) F4-C cerró con FakeRepos en lugar de validar contra Gold real; (O4) R10 PC Windows offline "se documenta", no se alerta al usuario; (O5) sin ADR de split temporal; (O6) lección F3.5 §10 nunca se propagó a `INICIAR_REVIEWER.md` (que de hecho no existía). Plan correctivo: [docs/plan-f4-fix1.md](docs/plan-f4-fix1.md). **3 agentes paralelos:** Dev A (ML diagnosis + ADR-0017 + lecciones), Dev T (PWA real repos + StaleDataBanner + E2E), Revisor (INICIAR_REVIEWER.md + tracking docs). Wall-clock ~3 h.
 
+> **2026-05-30 (Sesión 46) — Dev B entregado · F6-B forecasting categoría completado.** Notebook `24_forecast_categoria.py` con baseline sobre serie agregada por `cod_grupo`, script `eval_forecast_categoria.py` con Prophet + WAPE comparativa, ADR-0020 (Proposed), lecciones-aprendidas-f6.md, y 17 tests sqlparse. Commit `ef3ae8a` con prefijo `feat(F6-B-analytics):`. Pendiente de ejecutar en Databricks para validar hipótesis (F4-FIX1 recomendó esta dirección). Dev A también dejó cambios: ENV guardrail (`main.py`), workflow unificado (`infra/create_full_workflow.py`), drift monitor (`25_drift_monitor.py`), tests ENV guardrail. R16, R4 en progreso por Dev A.
+
 > **2026-05-30 (Sesión 45) — F5 cerrada · 🟢 GO a F6.** Auditoría revisor fresco PASS las 9 V-F5: (V1) schema InnoDB creado en Windows MySQL prod; (V2) idempotency verificada en test + prod E2E (POST 201 + replay 200); (V3) RBAC bloquea vendedor (unit + Playwright); (V4) audit log persiste; (V5) offline queue con backoff exp y flush al reconectar; (V6) "Mis acciones del día" operativa; (V7) R14 cleanup completo (Prophet/LightGBM archivados + workflow ajustado); (V8) ADR-0018/0019 → Accepted; (V9) backend unit 15/15, PWA E2E 5/5. **F5-FIX1 interna** (commits `68a3057`, `be97d33`) resolvió 5 critical + 5 major antes de mi review — disciplina madura. **R14 → ✅ Resuelto.** **R16 nuevo** (ENV guardrail: prod arrancó con `ENV=test` accidental y usó FakeRepo silenciosamente — falta block en código). R15 sigue diferida F6 (decisión humana: no rotar Sashita123, dejar como está). Plan F6 [docs/plan-f6.md](docs/plan-f6.md) abierto.
 
 > **2026-05-30 (Sesión 44) — F5 abierta · planificación detallada lista.** Plan [docs/plan-f5.md](docs/plan-f5.md): 3 sprints paralelos (Dev A backend + R14 cleanup, Dev T frontend + offline queue, Revisor ADRs + audit). Scope mínimo viable: 1 acción de negocio ("gestionar alerta de quiebre" con ordered/dismissed/postponed), 2 tablas InnoDB (`app_alert_actions`, `app_audit_log`), RBAC fino por role en JWT (`admin`/`gerente` write, `vendedor` read), idempotency-key obligatorio, audit dual structlog+DB, offline queue idb-keyval con retry exponencial 1s→6h (cap 6). [ADR-0018](docs/decisions/0018-stack-f5.md) Proposed con DT-F5-1..10. ADR-0019 (idempotency + RBAC pattern) pendiente. **R14 cleanup** parte de F5-A: archivar Prophet/LightGBM a `docs/archive/`. R15 sigue diferida F6. Wall-clock estimado ~4.5 h.
@@ -560,14 +562,28 @@ _(rellenar al cerrar la fase)_
 
 ### Checklist de entregables
 
-**Track A**
-- ⬜ Modelo de optimización de compras (LP o heurística greedy)
-- ⬜ Tabla `gold.sugerencias_compra` actualizada semanalmente
-- ⬜ Notebook de what-if de precios
-- ⬜ Detección de drift en los modelos
-- ⬜ Reentrenamiento automatizado
-- ⬜ Linaje completo en Unity Catalog
-- ⬜ Permisos por rol auditados
+**Track A · Dev B — Forecasting por categoría**
+- ✅ B1 · Esquema de agregación documentado (`_runs/v_categoria_schema_20260530.md`) · commit `ef3ae8a`
+- ✅ B2 · Notebook `24_forecast_categoria.py` con baseline sobre serie agregada · commit `ef3ae8a`
+- ✅ B3 · Tabla `gold.forecast_categoria` DDL + INSERT OVERWRITE en notebook · commit `ef3ae8a`
+- ✅ B4 · Script `eval_forecast_categoria.py` con Prophet + WAPE comparativa · commit `ef3ae8a`
+- ✅ B5 · ADR-0020 (Proposed → Accepted si hipótesis se valida) · commit `ef3ae8a`
+- ✅ B6 · `docs/lecciones-aprendidas-f6.md` con findings · commit `ef3ae8a`
+- ✅ B7 · `tests/gold/test_forecast_categoria.py` — 17 tests sqlparse · commit `ef3ae8a`
+
+**Track A · Dev A — Hardening operativo**
+- 🟡 ENV guardrail (R16) — `main.py` modificado, `test_env_guardrail.py` creado
+- 🟡 Databricks Workflow managed (R4) — `infra/create_full_workflow.py` creado
+- 🟡 Drift monitoring — `notebooks/gold/25_drift_monitor.py` creado
+
+**Track A** (legacy F6 checklist)
+- ⬜ Modelo de optimización de compras (LP o heurística greedy) — post-curso
+- ⬜ Tabla `gold.sugerencias_compra` actualizada semanalmente — post-curso
+- ⬜ Notebook de what-if de precios — post-curso
+- ⬜ Detección de drift en los modelos — Dev A en progreso
+- ⬜ Reentrenamiento automatizado — Dev A en progreso
+- ⬜ Linaje completo en Unity Catalog — F6-C
+- ⬜ Permisos por rol auditados — F6-C
 
 **Track T**
 - ⬜ CI/CD con GitHub Actions (lint, tests, build, deploy)
@@ -603,7 +619,18 @@ _(rellenar al cerrar la fase)_
 _(rellenar)_
 
 ### Lecciones de cierre
-_(rellenar al cerrar la fase)_
+_(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
+
+---
+
+## Notas de sesión
+
+### 2026-05-30 — Sesión 46 · Dev B · F6-B Forecasting categoría
+
+- **Hecho:** Notebook `24_forecast_categoria.py` (baseline sobre serie agregada por `cod_grupo`), script `eval_forecast_categoria.py` (Prophet + WAPE comparativa), ADR-0020, lecciones-aprendidas-f6.md, 17 tests sqlparse. Commit `ef3ae8a`.
+- **Aprendido:** La agregación por categoría escala cobertura de 0.7% a ~100%. Prophet sigue siendo limitado incluso a nivel agregado. WAPE funciona igual para series agregadas que individuales.
+- **Abierto:** La hipótesis no se puede validar sin ejecutar en Databricks. Script `eval_forecast_categoria.py` listo para correr con `python3 notebooks/gold/eval_forecast_categoria.py` desde el Mac con credenciales Databricks.
+- **Próximo paso:** Ejecutar `24_forecast_categoria.py` en Databricks SQL Warehouse, después `eval_forecast_categoria.py` localmente. Si hipótesis validada: cambiar ADR-0020 a Accepted.
 
 ---
 
