@@ -28,26 +28,30 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **F4-FIX1 · Remediación auditoría F4** (Dev A completado, Dev T + Revisor pendientes) |
+| Fase activa | **F4 cerrada · listos para F5 · Operación bidireccional** |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Cierre F4-FIX1 (Prophet honest metrics ✅ + Classifier audit ✅ + PWA real repos 🟡 + Stale banner 🟡 + reviewer rulebook 🟡) |
-| Avance global | 3/7 fases cerradas + 3 hardening sprints (F1.5 ✅, F1.9 ✅, F3.5 ✅, F3.6 ✅) · F4-A/B/C revierten a 🟡 hasta cierre FIX1 |
+| Próximo gate | Apertura F5 (planificación stack F5 + ADR-0018 + remover Prophet/LightGBM del pipeline — R14) |
+| Avance global | **4/7 fases cerradas** + 4 hardening sprints (F1.5 ✅, F1.9 ✅, F3.5 ✅, F3.6 ✅) + F4-FIX1 ✅ |
 | Última actualización | 2026-05-30 |
 
 ```
-F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 ✅  F3.5 ✅  F3.6 ✅  F4-A 🟡  F4-B 🟡  F4-C 🟡  F4-FIX1 🟡 (A✅, T🟡, R🟡)  F5 ⬜  F6 ⬜
+F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 ✅  F3.5 ✅  F3.6 ✅  F4-A ✅  F4-B ✅  F4-C ✅  F4-FIX1 ✅  F5 ⬜  F6 ⬜
 ```
 
 > **2026-05-30 (Sesión 42) — F4-FIX1 abierta tras auditoría revisor fresco.** Auditoría con contexto independiente sobre el cierre F4-B/F4-C levantó 2 bloqueantes + 4 observaciones: (B1) **Prophet MAPE 3540%** no es "peor que baseline" sino modelo/métrica rota — probable división por cero en demanda intermitente y SKUs con <30 puntos; (B2) **Classifier F1=0.9924** sospechoso de data leakage o desbalance — reporte sin target distribution, split temporal explícito ni top features; (O3) F4-C cerró con FakeRepos en lugar de validar contra Gold real; (O4) R10 PC Windows offline "se documenta", no se alerta al usuario; (O5) sin ADR de split temporal; (O6) lección F3.5 §10 nunca se propagó a `INICIAR_REVIEWER.md` (que de hecho no existía). Plan correctivo: [docs/plan-f4-fix1.md](docs/plan-f4-fix1.md). **3 agentes paralelos:** Dev A (ML diagnosis + ADR-0017 + lecciones), Dev T (PWA real repos + StaleDataBanner + E2E), Revisor (INICIAR_REVIEWER.md + tracking docs). Wall-clock ~3 h.
 
-> **2026-05-30 (Sesión 43) — F4-FIX1 ejecutada por Dev A.** Correcciones completadas. Commit `81d6bd5`. Resultados clave:
-> - 🔴 **Prophet WAPE 864%** en 31 SKUs elegibles (0.7% del total). Modelo inservible para demanda intermitente de autopartes. Baseline gana 97.9%.
-> - 🔴 **Classifier F1 real = 0.54** (vs 0.99 falso). Causa raíz: target leakage (`stock_actual` era feature y también definía el target) + random split sin separación temporal.
-> - ✅ **WAPE es ahora métrica primaria.** MAPE se infla cuando `actual=1, pred=36` → 3500%. WAPE agrega errores antes de dividir.
-> - ✅ **Split temporal** en classifier: train ≤ 2026-04-01, test ≥ 2026-04-02. Sin solapamiento de fechas.
-> - ✅ **ADR-0017** creado con decisión + alternativas + rationale.
-> - ✅ **Lecciones-aprendidas-f4.md** con 6 lecciones documentadas.
-> - Pendiente: Dev T (RealForecastRepo + StaleDataBanner) y Revisor (INICIAR_REVIEWER.md).
+> **2026-05-30 (Sesión 43) — F4-FIX1 cerrada · 🟢 GO a F5.** Auditoría revisor fresco PASS las 8 V-FIX1:
+> - **V1 ✅** WAPE primaria + filtro SKU elegible (31/4,392 = 0.7%). Métricas honestas finales: Prophet WAPE 864% / LightGBM WAPE 57% / **Baseline WAPE 45.83% (champion 97.9% SKUs)**.
+> - **V2 ✅** Classifier con split temporal explícito (Train 2026-02-27→04-01 / Test 04-02→05-28), target distribution balanceado (7.2% / 7.4%), top-10 features sin leak obvio (dia_semana, media_movil_28d/7d). F1 real = 0.536 sin `stock_actual` como feature.
+> - **V3 ✅** Re-evaluación con métricas honestas. Lecciones aprendidas: dataset insuficiente para forecasting por SKU; recomendación remover Prophet/LightGBM en F5 (R14).
+> - **V4 ✅** ADR-0017 (split temporal + WAPE + filtro elegibilidad + feature hygiene) Accepted.
+> - **V5/V6 ✅** PWA `/forecast` y `/alerts` con Real repos. Match Databricks SQL: 6/6 campos MOTS1297 + 10/10 SKUs alertas + 46/46 totales.
+> - **V7 ✅** StaleDataBanner: 4/4 casos E2E Playwright (48h stale, fresh, health error). R13 cierra.
+> - **V8 ✅** INICIAR_REVIEWER.md §3.2 Checks 7 (silver↔bronze), 8 (sniff test ML), 9 (Real vs Fake) presentes.
+> 
+> **R11/R12/R13 → ✅ Resueltos.** **R14 abierto** (remover Prophet/LightGBM en F5). **R15 abierto** (users.yaml force-added con `FG28` en comentario — diferido F6 por decisión humana 2026-05-30 para no romper auth local).
+> 
+> **Honestidad académica:** los modelos ML no superan baseline. El dataset (6,339 facturas / 6,185 SKUs con cola larga) es insuficiente para forecasting por SKU individual. Esta es la conclusión real y se defiende — la solución futura es agregación por categoría/familia (F6+).
 
 > **2026-05-30 (Sesión 41) — F4-B cerrada.** Sprint de modelos ML completado: Prophet, LightGBM (no superan baseline — documentado), classifier con F1=0.99, 69 alertas de quiebre. Evaluación consolidada: 4,343 SKUs con forecast (93.6% baseline, 4.9% Prophet, 1.5% LightGBM). Tests 97/97. F4-C (PWA predicciones + alertas) implementado pero pendiente de integración con datos reales. Pendiente: validar forecast en PWA, push notifications funcionales.
 

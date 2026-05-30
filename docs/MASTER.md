@@ -9,15 +9,15 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **F4-FIX1 · Remediación auditoría F4** (abierta) |
+| Fase activa | **F4 cerrada · listos para F5 · Operación bidireccional** |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Cierre F4-FIX1 (Prophet honest metrics + Classifier audit + PWA real repos + Stale banner) |
-| Avance global | 3/7 fases cerradas + 3 hardening sprints (F1.5, F1.9, F3.5, F3.6) · F4-A/B/C en 🟡 hasta cierre FIX1 |
-| ADRs aceptados | 16 (D1-D14 + ADR-0015 + ADR-0016) |
-| Riesgos vivos | 10 (R1, R2, R4, R5, R6, R7, R8, R11, R12, R13) |
+| Próximo gate | Apertura F5 (planificación stack F5 + ADR-0018 + remover Prophet/LightGBM — R14) |
+| Avance global | **4/7 fases cerradas** + 4 hardening sprints + F4-FIX1 ✅ |
+| ADRs aceptados | 17 (D1-D14 + ADR-0015, 0016, 0017) |
+| Riesgos vivos | 9 (R1, R2, R4, R5, R6, R7, R8, R14, R15) — R11/R12/R13 resueltos en F4-FIX1 |
 
 ```
-F0 ✅  F1 ✅ (+F1.5 ✅ +F1.9 ✅)  F2 ✅  F3 ✅ (+F3.5 ✅ +F3.6 ✅)  F4-A 🟡  F4-B 🟡  F4-C 🟡  F4-FIX1 🟡  F5 ⬜  F6 ⬜
+F0 ✅  F1 ✅ (+F1.5 ✅ +F1.9 ✅)  F2 ✅  F3 ✅ (+F3.5 ✅ +F3.6 ✅)  F4-A ✅  F4-B ✅  F4-C ✅  F4-FIX1 ✅  F5 ⬜  F6 ⬜
 ```
 
 **Documento canónico de tracking:** [`SEGUIMIENTO.md`](../SEGUIMIENTO.md) — bitácora viva por sesión + tablero de riesgos.
@@ -36,10 +36,10 @@ F0 ✅  F1 ✅ (+F1.5 ✅ +F1.9 ✅)  F2 ✅  F3 ✅ (+F3.5 ✅ +F3.6 ✅)  F4-A
 | **F3 · Gold + Dashboards** | ✅ | 5 marts gold (ventas, inventario, ABC, cohortes, dormidos), workflow Databricks UNPAUSED cron 02:30 COL, 4 dashboards PWA con recharts, 5 endpoints `/metrics/*`. |
 | **F3.5 · Hardening Silver** | ✅ | Fix `estfven/estcom` recuperó 6,324 facturas perdidas (15→6,339), V3 rediseñada para universo completo, regla CRITICAL `silver_completeness`. |
 | **F3.6 · Fix quality gold** | ✅ | Sentinel `-1 → 99999` para productos nunca vendidos, regla `negative_dias_sin_venta` ajustada. |
-| **F4-A · Feature store + Baseline + MLflow** | 🟡 (revertida por F4-FIX1) | Feature store con lag/rolling/calendar, baseline naïve, MLflow tracking. |
-| **F4-B · Prophet + LightGBM + Classifier** | 🟡 (revertida por F4-FIX1) | 3 modelos entrenados, evaluation 4,343 SKUs, classifier 69 alertas. **AUDIT FAIL:** Prophet MAPE 3540% + Classifier F1 0.9924 sin investigación → reabierta. |
-| **F4-C · API forecast + PWA + push** | 🟡 (revertida por F4-FIX1) | Endpoints `/forecast/*` + `/alerts/*`, PWA pages predicciones, push sender. **AUDIT FAIL:** usa FakeRepos en prod → reabierta. |
-| **F4-FIX1 · Remediación auditoría F4** | 🟡 ABIERTA | Plan [docs/plan-f4-fix1.md](plan-f4-fix1.md). 3 sprints paralelos: Dev A (ML honest metrics), Dev T (PWA real repos + StaleDataBanner), Revisor (process docs ya cerrado). |
+| **F4-A · Feature store + Baseline + MLflow** | ✅ | Feature store con lag/rolling/calendar (4,392 SKUs), baseline naïve, MLflow tracking. Baseline confirmado como champion 97.9% post-FIX1. |
+| **F4-B · Prophet + LightGBM + Classifier** | ✅ (con conclusión honesta) | 3 modelos entrenados. Métricas finales auditadas: Prophet WAPE 864% / LightGBM 57% / Baseline 45.83%. Classifier F1 0.536 (sin leakage). Modelos ML NO superan baseline — conclusión académica documentada. |
+| **F4-C · API forecast + PWA + push** | ✅ | Endpoints `/forecast/*` + `/alerts/*` con Real repos verificados contra Databricks SQL. PWA pages + StaleDataBanner + push sender. |
+| **F4-FIX1 · Remediación auditoría F4** | ✅ | 8/8 V-FIX1 PASS. R11/R12/R13 cerrados. R14 (remover Prophet/LightGBM en F5) + R15 (users.yaml diferido F6) abiertos. ADR-0017 Accepted. Plan [docs/plan-f4-fix1.md](plan-f4-fix1.md). |
 | **F5 · Operación bidireccional** | ⬜ | App tables InnoDB, escritura PWA→sgHermes vía staging tables. |
 | **F6 · Hardening + entrega** | ⬜ | Cierre R6/R7/R8/R11/R12/R13, demo gerencia, monitoring, entrega académica E5. |
 
@@ -105,9 +105,11 @@ Resumen — detalle en [`SEGUIMIENTO.md`](../SEGUIMIENTO.md) §Tablero y [`docs/
 | **R6** | Hito demo 4G no capturado | 🟡 Diferida a F6 | E3/E5 se acerca |
 | **R7** | V3 workflow 7 corridas pendiente | 🟡 Diferida a F6 | F6 kickoff o falla 3 noches |
 | **R8** | V5 demo a gerencia pendiente | 🟡 Diferida a F6 | F6 kickoff o E3 |
-| **R11** | Métricas ML F4-B no auditadas | 🔴 Abierta | Cierre F4-FIX1 |
-| **R12** | F4-C con FakeRepos en prod | 🔴 Abierta | Cierre F4-FIX1 |
-| **R13** | R10 sin alerta al usuario en PWA | 🟡 Pendiente fix | Cierre F4-FIX1 |
+| **R11** | Métricas ML F4-B no auditadas | ✅ Resuelto F4-FIX1 | — |
+| **R12** | F4-C con FakeRepos en prod | ✅ Resuelto F4-FIX1 | — |
+| **R13** | R10 sin alerta al usuario en PWA | ✅ Resuelto F4-FIX1 | — |
+| **R14** | Prophet/LightGBM en pipeline inservibles | 🟡 Diferido F5 | Kickoff F5 — remover scripts |
+| **R15** | `users.yaml` con FG28 propagada (gitignored pero force-added) | 🟡 Diferido F6 | F6 hardening — rotación + cleanup |
 
 ---
 
@@ -120,7 +122,7 @@ Resumen — detalle en [`SEGUIMIENTO.md`](../SEGUIMIENTO.md) §Tablero y [`docs/
 | **E1** | Diagnóstico + Arquitectura | ✅ Listo | [E1-diagnostico-arquitectura.md](entregable/E1-diagnostico-arquitectura.md) |
 | **E2** | Pipeline operativo | ✅ Listo | [E2-pipeline-operativo.md](entregable/E2-pipeline-operativo.md) |
 | **E3** | Producto descriptivo | ✅ Listo | [E3-producto-descriptivo.md](entregable/E3-producto-descriptivo.md) |
-| **E4** | Producto predictivo | 🟡 Pendiente cierre F4-FIX1 | [E4-producto-predictivo.md](entregable/E4-producto-predictivo.md) |
+| **E4** | Producto predictivo | ✅ Listo (cerrado con F4-FIX1) | [E4-producto-predictivo.md](entregable/E4-producto-predictivo.md) |
 | **E5** | Memoria final | ⬜ Pendiente cierre F6 | [E5-memoria-final.md](entregable/E5-memoria-final.md) |
 
 ---

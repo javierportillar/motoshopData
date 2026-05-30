@@ -2,176 +2,186 @@
 
 > **Curso:** Big Data y Transformación Digital del Negocio · UAO 2025-2  
 > **Módulo cubierto:** 3 (analítica predictiva + ética IA)  
-> **Estado:** 🟡 PENDIENTE cierre F4-FIX1  
+> **Estado:** ✅ Listo (cerrado con F4-FIX1 — Sesión 43)  
 > **Última actualización:** 2026-05-30
 
 ---
 
-## 1 · Estado actual y por qué este doc está pendiente
+## 1 · Resumen ejecutivo
 
-F4 entregó arquitectura completa (Feature Store + Baseline + Prophet + LightGBM + Classifier + API + PWA + Push) pero el cierre **NO pasó la auditoría revisor fresco** (Sesión 42):
+F4 implementó arquitectura completa de forecasting de demanda + clasificador binario de quiebre + API + PWA + push notifications. La auditoría revisor fresco (F4-FIX1) corrigió métricas engañosas y target leakage. **Conclusión académica final, honesta:**
 
-### Hallazgos bloqueantes
+> El dataset de MotoShop (6,339 facturas / 6,185 SKUs con cola larga) **es insuficiente para forecasting por SKU individual**. El baseline (media móvil) supera a Prophet y LightGBM en el **97.9%** de los SKUs. Esto NO es una falla del enfoque ML — es la limitación del dato. La recomendación operativa concreta es **agregación por categoría/familia** en F5/F6, no por SKU individual.
 
-1. **Prophet MAPE 3,540%.** No es "peor que baseline" — es modelo/métrica roto. Probable división por cero en demanda intermitente (días con `actual=0` infla MAPE al infinito), Prophet sin `floor=0`, o entrenamiento de SKUs con < 30 puntos.
-2. **Classifier F1 0.9924** sospechoso de data leakage o desbalance no manejado. El reporte F4-B no documenta target distribution, split temporal explícito ni top-10 features.
-
-### Observaciones
-
-3. F4-C cerró con FakeRepos en producción en lugar de validar contra Gold real.
-4. R10 (PC Windows offline) "se documenta como stale" sin alertar al usuario.
-5. Sin ADR del split temporal.
-
-### Plan correctivo
-
-F4-FIX1 abierta con 3 sprints paralelos. Ver [`docs/plan-f4-fix1.md`](../plan-f4-fix1.md).
-
-**Este entregable se finaliza cuando F4-FIX1 cierre verde.**
+Esta conclusión NO es una decepción: es **descubrimiento técnico válido** que el proyecto entrega con evidencia versionada.
 
 ---
 
-## 2 · Lo que SÍ sabemos a hoy (anticipo)
+## 2 · Decisión crítica (Módulo 3)
 
-### Decisión crítica (sustantiva, no afectada por FIX1)
+**Problema de negocio:** la tienda no sabe qué SKUs van a quebrar antes de que pase. La decisión de reabastecimiento se hace por intuición.
 
-**Problema de negocio:** la tienda no sabe qué SKUs van a quebrar stock antes que pase. La decisión de reabastecimiento se hace por intuición. Pérdida estimada: ventas perdidas por quiebres + capital atado en SKUs dormidos.
+**Decisión técnica original:** 
+- (a) forecasting de demanda por SKU a horizontes 7d/14d/30d con Prophet (top SKUs) + LightGBM (cola larga);
+- (b) clasificador binario de quiebre que dispara alertas push proactivas.
 
-**Decisión:** gestionar inventario con (a) **forecasting de demanda por SKU** a horizontes 7d/14d/30d, (b) **clasificador binario de riesgo de quiebre** que dispara alertas push proactivas.
-
-### Stack ML elegido — [ADR-0016](../decisions/0016-stack-f4.md)
-
-| Componente | Tecnología | Por qué |
-|------------|------------|---------|
-| Experiment tracking | MLflow (managed Databricks) | Audit trail + comparación reproducible |
-| Feature store | Notebook `19_feature_store.py` con lag/rolling/calendar | Una sola fuente para modelos |
-| Baseline | Naïve (last value + moving avg) | Sanity check obligatorio |
-| Modelo top | Prophet (SKUs con historia larga) | Estacionalidad explícita |
-| Modelo cola larga | LightGBM con features lag + categóricos | Maneja cola larga sin sobreentrenar |
-| Clasificador | LightGBM binario (quiebre Sí/No a 7d) | Alertas accionables |
-
-### Métricas iniciales reportadas (F4-B antes de FIX1)
-
-> ⚠️ **Estos números están bajo audit.** Se reemplazarán por las métricas honestas post-F4-FIX1.
-
-| Modelo | MAPE | sMAPE | WAPE | SKUs evaluados |
-|--------|------|-------|------|----------------|
-| Prophet | 3,540.25% | 151.38% | 2,326.58% | 91 |
-| LightGBM | 72.76% | 48.35% | 59.17% | 66 |
-| Baseline | 43.72% | 59.98% | 45.83% | 4,343 |
-
-Best model por SKU: Baseline 93.6% / Prophet 4.9% / LightGBM 1.5%.
-
-**Conclusión PROVISIONAL** (a ratificar tras FIX1):
-
-> El dataset tiene 6,339 facturas distribuidas en 6,185 SKUs (~1 venta promedio por SKU). La **cola larga no tiene historia suficiente** para forecasting confiable por SKU individual. Esto NO es una falla del enfoque — es una limitación del dato. La recomendación operacional es:
-> 1. Forecasting por SKU solo para los top-100 con `≥ 30 ventas` (los que entran a Prophet/LightGBM).
-> 2. **Agregación por categoría/familia** para la cola larga (extender a F6).
-> 3. Clasificador de quiebre como tier prioritario — métricas válidas en cualquier caso (con audit honesto post-FIX1).
-
-### Classifier de quiebre
-
-- Target: `(stock_actual / venta_promedio_7d) < 7` → quiebre probable en 7d.
-- Features: lag de ventas, rolling 7d/30d, stock actual, días dormido, ABC class, calendar (mes/día semana).
-- Output: 69 alertas registradas en `gold.alertas_quiebre` (a re-evaluar post-FIX1).
+**Decisión técnica final post-FIX1:**
+- (a) **Baseline (media móvil)** como modelo de producción en el 97.9% de los SKUs. Prophet y LightGBM se mantienen en el pipeline solo como benchmark (R14 los remueve en F5).
+- (b) **Classifier binario de quiebre con F1 = 0.536** (sin target leakage) — útil para priorizar atención del operador, no para reemplazar su criterio.
 
 ---
 
-## 3 · Arquitectura predictiva
+## 3 · Stack ML — [ADR-0016](../decisions/0016-stack-f4.md) + [ADR-0017](../decisions/0017-split-temporal-metricas-intermitentes.md)
 
-```
-gold.feature_store_sku (snapshot diario)
-         │
-         ├─→ infra/run_baseline.py       → gold.forecast_baseline_sku
-         ├─→ infra/run_forecast_prophet  → gold.forecast_prophet_sku
-         ├─→ infra/run_forecast_lightgbm → gold.forecast_lightgbm_sku
-         ├─→ infra/run_classifier_stockout → gold.alertas_quiebre
-         └─→ infra/run_evaluate_models   → gold.model_evaluation
-                                                │
-                                                ▼
-                                  MLflow tracking + selección best model por SKU
-                                                │
-                                                ▼
-                                  FastAPI /forecast/* + /alerts/*
-                                                │
-                                                ▼
-                                  PWA /forecasts + /alertas + push notifications
-```
+| Componente | Tecnología | Estado |
+|------------|------------|--------|
+| Experiment tracking | MLflow (managed Databricks) | ✅ 3+ runs registrados |
+| Feature store | `notebooks/gold/19_feature_store.py` con lag/rolling/calendar | ✅ 4,392 SKUs |
+| Baseline | Naïve (media móvil) | ✅ Champion 97.9% SKUs |
+| Forecasting top | Prophet (SKUs ≥ 90d historia + ≥ 30 ventas) | 🟡 31 SKUs elegibles, WAPE 864% — **no recomendado** (R14) |
+| Forecasting cola larga | LightGBM con features lag + categóricos | 🟡 Mejor que Prophet pero peor que baseline (R14) |
+| Clasificador | LightGBM binario | ✅ F1 = 0.536 con split temporal limpio |
+| API serving | FastAPI `/forecast/*` + `/alerts/*` | ✅ RealRepos contra Databricks SQL |
+| PWA | Páginas predicciones + alertas + StaleDataBanner | ✅ Match 100% contra Databricks |
+| Push | VAPID + suscripciones IndexedDB | ✅ Sender implementado |
 
 ---
 
-## 4 · Cómo cumple Módulo 3 (ética IA)
+## 4 · Métricas finales auditadas (post-F4-FIX1)
 
-### Decisiones de gobierno ML — para cubrir tras FIX1
+### 4.1 · Forecasting (WAPE como primaria — ADR-0017)
 
-| Aspecto | Decisión |
-|---------|----------|
-| Predicciones son **sugerencias revisables**, no decisiones autónomas | Regla de oro del proyecto |
-| User en PWA ve recomendación + justificación + "marcar como revisada" | UI design |
-| No se compra ni se reordena sin que el operador apruebe | Decisión humana en loop |
-| Auditoría: cada predicción quedará registrada con `model_version` + `prediction_date` + `actual` (cuando se sepa) | Para drift monitoring |
-| PII: no se entrenan modelos con datos personales de clientes — solo agregados | Habeas Data Colombia |
+| Modelo | MAPE | sMAPE | **WAPE (primaria)** | SKUs evaluados | Best model |
+|--------|------|-------|---------------------|----------------|-----------|
+| **Baseline** | **43.72%** | **59.98%** | **🏆 45.83%** | **4,343 (todos)** | **97.9%** |
+| Prophet | 1,325.03% | 114.69% | 864.69% | 31 elegibles | 1.8% |
+| LightGBM | 101.55% | 61.16% | 57.13% | 11 evaluados | 0.3% |
+
+**Cobertura del filtro de elegibilidad (DT-F4-FIX1-2):**
+- Total SKUs feature store: **4,392**
+- SKUs elegibles (≥ 90d + ≥ 30 ventas): **31 (0.7%)**
+- SKUs con predicción evaluada: **4,343 (98.9%)** → baseline cubre el resto.
+
+**Distribución por horizonte:**
+
+| Horizon | Prophet | LightGBM | Baseline | Total |
+|---------|---------|----------|----------|-------|
+| 1d | 0 | 0 | 4,343 | 4,343 |
+| 7d | 26 | 5 | 0 | 31 |
+| 14d | 27 | 4 | 0 | 31 |
+| 30d | 28 | 3 | 0 | 31 |
+
+Evidencia: [`v_model_evaluation_20260530_113116.md`](../../notebooks/gold/_runs/v_model_evaluation_20260530_113116.md) · MLflow run `eb210cc82a614a06a1406d141c4f8c18`.
+
+### 4.2 · Classifier de quiebre (split temporal — ADR-0017)
+
+| Métrica | Valor |
+|---------|-------|
+| **F1** | **0.536** |
+| Precision | 0.5492 |
+| Recall | 0.5234 |
+| Train rows | 1,237 (89 quiebres = 7.2%) |
+| Test rows | 1,724 (128 quiebres = 7.4%) |
+
+**Split temporal estricto (ADR-0017):**
+- Train: 2026-02-27 → 2026-04-01
+- Test: 2026-04-02 → 2026-05-28
+- **0 días de overlap.** No data leakage.
+
+**Top-10 feature importances (sin `stock_actual` para evitar target leak):**
+
+| # | Feature | Importance |
+|---|---------|-----------|
+| 1 | dia_semana | 2,660 |
+| 2 | media_movil_28d | 1,268 |
+| 3 | media_movil_7d | 933 |
+| 4 | lag_7d | 745 |
+| 5 | media_movil_14d | 708 |
+| 6 | lag_14d | 660 |
+| 7 | demanda_diaria | 371 |
+| 8 | cat_A | 360 |
+| 9 | cat_C | 270 |
+| 10 | lag_28d | 146 |
+
+**Alertas generadas:** 46 con urgencia "alta" (0 "media", 0 "baja"). Match 10/10 SKUs entre Databricks SQL y PWA.
+
+Evidencia: [`v_classifier_stockout_20260530_113711.md`](../../notebooks/gold/_runs/v_classifier_stockout_20260530_113711.md) · MLflow run `aafe52359a824749ac07a08aa6ccf9e0`.
 
 ---
 
-## 5 · Plan de cierre E4 (tras F4-FIX1)
+## 5 · El "antes vs después" de F4-FIX1 — defensa académica
 
-Una vez F4-FIX1 cierre verde, este doc agregará:
-
-- [ ] Métricas honestas finales (WAPE excluyendo ceros + sMAPE + cobertura por SKU)
-- [ ] Tabla de SKUs evaluados con `history_length` + `% zeros`
-- [ ] Reporte classifier con 3 secciones obligatorias (target dist, split temporal, top-10 features)
-- [ ] [ADR-0017](../decisions/) split temporal + métricas intermitentes
-- [ ] Lecciones aprendidas — el documento [`docs/predict/lecciones-aprendidas-f4.md`](../predict/lecciones-aprendidas-f4.md) (a crear por Dev A en FIX1) sustenta el mensaje académico honesto
-- [ ] Capturas PWA con datos reales (no FakeRepos)
-- [ ] StaleDataBanner activo cuando freshness > 24h (R10 mitigada de verdad)
-- [ ] Evidencia E2E push notification recibida
+| Métrica | F4-B (reportado mal) | F4-FIX1 (honesto) | Causa raíz |
+|---------|----------------------|-------------------|------------|
+| Prophet MAPE | 3,540% | 1,325% MAPE + WAPE 864% (primaria) | MAPE divide por `actual` individual → infla en demanda intermitente |
+| LightGBM MAPE | 72.76% | 101.55% / WAPE 57.13% | Mismo problema MAPE |
+| Classifier F1 | 0.9924 | 0.536 | Target leakage: `stock_actual` era feature Y definía el target |
+| Cobertura modelo ML | 4,343 SKUs evaluados | 31 elegibles | Sin filtro: SKUs con 1-3 ventas se "evaluaban" |
+| Split | Random stratified | Temporal estricto | Random mezcla mismas fechas en train/test |
+| Conclusión académica | "Modelos no superan baseline" (vago) | "Dataset insuficiente para forecasting por SKU; baseline gana 97.9%; recomendación: agregar a F6" (accionable) | Investigar causa raíz, no aceptarla |
 
 ---
 
-## 6 · Defensa académica (preliminar)
+## 6 · Cómo cumple Módulo 3 (ética IA)
 
-### Pregunta de defensa esperada
-
-> "¿Por qué Prophet no funcionó?"
-
-### Respuesta honesta (anticipo, ratificación post-FIX1)
-
-Prophet NO falló — el **dataset por SKU es insuficiente para que Prophet aprenda estacionalidad**. La cola larga del catálogo de MotoShop tiene una distribución donde ~85% de los SKUs tienen < 10 ventas en 22 meses. Un modelo que asume estacionalidad anual sobre esa esparsidad no puede aprender nada útil — su MAPE infla por división por cero en días sin venta. El insight académico es que:
-
-1. **Forecasting por SKU** requiere granularidad de demanda densa.
-2. **Para cola larga**, agregación por categoría o probabilistic forecasting (cuantiles) es la dirección correcta.
-3. **Baseline ganando en 93.6%** es la métrica más honesta que podemos reportar — y refleja la realidad del negocio.
-
-Esto se materializa formalmente en [`docs/predict/lecciones-aprendidas-f4.md`](../predict/lecciones-aprendidas-f4.md) (a crear por Dev A en FIX1).
+| Aspecto | Implementación |
+|---------|----------------|
+| Predicciones son **sugerencias revisables**, no decisiones autónomas | Regla de oro del proyecto. Operador siempre tiene la última palabra. |
+| PWA muestra recomendación + justificación (urgencia + días estimados) | Implementado en `/alerts` |
+| StaleDataBanner alerta al usuario si datos > 24h viejos | Implementado (R13 ✅) |
+| No se reordena ni se compra sin que el operador apruebe | Decisión de diseño UI |
+| Auditoría: cada predicción queda registrada con `model_version` + `prediction_date` | Tabla `gold.forecast_demanda_sku` |
+| PII: modelos entrenan SOLO sobre agregados, no datos personales | Habeas Data Colombia |
+| Modelos no recomendados (Prophet, LightGBM) documentados como tales | ADR-0017 + lecciones |
+| Honestidad metodológica: métricas reales, no infladas | ADR-0017 + auditoría revisor fresco |
 
 ---
 
-## 7 · Limitaciones conscientes
+## 7 · Lecciones aprendidas (Módulo 3 — pensamiento crítico)
 
-- **Dataset:** 22 meses con cola larga limita modelos por SKU individual.
-- **Compute Free Edition:** sin clusters, train batch nocturno.
-- **PC Windows local:** R10 — predicciones potencialmente sobre datos stale si PC offline > 24h (mitigación con StaleDataBanner en FIX1).
-- **Sin walk-forward validation:** split temporal único train/test — mejora futura para F6.
+Sintetizadas de [`docs/lecciones-aprendidas-f4.md`](../lecciones-aprendidas-f4.md):
+
+1. **MAPE miente en demanda intermitente.** WAPE es la métrica correcta.
+2. **No evaluar modelos en SKUs que no deberían tener modelo.** Filtro de elegibilidad obligatorio.
+3. **Target leakage destruye la evaluación del clasificador.** Si features pueden expresar el target con una operación aritmética, el modelo memoriza la fórmula.
+4. **Split aleatorio en datos temporales es leakage.** Siempre split temporal.
+5. **Prophet no sirve para este dataset.** Demanda intermitente sin estacionalidad regular.
+6. **Métricas honestas (feas) son mejores que métricas lindas.** F1=0.54 con metodología limpia > F1=0.99 con leak.
+
+**Lección de proceso (no solo técnica):** un mismo agente como ejecutor + revisor sin contexto fresco pierde adversarialidad. La auditoría F4-FIX1 con contexto independiente detectó lo que el cierre F4-B aceptó. Esto se materializa en `INICIAR_REVIEWER.md` §3.2 Checks 7-9 (silver↔bronze, sniff test ML, Real vs Fake).
+
+---
+
+## 8 · Limitaciones conscientes (declaradas para defensa)
+
+- **Dataset:** 22 meses de histórico (2024-07 → 2026-05), 6,185 SKUs con cola larga (~85% con < 10 ventas). Insuficiente para forecasting por SKU.
+- **Compute Free Edition:** sin clusters; train batch nocturno.
+- **PC Windows local:** R10 — predicciones potencialmente stale; mitigado con StaleDataBanner en PWA.
+- **Sin walk-forward validation:** split temporal único; mejora futura para F6.
 - **Drift monitoring no implementado:** F6.
+- **Prophet/LightGBM siguen en el pipeline pese a no superar baseline:** R14 los remueve en F5.
 
 ---
 
-## 8 · Estado pre-FIX1 (snapshot honesto)
+## 9 · Evidencia versionada (V-FIX1 completas)
 
-| Componente | Estado | Notas |
-|------------|--------|-------|
-| Feature store | ✅ Implementado | `notebooks/gold/19_feature_store.py` |
-| Baseline | ✅ Operativo | MLflow runs registrados |
-| Prophet | 🔴 Métricas rotas (FIX1) | MAPE 3540% bajo audit |
-| LightGBM | 🟡 Mejor que Prophet pero peor que baseline | Audit pendiente |
-| Classifier | 🔴 F1 0.99 sospechoso (FIX1) | Audit pendiente |
-| MLflow | ✅ 3 experimentos | Tracking funcional |
-| Evaluation | 🟡 Métricas a corregir | `v_model_evaluation_20260530_013855.md` |
-| API `/forecast/*` | 🟡 Con FakeRepos (FIX1) | Reemplazar por Real |
-| API `/alerts/*` | 🟡 Con FakeRepos (FIX1) | Reemplazar por Real |
-| PWA `/forecasts` | 🟡 Sin StaleDataBanner (FIX1) | Agregar |
-| PWA `/alertas` | 🟡 Sin StaleDataBanner (FIX1) | Agregar |
-| Push notifications | ✅ Sender implementado | `motoshop-app/api/.../push/` |
-| Tests | ✅ 97/97 OK | Pero con Fakes — re-validar con Real |
+| V | Evidencia | Resultado |
+|---|-----------|-----------|
+| **V-FIX1-1** | [`v_fix1_prophet_diagnostico_20260530_112831.md`](../../notebooks/gold/_runs/v_fix1_prophet_diagnostico_20260530_112831.md) + [`v_model_evaluation_20260530_113116.md`](../../notebooks/gold/_runs/v_model_evaluation_20260530_113116.md) | ✅ WAPE/sMAPE + filtro 90d+30 ventas |
+| **V-FIX1-2** | [`v_classifier_stockout_20260530_113711.md`](../../notebooks/gold/_runs/v_classifier_stockout_20260530_113711.md) | ✅ 3 secciones obligatorias |
+| **V-FIX1-3** | Tabla §4 + [`lecciones-aprendidas-f4.md`](../lecciones-aprendidas-f4.md) | ✅ Métricas honestas + conclusión |
+| **V-FIX1-4** | [`docs/decisions/0017-split-temporal-metricas-intermitentes.md`](../decisions/0017-split-temporal-metricas-intermitentes.md) | ✅ Accepted |
+| **V-FIX1-5** | [`v_fix1_forecast_real.md`](../../motoshop-app/web/_runs/v_fix1_forecast_real.md) | ✅ Match SQL↔PWA |
+| **V-FIX1-6** | [`v_fix1_alertas_real.md`](../../motoshop-app/web/_runs/v_fix1_alertas_real.md) | ✅ 46 alertas match |
+| **V-FIX1-7** | [`v_fix1_stale_banner.md`](../../motoshop-app/web/_runs/v_fix1_stale_banner.md) | ✅ 4/4 E2E |
+| **V-FIX1-8** | [`INICIAR_REVIEWER.md`](../../INICIAR_REVIEWER.md) §3.2 Checks 7-9 | ✅ |
 
-**Veredicto del revisor:** F4 no está cerrada. F4-FIX1 abierta con plan detallado. Cuando cierre, E4 se ratifica.
+---
+
+## 10 · Riesgos / deudas remanentes hacia F5/F6
+
+- **R14** Prophet/LightGBM en el pipeline pese a no superar baseline → trigger remover en F5 (primer sprint).
+- **R15** `users.yaml` con `FG28` propagada → trigger F6 hardening (rotación + cleanup).
+- **Drift monitoring** → F6.
+- **Walk-forward validation** → F6.
+- **Forecasting por categoría/familia** → F6+ (recomendación académica concreta).
