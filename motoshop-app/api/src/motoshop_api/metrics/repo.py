@@ -23,6 +23,8 @@ from motoshop_api.metrics.schemas import (
     DormidosResponse,
     InventorySummary,
     SalesSummary,
+    SalesTrendItem,
+    SalesTrendResponse,
     TopSkuItem,
 )
 
@@ -35,6 +37,7 @@ class MetricsRepoProtocol(Protocol):
     def get_abc_segmentation(self) -> AbcSegmentation: ...
     def get_dormidos(self) -> DormidosResponse: ...
     def get_cohortes(self) -> CohortesResponse: ...
+    def get_sales_trend(self, periods: int) -> SalesTrendResponse: ...
 
 
 # ── Fake (mock) ──────────────────────────────────────────────────────────
@@ -127,6 +130,20 @@ class FakeMetricsRepo:
             CohorteItem(cohorte_mes="2026-03", mes_observacion="2026-04", num_clientes=52, ticket_promedio=48_900.0, tasa_recurrencia=0.19),
             CohorteItem(cohorte_mes="2026-04", mes_observacion="2026-04", num_clientes=41, ticket_promedio=50_600.0, tasa_recurrencia=0.0),
         ])
+
+    def get_sales_trend(self, periods: int = 6) -> SalesTrendResponse:
+        """Genera tendencia mensual mock con leve crecimiento."""
+        items: list[SalesTrendItem] = []
+        now = datetime.now()
+        for i in range(periods - 1, -1, -1):
+            d = (now.replace(day=1) - timedelta(days=i * 31)).replace(day=1)
+            items.append(SalesTrendItem(
+                year=d.year, month=d.month,
+                total_ventas=48_000_000.0 + (periods - 1 - i) * 500_000.0,
+                num_facturas=780 + (periods - 1 - i) * 8,
+                ticket_promedio=62_000.0 + (periods - 1 - i) * 150.0,
+            ))
+        return SalesTrendResponse(periods=periods, items=items)
 
 
 # ── Real (Databricks SQL Warehouse vía SDK) ──────────────────────────────
@@ -297,6 +314,29 @@ class RealMetricsRepo:
             r["ticket_promedio"] = float(r["ticket_promedio"])
             r["tasa_recurrencia"] = float(r["tasa_recurrencia"])
         return CohortesResponse(cohortes=[CohorteItem(**r) for r in rows])
+
+    def get_sales_trend(self, periods: int = 6) -> SalesTrendResponse:
+        rows = self._query(f"""
+            SELECT YEAR(business_date) AS year,
+                   MONTH(business_date) AS month,
+                   SUM(total_factura) AS total_ventas,
+                   COUNT(*) AS num_facturas,
+                   AVG(total_factura) AS ticket_promedio
+            FROM motoshop.silver.fact_ventas
+            WHERE business_date >= ADD_MONTHS(CURRENT_DATE(), -{periods})
+            GROUP BY year, month
+            ORDER BY year, month
+        """)
+        if not rows:
+            logger.warning("No sales trend data found in silver.fact_ventas")
+            return FakeMetricsRepo().get_sales_trend(periods)
+        for r in rows:
+            r["year"] = int(r["year"])
+            r["month"] = int(r["month"])
+            r["total_ventas"] = float(r["total_ventas"])
+            r["num_facturas"] = int(r["num_facturas"])
+            r["ticket_promedio"] = float(r["ticket_promedio"])
+        return SalesTrendResponse(periods=periods, items=[SalesTrendItem(**r) for r in rows])
 
     def _query(self, sql: str) -> list[dict]:
         result = self._w.statement_execution.execute_statement(

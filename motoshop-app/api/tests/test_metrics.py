@@ -38,6 +38,7 @@ class TestMetricsUnauthenticated:
             "/metrics/abc-segmentation",
             "/metrics/dormidos",
             "/metrics/cohortes",
+            "/metrics/sales-trend",
         ]
         for ep in endpoints:
             resp = client.get(ep)
@@ -204,6 +205,7 @@ class TestMetricsAuthenticated:
             "/metrics/abc-segmentation": ["bucket_a", "bucket_b", "bucket_c"],
             "/metrics/dormidos": ["total", "productos"],
             "/metrics/cohortes": ["cohortes"],
+            "/metrics/sales-trend": ["periods", "items"],
         }
         for ep, expected_fields in endpoints.items():
             resp = client.get(ep, headers={"Authorization": f"Bearer {admin_token}"})

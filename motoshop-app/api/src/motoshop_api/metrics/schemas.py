@@ -86,3 +86,16 @@ class DormidosResponse(BaseModel):
 
 class CohortesResponse(BaseModel):
     cohortes: list[CohorteItem]
+
+
+class SalesTrendItem(BaseModel):
+    year: int
+    month: int
+    total_ventas: float
+    num_facturas: int
+    ticket_promedio: float
+
+
+class SalesTrendResponse(BaseModel):
+    periods: int
+    items: list[SalesTrendItem]

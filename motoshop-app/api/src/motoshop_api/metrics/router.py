@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from time import time
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -30,6 +30,7 @@ from motoshop_api.metrics.schemas import (
     DormidosResponse,
     InventorySummary,
     SalesSummary,
+    SalesTrendResponse,
 )
 
 router = APIRouter(tags=["metrics"])
@@ -144,6 +145,20 @@ def cohortes(
 ) -> CohortesResponse:
     """Cohortes de clientes por mes de primera compra."""
     return _cached_or_fetch("cohortes", repo.get_cohortes)
+
+
+@router.get("/metrics/sales-trend", response_model=SalesTrendResponse)
+@limiter.limit("30/minute")
+def sales_trend(
+    request: Request,
+    periods: int = 6,
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+) -> SalesTrendResponse:
+    """Tendencia de ventas mensual: total, facturas y ticket promedio."""
+    if periods < 1 or periods > 24:
+        raise HTTPException(status_code=422, detail="periods must be between 1 and 24")
+    return _cached_or_fetch(f"sales-trend:{periods}", lambda: repo.get_sales_trend(periods))
 
 
 @router.post("/metrics/cache/clear")
