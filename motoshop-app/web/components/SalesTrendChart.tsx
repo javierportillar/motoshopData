@@ -9,6 +9,7 @@ import {
   Tooltip,
   CartesianGrid,
 } from "recharts";
+import { formatMoney } from "@/lib/format/currency";
 
 interface DataPoint {
   label: string;
@@ -48,13 +49,7 @@ export function SalesTrendChart({
           tick={{ fontSize: 11, fill: "#9ca3af" }}
           axisLine={false}
           tickLine={false}
-          tickFormatter={(v: number) =>
-            v >= 1_000_000
-              ? `$${(v / 1_000_000).toFixed(1)}M`
-              : v >= 1_000
-                ? `$${(v / 1_000).toFixed(0)}K`
-                : `$${v}`
-          }
+          tickFormatter={(v: number) => formatMoney(v)}
         />
         <Tooltip
           formatter={(value) => [

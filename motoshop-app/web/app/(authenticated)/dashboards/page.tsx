@@ -3,10 +3,7 @@
 import { KpiGrid } from "@/components/KpiGrid";
 import { KpiCard } from "@/components/KpiCard";
 import { useSalesSummary, useInventorySummary, useAbcSegmentation, useDormidos } from "@/lib/api/hooks";
-
-function formatMoney(v: number): string {
-  return `$${(v / 1_000_000).toFixed(1)}M`;
-}
+import { formatMoney } from "@/lib/format/currency";
 
 function formatNumber(v: number): string {
   return v.toLocaleString("es-CO");

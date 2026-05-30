@@ -5,10 +5,7 @@ import { KpiCard } from "@/components/KpiCard";
 import { InventoryByBodega } from "@/components/InventoryByBodega";
 import { useInventorySummary } from "@/lib/api/hooks";
 import Link from "next/link";
-
-function formatMoney(v: number): string {
-  return `$${(v / 1_000_000).toFixed(1)}M`;
-}
+import { formatMoney } from "@/lib/format/currency";
 
 function formatNumber(v: number): string {
   return v.toLocaleString("es-CO");

@@ -6,10 +6,7 @@ import { SalesTrendChart } from "@/components/SalesTrendChart";
 import { TopList } from "@/components/TopList";
 import { useSalesSummary } from "@/lib/api/hooks";
 import Link from "next/link";
-
-function formatMoney(v: number): string {
-  return `$${(v / 1_000_000).toFixed(1)}M`;
-}
+import { formatMoney } from "@/lib/format/currency";
 
 export default function VentasPage(): JSX.Element {
   const { data, error, isLoading } = useSalesSummary();

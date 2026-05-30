@@ -6,10 +6,7 @@ import { AbcChart } from "@/components/AbcChart";
 import { TopList } from "@/components/TopList";
 import { useAbcSegmentation, useDormidos } from "@/lib/api/hooks";
 import Link from "next/link";
-
-function formatMoney(v: number): string {
-  return `$${(v / 1_000_000).toFixed(1)}M`;
-}
+import { formatMoney } from "@/lib/format/currency";
 
 export default function AbcPage(): JSX.Element {
   const abc = useAbcSegmentation();

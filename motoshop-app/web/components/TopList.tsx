@@ -1,5 +1,7 @@
 "use client";
 
+import { formatMoney } from "@/lib/format/currency";
+
 interface TopListItem {
   label: string;
   value: number;
@@ -14,9 +16,7 @@ interface TopListProps {
 }
 
 function defaultFormat(v: number): string {
-  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`;
-  return `$${v.toLocaleString("es-CO")}`;
+  return formatMoney(v);
 }
 
 export function TopList({
