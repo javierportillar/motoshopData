@@ -78,6 +78,9 @@ Thumbs.db
 conectividad/
 *.log
 
+# ─── MLflow experimentos locales ──────────────────────────
+mlruns/
+
 # ─── Staging del dump local antes de subir a cloud storage ─
 _staging/
 *.parquet

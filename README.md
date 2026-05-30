@@ -1,76 +1,111 @@
-# MotoShop · Transformación digital
+# MotoShopData — Transformación digital de una motopartes
 
-Aplicación práctica del marco conceptual de **Big Data y Transformación Digital del Negocio** (Maestría UAO 2025-2) sobre la BD real `motoshop2024` (MySQL 5.0, sgHermes). Dos tracks paralelos:
+Esto nació como proyecto de la materia **Big Data y Transformación Digital del Negocio** (Maestría UAO, 2025-2) y terminó siendo mucho más. Arrancó con una BD MySQL 5.0 de un sistema que se llama sgHermes, y la idea es llevarla a un lakehouse en Databricks con todo lo que eso implica: ingesta, transformación, ML, y una PWA para consultar desde el celu.
 
-- **Track A · Analítico** — Databricks Lakehouse medallion (bronze→silver→gold) + ML.
-- **Track T · Transaccional** — FastAPI + PWA Next.js para consulta remota.
+Son dos tracks paralelos:
 
-> Fase activa, decisiones, KPIs y verificaciones críticas viven en [SEGUIMIENTO.md](SEGUIMIENTO.md).
+- **Track A · Analítico** — Databricks Lakehouse con arquitectura medallion (bronze → silver → gold) + modelos ML.
+- **Track T · Transaccional** — FastAPI + PWA con Next.js para consultar stock, ventas, predicciones, alertas.
 
----
-
-## Documentación de referencia
-
-| Archivo | Para qué |
-|---------|---------|
-| [INICIAR_AGENTE.md](INICIAR_AGENTE.md) | **🚀 Bootstrap de sesión.** Si arrancás como Dev Agent o Runtime Agent, leelo PRIMERO. Identifica tu rol, qué leer, qué reglas no romper. |
-| [INICIAR_REVIEWER.md](INICIAR_REVIEWER.md) | **🔍 Bootstrap del rol auditor.** Si te van a usar como Reviewer Agent (auditar commits, GO/NO-GO, escribir planes), empezá acá. NO se mezcla con `INICIAR_AGENTE.md`. |
-| [docs/contexto-proyecto.md](docs/contexto-proyecto.md) | **🧭 Snapshot del proyecto a hoy.** Empieza aquí si volvés al repo después de tiempo o necesitás contexto completo en 5 minutos. |
-| [PLAN.md](PLAN.md) | Fuente de verdad: arquitectura, fases, stack, KPIs, VPC/BMC. |
-| [SEGUIMIENTO.md](SEGUIMIENTO.md) | Estado vivo: checklist de la fase activa, bitácora, riesgos. |
-| [PENDIENTES.md](PENDIENTES.md) | Lo que tiene que hacer Javier entre sesiones del agente. |
-| [docs/handoff-f1.md](docs/handoff-f1.md) | **Empezá aquí si vas a desarrollar Fase 1.** Pre-flight, roles, flujo de trabajo. |
-| [docs/plan-f1.md](docs/plan-f1.md) | Plan operativo detallado de Fase 1 (sprints, archivos, KPIs, riesgos). |
-| [docs/plan-f1-fix1.md](docs/plan-f1-fix1.md) | Plan F1-FIX1 · Remediación post-auditoría F1. Resolvió 11/13 ítems. |
-| [docs/plan-f1-fix2.md](docs/plan-f1-fix2.md) | Plan F1-FIX2 · Cierre limpio de F1 (3 evidencias + sync SEGUIMIENTO). |
-| [docs/plan-f1-hardening.md](docs/plan-f1-hardening.md) | Plan F1.5 · Hardening pre-F2 (R3 idempotencia + R-X2 cache /stock). |
-| [docs/plan-f1-9.md](docs/plan-f1-9.md) | Plan F1.9 · Robustez del pipeline pre-F2 (sondeo BD + lag monitor + Task Scheduler robusto + ADR-0013 fechas). |
-| [docs/plan-f2.md](docs/plan-f2.md) | Plan F2 · Silver + PWA MVP (3 sprints). ✅ Cerrada Sesión 30. |
-| [docs/plan-f3.md](docs/plan-f3.md) | **Plan F3 · Gold + Dashboards** (3 sprints: marts+workflow+SQL dashboard, /metrics+PWA dashboards, demo+validación). |
-| [docs/plan-f2-fix1.md](docs/plan-f2-fix1.md) | **Plan F2-FIX1 · Cierre real F2.** Remedia NO-GO de F2 A/B/C con Dev A y Dev T en paralelo. |
-| [infollm.md](infollm.md) | Conexión a la BD y esquema general. |
-| [AGENT_PROMPT.md](AGENT_PROMPT.md) | Instrucciones del agente de IA que asiste el desarrollo. |
-| [docs/decisions/](docs/decisions/README.md) | ADRs — bitácora detallada de cada decisión arquitectural. |
+> El estado vivo del proyecto, decisiones, y qué está pasando ahora está en [SEGUIMIENTO.md](SEGUIMIENTO.md). Ahí está todo el detalle día a día.
 
 ---
 
-## Estructura del repo (monorepo)
+## Cómo está organizado el repo
 
 ```
 motoshopData/
-├── PLAN.md                      Plan maestro
-├── SEGUIMIENTO.md               Estado vivo
-├── infollm.md                   Conexión BD + esquema
-├── AGENT_PROMPT.md              Briefing del agente
-├── pyproject.toml               Track A · Python (tests, lint)
-├── .env.example                 Plantilla de variables de entorno
+├── PLAN.md                      El plan maestro con la visión general
+├── SEGUIMIENTO.md               Bitácora viva: sesiones, avances, checklist
+├── INICIAR_AGENTE.md            Para cuando arranco una sesión con IA
+├── INICIAR_REVIEWER.md          Para cuando alguien viene a auditar
+├── PENDIENTES.md                Lo que yo (Javier) tengo que hacer entre sesiones
+├── infollm.md                   Datos de conexión a la BD y esquema
+├── AGENT_PROMPT.md              Cómo está configurado el agente de IA
+├── pyproject.toml               Python (Track A — tests, lint)
+├── .env.example                 Template de variables de entorno
 │
-├── docs/
-│   └── decisions/               ADRs (Architecture Decision Records)
+├── docs/                        Documentación del proyecto
+│   ├── decisiones/              ADRs — cada decisión técnica justificada
+│   ├── plan-f1.md, plan-f2.md…  Planes detallados por fase
+│   ├── contexto-proyecto.md     Snapshot del proyecto para ponerse al día
+│   └── handoff-f1.md, …         Handoffs para arranque de fase
 │
-├── notebooks/                   Track A · Notebooks Databricks
-│   ├── bronze/
-│   ├── silver/
-│   └── gold/
+├── notebooks/                   Track A — Notebooks Databricks
+│   ├── bronze/                  Ingesta de datos crudos
+│   ├── silver/                  Limpieza y transformación
+│   └── gold/                    Métricas, marts, features stores, ML
 │
-├── src/motoshop/                Track A · Código Python reutilizable
-├── tests/                       Track A · Tests locales de transformaciones
-│
+├── src/motoshop/                Código Python reusable
+├── tests/                       Tests de transformaciones y lógica
 ├── infra/                       Scripts de infraestructura
-│   ├── backup_mysql.sh          Backup mysqldump (bash · verificación crítica F0)
-│   ├── backup_mysql.ps1         Backup mysqldump (PowerShell · Windows)
-│   └── create_users.sql.example Plantilla de creación de usuarios MySQL read-only
+│   ├── backup_mysql.sh/.ps1     Backups de la BD
+│   └── run_*.py                 Scripts portables de ML (corren en Mac o Windows)
 │
-└── motoshop-app/                Track T · API + PWA
-    ├── api/                     FastAPI (Python)
-    └── web/                     Next.js 14 + PWA (TypeScript)
+├── motoshop-app/                Track T — API + PWA
+│   ├── api/                     FastAPI con endpoints de negocio
+│   └── web/                     Next.js 14 + PWA
+│
+└── mlruns/                      Experimentos de MLflow locales
 ```
 
-Decisión de monorepo documentada en [ADR-0009](docs/decisions/0009-monorepo-vs-two-repos.md).
+Decisión de mantener todo en un monorepo: [ADR-0009](docs/decisions/0009-monorepo-vs-two-repos.md).
 
 ---
 
-## Setup local (fase 0)
+## Las fases del proyecto
+
+Son 7 fases, de la 0 a la 6. Cada una tiene su gate de verificación antes de pasar a la siguiente.
+
+```
+F0 🟢 Cimientos — Conexión a BD, Databricks, túnel, backups, usuarios
+F1 🟢 Ingesta — Bronze con 12 tablas core + API funcionando
+     └── F1.5 Hardening — Cache de stock, robustez
+     └── F1.9 Pipeline — Sondeo BD, lag monitor, task scheduler
+F2 🟢 Silver + PWA — Limpieza de datos + app web instalable
+F3 🟢 Gold + Dashboards — Marts de negocio + dashboards + workflow
+     └── F3.5 Silver Hardening — Corrección universo ventas completo
+     └── F3.6 Quality Gold — Fix quality + sanity checks
+F4 🟡 Predictivo — Forecasting demanda + alertas de quiebre de stock
+     ├── F4-A Feature Store + Baseline ✅
+     ├── F4-B Modelos ML (Prophet, LightGBM, Classifier) ✅
+     └── F4-C API + PWA Predicciones/Alertas 🟡
+F5 ⬜ Escritura — Cotizaciones y pedidos desde la app
+F6 ⬜ Prospectivo — Optimización de compras, what-if, CI/CD completo
+```
+
+---
+
+## Estado actual
+
+Estoy en **Fase 4 — Predictivo**. Hasta ahora:
+
+- ✅ Feature store con 4,392 SKUs y 34,838 registros de demanda diaria
+- ✅ Baseline naïve con MAPE 43.72% registrado en MLflow
+- ✅ Prophet top-100 (no supera baseline — demanda intermitente)
+- ✅ LightGBM global (no supera baseline — mismo problema)
+- ✅ Clasificador de quiebre con F1=0.99 — 69 alertas en gold.alertas_quiebre
+- ✅ API endpoints para forecast y alertas
+- ✅ PWA con páginas de predicciones y alertas
+- 🟡 Integrar PWA con datos reales de forecast/alertas
+- ⬜ Push notifications activas
+- ⬜ Correo de alertas desde Workflows
+
+Lo más valioso hasta ahora: el clasificador de quiebre. Los modelos de forecasting no superaron al baseline porque las autopartes tienen demanda muy intermitente (80% de los días son 0). Pero saber qué SKU se va a quedar sin stock antes de que pase — eso es útil ya.
+
+---
+
+## Reglas que no negocio
+
+1. **sgHermes es intocable** — no se modifican esquemas, datos ni permisos del MySQL productivo.
+2. **Credenciales fuera de Git** — siempre `.env`, nunca hardcodeadas.
+3. **Toda cifra en pantalla debe cuadrar con sgHermes** con tolerancia documentada.
+4. **Modelo que no supera al baseline no se libera** — prefiero el promedio histórico conocido.
+5. **Predicciones son sugerencias revisables**, no decisiones autónomas (hasta F6).
+
+---
+
+## Cómo arrancar todo local
 
 ```bash
 # Track A — Python
@@ -94,56 +129,24 @@ cp .env.local.example .env.local
 npm run dev
 ```
 
----
-
-## Reglas no negociables
-
-1. **sgHermes es intocable** — sin cambios de schema, datos ni permisos del MySQL operativo.
-2. **Credenciales fuera de Git** — siempre `.env`; nunca hardcoded.
-3. **Toda cifra mostrada al usuario debe cuadrar con sgHermes** dentro de la tolerancia documentada.
-4. **Modelo que no supera al baseline no se libera** — preferimos el baseline conocido.
-5. **Predicciones son sugerencias revisables**, no decisiones autónomas (hasta F6).
-
-Lista completa en [AGENT_PROMPT.md](AGENT_PROMPT.md) §3.
-
----
-
-## Estado actual
-
-```
-F0 ✅  F1 ✅  F2 🟡  F3 ⬜  F4 ⬜  F5 ⬜  F6 ⬜
-```
-
-**Fase 1 completada.** Ver [SEGUIMIENTO.md](SEGUIMIENTO.md) para detalles.
-
-### Lo que funciona
-
-| Componente | Status | URL |
-|------------|--------|-----|
-| API FastAPI | ✅ | `http://localhost:8000` |
-| Túnel Cloudflare | ✅ | `https://api.fragloesja.uk` |
-| Demo page | ✅ | `https://api.fragloesja.uk/demo` |
-| Dump pipeline | ✅ | c/30 min (07:00–19:30 COL) + catch-up |
-| Health check | ✅ | Cada 5 min (invisible) |
-| 12 tablas Bronze | ✅ | 79,132 filas |
-| API: 4 endpoints | ✅ | login, products, stock, sales |
-| Tests | ✅ | 22 passing, 85% cobertura |
-
-### Automatización
-
-| Tarea | Horario | Descripción |
-|-------|---------|-------------|
-| `MotoShop_Dump` | c/30 min (07:00–19:30 COL) + retry 10min×3 | MySQL → Parquet → UC Volume con catch-up |
-| `MotoShop_HealthCheck` | Cada 5 min | Verifica MySQL + API + Túnel |
-
-### Para arrancar todo en el PC
+Para arrancar todo junto en el PC (Windows):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File infra\start_motoshop.ps1
 ```
 
-### Para probar la demo en el celular
+Para probar la demo desde el celu:
+1. Apagar WiFi (solo 4G)
+2. Ir a `https://api.fragloesja.uk/demo`
 
-1. Apaga WiFi (solo 4G)
-2. Ve a `https://api.fragloesja.uk/demo`
-3. Haz clic en "Entrar" → "Buscar productos" → "Ver stock" → "Ver ventas"
+---
+
+## Links rápidos
+
+| Qué | Dónde |
+|-----|-------|
+| Documentación general | [docs/contexto-proyecto.md](docs/contexto-proyecto.md) |
+| Decisiones técnicas | [docs/decisions/](docs/decisions/README.md) |
+| Estado en vivo | [SEGUIMIENTO.md](SEGUIMIENTO.md) |
+| Mis pendientes | [PENDIENTES.md](PENDIENTES.md) |
+| Plan maestro | [PLAN.md](PLAN.md) |
