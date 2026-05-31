@@ -3,7 +3,6 @@
 import { useState, useCallback } from "react";
 import { submitAlertAction, type SubmitActionBody } from "@/lib/api/alertActions";
 import { enqueueAction } from "@/lib/offline/queue";
-import { useAuthStore } from "@/lib/auth/store";
 
 type Tab = "ordered" | "dismissed" | "postponed";
 
@@ -11,12 +10,6 @@ const TAB_LABELS: Record<Tab, string> = {
   ordered: "Pedir",
   dismissed: "Descartar",
   postponed: "Posponer",
-};
-
-const TAB_COLORS: Record<Tab, string> = {
-  ordered: "data-[active=true]:bg-green-600 data-[active=true]:text-white",
-  dismissed: "data-[active=true]:bg-gray-600 data-[active=true]:text-white",
-  postponed: "data-[active=true]:bg-blue-600 data-[active=true]:text-white",
 };
 
 interface FormData {

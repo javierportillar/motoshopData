@@ -9,7 +9,6 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { StaleDataBanner } from "@/components/StaleDataBanner";
 import {
-  LineChart,
   Line,
   BarChart,
   Bar,
@@ -21,7 +20,6 @@ import {
   Area,
   AreaChart,
 } from "recharts";
-import { formatMoney } from "@/lib/format/currency";
 
 const HORIZON_OPTIONS = [7, 14, 30] as const;
 

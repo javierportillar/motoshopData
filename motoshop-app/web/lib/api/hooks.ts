@@ -221,8 +221,70 @@ interface VendedoresSummaryResponse {
   items: VendedorItem[];
 }
 
-export function useVendedoresSummary() {
-  return useMetrics<VendedoresSummaryResponse>("/api/metrics/vendedores-summary");
+export function useVendedoresSummary(period = "month") {
+  return useMetrics<VendedoresSummaryResponse>(
+    `/api/metrics/vendedores-summary?period=${period}`,
+  );
+}
+
+interface VendedorCategoriaItem {
+  categoria: string;
+  total: number;
+}
+
+interface VendedorComparacion {
+  actual: number;
+  anterior: number;
+  delta?: number;
+}
+
+interface VendedorDetailResponse {
+  vendedor_id: string;
+  nombre: string;
+  ventas_total: number;
+  ventas_por_categoria: VendedorCategoriaItem[];
+  ticket_promedio: number;
+  productos_vendidos: number;
+  comparacion_mes_anterior: VendedorComparacion;
+}
+
+export function useVendedorDetail(vendedorId: string | null, period = "month") {
+  const key = vendedorId
+    ? `/api/metrics/vendedores-summary?vendedor_id=${encodeURIComponent(vendedorId)}&period=${period}`
+    : null;
+  return useMetrics<VendedorDetailResponse>(key);
+}
+
+// ── Sales Daily / Historical ────────────────────────────────────────────
+
+interface SalesDailyItem {
+  sku: string;
+  nombre: string;
+  cantidad: number;
+  valor: number;
+}
+
+interface SalesDailyResponse {
+  date: string;
+  total_ventas: number;
+  total_facturas: number;
+  productos_vendidos: SalesDailyItem[];
+}
+
+export function useSalesDaily(date?: string) {
+  const qs = date ? `?date=${date}` : "";
+  return useMetrics<SalesDailyResponse>(`/api/metrics/sales-daily${qs}`);
+}
+
+interface SalesHistoricalResponse {
+  total_ventas: number;
+  total_facturas: number;
+  meses: SalesTrendItem[];
+  fecha_primera_venta?: string;
+}
+
+export function useSalesHistorical() {
+  return useMetrics<SalesHistoricalResponse>("/api/metrics/sales-historical");
 }
 
 interface CohorteRetencionItem {

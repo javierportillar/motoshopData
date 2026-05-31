@@ -5,7 +5,6 @@ import Link from "next/link";
 import { fetchMyActions, type MyActionItem } from "@/lib/api/alertActions";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { Stat } from "@/components/ui/Stat";
 import { Skeleton } from "@/components/ui/Skeleton";
 
 type Period = "today" | "week" | "month";

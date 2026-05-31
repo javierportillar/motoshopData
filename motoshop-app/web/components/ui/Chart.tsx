@@ -98,7 +98,6 @@ export function Chart({
   children,
   dark = true,
   height = 320,
-  margin = { top: 8, right: 12, bottom: 8, left: 12 },
   className = "",
 }: ChartProps): JSX.Element {
   return (

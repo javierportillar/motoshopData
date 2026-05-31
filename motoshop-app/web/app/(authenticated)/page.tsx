@@ -13,7 +13,7 @@ import { Logo } from "@/components/Logo";
 import { SalesTrendChart } from "@/components/SalesTrendChart";
 import { SearchBar } from "@/components/SearchBar";
 import { StaleDataBanner } from "@/components/StaleDataBanner";
-import { Skeleton, SkeletonCard, SkeletonStat } from "@/components/ui/Skeleton";
+import { Skeleton, SkeletonCard } from "@/components/ui/Skeleton";
 import { ErrorState } from "@/components/ui/ErrorState";
 
 // ── Gerente: home completo ────────────────────────────────────────────────

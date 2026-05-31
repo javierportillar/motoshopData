@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useAbcSegmentation } from "@/lib/api/hooks";
 import { formatMoney } from "@/lib/format/currency";
 import { Card } from "@/components/ui/Card";
-import { Stat } from "@/components/ui/Stat";
 import { Badge } from "@/components/ui/Badge";
 import { AbcChart } from "@/components/AbcChart";
 import { Skeleton } from "@/components/ui/Skeleton";
