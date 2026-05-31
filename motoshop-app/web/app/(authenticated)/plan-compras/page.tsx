@@ -2,83 +2,12 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { usePlanCompras } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/Card";
 import { Stat } from "@/components/ui/Stat";
 import { Table } from "@/components/ui/Table";
 import { Badge, StockBadge } from "@/components/ui/Badge";
 import { formatMoney } from "@/lib/format/currency";
-
-// ── Mock data (reemplazar cuando Dev A2 cree /metrics/plan-compras) ──
-
-interface PlanCompraItem {
-  sku: string;
-  nombre: string;
-  stock_actual: number;
-  demanda_7d: number;
-  cantidad_a_comprar: number;
-  abc: "A" | "B" | "C";
-  urgencia: "alta" | "media" | "baja" | null;
-  dormido: boolean;
-  supplier: string;
-}
-
-const MOCK_PLAN: PlanCompraItem[] = [
-  {
-    sku: "MOTS1297",
-    nombre: "ACEITE 20W50 MOTUL 1L",
-    stock_actual: 2,
-    demanda_7d: 18,
-    cantidad_a_comprar: 16,
-    abc: "A",
-    urgencia: "alta",
-    dormido: false,
-    supplier: "Motul Colombia",
-  },
-  {
-    sku: "MOTS0412",
-    nombre: "FILTRO ACEITE YAMAHA YBR125",
-    stock_actual: 0,
-    demanda_7d: 12,
-    cantidad_a_comprar: 12,
-    abc: "A",
-    urgencia: "alta",
-    dormido: false,
-    supplier: "Yamaha Parts SA",
-  },
-  {
-    sku: "MOTS0834",
-    nombre: "PASTILLAS FRENO DELANTERAS",
-    stock_actual: 5,
-    demanda_7d: 8,
-    cantidad_a_comprar: 3,
-    abc: "B",
-    urgencia: "media",
-    dormido: false,
-    supplier: "Frenos del Sur",
-  },
-  {
-    sku: "MOTS1205",
-    nombre: "CADENA TRANSMISIÓN 428H",
-    stock_actual: 1,
-    demanda_7d: 4,
-    cantidad_a_comprar: 3,
-    abc: "A",
-    urgencia: "alta",
-    dormido: false,
-    supplier: "DID Chains Intl",
-  },
-  {
-    sku: "MOTS0560",
-    nombre: "ESPEJO RETROVISOR UNIVERSAL",
-    stock_actual: 20,
-    demanda_7d: 3,
-    cantidad_a_comprar: 0,
-    abc: "C",
-    urgencia: null,
-    dormido: true,
-    supplier: "Genéricos Express",
-  },
-];
 
 const ABC_VARIANT: Record<string, "success" | "warning" | "error"> = {
   A: "success",
@@ -86,24 +15,56 @@ const ABC_VARIANT: Record<string, "success" | "warning" | "error"> = {
   C: "error",
 };
 
-// ── Page ───────────────────────────────────────────────────────
-
 export default function PlanComprasPage(): JSX.Element {
+  const { data, error, isLoading } = usePlanCompras();
   const [filterAbc, setFilterAbc] = useState<string | null>(null);
   const [filterUrgencia, setFilterUrgencia] = useState<string | null>(null);
   const [filterDormido, setFilterDormido] = useState<boolean | null>(null);
 
-  // TODO: reemplazar por usePlanCompras() cuando Dev A2 cree el endpoint
-  let data = MOCK_PLAN;
+  // ── Loading ──────────────────────────────────────────────────
 
-  // Filtros
-  if (filterAbc) data = data.filter((i) => i.abc === filterAbc);
-  if (filterUrgencia) data = data.filter((i) => i.urgencia === filterUrgencia);
-  if (filterDormido !== null) data = data.filter((i) => i.dormido === filterDormido);
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <Link href="/" className="text-sm text-accent hover:underline">
+          ← Volver a inicio
+        </Link>
+        <div className="h-5 w-24 animate-pulse rounded bg-surface-alt" />
+        <div className="grid grid-cols-3 gap-3">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="h-24 animate-pulse rounded-xl bg-surface-alt" />
+          ))}
+        </div>
+        <div className="h-80 animate-pulse rounded-xl bg-surface-alt" />
+      </div>
+    );
+  }
 
-  const totalSkus = data.length;
-  const totalUnidades = data.reduce((s, i) => s + i.cantidad_a_comprar, 0);
-  const totalValor = data.reduce((s, i) => s + i.cantidad_a_comprar * 25000, 0); // placeholder
+  // ── Error ────────────────────────────────────────────────────
+
+  if (error || !data) {
+    return (
+      <div className="space-y-4">
+        <Link href="/" className="text-sm text-accent hover:underline">
+          ← Volver a inicio
+        </Link>
+        <Card>
+          <p className="py-8 text-center text-sm text-text-muted">
+            Error al cargar datos del plan de compras
+          </p>
+        </Card>
+      </div>
+    );
+  }
+
+  // ── Filtros ──────────────────────────────────────────────────
+
+  let items = data.items;
+  if (filterAbc) items = items.filter((i) => i.abc === filterAbc);
+  if (filterUrgencia) items = items.filter((i) => i.urgencia === filterUrgencia);
+  if (filterDormido !== null) items = items.filter((i) => i.dormido === filterDormido);
+
+  // ── Render ───────────────────────────────────────────────────
 
   return (
     <div className="space-y-4">
@@ -114,24 +75,32 @@ export default function PlanComprasPage(): JSX.Element {
       <div>
         <h1 className="text-xl font-bold text-text-primary">Plan de compras</h1>
         <p className="text-sm text-text-muted">
-          Sugerencia combinando alertas, forecast, ABC y dormidos — datos de muestra
+          Sugerencia combinando alertas, forecast, ABC y dormidos
         </p>
       </div>
 
       {/* Resumen */}
       <div className="grid grid-cols-3 gap-3">
         <Card>
-          <Stat label="SKUs a pedir" value={String(totalSkus)} subtitle="en el plan" />
+          <Stat
+            label="SKUs en plan"
+            value={String(data.total_skus)}
+            subtitle={`${data.skus_urgentes} urgentes`}
+          />
         </Card>
         <Card>
           <Stat
             label="Unidades"
-            value={totalUnidades.toLocaleString("es-CO")}
+            value={Math.round(data.total_unidades).toLocaleString("es-CO")}
             subtitle="cantidad sugerida"
           />
         </Card>
         <Card>
-          <Stat label="Valor estimado" value={formatMoney(totalValor)} subtitle="orden propuesta" />
+          <Stat
+            label="Valor estimado"
+            value={formatMoney(data.total_valor_estimado)}
+            subtitle={`${data.skus_dormidos} dormidos`}
+          />
         </Card>
       </div>
 
@@ -198,93 +167,103 @@ export default function PlanComprasPage(): JSX.Element {
       </div>
 
       {/* Tabla */}
-      <Card>
-        <div className="overflow-x-auto">
-          <Table
-            columns={[
-              {
-                header: "SKU",
-                cell: (item) => (
-                  <div>
-                    <p className="text-sm font-medium">{item.nombre}</p>
-                    <p className="font-mono text-xs text-text-muted">{item.sku}</p>
-                  </div>
-                ),
-              },
-              {
-                header: "Stock",
-                cell: (item) => (
-                  <div className="text-center">
-                    <StockBadge qty={item.stock_actual} />
-                  </div>
-                ),
-                align: "center",
-              },
-              {
-                header: "Demanda 7d",
-                cell: (item) => item.demanda_7d,
-                align: "right",
-              },
-              {
-                header: "Comprar",
-                cell: (item) => (
-                  <span className={item.cantidad_a_comprar > 0 ? "font-bold text-text-primary" : "text-text-muted"}>
-                    {item.cantidad_a_comprar > 0 ? item.cantidad_a_comprar : "—"}
-                  </span>
-                ),
-                align: "right",
-              },
-              {
-                header: "ABC",
-                cell: (item) => (
-                  <Badge variant={ABC_VARIANT[item.abc]} size="sm">
-                    {item.abc}
-                  </Badge>
-                ),
-                align: "center",
-              },
-              {
-                header: "Urgencia",
-                cell: (item) =>
-                  item.urgencia ? (
-                    <Badge
-                      variant={item.urgencia === "alta" ? "error" : item.urgencia === "media" ? "warning" : "info"}
-                      size="sm"
-                    >
-                      {item.urgencia}
-                    </Badge>
-                  ) : (
-                    <span className="text-text-muted">—</span>
+      {items.length > 0 ? (
+        <Card>
+          <div className="overflow-x-auto">
+            <Table
+              columns={[
+                {
+                  header: "SKU",
+                  cell: (item) => (
+                    <div>
+                      <p className="text-sm font-medium">{item.nombre}</p>
+                      <p className="font-mono text-xs text-text-muted">{item.sku}</p>
+                    </div>
                   ),
-                align: "center",
-              },
-              {
-                header: "Dormido",
-                cell: (item) =>
-                  item.dormido ? (
-                    <Badge variant="warning" size="sm">
-                      Dormido
+                },
+                {
+                  header: "Stock",
+                  cell: (item) => (
+                    <div className="text-center">
+                      <StockBadge qty={Math.round(item.stock_actual)} />
+                    </div>
+                  ),
+                  align: "center",
+                },
+                {
+                  header: "Demanda 7d",
+                  cell: (item) => Math.round(item.demanda_7d),
+                  align: "right",
+                },
+                {
+                  header: "Comprar",
+                  cell: (item) => {
+                    const qty = Math.round(item.cantidad_a_comprar);
+                    if (qty <= 0) return <span className="text-text-muted">—</span>;
+                    return <span className="font-bold text-text-primary">{qty}</span>;
+                  },
+                  align: "right",
+                },
+                {
+                  header: "ABC",
+                  cell: (item) => (
+                    <Badge variant={ABC_VARIANT[item.abc] ?? "default"} size="sm">
+                      {item.abc}
                     </Badge>
-                  ) : null,
-                align: "center",
-              },
-              {
-                header: "Proveedor",
-                cell: (item) => (
-                  <span className="text-xs text-text-secondary">{item.supplier}</span>
-                ),
-              },
-            ]}
-            data={data}
-            keyFn={(item) => item.sku}
-            striped
-          />
-        </div>
-      </Card>
-
-      <p className="text-center text-xs text-text-muted">
-        Datos de muestra — endpoint real en desarrollo por Dev A2
-      </p>
+                  ),
+                  align: "center",
+                },
+                {
+                  header: "Urgencia",
+                  cell: (item) =>
+                    item.urgencia ? (
+                      <Badge
+                        variant={
+                          item.urgencia === "alta"
+                            ? "error"
+                            : item.urgencia === "media"
+                              ? "warning"
+                              : "info"
+                        }
+                        size="sm"
+                      >
+                        {item.urgencia}
+                      </Badge>
+                    ) : (
+                      <span className="text-text-muted">—</span>
+                    ),
+                  align: "center",
+                },
+                {
+                  header: "Dormido",
+                  cell: (item) =>
+                    item.dormido ? (
+                      <Badge variant="warning" size="sm">
+                        Dormido
+                      </Badge>
+                    ) : null,
+                  align: "center",
+                },
+                {
+                  header: "Proveedor",
+                  cell: (item) => (
+                    <span className="text-xs text-text-secondary">{item.supplier}</span>
+                  ),
+                },
+              ]}
+              data={items}
+              keyFn={(item) => item.sku}
+              striped
+            />
+          </div>
+        </Card>
+      ) : (
+        <Card>
+          <p className="py-8 text-center text-sm text-text-muted">
+            Sin SKUs que coincidan con los filtros
+          </p>
+        </Card>
+      )}
     </div>
   );
 }

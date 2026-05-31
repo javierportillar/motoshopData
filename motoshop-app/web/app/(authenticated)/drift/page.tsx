@@ -1,57 +1,52 @@
 "use client";
 
 import Link from "next/link";
+import { useDriftSummary } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/Card";
 import { Stat } from "@/components/ui/Stat";
 import { Table } from "@/components/ui/Table";
 import { Badge } from "@/components/ui/Badge";
 
-// ── Mock data (reemplazar cuando Dev A2 cree /metrics/drift-summary) ──
-
-interface DriftItem {
-  metric_name: string;
-  detected_at: string;
-  drift_magnitude: number;
-  threshold: number;
-  status: "active" | "resolved" | "warning";
-  recommended_action: string;
-}
-
-const MOCK_DRIFT: DriftItem[] = [
-  {
-    metric_name: "WAPE baseline",
-    detected_at: "2026-05-28",
-    drift_magnitude: 3.2,
-    threshold: 5.0,
-    status: "warning",
-    recommended_action: "Monitorear. Si supera 5%, re-entrenar baseline la próxima semana.",
-  },
-  {
-    metric_name: "Ventas diarias promedio",
-    detected_at: "2026-05-25",
-    drift_magnitude: 8.7,
-    threshold: 5.0,
-    status: "active",
-    recommended_action: "Revisar datos de ingesta. Verificar si es real (fin de mes) o error de pipeline.",
-  },
-  {
-    metric_name: "Mix de categorías",
-    detected_at: "2026-05-15",
-    drift_magnitude: 2.1,
-    threshold: 5.0,
-    status: "resolved",
-    recommended_action: "Normalizado. El drift fue temporal (promoción fin de semana).",
-  },
-];
-
-// ── Page ───────────────────────────────────────────────────────
-
 export default function DriftPage(): JSX.Element {
-  // TODO: reemplazar por useDrift() cuando Dev A2 cree el endpoint
-  const data = MOCK_DRIFT;
+  const { data, error, isLoading } = useDriftSummary();
 
-  const activeCount = data.filter((d) => d.status === "active").length;
-  const warningCount = data.filter((d) => d.status === "warning").length;
+  // ── Loading ──────────────────────────────────────────────────
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <Link href="/" className="text-sm text-accent hover:underline">
+          ← Volver a inicio
+        </Link>
+        <div className="h-5 w-24 animate-pulse rounded bg-surface-alt" />
+        <div className="grid grid-cols-3 gap-3">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="h-24 animate-pulse rounded-xl bg-surface-alt" />
+          ))}
+        </div>
+        <div className="h-80 animate-pulse rounded-xl bg-surface-alt" />
+      </div>
+    );
+  }
+
+  // ── Error ────────────────────────────────────────────────────
+
+  if (error || !data) {
+    return (
+      <div className="space-y-4">
+        <Link href="/" className="text-sm text-accent hover:underline">
+          ← Volver a inicio
+        </Link>
+        <Card>
+          <p className="py-8 text-center text-sm text-text-muted">
+            Error al cargar datos de drift
+          </p>
+        </Card>
+      </div>
+    );
+  }
+
+  // ── Render ───────────────────────────────────────────────────
 
   return (
     <div className="space-y-4">
@@ -62,7 +57,7 @@ export default function DriftPage(): JSX.Element {
       <div>
         <h1 className="text-xl font-bold text-text-primary">Alertas de drift</h1>
         <p className="text-sm text-text-muted">
-          Monitoreo de desviaciones en métricas clave — datos de muestra
+          Monitoreo de desviaciones en métricas clave
         </p>
       </div>
 
@@ -70,30 +65,30 @@ export default function DriftPage(): JSX.Element {
       <div className="grid grid-cols-3 gap-3">
         <Card>
           <Stat
-            label="Alertas activas"
-            value={String(activeCount)}
+            label="Activas"
+            value={String(data.active_count)}
             subtitle="requieren acción"
           />
         </Card>
         <Card>
           <Stat
             label="Warnings"
-            value={String(warningCount)}
+            value={String(data.warning_count)}
             subtitle="en observación"
           />
         </Card>
         <Card>
           <Stat
             label="Threshold"
-            value="5.0%"
+            value={`${data.current_threshold}%`}
             subtitle="umbral de drift"
           />
         </Card>
       </div>
 
       {/* Tabla de drift */}
-      <Card header={<h2 className="font-semibold text-text-primary">Historial de drift</h2>}>
-        <div className="overflow-x-auto">
+      {data.items.length > 0 ? (
+        <Card header={<h2 className="font-semibold text-text-primary">Historial de drift</h2>}>
           <Table
             columns={[
               {
@@ -147,16 +142,18 @@ export default function DriftPage(): JSX.Element {
                 ),
               },
             ]}
-            data={data}
+            data={data.items}
             keyFn={(d, i) => `${d.metric_name}-${d.detected_at}-${i}`}
             striped
           />
-        </div>
-      </Card>
-
-      <p className="text-center text-xs text-text-muted">
-        Datos de muestra — endpoint real en desarrollo por Dev A2
-      </p>
+        </Card>
+      ) : (
+        <Card>
+          <p className="py-8 text-center text-sm text-text-muted">
+            No se detectaron desviaciones
+          </p>
+        </Card>
+      )}
     </div>
   );
 }

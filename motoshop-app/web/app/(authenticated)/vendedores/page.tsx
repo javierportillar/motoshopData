@@ -1,55 +1,55 @@
 "use client";
 
 import Link from "next/link";
+import { useVendedoresSummary } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/Card";
 import { Stat } from "@/components/ui/Stat";
 import { Table } from "@/components/ui/Table";
-import { Badge, DeltaBadge } from "@/components/ui/Badge";
+import { DeltaBadge } from "@/components/ui/Badge";
 import { formatMoney } from "@/lib/format/currency";
 
-// ── Mock data (reemplazar cuando Dev A2 cree /metrics/vendedores-summary) ──
-
-interface VendedorItem {
-  nit_vendedor: string;
-  nombre_vendedor: string;
-  facturas: number;
-  total: number;
-  ticket_promedio: number;
-  variacion: number;
-}
-
-const MOCK_VENDEDORES: VendedorItem[] = [
-  {
-    nit_vendedor: "123456",
-    nombre_vendedor: "Carlos Martínez",
-    facturas: 245,
-    total: 8_500_000,
-    ticket_promedio: 34_693,
-    variacion: 12.5,
-  },
-  {
-    nit_vendedor: "234567",
-    nombre_vendedor: "María López",
-    facturas: 198,
-    total: 6_200_000,
-    ticket_promedio: 31_313,
-    variacion: -3.2,
-  },
-  {
-    nit_vendedor: "345678",
-    nombre_vendedor: "Pedro Ramírez",
-    facturas: 167,
-    total: 4_800_000,
-    ticket_promedio: 28_742,
-    variacion: 8.1,
-  },
-];
-
-// ── Page ───────────────────────────────────────────────────────
-
 export default function VendedoresPage(): JSX.Element {
-  // TODO: reemplazar por useVendedores() cuando Dev A2 cree el endpoint
-  const data = MOCK_VENDEDORES;
+  const { data, error, isLoading } = useVendedoresSummary();
+
+  // ── Loading ──────────────────────────────────────────────────
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <Link href="/" className="text-sm text-accent hover:underline">
+          ← Volver a inicio
+        </Link>
+        <div className="h-5 w-24 animate-pulse rounded bg-surface-alt" />
+        <div className="grid grid-cols-3 gap-3">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="h-24 animate-pulse rounded-xl bg-surface-alt" />
+          ))}
+        </div>
+        <div className="h-80 animate-pulse rounded-xl bg-surface-alt" />
+      </div>
+    );
+  }
+
+  // ── Error ────────────────────────────────────────────────────
+
+  if (error || !data) {
+    return (
+      <div className="space-y-4">
+        <Link href="/" className="text-sm text-accent hover:underline">
+          ← Volver a inicio
+        </Link>
+        <Card>
+          <p className="py-8 text-center text-sm text-text-muted">
+            Error al cargar datos de vendedores
+          </p>
+        </Card>
+      </div>
+    );
+  }
+
+  const items = data.items;
+
+  // ── Render ───────────────────────────────────────────────────
 
   return (
     <div className="space-y-4">
@@ -59,9 +59,7 @@ export default function VendedoresPage(): JSX.Element {
 
       <div>
         <h1 className="text-xl font-bold text-text-primary">Vendedores</h1>
-        <p className="text-sm text-text-muted">
-          Rendimiento del mes actual — datos de muestra
-        </p>
+        <p className="text-sm text-text-muted">Rendimiento del mes actual</p>
       </div>
 
       {/* KPIs */}
@@ -69,71 +67,67 @@ export default function VendedoresPage(): JSX.Element {
         <Card>
           <Stat
             label="Total vendido"
-            value={formatMoney(data.reduce((s, v) => s + v.total, 0))}
+            value={formatMoney(items.reduce((s, v) => s + v.total_ventas, 0))}
             subtitle="este mes"
           />
         </Card>
         <Card>
           <Stat
             label="Facturas"
-            value={data.reduce((s, v) => s + v.facturas, 0).toLocaleString("es-CO")}
+            value={items.reduce((s, v) => s + v.facturas, 0).toLocaleString("es-CO")}
             subtitle="este mes"
           />
         </Card>
         <Card>
           <Stat
             label="Vendedores"
-            value={String(data.length)}
+            value={String(items.length)}
             subtitle="activos"
           />
         </Card>
       </div>
 
       {/* Tabla ranking */}
-      <Card header={<h2 className="font-semibold text-text-primary">Ranking del mes</h2>}>
-        <Table
-          columns={[
-            { header: "#", cell: (_, i) => i + 1, align: "center", className: "w-8" },
-            {
-              header: "Vendedor",
-              cell: (v) => (
-                <div>
-                  <p className="text-sm font-medium">{v.nombre_vendedor}</p>
-                  <p className="font-mono text-xs text-text-muted">{v.nit_vendedor}</p>
-                </div>
-              ),
-            },
-            {
-              header: "Facturas",
-              cell: (v) => v.facturas,
-              align: "right",
-            },
-            {
-              header: "Total",
-              cell: (v) => formatMoney(v.total),
-              align: "right",
-            },
-            {
-              header: "Ticket",
-              cell: (v) => formatMoney(v.ticket_promedio),
-              align: "right",
-            },
-            {
-              header: "Δ",
-              cell: (v) => <DeltaBadge value={v.variacion} />,
-              align: "center",
-            },
-          ]}
-          data={data}
-          keyFn={(v) => v.nit_vendedor}
-          striped
-        />
-      </Card>
-
-      {/* Nota mock */}
-      <p className="text-center text-xs text-text-muted">
-        Datos de muestra — endpoint real en desarrollo por Dev A2
-      </p>
+      {items.length > 0 ? (
+        <Card header={<h2 className="font-semibold text-text-primary">Ranking del mes</h2>}>
+          <Table
+            columns={[
+              { header: "#", cell: (_, i) => i + 1, align: "center", className: "w-8" },
+              {
+                header: "Vendedor",
+                cell: (v) => (
+                  <div>
+                    <p className="text-sm font-medium">{v.nombre_vendedor}</p>
+                    <p className="font-mono text-xs text-text-muted">{v.nit_vendedor}</p>
+                  </div>
+                ),
+              },
+              {
+                header: "Facturas",
+                cell: (v) => v.facturas,
+                align: "right",
+              },
+              {
+                header: "Total",
+                cell: (v) => formatMoney(v.total_ventas),
+                align: "right",
+              },
+              {
+                header: "Ticket",
+                cell: (v) => formatMoney(v.ticket_promedio),
+                align: "right",
+              },
+            ]}
+            data={items}
+            keyFn={(v) => v.nit_vendedor}
+            striped
+          />
+        </Card>
+      ) : (
+        <Card>
+          <p className="py-8 text-center text-sm text-text-muted">Sin datos de vendedores este mes</p>
+        </Card>
+      )}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCohortes } from "@/lib/api/hooks";
+import { useCohortes, useCohortesDetail } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/Card";
 import { Stat } from "@/components/ui/Stat";
 import { Table } from "@/components/ui/Table";
@@ -10,10 +10,13 @@ import { formatMoney } from "@/lib/format/currency";
 
 export default function CohortesPage(): JSX.Element {
   const { data, error, isLoading } = useCohortes();
+  const detail = useCohortesDetail();
+
+  const isLoadingBoth = isLoading || detail.isLoading;
 
   // ── Loading ──────────────────────────────────────────────────
 
-  if (isLoading) {
+  if (isLoadingBoth) {
     return (
       <div className="space-y-4">
         <Link href="/" className="text-sm text-accent hover:underline">
@@ -73,12 +76,26 @@ export default function CohortesPage(): JSX.Element {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-3 gap-3 md:grid-cols-5">
         <Card>
           <Stat
             label="Cohortes"
-            value={String(totalClientes)}
+            value={detail.data ? String(detail.data.total_cohortes) : String(totalClientes)}
             subtitle="meses con primera compra"
+          />
+        </Card>
+        <Card>
+          <Stat
+            label="Nuevos"
+            value={detail.data ? String(detail.data.nuevos_este_mes) : "—"}
+            subtitle="clientes este mes"
+          />
+        </Card>
+        <Card>
+          <Stat
+            label="Recurrentes"
+            value={detail.data ? String(detail.data.recurrentes_este_mes) : "—"}
+            subtitle="compraron otra vez"
           />
         </Card>
         <Card>
@@ -90,9 +107,9 @@ export default function CohortesPage(): JSX.Element {
         </Card>
         <Card>
           <Stat
-            label="Total clientes"
-            value={String(data.cohortes.length)}
-            subtitle="observaciones"
+            label="Top recurrentes"
+            value={detail.data ? String(detail.data.top_recurrentes) : "—"}
+            subtitle="máximos compradores"
           />
         </Card>
       </div>

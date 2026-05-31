@@ -206,6 +206,114 @@ export function useSalesTrend(periods = 6) {
   );
 }
 
+// ── Nuevos endpoints F7-D (Dev A2) ──────────────────────────────────────────
+
+interface VendedorItem {
+  nit_vendedor: string;
+  nombre_vendedor: string;
+  facturas: number;
+  total_ventas: number;
+  ticket_promedio: number;
+}
+
+interface VendedoresSummaryResponse {
+  items: VendedorItem[];
+}
+
+export function useVendedoresSummary() {
+  return useMetrics<VendedoresSummaryResponse>("/api/metrics/vendedores-summary");
+}
+
+interface CohorteRetencionItem {
+  mes_observacion: string;
+  num_clientes: number;
+  tasa_recurrencia: number;
+}
+
+interface CohorteDetailItem {
+  cohorte_mes: string;
+  total_clientes: number;
+  ltv_promedio: number;
+  retencion: CohorteRetencionItem[];
+}
+
+interface CohortesDetailResponse {
+  cohortes: CohorteDetailItem[];
+  total_cohortes: number;
+  nuevos_este_mes: number;
+  recurrentes_este_mes: number;
+  top_recurrentes: number;
+}
+
+export function useCohortesDetail() {
+  return useMetrics<CohortesDetailResponse>("/api/metrics/cohortes-detail");
+}
+
+interface DriftItem {
+  metric_name: string;
+  detected_at: string;
+  drift_magnitude: number;
+  threshold: number;
+  status: string; // active | resolved | warning
+  recommended_action: string;
+}
+
+interface DriftSummaryResponse {
+  items: DriftItem[];
+  total_alerts: number;
+  active_count: number;
+  warning_count: number;
+  current_threshold: number;
+}
+
+export function useDriftSummary() {
+  return useMetrics<DriftSummaryResponse>("/api/metrics/drift-summary");
+}
+
+interface PlanCompraItem {
+  sku: string;
+  nombre: string;
+  stock_actual: number;
+  demanda_7d: number;
+  cantidad_a_comprar: number;
+  abc: string; // A | B | C
+  urgencia: string | null; // alta | media | baja
+  dormido: boolean;
+  supplier: string;
+}
+
+interface PlanComprasResponse {
+  items: PlanCompraItem[];
+  total_skus: number;
+  total_unidades: number;
+  total_valor_estimado: number;
+  skus_urgentes: number;
+  skus_dormidos: number;
+}
+
+export function usePlanCompras() {
+  return useMetrics<PlanComprasResponse>("/api/metrics/plan-compras");
+}
+
+interface ForecastCategoriaItem {
+  cod_grupo: string;
+  demanda_real: number;
+  demanda_predicha: number;
+  desviacion_pct: number;
+  metodo: string;
+}
+
+interface ForecastCategoriaResponse {
+  items: ForecastCategoriaItem[];
+  total_categorias: number;
+  wape_promedio: number;
+  cobertura_pct: number;
+}
+
+export function useForecastCategoria() {
+  return useMetrics<ForecastCategoriaResponse>("/api/metrics/forecast-categoria");
+}
+
 // ── Forecast / Predicciones ────────────────────────────────────────────────
 
 interface ForecastItem {
