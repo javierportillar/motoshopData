@@ -8,6 +8,13 @@ import { Table } from "@/components/ui/Table";
 import { Badge } from "@/components/ui/Badge";
 import { Skeleton } from "@/components/ui/Skeleton";
 
+const METRIC_DESCRIPTIONS: Record<string, string> = {
+  "WAPE baseline": "Error de predicción del modelo — mide qué tan precisas son las predicciones vs. la demanda real",
+  "Ventas diarias": "Volumen de ventas promedio por día — permite detectar cambios en la demanda",
+  "Cobertura forecast": "% de SKUs con predicción válida — indica qué tan completo es el modelo de forecast",
+  "Tasa recurrencia": "% de clientes que recompran — mide la fidelidad y retención de clientes",
+};
+
 export default function DriftPage(): JSX.Element {
   const { data, error, isLoading } = useDriftSummary();
 
@@ -62,6 +69,44 @@ export default function DriftPage(): JSX.Element {
         </p>
       </div>
 
+      {/* Explicación de drift */}
+      <Card>
+        <h3 className="mb-2 text-sm font-semibold text-text-primary">¿Qué es el monitoreo de drift?</h3>
+        <p className="mb-3 text-xs leading-relaxed text-text-secondary">
+          Drift es la <strong>desviación de métricas clave</strong> respecto a su valor histórico.
+          El monitoreo continuo permite detectar cambios inesperados en los patrones de ventas,
+          calidad de predicciones y comportamiento de clientes.
+        </p>
+        <div className="grid grid-cols-2 gap-3 text-xs">
+          <div className="rounded-lg bg-surface-alt p-2.5">
+            <span className="font-medium text-text-primary">Estados</span>
+            <ul className="mt-1 space-y-1.5 text-text-secondary">
+              <li className="flex items-center gap-1.5">
+                <Badge variant="error" size="sm">Activo</Badge>
+                Métrica fuera de rango, requiere atención
+              </li>
+              <li className="flex items-center gap-1.5">
+                <Badge variant="warning" size="sm">Alerta</Badge>
+                Métrica en observación, cerca del umbral
+              </li>
+              <li className="flex items-center gap-1.5">
+                <Badge variant="success" size="sm">Resuelto</Badge>
+                Métrica volvió a rango normal
+              </li>
+            </ul>
+          </div>
+          <div className="rounded-lg bg-surface-alt p-2.5">
+            <span className="font-medium text-text-primary">Métricas monitoreadas</span>
+            <ul className="mt-1 space-y-1 text-text-secondary">
+              <li><strong>WAPE baseline</strong> — Error de predicción del modelo</li>
+              <li><strong>Ventas diarias</strong> — Volumen de ventas promedio</li>
+              <li><strong>Cobertura forecast</strong> — % de SKUs con predicción válida</li>
+              <li><strong>Tasa recurrencia</strong> — % de clientes que recompran</li>
+            </ul>
+          </div>
+        </div>
+      </Card>
+
       {/* KPIs */}
       <div className="grid grid-cols-3 gap-3">
         <Card>
@@ -94,7 +139,14 @@ export default function DriftPage(): JSX.Element {
             columns={[
               {
                 header: "Métrica",
-                cell: (d) => <span className="font-medium">{d.metric_name}</span>,
+                cell: (d) => (
+                  <span
+                    className="cursor-help font-medium underline decoration-dotted decoration-text-muted/40 underline-offset-2"
+                    title={METRIC_DESCRIPTIONS[d.metric_name] ?? d.metric_name}
+                  >
+                    {d.metric_name}
+                  </span>
+                ),
               },
               {
                 header: "Detectado",
