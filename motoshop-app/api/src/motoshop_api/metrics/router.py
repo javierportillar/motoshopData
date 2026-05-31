@@ -33,6 +33,9 @@ from motoshop_api.metrics.schemas import (
     ForecastCategoriaResponse,
     InventorySummary,
     PlanComprasResponse,
+    SalesDailyResponse,
+    SalesHistoricalResponse,
+    SalesMonthlyResponse,
     SalesSummary,
     SalesTrendResponse,
     VendedoresSummaryResponse,
@@ -106,6 +109,47 @@ def sales_summary(
 ) -> SalesSummary:
     """Resumen de ventas del mes actual vs anterior + top 10 SKUs."""
     return _cached_or_fetch("sales-summary", repo.get_sales_summary)
+
+
+@router.get("/metrics/sales-daily", response_model=SalesDailyResponse)
+@limiter.limit("30/minute")
+def sales_daily(
+    request: Request,
+    date: str = Query(default=None),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+) -> SalesDailyResponse:
+    """Ventas del día específico: productos vendidos, totales."""
+    if not date:
+        from datetime import date as d
+        date = d.today().isoformat()
+    return _cached_or_fetch(f"sales-daily:{date}", lambda: repo.get_sales_daily(date))
+
+
+@router.get("/metrics/sales-monthly", response_model=SalesMonthlyResponse)
+@limiter.limit("30/minute")
+def sales_monthly(
+    request: Request,
+    month: str = Query(default=None),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+) -> SalesMonthlyResponse:
+    """Ventas del mes: total vs mes anterior + top 10 SKUs."""
+    if not month:
+        from datetime import datetime
+        month = datetime.now().strftime("%Y-%m")
+    return _cached_or_fetch(f"sales-monthly:{month}", lambda: repo.get_sales_monthly(month))
+
+
+@router.get("/metrics/sales-historical", response_model=SalesHistoricalResponse)
+@limiter.limit("30/minute")
+def sales_historical(
+    request: Request,
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+) -> SalesHistoricalResponse:
+    """Ventas históricas: total acumulado + tendencia mensual."""
+    return _cached_or_fetch("sales-historical", repo.get_sales_historical)
 
 
 @router.get("/metrics/inventory-summary", response_model=InventorySummary)

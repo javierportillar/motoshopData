@@ -31,6 +31,10 @@ from motoshop_api.metrics.schemas import (
     InventorySummary,
     PlanCompraItem,
     PlanComprasResponse,
+    SalesDailyItem,
+    SalesDailyResponse,
+    SalesHistoricalResponse,
+    SalesMonthlyResponse,
     SalesSummary,
     SalesTrendItem,
     SalesTrendResponse,
@@ -46,6 +50,9 @@ class MetricsRepoProtocol(Protocol):
     """Contrato que cumplen FakeMetricsRepo y RealMetricsRepo."""
 
     def get_sales_summary(self) -> SalesSummary: ...
+    def get_sales_daily(self, date: str) -> SalesDailyResponse: ...
+    def get_sales_monthly(self, month: str) -> SalesMonthlyResponse: ...
+    def get_sales_historical(self) -> SalesHistoricalResponse: ...
     def get_inventory_summary(self) -> InventorySummary: ...
     def get_abc_segmentation(self) -> AbcSegmentation: ...
     def get_dormidos(self) -> DormidosResponse: ...
@@ -110,6 +117,39 @@ class FakeMetricsRepo:
             ticket_promedio=62_650.0,
             num_facturas=823,
             top_skus=_TOP_SKUS,
+        )
+
+    def get_sales_daily(self, date: str) -> SalesDailyResponse:
+        return SalesDailyResponse(
+            date=date,
+            total_ventas=1_850_000.0,
+            total_facturas=28,
+            productos_vendidos=[
+                SalesDailyItem(sku="MOTS1297", nombre="ACEITE 20W50 MOTUL 1L", cantidad=12.0, valor=300_000.0),
+                SalesDailyItem(sku="MOTS0412", nombre="FILTRO ACEITE YAMAHA YBR125", cantidad=8.0, valor=160_000.0),
+            ],
+        )
+
+    def get_sales_monthly(self, month: str) -> SalesMonthlyResponse:
+        return SalesMonthlyResponse(
+            month=month,
+            total_ventas=50_120_000.0,
+            total_facturas=823,
+            delta_porcentaje=4.8,
+            productos_top=_TOP_SKUS,
+        )
+
+    def get_sales_historical(self) -> SalesHistoricalResponse:
+        now = datetime.now()
+        meses = [
+            SalesTrendItem(year=now.year, month=m, total_ventas=48_000_000.0 + m * 200_000.0, num_facturas=780 + m, ticket_promedio=62_000.0 + m * 100.0)
+            for m in range(1, now.month + 1)
+        ]
+        return SalesHistoricalResponse(
+            total_ventas=sum(m.total_ventas for m in meses),
+            total_facturas=sum(m.num_facturas for m in meses),
+            meses=meses,
+            fecha_primera_venta=f"{now.year - 3}-01-15",
         )
 
     def get_inventory_summary(self) -> InventorySummary:
@@ -314,6 +354,19 @@ class FakeMetricsRepo:
         )
 
 
+# ── Helpers ──────────────────────────────────────────────────────────────
+
+def _prev_month_str(month: str) -> str:
+    """Retorna el mes anterior en formato YYYY-MM."""
+    from datetime import datetime
+    d = datetime.strptime(month, "%Y-%m")
+    if d.month == 1:
+        d = d.replace(year=d.year - 1, month=12)
+    else:
+        d = d.replace(month=d.month - 1)
+    return d.strftime("%Y-%m")
+
+
 # ── Real (Databricks SQL Warehouse vía SDK) ──────────────────────────────
 
 class RealMetricsRepo:
@@ -376,6 +429,107 @@ class RealMetricsRepo:
             ticket_promedio=float(mes_actual["ticket_promedio"]),
             num_facturas=int(mes_actual["num_facturas"]),
             top_skus=[TopSkuItem(**r) for r in top],
+        )
+
+    def get_sales_daily(self, date: str) -> SalesDailyResponse:
+        productos = self._query(f"""
+            SELECT
+                cod_producto AS sku,
+                nom_producto AS nombre,
+                SUM(cantidad_total) AS cantidad,
+                ROUND(SUM(valor_total), 2) AS valor
+            FROM motoshop.gold.mart_ventas_diarias_sku
+            WHERE business_date = '{date}'
+            GROUP BY cod_producto, nom_producto
+            ORDER BY valor DESC
+        """)
+        totals = self._query(f"""
+            SELECT
+                ROUND(SUM(valor_total), 2) AS total_ventas,
+                COALESCE(SUM(num_facturas), 0) AS total_facturas
+            FROM motoshop.gold.mart_ventas_diarias_sku
+            WHERE business_date = '{date}'
+        """)
+        if not totals:
+            raise RuntimeError(f"No sales data found for date {date}")
+        t = totals[0]
+        return SalesDailyResponse(
+            date=date,
+            total_ventas=float(t["total_ventas"]),
+            total_facturas=int(t["total_facturas"]),
+            productos_vendidos=[SalesDailyItem(**r) for r in productos],
+        )
+
+    def get_sales_monthly(self, month: str) -> SalesMonthlyResponse:
+        totals = self._query(f"""
+            SELECT
+                ROUND(SUM(valor_total), 2) AS total_ventas,
+                COALESCE(SUM(num_facturas), 0) AS total_facturas
+            FROM motoshop.gold.mart_ventas_diarias_sku
+            WHERE DATE_FORMAT(business_date, 'yyyy-MM') = '{month}'
+        """)
+        prev_month = self._query(f"""
+            SELECT ROUND(SUM(valor_total), 2) AS total_ventas
+            FROM motoshop.gold.mart_ventas_diarias_sku
+            WHERE DATE_FORMAT(business_date, 'yyyy-MM') = '{_prev_month_str(month)}'
+        """)
+        top = self._query(f"""
+            SELECT
+                cod_producto AS cod_producto,
+                nom_producto AS nom_producto,
+                SUM(cantidad_total) AS cantidad_total,
+                ROUND(SUM(valor_total), 2) AS valor_total,
+                ROUND(SUM(valor_total) / NULLIF(SUM(SUM(valor_total)) OVER(), 0) * 100, 1) AS porcentaje_ingreso
+            FROM motoshop.gold.mart_ventas_diarias_sku
+            WHERE DATE_FORMAT(business_date, 'yyyy-MM') = '{month}'
+            GROUP BY cod_producto, nom_producto
+            ORDER BY valor_total DESC
+            LIMIT 10
+        """)
+        if not totals:
+            raise RuntimeError(f"No sales data found for month {month}")
+        t = totals[0]
+        va_actual = float(t["total_ventas"])
+        va_anterior = float(prev_month[0]["total_ventas"]) if prev_month else 0.0
+        delta = round((va_actual - va_anterior) / va_anterior * 100, 1) if va_anterior else None
+        return SalesMonthlyResponse(
+            month=month,
+            total_ventas=va_actual,
+            total_facturas=int(t["total_facturas"]),
+            delta_porcentaje=delta,
+            productos_top=[TopSkuItem(**r) for r in top],
+        )
+
+    def get_sales_historical(self) -> SalesHistoricalResponse:
+        totals = self._query("""
+            SELECT
+                ROUND(SUM(valor_total), 2) AS total_ventas,
+                COALESCE(SUM(num_facturas), 0) AS total_facturas
+            FROM motoshop.gold.mart_ventas_diarias_sku
+        """)
+        meses = self._query("""
+            SELECT YEAR(business_date) AS year,
+                   MONTH(business_date) AS month,
+                   ROUND(SUM(valor_total), 2) AS total_ventas,
+                   COALESCE(SUM(num_facturas), 0) AS num_facturas,
+                   ROUND(SUM(valor_total) / NULLIF(SUM(num_facturas), 0), 2) AS ticket_promedio
+            FROM motoshop.gold.mart_ventas_diarias_sku
+            GROUP BY YEAR(business_date), MONTH(business_date)
+            ORDER BY year, month
+        """)
+        first = self._query("""
+            SELECT MIN(business_date) AS first_date
+            FROM motoshop.gold.mart_ventas_diarias_sku
+        """)
+        if not totals or not meses:
+            raise RuntimeError("No historical sales data found")
+        t = totals[0]
+        fecha_primera = str(first[0]["first_date"]) if first and first[0].get("first_date") else None
+        return SalesHistoricalResponse(
+            total_ventas=float(t["total_ventas"]),
+            total_facturas=int(t["total_facturas"]),
+            meses=[SalesTrendItem(**r) for r in meses],
+            fecha_primera_venta=fecha_primera,
         )
 
     def get_inventory_summary(self) -> InventorySummary:

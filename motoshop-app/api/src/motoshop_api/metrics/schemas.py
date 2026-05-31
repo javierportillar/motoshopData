@@ -52,6 +52,37 @@ class AbcBucket(BaseModel):
     porcentaje_ingreso: float
 
 
+# ── Sales Daily / Monthly / Historical ───────────────────────────────────
+
+class SalesDailyItem(BaseModel):
+    sku: str
+    nombre: str
+    cantidad: float
+    valor: float
+
+
+class SalesDailyResponse(BaseModel):
+    date: str
+    total_ventas: float
+    total_facturas: int
+    productos_vendidos: list[SalesDailyItem]
+
+
+class SalesMonthlyResponse(BaseModel):
+    month: str
+    total_ventas: float
+    total_facturas: int
+    delta_porcentaje: float | None = None
+    productos_top: list[TopSkuItem]
+
+
+class SalesHistoricalResponse(BaseModel):
+    total_ventas: float
+    total_facturas: int
+    meses: list[SalesTrendItem]
+    fecha_primera_venta: str | None = None
+
+
 # ── Response models ──────────────────────────────────────────────────────
 
 class SalesSummary(BaseModel):
