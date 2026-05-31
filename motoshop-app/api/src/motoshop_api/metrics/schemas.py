@@ -99,3 +99,15 @@ class SalesTrendItem(BaseModel):
 class SalesTrendResponse(BaseModel):
     periods: int
     items: list[SalesTrendItem]
+
+
+class VendedorItem(BaseModel):
+    nit_vendedor: str
+    nombre_vendedor: str
+    facturas: int
+    total_ventas: float
+    ticket_promedio: float
+
+
+class VendedoresSummaryResponse(BaseModel):
+    items: list[VendedorItem]

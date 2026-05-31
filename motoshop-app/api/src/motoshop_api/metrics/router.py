@@ -31,6 +31,7 @@ from motoshop_api.metrics.schemas import (
     InventorySummary,
     SalesSummary,
     SalesTrendResponse,
+    VendedoresSummaryResponse,
 )
 
 router = APIRouter(tags=["metrics"])
@@ -159,6 +160,17 @@ def sales_trend(
     if periods < 1 or periods > 24:
         raise HTTPException(status_code=422, detail="periods must be between 1 and 24")
     return _cached_or_fetch(f"sales-trend:{periods}", lambda: repo.get_sales_trend(periods))
+
+
+@router.get("/metrics/vendedores-summary", response_model=VendedoresSummaryResponse)
+@limiter.limit("30/minute")
+def vendedores_summary(
+    request: Request,
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+) -> VendedoresSummaryResponse:
+    """Ranking top 10 vendedores del mes actual: facturas, ventas, ticket promedio."""
+    return _cached_or_fetch("vendedores-summary", repo.get_vendedores_summary)
 
 
 @router.post("/metrics/cache/clear")

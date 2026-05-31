@@ -26,6 +26,8 @@ from motoshop_api.metrics.schemas import (
     SalesTrendItem,
     SalesTrendResponse,
     TopSkuItem,
+    VendedorItem,
+    VendedoresSummaryResponse,
 )
 
 
@@ -38,6 +40,7 @@ class MetricsRepoProtocol(Protocol):
     def get_dormidos(self) -> DormidosResponse: ...
     def get_cohortes(self) -> CohortesResponse: ...
     def get_sales_trend(self, periods: int) -> SalesTrendResponse: ...
+    def get_vendedores_summary(self) -> VendedoresSummaryResponse: ...
 
 
 # ── Fake (mock) ──────────────────────────────────────────────────────────
@@ -144,6 +147,31 @@ class FakeMetricsRepo:
                 ticket_promedio=62_000.0 + (periods - 1 - i) * 150.0,
             ))
         return SalesTrendResponse(periods=periods, items=items)
+
+    def get_vendedores_summary(self) -> VendedoresSummaryResponse:
+        """Top 10 vendedores del mes actual con cifras mock realistas."""
+        return VendedoresSummaryResponse(items=[
+            VendedorItem(
+                nit_vendedor="900123456-7", nombre_vendedor="Carlos MotoPartes",
+                facturas=215, total_ventas=18_500_000.0, ticket_promedio=86_046.0,
+            ),
+            VendedorItem(
+                nit_vendedor="900234567-8", nombre_vendedor="María Repuestos",
+                facturas=178, total_ventas=14_200_000.0, ticket_promedio=79_775.0,
+            ),
+            VendedorItem(
+                nit_vendedor="900345678-9", nombre_vendedor="Juan Talleres",
+                facturas=142, total_ventas=10_800_000.0, ticket_promedio=76_056.0,
+            ),
+            VendedorItem(
+                nit_vendedor="900456789-0", nombre_vendedor="Ana Lubricantes",
+                facturas=98, total_ventas=5_620_000.0, ticket_promedio=57_346.0,
+            ),
+            VendedorItem(
+                nit_vendedor="900567890-1", nombre_vendedor="Pedro Accesorios",
+                facturas=67, total_ventas=3_450_000.0, ticket_promedio=51_492.0,
+            ),
+        ])
 
 
 # ── Real (Databricks SQL Warehouse vía SDK) ──────────────────────────────
@@ -337,6 +365,27 @@ class RealMetricsRepo:
             r["num_facturas"] = int(r["num_facturas"])
             r["ticket_promedio"] = float(r["ticket_promedio"])
         return SalesTrendResponse(periods=periods, items=[SalesTrendItem(**r) for r in rows])
+
+    def get_vendedores_summary(self) -> VendedoresSummaryResponse:
+        rows = self._query("""
+            SELECT nit_vendedor, nombre_vendedor,
+                   COUNT(*) AS facturas,
+                   SUM(total_factura) AS total_ventas,
+                   AVG(total_factura) AS ticket_promedio
+            FROM motoshop.silver.fact_ventas
+            WHERE business_date >= DATE_TRUNC('MONTH', CURRENT_DATE())
+            GROUP BY nit_vendedor, nombre_vendedor
+            ORDER BY total_ventas DESC
+            LIMIT 10
+        """)
+        if not rows:
+            logger.warning("No vendedores data found in silver.fact_ventas")
+            return FakeMetricsRepo().get_vendedores_summary()
+        for r in rows:
+            r["facturas"] = int(r["facturas"])
+            r["total_ventas"] = float(r["total_ventas"])
+            r["ticket_promedio"] = float(r["ticket_promedio"])
+        return VendedoresSummaryResponse(items=[VendedorItem(**r) for r in rows])
 
     def _query(self, sql: str) -> list[dict]:
         result = self._w.statement_execution.execute_statement(
