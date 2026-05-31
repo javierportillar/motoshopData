@@ -68,7 +68,7 @@ export default function LoginPage(): JSX.Element {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
+    <main className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-2xl font-bold text-white shadow-lg">
@@ -117,6 +117,6 @@ export default function LoginPage(): JSX.Element {
           </Button>
         </form>
       </div>
-    </div>
+    </main>
   );
 }
