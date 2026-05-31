@@ -669,6 +669,24 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ---
 
+### 2026-05-30 — Sesión 58 · Dev A2 · F7-D COMPLETO
+
+> 🟢 [F7-D-A2] F7-D COMPLETO · 7/7 pasos terminados · commit: 3dccde9 · sprint cerrado · ACCIÓN HUMANO: avisar Dev W (restart API + smoke + APLICAR MIGRATION F7-001 en Windows) + avisar Revisor para audit F7-D
+
+- **Hecho:** Sprint F7-D completo: 5 endpoints métricas + 1 endpoint forecast + 1 CRUD purchase_plans + 1 migration SQL. Total 58/58 tests pasan.
+  - A2-1: `/metrics/sales-trend` (8 tests)
+  - A2-2: `/metrics/vendedores-summary` (6 tests)
+  - A2-3: `/metrics/cohortes-detail` (7 tests)
+  - A2-4: `/metrics/drift-summary` (7 tests, contrato Dev T2 exacto)
+  - A2-5: `/metrics/forecast-categoria` (5 tests, WAPE + cobertura)
+  - A2-7: `/metrics/plan-compras` (7 tests, 9 campos + multi-join 6 fuentes)
+  - A2-6: `/purchase-plans` CRUD (7 tests, POST/GET/GET:id/PATCH + migration F7-001)
+- **Aprendido:** Los endpoints que cruzan 5+ marts se benefician de CTEs (`WITH`) antes que subqueries anidadas — más legible y el optimizador de Spark SQL las maneja bien. El contrato del frontend es la fuente de verdad del schema — copiar la interfaz TypeScript de Dev T2 garantiza calce sin adaptaciones. Para `supplier` usé `MAX(nom_proveedor)` como heurística pragmática. `CASE WHEN` reemplaza a `GREATEST()` que no existe en Databricks SQL.
+- **Abierto:** Migration F7-001 requiere Dev W ejecutar en Windows MySQL. Los 3 endpoints post-A2-3 (cohortes-detail, drift-summary, plan-compras) requieren restart API en Windows.
+- **Próximo paso:** Nada. Sprint cerrado. Esperar audit revisor.
+
+---
+
 ### 2026-05-30 — Sesión 57 · Dev A2 · F7-D Paso A2-7 terminado
 
 > 🟢 [F7-D-A2] Paso A2-7 terminado · plan-compras operativo · commit: 8e216ea · siguiente paso: A2-5 forecast-categoria o A2-6 purchase_plans · ACCIÓN HUMANO: avisar Dev W (restart API + smoke) + LIBERA a Dev T2 (/plan-compras real)
