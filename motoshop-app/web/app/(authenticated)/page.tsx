@@ -13,18 +13,8 @@ import { Logo } from "@/components/Logo";
 import { SalesTrendChart } from "@/components/SalesTrendChart";
 import { SearchBar } from "@/components/SearchBar";
 import { StaleDataBanner } from "@/components/StaleDataBanner";
-
-// ── Gerente: skeleton para carga ──────────────────────────────────────────
-
-function SkeletonBlock(): JSX.Element {
-  return (
-    <div className="animate-pulse space-y-3 rounded-xl border border-border bg-surface p-4">
-      <div className="h-3 w-20 rounded bg-surface-alt" />
-      <div className="h-7 w-32 rounded bg-surface-alt" />
-      <div className="h-3 w-24 rounded bg-surface-alt" />
-    </div>
-  );
-}
+import { Skeleton, SkeletonCard, SkeletonStat } from "@/components/ui/Skeleton";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 // ── Gerente: home completo ────────────────────────────────────────────────
 
@@ -50,16 +40,26 @@ function GerenteHome(): JSX.Element {
         </div>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {[...Array(4)].map((_, i) => (
-            <SkeletonBlock key={i} />
+            <SkeletonCard key={i} />
           ))}
         </div>
-        <div className="h-60 animate-pulse rounded-xl bg-surface-alt" />
+        <SkeletonCard />
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
           {[...Array(5)].map((_, i) => (
-            <SkeletonBlock key={i} />
+            <SkeletonCard key={i} />
           ))}
         </div>
       </div>
+    );
+  }
+
+  if (sales.error || !sales.data) {
+    return (
+      <ErrorState
+        title="Error al cargar"
+        message="No se pudieron obtener los indicadores de gerencia. Verificá la conexión e intentá de nuevo."
+        severity="warning"
+      />
     );
   }
 
@@ -227,28 +227,6 @@ function GerenteHome(): JSX.Element {
   );
 }
 
-// ── Vendedor: skeleton ────────────────────────────────────────────────────
-
-function VendedorSkeleton(): JSX.Element {
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <div className="h-12 w-20 animate-pulse rounded-lg bg-surface-alt" />
-        <div className="space-y-2">
-          <div className="h-5 w-28 animate-pulse rounded bg-surface-alt" />
-          <div className="h-3 w-40 animate-pulse rounded bg-surface-alt" />
-        </div>
-      </div>
-      <div className="h-12 animate-pulse rounded-xl bg-surface-alt" />
-      <div className="grid grid-cols-2 gap-3">
-        {[...Array(3)].map((_, i) => (
-          <div key={i} className="h-32 animate-pulse rounded-xl bg-surface-alt" />
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ── Vendedor: home completo ───────────────────────────────────────────────
 
 function VendedorHome(): JSX.Element {
@@ -266,7 +244,25 @@ function VendedorHome(): JSX.Element {
     }
   }
 
-  if (loading) return <VendedorSkeleton />;
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <Logo size="sm" />
+          <div>
+            <h1 className="text-lg font-bold text-text-primary">MotoShop</h1>
+            <p className="text-xs text-text-muted">Búsqueda rápida</p>
+          </div>
+        </div>
+        <Skeleton className="h-12 rounded-xl" />
+        <div className="grid grid-cols-2 gap-3">
+          {[...Array(3)].map((_, i) => (
+            <SkeletonCard key={i} />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

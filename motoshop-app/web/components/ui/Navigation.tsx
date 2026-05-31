@@ -301,6 +301,9 @@ export function gerenteNavItems(): NavItem[] {
     { label: "Forecast", href: "/forecast", icon: Icons.forecast },
     { label: "Alertas", href: "/alerts", icon: Icons.alerts },
     { label: "Acciones", href: "/acciones", icon: Icons.acciones },
+    { label: "Cohortes", href: "/cohortes", icon: Icons.home },
+    { label: "Vendedores", href: "/vendedores", icon: Icons.home },
+    { label: "Drift", href: "/drift", icon: Icons.alerts },
     { label: "Plan Compras", href: "/plan-compras", icon: Icons.planCompras },
   ];
 }
