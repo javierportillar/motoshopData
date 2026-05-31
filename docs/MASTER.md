@@ -53,6 +53,7 @@ F0 ✅  F1 ✅ (+F1.5 ✅ +F1.9 ✅)  F2 ✅  F3 ✅ (+F3.5 ✅ +F3.6 ✅)  F4-A
 | [`PENDIENTES.md`](../PENDIENTES.md) | Tareas humanas + handoffs Dev/Revisor entre sesiones | Para saber qué tengo que hacer yo o qué ejecutan los devs |
 | [`docs/contexto-proyecto.md`](contexto-proyecto.md) | Snapshot ejecutivo: arquitectura + entregables + riesgos + resumen | Para onboarding rápido o defensa académica |
 | [`docs/plan-f4-fix1.md`](plan-f4-fix1.md) | Plan de la fase activa (F4-FIX1) | Mientras esté abierta |
+| [`docs/roadmap-v2-produccion.md`](roadmap-v2-produccion.md) | **⭐ CORE · V2 producción seria · todas las deudas V1 y cómo se cierran** | Para visión post-V1, defensa académica como anexo, kick-off V2 |
 | [`docs/MASTER.md`](MASTER.md) | Este archivo — índice de navegación | Como entry point cuando volvés después de tiempo |
 
 ---
