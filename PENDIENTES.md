@@ -37,14 +37,27 @@ El resto (bronze_ingest → 11 silver → gold marts → quality → validate �
   b) O eliminar DEFAULT y manejarlo en el INSERT
   c) O ejecutar ALTER TABLE sobre la tabla existente
 
-### ⬜ Pregunta arquitectónica para el Revisor
+### 🟡 Propuesta Dev W — Mantener 1 job unificado (en revisión)
 
-> ¿Tiene sentido tener 1 solo job (`motoshop_full_workflow`) que va de bronze a gold + classifier + drift + snapshots? O conviene separar:
-> - **Job Bronze** (ingesta)
-> - **Job Silver** (dimensiones + hechos + calidad)
-> - **Job Gold** (marts + classifier + drift + snapshots)
+**Contexto:** Los 2 bugs que tumbaban el workflow (classifier y drift) ya están fixeados y pusheados (`a61ab1f`). La próxima corrida debería pasar completa.
+
+**Propuesta de Dev W (quien lo opera):**
+
+> ✅ **Mantener 1 solo job** (`motoshop_full_workflow`) con schedule unificado 19:00 COL.
 >
-> Porque hoy: si gold_classifier o gold_drift fallan, todo el workflow se marca FAILED aunque bronze y silver hayan pasado perfecto. Habría que pensar si conviene pipelines independientes con sus propios schedules y alertas.
+> **Razones:**
+> 1. Ya no hay bugs conocidos → el job debería pasar todas las noches
+> 2. Un solo schedule = un solo lugar para monitorear
+> 3. Las tasks de silver corren en paralelo entre sí (no son secuenciales), igual que gold
+> 4. Si gold falla, el run se marca FAILED **pero silver ya se ejecutó y actualizó los datos** — la diferencia con tener jobs separados es solo el color del marker en la UI
+> 5. Mantener 3 jobs implica 3 veces más infra (scripts, schedules, alertas, dependencias entre jobs)
+> 6. Para una demo académica con 1 schedule nocturno, la simplicidad pesa más que la segregación
+>
+> **Riesgo aceptado:** Si gold falla de noche, silver ya está actualizado, la API sirve datos frescos de silver, y el humano ve el FAILED a la mañana siguiente para corregir.
+
+**Pendiente:** Decisión del Revisor — aprobar propuesta ✅ o pedir separación en jobs independientes.
+
+**Próximo paso si se aprueba:** Marcar como resuelto y eliminar el job legacy `Motoshop Bronze Ingestion` (ID: 810345190577693) que quedó de F2 y ya no se usa.
 
 ---
 
