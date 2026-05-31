@@ -46,8 +46,8 @@
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>powershell</Command>
-      <Arguments>-ExecutionPolicy Bypass -File C:\Users\MotoShop\Documents\javidevmoto\infra\auto_pull_and_apply.ps1 -Verbose</Arguments>
+      <Command>wscript</Command>
+      <Arguments>//Nologo C:\Users\MotoShop\Documents\javidevmoto\infra\auto_pull_wrapper.vbs</Arguments>
     </Exec>
   </Actions>
 </Task>

@@ -23,8 +23,7 @@
 #   Crear archivo infra\AUTO_PULL_DISABLED — el script chequea y aborta.
 
 param(
-    [switch]$DryRun = $false,
-    [switch]$Verbose = $false
+    [switch]$DryRun = $false
 )
 
 $ErrorActionPreference = "Continue"
@@ -37,9 +36,6 @@ function Log {
     param([string]$Level, [string]$Message)
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $line = "[$ts] [$Level] $Message"
-    if ($Verbose -or $Level -eq "ERROR" -or $Level -eq "WARN") {
-        Write-Host $line
-    }
     Add-Content -Path $LogFile -Value $line -Encoding UTF8
 }
 
