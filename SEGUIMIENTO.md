@@ -625,107 +625,14 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ## Notas de sesión
 
-### 2026-05-30 — Sesión 57 · Dev W · Ciclo 1 — combo CASO C + CASO A
+### 2026-05-30 — Sesión 53 · Dev D · F7-E Paso D2 terminado
 
-> 🟢 [Dev W] Ciclo 1 aplicado · commits: `fee4559`, `ec9c30f`, `57df7d6` · rutinas: C (notebooks sync) + A (restart API) · notebooks sync OK (4 snapshot notebooks en Workspace) · API restart OK (PID 12548) · inventory-summary valor_total=$83.1M ✅ · sales-trend 200 + 6 items ✅ · timestamp: 2026-05-30 20:15 COL
+> 🟢 [F7-E-D] Paso D2 terminado · workflow modificado con 4 tasks snapshot · commit: e180aec · siguiente paso: D3 verificar primera corrida · ACCIÓN HUMANO: avisar Dev W para create_full_workflow.py + verificar UNPAUSED
 
-- **Hecho:** CASO C: 4 notebooks snapshot (30_snapshot_abc_mensual, 31_snapshot_dormidos_mensual, 32_snapshot_alertas_diario, 33_archive_forecasts) subidos a Databricks Workspace. CASO A: API reiniciada con fix inventory-summary (`fee4559`, valor_total $83.1M ≠ 0) + nuevo endpoint sales-trend (`ec9c30f`, 6 items mensuales desde Dec 2025). Todos los smoke tests pasan.
-- **Pendiente:** Dev D necesita confirmación para arrancar D2 (modificar workflow con 4 tasks snapshot). Dev A2 espera validación para continuar con A2-2 (vendedores-summary).
-
-### 2026-05-30 — Sesión 56b · Dev T2 · F7-C 8 pages migradas + 4 dashboards nuevos ⭐ HITO
-
-> 🟢 [F7-C-T2] Migración 8 pages COMPLETA + 4 dashboards nuevos creados · commit: `c328eae` · siguiente paso: esperar endpoints Dev A2 para reemplazar mocks + tests E2E · sin bloqueo
-
-- **Hecho (8 pages migradas):**
-  - Home por rol (`app/(authenticated)/page.tsx`): gerente (4 KPI Stat cards + SalesTrendChart real + 5 cards decisiones) y vendedor (SearchBar autofocus + 4 cards alertas/dormidos/acciones/rotación). Eliminado redirect server-side.
-  - `/dashboards/ventas`: fix bug semántico — el chart ahora usa `useSalesTrend(9)` con tendencia mensual REAL, no top 5 SKUs. Stat cards + Table\<T\> para top 10.
-  - `/dashboards/inventario`: Stat cards + Badge de porcentaje por bodega.
-  - `/dashboards/dormidos`: Badge semántico por días (error>180d, warning>90d, default<90d). Stat para KPIs.
-  - `/dashboards/abc`: Badge para buckets (success/warning/error). Card+AbcChart.
-  - `/dashboards/` (landing): 6 Stat cards con links, grid responsive md:2col lg:3col.
-  - `/forecast`: Badge para métricas, chart usa accent (#0EA5E9) en vez de azul hardcodeado.
-  - `/alerts`: AlertBadge compuesto, Badge para counts. Link "Ver SKU" usa accent.
-  - `/acciones`: Badge por tipo (success=ordered, info=postponed, default=dismissed). KPIs 3-col.
-- **Hecho (4 dashboards nuevos):**
-  - `/cohortes`: usa `useCohortes()` real (endpoint existe de F3). 3 KPI + tabla con recurrencia Badge.
-  - `/vendedores`: mock con 3 vendedores. Ranking + DeltaBadge + tabla con 6 columnas.
-  - `/drift`: mock con 3 alertas. Badge estado + tabla con acción recomendada.
-  - `/plan-compras`: mock con 5 SKUs. Filtros ABC+urgencia+dormidos. Tabla 8 columnas (StockBadge, cantidad, ABC, urgencia, dormido, supplier). Resumen 3 KPI.
-- **Dependencias pendientes:** Endpoints Dev A2 faltantes para reemplazar mocks en /vendedores, /drift, /plan-compras. `/cohortes` ya usa endpoint real.
-- **Stats:** 23 pages estáticas compilando (↑ de 19). 5 commits en esta sesión. ~1,860 líneas nuevas. Build 0 errores. 3/4 dashboards mockeados con TODO visibles.
-- **Aprendido:** `useMetrics<T>` genérico acepta cualquier response model — solo se define la interfaz y la URL. El patrón mock→real con datos hardcoded permite desbloquear el frontend mientras backend termina. Las pages mockeadas llevan marca visible "datos de muestra" para auditoría.
-- **Próximo paso:** Tests E2E Playwright en 3 viewports (375/768/1280px) + Lighthouse audit. Reemplazar mocks cuando Dev A2 pushee endpoints. Agregar link de Navegación a los 4 nuevos dashboards en el layout.
-
-### 2026-05-30 — Sesión 56 · Dev T2 · F7-C Paso 1 · Home por rol
-
-> 🟢 [F7-C-T2] Paso 1 terminado · home vendedor + gerente con diseño F7-B · commit: `97501cb` · siguiente paso: migrar /ventas + fix tendencia real · sin bloqueo
-
-- **Hecho:** Home page (`/`) completamente reemplazado. Antes: redirect server-side a `/dashboards`. Ahora: `app/(authenticated)/page.tsx` (cliente, 389 líneas) con dos layouts completos:
-  - **Gerente:** Logo + 4 KPI `Stat` cards (ventas mes, facturas, ticket promedio, valor inventario) → gráfico tendencia mensual real via `useSalesTrend(6)` usando `SalesTrendChart` existente → 5 cards de decisiones de compra linkeando a sub-dashboards (ventas, alertas, ABC, forecast, dormidos). Skeleton loading state con 13 bloques animados.
-  - **Vendedor:** Logo compacto + `SearchBar` con autofocus y botón Buscar → 4 cards rápidas en grid 2-col: alertas activas (Badge error + count), dormidos (Badge warning + count), mis acciones, rotación A top. Las cards de alertas/dormidos usan `Card variant="dark"` para destacar.
-  - Hook `useSalesTrend(periods)` agregado a `lib/api/hooks.ts` (19 líneas, tipos SalesTrendItem/SalesTrendResponse).
-- **Aprendido:** Next.js v14 App Router con route groups: `(authenticated)/page.tsx` resuelve a `/` siempre que no haya otro `page.tsx` en la raíz. Al eliminar el redirect viejo, el layout `(authenticated)/layout.tsx` (Header + NavBar) envuelve automáticamente la home. El hook `useMetrics<T>` genérico (ya existente) acepta cualquier response model — solo tuve que definir tipos y la URL parametrizada `sales-trend?periods=N`.
-- **Próximo paso:** Paso 2 — migrar `/dashboards/ventas` con fix del bug semántico "tendencia" (mostrar tendencia real mensual, no top SKUs disfrazado). Requiere el endpoint `sales-trend` (ya existe) y el formatter `formatMoney` (ya arreglado). Sin bloqueo.
-
-### 2026-05-30 — Sesión 55 · Dev T1 · F7-B COMPLETO ⭐ SPRINT CERRADO
-
-> 🟢 [F7-B-T1] F7-B COMPLETO · design system listo · commit: `c32f47b` · sprint cerrado · ACCIÓN HUMANO: avisar Revisor para audit F7-B
-
-- **Hecho:** Design system MotoShop completo en 6 pasos:
-  - **T1-1:** `tokens.ts` (286 líneas, tipos estrictos) + `globals.css` @theme paleta real + `layout.tsx` themeColor `#C83828`. Adaptado a Tailwind v4.
-  - **T1-2:** `Logo.tsx` (sm/md/lg + link + LogoMark) + `logo.png` en public/.
-  - **T1-3:** MVP componentes: `Card` (3 variantes), `Stat` (KPI + delta), `Table` (genérica `<T>`), `Badge` (5 variantes + compuestos StockBadge/DeltaBadge/AlertBadge).
-  - **T1-4:** Secundarios con estética industrial: `Chart` (wrapper recharts dark, tooltip diagnóstico), `Skeleton` (shimmer metálico cromado), `ErrorState` (hazard stripes + pulso), `EmptyState` (gradiente atmosférico dual).
-  - **T1-5:** `Navigation` adaptable (bottom nav mobile ≤5 items + sidebar desktop fijo con logo/logout). Icons SVG inline. Helpers `gerenteNavItems()` / `vendedorNavItems()`.
-  - **T1-6:** Cierre — build 0 errores (typecheck pre-existente: `vitest` types en `currency.test.ts`). 9 componentes en `components/ui/` + `Logo` + `tokens.ts` + `globals.css`. Total: ~2,400 líneas nuevas en 14 archivos.
-- **Aprendido:**
-  - Tailwind v4 usa `@theme` CSS-first, no `tailwind.config.ts`. El plan original asumía v3.
-  - Los componentes legacy en `lib/ui/` (Button, Card, Badge, Skeleton, EmptyState) consumen automáticamente los nuevos tokens vía `@theme` — migración visual inmediata sin tocar JSX.
-  - La separación `error ≠ primary` (#B91C1C vs #C83828) evita confusión UX entre "botón confirmar pedido" y "mensaje de error".
-- **Próximo paso:** Nada para Dev T1. Sprint cerrado. **Revisor audita F7-B.** **Dev T2 ya desbloqueado desde T1-3** — humano puede dispararlo cuando quiera.
-
-### 2026-05-30 — Sesión 55 · Dev T1 · F7-B T1-3 MVP COMPLETO ⭐ HITO
-
-> 🟢 [F7-B-T1] Paso T1-3 MVP COMPLETO · 4 componentes base + tokens + Logo listos · commit: `5aa9929` · siguiente paso: T1-4 componentes secundarios · 🔓 **LIBERA a Dev T2 — humano puede arrancar T2 AHORA**
-
-- **Hecho:** 4 componentes base creados en `components/ui/`: **Card** (3 variantes: default/dark/bordered, header/footer, hover toggle), **Stat** (KPI standalone con delta coloreado tokens delta-positive/negative), **Table** (genérica `<T>` con columnas, striped, hover, empty state), **Badge** (5 variantes semánticas + 2 tamaños + compuestos StockBadge/DeltaBadge/AlertBadge). Stories en `docs/f7/components/`. Build: 0 errores.
-- **Aprendido:** Los componentes existentes en `lib/ui/` (Button, Card legacy, Badge legacy, etc.) ya consumen los tokens MotoShop automáticamente vía `@theme` — no requieren migración urgente. Los nuevos `components/ui/` son la capa tokenizada para que Dev T2 construya las pages de F7-C.
-- **Próximo paso:** T1-4 componentes secundarios (Chart, Skeleton, ErrorState, EmptyState). Sin bloqueo.
-
-### 2026-05-30 — Sesión 55 · Dev T1 · F7-B T1-1 terminado
-
-> 🟢 [F7-B-T1] Paso T1-1 terminado · tokens + tailwind + globals operativos · commit: 2fa055e · siguiente paso: T1-2 Logo component · sin bloqueo, puedo continuar
-
-- **Hecho:** `lib/design/tokens.ts` (286 líneas, paleta semántica completa con tipos estrictos: colors, spacing, typography, radius, shadow, breakpoints). `app/globals.css` reemplazado: placeholder `#881337` por paleta MotoShop real (`#C83828` rojo marca, `#0EA5E9` cyan acento, `#171717` surfaceDark, escala completa de neutros/superficies/texto/estados/charts/deltas). `app/layout.tsx`: themeColor `#C83828`. Adaptado a Tailwind v4 (CSS-first `@theme`, sin `tailwind.config.ts`). Compatibilidad backward: `primary`/`primary-light`/`primary-dark`, `secondary`/`secondary-light`/`secondary-dark`, `error` preservados para componentes existentes. Build: 0 errores. Smoke test visual verificó render rojo MotoShop.
-- **Aprendido:** El proyecto usa Tailwind v4 (`@tailwindcss/postcss`) que configura colores vía `@theme` en CSS, no vía `tailwind.config.ts`. El plan original pedía crear `tailwind.config.ts` pero en v4 ese archivo es ignorado. Los componentes existentes (`Button.tsx`, `KpiCard.tsx`) usan clases como `bg-primary`, `hover:bg-primary-light`, `text-secondary-dark` — al sobreescribir `@theme` con la paleta real, todos los componentes migran visualmente sin tocar una línea de JSX.
-- **Próximo paso:** T1-2 Logo component (cp logo.png + Logo.tsx + Story). Sin bloqueo.
-
-### 2026-05-30 — Sesión 55 · Dev T1 · F7-B T1-2 terminado
-
-> 🟢 [F7-B-T1] Paso T1-2 terminado · Logo component + logo.png asset + story · commit: 9a428b6 · siguiente paso: T1-3 MVP componentes · sin bloqueo
-
-- **Hecho:** `Logo.tsx` con variantes `Logo` (sm 32px / md 48px / lg 64px, link opcional a `/`) y `LogoMark` (isotipo solo, para espacios reducidos). Logo copiado a `public/logo.png`. Story en `docs/f7/components/Logo.md` con 4 variantes + WCAG 13.62:1 AAA. Build 0 errores.
-- **Aprendido:** El logo está diseñado para fondo negro — el texto blanco "MOTOSHOP" es invisible sobre `surface` blanco. Solución: wrapper `bg-surface-dark` automático en el componente. Deuda documentada: SVG vectorial diferido a F8.
-- **Próximo paso:** T1-3 MVP componentes (Card + Stat + Table + Badge). **PARAR al terminar — libera a Dev T2.**
-
-### 2026-05-30 — Sesión 53 · Dev A · F6-D-FIX1-A Bug 3 backend
-
-> 🟢 [F6-D-FIX1-A] COMPLETO · valor_total arreglado (commit `fee4559`) · sprint cerrado · **ACCION HUMANO: avisar Dev W (Windows) git pull + restart API + smoke test** + avisar Revisor (audit FIX1).
-
-- **Hecho:** Bug 3 fix — `costo_promedio = 0` en todas las 4,829 filas de `mart_inventario_actual`. La query original filtraba con `WHERE costo_promedio > 0` → eliminaba 100% de filas → `valor_total = 0.0`. Fix: JOIN con `silver.fact_compras_detalle` trayendo último `costo_producto` vía `ROW_NUMBER` particionado por producto. Valor calculado: ~$83M COP. Tests 11/11 verdes. Evidencia en `motoshop-app/api/_runs/v_fix_inventory_valor_20260530.md`.
-- **Pendiente:** El fix está en `main` pero NO deployado. API producción (`api.fragloesja.uk`) aún retorna `valor_total: 0.0`. Requiere `git pull` + restart API en Windows.
-- **Próximo paso:** Dev W ejecuta deploy + Revisor audita V-FIX1-3.
-
----
-
-### 2026-05-30 — Sesión 54 · Dev T · F6-D-FIX1-B Bug 1+2 frontend
-
-> 🟢 [F6-D-FIX1-B] COMPLETO · pagina dormidos + formatter K/M · commit: `20542a0` · Vercel auto-deploya · sprint cerrado · **ACCION HUMANO: avisar Revisor para audit FIX1**.
-
-- **Hecho:** Bug 1 — creada pagina `/dashboards/dormidos` (`page.tsx`) usando `useDormidos()` SWR hook (ya existía). Layout consistente con inventario. Color coding: >180d rojo, 90-180d naranja, <90d gris. Bug 2 — creado `lib/format/currency.ts` con `formatMoney(value)`: >=1M → $1.2M, >=1K → $1.2K, <1K → $847. Reemplazados 7 lugares con definiciones duplicadas (ventas, inventario, abc, dashboards/page, TopList, SalesTrendChart). 5/5 tests unit verdes. Build 0 errores, Vercel deployado en `app.fragloesja.uk`.
-- **Aprendido:** El bug `$0.0M` para ticket_promedio=25813 era puramente frontend — la API devolvía el valor correcto pero el formatter siempre dividía por 1M. 7 archivos tenían la misma función `formatMoney(v / 1_000_000)` copiada localmente — DRY violado. Extraída a `lib/format/currency.ts`.
-- **Pendiente:** Bug 3 (`valor_total: 0.0`) es Dev A — fixado en commit `fee4559` pero no deployado en Windows aún.
-- **Próximo paso:** Nada. Sprint cerrado. Esperar audit revisor.
+- **Hecho:** `infra/create_full_workflow.py` modificado. 4 tasks nuevas agregadas al unified workflow: gold_snapshot_abc (30), gold_snapshot_dormidos (31), gold_archive_forecasts (33), gold_snapshot_alertas (32). Archive corre ANTES de baseline (dependencia: gold_feature_store → gold_archive_forecasts → gold_baseline). Snapshots corren DESPUÉS de sus marts originales (gold_abc → snapshot_abc, gold_dormidos → snapshot_dormidos, gold_classifier → snapshot_alertas). Total tasks: 26 → 30.
+- **Aprendido:** El orden de dependencias en el workflow es crítico para balde B: archive DEBE ejecutarse antes de que baseline haga INSERT OVERWRITE sobre forecast_demanda_sku. Si se invierte, se archiva el forecast NUEVO en vez del viejo.
+- **Abierto:** Esperar confirmación de Dev W que workflow fue re-deployado con `python infra/create_full_workflow.py` y verificar UNPAUSED.
+- **Próximo paso:** D3 verificar primera corrida snapshots (disparar workflow manual desde Databricks UI, verificar 4 tablas snapshot tienen ≥ 1 fila).
 
 ---
 
