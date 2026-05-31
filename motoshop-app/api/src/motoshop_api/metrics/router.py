@@ -29,6 +29,7 @@ from motoshop_api.metrics.schemas import (
     CohortesDetailResponse,
     CohortesResponse,
     DormidosResponse,
+    DriftSummaryResponse,
     InventorySummary,
     SalesSummary,
     SalesTrendResponse,
@@ -183,6 +184,17 @@ def cohortes_detail(
 ) -> CohortesDetailResponse:
     """Detalle de cohortes: LTV, retención por mes, nuevos vs recurrentes."""
     return _cached_or_fetch("cohortes-detail", repo.get_cohortes_detail)
+
+
+@router.get("/metrics/drift-summary", response_model=DriftSummaryResponse)
+@limiter.limit("30/minute")
+def drift_summary(
+    request: Request,
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+) -> DriftSummaryResponse:
+    """Alertas de drift: métricas desviadas, severidad y acciones recomendadas."""
+    return _cached_or_fetch("drift-summary", repo.get_drift_summary)
 
 
 @router.post("/metrics/cache/clear")

@@ -28,6 +28,8 @@ from motoshop_api.metrics.schemas import (
     SalesSummary,
     SalesTrendItem,
     SalesTrendResponse,
+    DriftSummaryItem,
+    DriftSummaryResponse,
     TopSkuItem,
     VendedorItem,
     VendedoresSummaryResponse,
@@ -45,6 +47,7 @@ class MetricsRepoProtocol(Protocol):
     def get_sales_trend(self, periods: int) -> SalesTrendResponse: ...
     def get_vendedores_summary(self) -> VendedoresSummaryResponse: ...
     def get_cohortes_detail(self) -> CohortesDetailResponse: ...
+    def get_drift_summary(self) -> DriftSummaryResponse: ...
 
 
 # ── Fake (mock) ──────────────────────────────────────────────────────────
@@ -228,6 +231,40 @@ class FakeMetricsRepo:
             nuevos_este_mes=35,
             recurrentes_este_mes=47,
             top_recurrentes=12,
+        )
+
+    def get_drift_summary(self) -> DriftSummaryResponse:
+        """Alertas de drift con severidad y acciones recomendadas mock."""
+        items = [
+            DriftSummaryItem(
+                metric_name="WAPE baseline", detected_at="2026-05-28",
+                drift_magnitude=3.2, threshold=30.0, status="warning",
+                recommended_action="Monitorear. Si supera 30%, re-entrenar baseline.",
+            ),
+            DriftSummaryItem(
+                metric_name="Ventas diarias promedio", detected_at="2026-05-20",
+                drift_magnitude=2.1, threshold=30.0, status="resolved",
+                recommended_action="Volvió a rango normal. Sin acción requerida.",
+            ),
+            DriftSummaryItem(
+                metric_name="Cobertura forecast", detected_at="2026-05-15",
+                drift_magnitude=5.8, threshold=30.0, status="warning",
+                recommended_action="Cayó 5.8pp. Verificar nuevos SKUs sin forecast.",
+            ),
+            DriftSummaryItem(
+                metric_name="Tasa recurrencia", detected_at="2026-05-10",
+                drift_magnitude=1.4, threshold=30.0, status="resolved",
+                recommended_action="Sin acción requerida.",
+            ),
+        ]
+        active = sum(1 for i in items if i.status == "active")
+        warning = sum(1 for i in items if i.status == "warning")
+        return DriftSummaryResponse(
+            items=items,
+            total_alerts=len(items),
+            active_count=active,
+            warning_count=warning,
+            current_threshold=30.0,
         )
 
 
@@ -503,6 +540,47 @@ class RealMetricsRepo:
             nuevos_este_mes=int(n["nuevos"]),
             recurrentes_este_mes=int(n["recurrentes"]),
             top_recurrentes=int(n["top_recurrentes"]),
+        )
+
+    def get_drift_summary(self) -> DriftSummaryResponse:
+        rows = self._query("""
+            SELECT alert_msg AS metric_name,
+                   DATE_FORMAT(week_end, 'yyyy-MM-dd') AS detected_at,
+                   desviacion_pct AS drift_magnitude,
+                   threshold_pct AS threshold,
+                   CASE
+                     WHEN desviacion_pct >= threshold_pct THEN 'active'
+                     WHEN desviacion_pct >= threshold_pct * 0.5 THEN 'warning'
+                     ELSE 'resolved'
+                   END AS status,
+                   CASE
+                     WHEN desviacion_pct >= threshold_pct THEN 'Re-entrenar modelo inmediatamente'
+                     WHEN desviacion_pct >= threshold_pct * 0.5 THEN 'Monitorear. Si supera threshold, re-entrenar.'
+                     ELSE 'Sin acción requerida'
+                   END AS recommended_action
+            FROM motoshop.gold.alertas_drift
+            ORDER BY week_end DESC
+            LIMIT 50
+        """)
+        threshold_row = self._query("""
+            SELECT COALESCE(MAX(threshold_pct), 30.0) AS current_threshold
+            FROM motoshop.gold.alertas_drift
+        """)
+        if not rows:
+            logger.warning("No drift alerts found in gold.alertas_drift")
+            return FakeMetricsRepo().get_drift_summary()
+        for r in rows:
+            r["drift_magnitude"] = float(r["drift_magnitude"])
+            r["threshold"] = float(r["threshold"])
+        current_threshold = float(threshold_row[0]["current_threshold"]) if threshold_row else 30.0
+        active = sum(1 for r in rows if r["status"] == "active")
+        warning = sum(1 for r in rows if r["status"] == "warning")
+        return DriftSummaryResponse(
+            items=[DriftSummaryItem(**r) for r in rows],
+            total_alerts=len(rows),
+            active_count=active,
+            warning_count=warning,
+            current_threshold=current_threshold,
         )
 
     def _query(self, sql: str) -> list[dict]:

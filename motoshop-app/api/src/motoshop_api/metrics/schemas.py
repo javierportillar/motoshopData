@@ -132,3 +132,20 @@ class CohortesDetailResponse(BaseModel):
     nuevos_este_mes: int
     recurrentes_este_mes: int
     top_recurrentes: int
+
+
+class DriftSummaryItem(BaseModel):
+    metric_name: str
+    detected_at: str
+    drift_magnitude: float
+    threshold: float
+    status: str  # active | resolved | warning
+    recommended_action: str
+
+
+class DriftSummaryResponse(BaseModel):
+    items: list[DriftSummaryItem]
+    total_alerts: int
+    active_count: int
+    warning_count: int
+    current_threshold: float
