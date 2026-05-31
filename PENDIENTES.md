@@ -50,6 +50,45 @@
 - F7-A Dev A es DIFERENTE de F6-D-FIX1-A Dev A. Si vos solo tenés "un Dev A", usalo primero para F6-D-FIX1-A (30 min) y después arrancalo en F7-D. O abrí 2 chats Dev A distintos en paralelo.
 - Dev W (Runtime Windows) se dispara cada vez que A o D pushean (vos pegás handoff Sesión 49 conocido).
 
+### 🖥️ Handoff · Dev W · F7-D A2-3 + A2-4 + A2-7 post-push (~10 min)
+
+```
+Soy Runtime Agent · Windows del proyecto MotoShop.
+Dev A2 acaba de pushear 3 endpoints nuevos que desbloquean
+a Dev T2 (frontend). Necesito aplicar todo junto.
+
+PRE-FLIGHT:
+1. cd C:\Users\MotoShop\Documents\javidevmoto
+2. git pull --ff-only origin main
+
+MI MISIÓN:
+Restart API y verificar 3 endpoints: cohortes-detail, drift-summary, plan-compras.
+
+PASO 1 · git pull + restart API
+  git pull --ff-only origin main
+  Stop-Process -Name python -Force 2>$null
+  .\infra\start_api.ps1
+  Start-Sleep 10
+
+PASO 2 · Smoke cohortes-detail
+  curl http://127.0.0.1:8000/metrics/cohortes-detail ^
+    -H "Authorization: Bearer <token>"
+  # 200 con cohortes: cohorte_mes, ltv_promedio, retencion, ...
+
+PASO 3 · Smoke drift-summary
+  curl http://127.0.0.1:8000/metrics/drift-summary ^
+    -H "Authorization: Bearer <token>"
+  # 200 con items: metric_name, detected_at, drift_magnitude, threshold, status
+
+PASO 4 · Smoke plan-compras
+  curl http://127.0.0.1:8000/metrics/plan-compras ^
+    -H "Authorization: Bearer <token>"
+  # 200 con items: sku, nombre, stock_actual, demanda_7d, cantidad_a_comprar, abc, urgencia, dormido, supplier
+
+PASO 5 · Reportar en SEGUIMIENTO.md:
+  > 🟢 [Dev W] Rutina post-push A2-3 + A2-4 + A2-7 aplicada · commits: efb3041 + e4eb793 + 8e216ea · API restart OK · cohortes-detail 200 · drift-summary 200 · plan-compras 200
+```
+
 ### 🖥️ Handoff · Dev W · F7-D A2-1 + A2-2 post-push (~10 min)
 
 Abrí un chat Claude Code corriendo en la PC Windows. Pegá esto:
