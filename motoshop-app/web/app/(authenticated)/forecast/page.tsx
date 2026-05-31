@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
-import { useForecast, useProducts } from "@/lib/api/hooks";
+import { useForecast, useForecastCategoria, useProducts } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -11,6 +11,8 @@ import { StaleDataBanner } from "@/components/StaleDataBanner";
 import {
   LineChart,
   Line,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -22,6 +24,24 @@ import {
 import { formatMoney } from "@/lib/format/currency";
 
 const HORIZON_OPTIONS = [7, 14, 30] as const;
+
+function CustomBarTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  return (
+    <div className="rounded-lg border border-border bg-surface px-3 py-2 text-xs shadow-md">
+      <p className="font-medium text-text-primary">{label}</p>
+      <p className="mt-1 text-text-secondary">
+        <strong>{d.predicted}</strong> unidades
+      </p>
+      {(d.ciLower != null || d.ciUpper != null) && (
+        <p className="text-text-muted">
+          IC: {d.ciLower}–{d.ciUpper}
+        </p>
+      )}
+    </div>
+  );
+}
 
 
 export default function ForecastPage(): JSX.Element {
@@ -63,6 +83,38 @@ export default function ForecastPage(): JSX.Element {
       upper: f.confidence_upper ?? f.predicted_qty * 1.2,
     }));
   }, [data]);
+
+  // Separate fetch with max horizon for bar chart aggregation
+  const { data: barSourceData } = useForecast(selectedSku, 30);
+
+  // Aggregate 30-day data into 3 period buckets for the bar chart
+  const barChartData = useMemo(() => {
+    if (!barSourceData?.forecast) return [];
+    const items = barSourceData.forecast;
+    const buckets = [
+      { label: "0–7 días", start: 0, end: 7 },
+      { label: "7–14 días", start: 7, end: 14 },
+      { label: "14–30 días", start: 14, end: 30 },
+    ];
+    return buckets
+      .filter((b) => b.start < items.length)
+      .map((b) => {
+        const slice = items.slice(b.start, Math.min(b.end, items.length));
+        if (slice.length === 0) return null;
+        const predicted = Number(slice.reduce((s, f) => s + f.predicted_qty, 0).toFixed(1));
+        const ciLower = Number(
+          slice.reduce((s, f) => s + (f.confidence_lower ?? f.predicted_qty * 0.8), 0).toFixed(1),
+        );
+        const ciUpper = Number(
+          slice.reduce((s, f) => s + (f.confidence_upper ?? f.predicted_qty * 1.2), 0).toFixed(1),
+        );
+        return { horizon: b.label, predicted, ciLower, ciUpper };
+      })
+      .filter(Boolean) as { horizon: string; predicted: number; ciLower: number; ciUpper: number }[];
+  }, [barSourceData]);
+
+  // Category-level data for comparative chart
+  const { data: categoriaData } = useForecastCategoria();
 
   function handleSelect(suggestionSku: string) {
     setSku(suggestionSku);
@@ -232,29 +284,60 @@ export default function ForecastPage(): JSX.Element {
             </div>
           </Card>
 
-          {/* Tabla de valores */}
-          <Card header={<h2 className="font-semibold text-text-primary">Valores</h2>}>
-            <div className="space-y-1">
-              {data.forecast.map((f, i) => (
-                <div
-                  key={i}
-                  className="flex items-center justify-between rounded-lg bg-surface-alt px-3 py-2"
-                >
-                  <span className="text-xs text-text-muted">{f.forecast_date}</span>
-                  <div className="text-right">
-                    <span className="text-sm font-medium text-text-primary">
-                      {f.predicted_qty.toFixed(1)} u.
-                    </span>
-                    {f.confidence_lower != null && (
-                      <span className="ml-2 text-xs text-text-muted">
-                        ({f.confidence_lower.toFixed(1)}–{f.confidence_upper?.toFixed(1)})
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
+          {/* Gráfico de barras por período */}
+          {barChartData.length > 0 && (
+            <Card header={<h2 className="font-semibold text-text-primary">Resumen por período</h2>}>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={barChartData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="horizon" tick={{ fontSize: 11 }} stroke="#a3a3a3" />
+                  <YAxis tick={{ fontSize: 11 }} stroke="#a3a3a3" tickFormatter={(v) => Math.round(v).toString()} />
+                  <Tooltip content={<CustomBarTooltip />} />
+                  <Bar dataKey="predicted" fill="#0EA5E9" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </Card>
+          )}
+
+          {/* Comparativo por categoría */}
+          {categoriaData?.items && categoriaData.items.length > 0 && (
+            <Card header={<h2 className="font-semibold text-text-primary">Predicción por categoría</h2>}>
+              <div className="space-y-2">
+                {categoriaData.items
+                  .slice()
+                  .sort((a, b) => b.desviacion_pct - a.desviacion_pct)
+                  .map((cat) => (
+                    <div
+                      key={cat.cod_grupo}
+                      className="flex items-center justify-between rounded-lg bg-surface-alt px-3 py-2"
+                    >
+                      <span className="text-xs font-medium text-text-primary">{cat.cod_grupo}</span>
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs text-text-muted">
+                          Real: {cat.demanda_real.toFixed(0)}
+                        </span>
+                        <span className="text-xs text-text-muted">
+                          Pred: {cat.demanda_predicha.toFixed(0)}
+                        </span>
+                        <Badge
+                          variant={
+                            Math.abs(cat.desviacion_pct) > 20
+                              ? "error"
+                              : Math.abs(cat.desviacion_pct) > 10
+                                ? "warning"
+                                : "success"
+                          }
+                          size="sm"
+                        >
+                          {cat.desviacion_pct > 0 ? "+" : ""}
+                          {cat.desviacion_pct.toFixed(0)}%
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </Card>
+          )}
         </>
       )}
 
