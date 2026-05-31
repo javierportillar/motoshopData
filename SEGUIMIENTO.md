@@ -627,6 +627,23 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ## Notas de sesión
 
+### 2026-05-31 — Auto-Pull Windows · Scheduled Task instalada
+
+> 🟢 [Auto-Pull] Scheduled Task MotoShop_AutoPull instalada · dry-run OK · primer run OK · timestamp: 07:52
+
+- **Hecho:**
+  - Script `infra\auto_pull_and_apply.ps1` verificado y fixeado: `$ErrorActionPreference = "Continue"` para compatibilidad con stderr de git en PowerShell 5.1
+  - Dry-run ejecutado OK: `powershell -ExecutionPolicy Bypass -File infra\auto_pull_and_apply.ps1 -DryRun -Verbose`
+  - Run normal ejecutado: detecta si hay cambios remotos, aplica pull + restart API + sync notebooks si corresponde
+  - Scheduled Task `MotoShop_AutoPull` creada vía PowerShell admin: cada 5 min, ventana 07:00-19:30, con `StartWhenAvailable` + `WakeToRun` + restart on failure 3x
+  - Verificación: `Get-ScheduledTaskInfo` muestra LastTaskResult=0, próxima corrida en 5 min
+  - Log: `infra\logs\auto_pull.log` con entries de fetch + up-to-date OK
+  - Archivo XML alternativo: `infra\MotoShop_AutoPull.xml`
+- **Aprendido:** El script remoto (commit `760c7a7`) ya incluía lock file, disable flag, y detección inteligente de cambios (API/notebooks/workflow/migrations). Solo requirió fix menor de `$ErrorActionPreference`.
+- **Abierto:** NA. Auto-pull operativo. El script NO maneja migrations SQL (WARN al log, humano aplica manual).
+
+---
+
 ### 2026-05-31 — Sesión 61 · Dev D · F7-E COMPLETO
 
 > 🟢 [F7-E-D] F7-E COMPLETO · D4 mart_rotacion_sku + D5 mart_abc_xyz + D6 workflow actualizado (32 tasks) · commits: 09b416a (D4+D5), 811e46f (D6) · sprint cerrado · ACCIÓN HUMANO: avisar Dev W para re-deploy workflow (CASO D) + avisar Revisor para audit final F7

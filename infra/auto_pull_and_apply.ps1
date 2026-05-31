@@ -27,7 +27,7 @@ param(
     [switch]$Verbose = $false
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $RepoRoot = "C:\Users\MotoShop\Documents\javidevmoto"
 $LogFile = "$RepoRoot\infra\logs\auto_pull.log"
 $DisableFlag = "$RepoRoot\infra\AUTO_PULL_DISABLED"
