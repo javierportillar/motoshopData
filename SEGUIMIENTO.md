@@ -686,7 +686,27 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 - **🔴 Bloqueantes:**
   - `GET /metrics/drift-summary` — depende de que Dev D arregle `gold_drift` y el workflow cree `gold.alertas_drift`.
   - `GET /metrics/plan-compras` — columna incorrecta en la query SQL. Lo arregla Dev A2.
-- **Próximo paso:** Esperar fixes de Dev D (gold_drift) y Dev A2 (plan-compras columna). Cuando pusheen, Ciclo 5.
+- **Próximo paso:** Ciclo 5 ejecutado (D4 + D5 + workflow redeploy).
+
+---
+
+### 2026-05-31 — Sesión 62 · Dev W · Ciclo 5 — D4 + D5 + workflow redeploy + ADR-0022 + job legacy cleanup
+
+> 🟢 [Dev W] Ciclo 5 completo · commits: `45fc06c`, `a61ab1f`, `23fe49f` (merge D4+D5+ADR-0022) · ADR-0022 aprobado + job legacy eliminado + notebooks D4/D5 sync + workflow redeploy 31 tasks UNPAUSED · smoke: drift-summary 200 ✅ · plan-compras 200 ✅ · timestamp: 2026-05-31 00:15 COL
+
+- **ACCION 1 — Limpieza job legacy:**
+  - ADR-0022 aprobado (workflow unificado): job `Motoshop Bronze Ingestion` (ID 810345190577693) eliminado.
+  - Jobs activos: solo `motoshop_full_workflow` (ID 272152121206178).
+- **ACCION 2 — Ciclo 5 (CASO C + CASO D):**
+  - CASO C (sync notebooks): `18_mart_rotacion_promedio.py` + `19_mart_abc_xyz.py` subidos a Workspace (200 OK).
+  - CASO D (redeploy): `create_full_workflow.py` ejecutado → workflow actualizado con **31 tasks** (nuevas: `gold_rotacion_promedio`, `gold_abc_xyz`).
+  - Schedule UNPAUSED: `0 0 19 * * ?` (19:00 COL) — retomando corridas nocturnas.
+- **Fixes adicionales (commit `a61ab1f`):**
+  - `drift-summary`: tabla `gold.alertas_drift` creada manualmente + notebook `25_drift_monitor.py` fixeado (DEFAULT CURRENT_TIMESTAMP eliminado).
+  - `plan-compras`: 3 bugs de columna SQL corregidos — `fact_ventas`→`fact_ventas_detalle`, `alertas_quiebre` JOIN por `sku`, `suppliers` CTE con JOIN `fact_compras_detalle` + `fact_compras`.
+- **Smoke test:** ambos endpoints responden 200 OK desde Databricks real.
+- **Run manual:** disparado `run_id: 794737486389619` — `bronze_ingest` RUNNING al cierre, gold tasks BLOCKED.
+- **🚀 F7 completo.** Todos los sprints cerrados: F7-B (design system), F7-C (frontend), F7-D (backend), F7-E (databricks). Pendiente: audit Revisor para cierre formal de F7.
 
 ---
 
