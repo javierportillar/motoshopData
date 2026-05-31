@@ -103,6 +103,13 @@ Tenés 27 horas totales distribuidas en 3 fases.
 3. Verificá que el parámetro `urgency` se pase correctamente al endpoint
 4. Posible bug: el frontend hardcodea `urgency=alta`
 
+**⚠️ NOTA**: Antes de implementar, verificá que el backend retorne datos para media/baja:
+```bash
+curl http://localhost:8000/api/alerts/stockout?urgency=media
+curl http://localhost:8000/api/alerts/stockout?urgency=baja
+# Si retornan [], el bug es del backend, no del frontend
+```
+
 **Criterio de aceptación**:
 - Al hacer click en "Alta", se muestran solo alertas alta
 - Al hacer click en "Media", se muestran solo alertas media
@@ -110,6 +117,27 @@ Tenés 27 horas totales distribuidas en 3 fases.
 - Los contadores se actualizan
 
 **Commit**: `fix(fase-1): ALERTAS filtros urgencia funcionando`
+
+---
+
+## TAREA 1.5: ALERTAS - Fix "Ver SKU" (1h extra si alcanza el tiempo)
+
+**Archivo**: `motoshop-app/web/app/(authenticated)/alerts/page.tsx` + `products/[sku]/page.tsx`
+
+**Problema**: Al hacer click en "Ver SKU" de una alerta, lleva a `/products/VH10025` pero dice "producto no encontrado".
+
+**Posibles causas**:
+- Backend: el SKU no existe en la tabla de productos
+- Frontend: la URL está mal construida (falta `/` o el slug)
+- Frontend: la página de detalle no maneja correctamente el SKU
+
+**Qué hacer**:
+1. Verificá la URL que genera el link en `alerts/page.tsx`
+2. Navegá manualmente a `/products/VH10025` y verificá qué dice el backend
+3. Si el backend retorna 404, es un problema de datos (agregar al prompt de Backend)
+4. Si el frontend no muestra el error correctamente, fix en `products/[sku]/page.tsx`
+
+**Commit**: `fix(fase-1): ALERTAS link Ver SKU navega correctamente`
 
 ---
 
@@ -557,7 +585,7 @@ El servidor FastAPI corre en un PC Windows. Necesitás acceso para:
 
 ## TU MISIÓN COMPLETA (3 FASES - 4 SEMANAS)
 
-Tenés 14 horas totales distribuidas en 2 fases.
+Tenés 24 horas totales distribuidas en 3 fases.
 
 ---
 
@@ -766,14 +794,147 @@ LIMIT 500
 
 ---
 
-# FASE 3: (Semanas 3-4) - 0h
+# FASE 3: ENDPOINTS PARA ENHANCEMENTS (Semanas 3-4) - 10h
 
-**Nota**: En Fase 3 no tenés tareas asignadas. Dev Frontend 1 y 2 trabajan en enhancements UX.
+**Objetivo**: Crear endpoints que Dev Frontend 1 y 2 necesitan para enhancements  
+**⚠️ CRÍTICO**: Sin estos endpoints, ambos devs frontend se bloquean el primer día de Fase 3  
+**Deadline**: Lunes Semana 3 EOD (ANTES de que arranquen los frontends)
 
-**Tu rol en Fase 3**:
-- Soporte a devs frontend si necesitan endpoints adicionales
-- Revisar PRs si es necesario
-- Preparar documentación técnica
+## TAREA 3.1: VENTAS - Crear endpoints diaria/mensual/histórica (4h)
+
+**Archivos**: `motoshop-app/api/src/motoshop_api/metrics/repo.py` + `router.py`
+
+**Problema**: Dev Frontend 1 necesita 3 endpoints que no existen para los toggles de ventas.
+
+**Qué crear**:
+
+### Endpoint 1: `/api/metrics/sales-daily?date=YYYY-MM-DD`
+```python
+# Retorna ventas del día específico
+# Respuesta: { date, total_ventas, total_facturas, productos_vendidos: [{sku, nombre, cantidad, valor}] }
+```
+
+### Endpoint 2: `/api/metrics/sales-monthly?month=YYYY-MM`
+```python
+# Retorna ventas del mes + comparación con mes anterior
+# Respuesta: { month, total_ventas, total_facturas, delta_porcentaje, productos_top: [...] }
+```
+
+### Endpoint 3: `/api/metrics/sales-historical`
+```python
+# Retorna total acumulado desde el inicio + tendencia mensual
+# Respuesta: { total_ventas, total_facturos, meses: [{month, ventas}], fecha_primera_venta }
+```
+
+**Criterio de aceptación**:
+- Los 3 endpoints retornan datos correctos
+- `curl` funciona para cada uno
+- Formato de respuesta consistente con el resto de la API
+
+**Commit**: `feat(fase-3): crear endpoints sales-daily, sales-monthly, sales-historical`
+
+---
+
+## TAREA 3.2: VENDEDORES - Agregar parámetros de período (3h)
+
+**Archivos**: `motoshop-app/api/src/motoshop_api/metrics/repo.py` + `router.py`
+
+**Problema**: Dev Frontend 1 necesita parámetros que no existen para los toggles de vendedores.
+
+**Qué crear**:
+
+### Parámetros a agregar a `/api/metrics/vendedores-summary`:
+```
+?period=month      → Solo ventas del mes actual
+?period=historical → Total acumulado desde el inicio
+?period=6months    → Últimos 6 meses
+?vendedor_id=123   → Detalle de un vendedor específico
+```
+
+### Respuesta para `?vendedor_id=123`:
+```python
+# { 
+#   vendedor_id, nombre, ventas_total, ventas_por_categoria: [{categoria, total}],
+#   ticket_promedio, productos_vendidos, comparacion_mes_anterior: {actual, anterior, delta}
+# }
+```
+
+**Criterio de aceptación**:
+- Sin parámetros: retorna mes actual (comportamiento actual, sin breaking change)
+- Con `?period=historical`: retorna total acumulado
+- Con `?vendedor_id=X`: retorna detalle del vendedor
+- Formato de respuesta consistente
+
+**Commit**: `feat(fase-3): vendedores-summary acepta parámetros period y vendedor_id`
+
+---
+
+## TAREA 3.3: SALES-TREND - Agregar parámetro ?year= (1h)
+
+**Archivos**: `motoshop-app/api/src/motoshop_api/metrics/repo.py` + `router.py`
+
+**Problema**: Dev Frontend 2 necesita comparar año actual vs año anterior en la gráfica.
+
+**Qué crear**:
+
+### Parámetro a agregar a `/api/metrics/sales-trend`:
+```
+?periods=12&year=2026  → Retorna meses de 2026
+?periods=12&year=2025  → Retorna meses de 2025
+```
+
+**Criterio de aceptación**:
+- Sin parámetro `year`: retorna últimos N meses (comportamiento actual)
+- Con `?year=2025`: retorna solo meses de 2025
+- Con `?year=2026`: retorna solo meses de 2026
+
+**Commit**: `feat(fase-3): sales-trend acepta parámetro year`
+
+---
+
+## TAREA 3.4: DORMIDOS - Agregar campos ultima_compra y dias_sin_venta (2h)
+
+**Archivos**: `motoshop-app/api/src/motoshop_api/metrics/repo.py`
+
+**Problema**: Dev Frontend 2 necesita campos que no existen para ordenar y mostrar días sin venta.
+
+**Qué crear**:
+
+### Campos a agregar a respuesta de `/api/metrics/dormidos`:
+```python
+# Cada item debe incluir:
+{
+  sku, nombre, categoria, stock_actual,
+  ultima_compra: "2026-01-15",     # NUEVO: fecha de última venta
+  dias_sin_venta: 136               # NUEVO: CURRENT_DATE - ultima_compra
+}
+```
+
+### Query SQL corregida:
+```python
+query = """
+SELECT 
+    d.*,
+    COALESCE(v.ultima_venta, d.ultima_venta) as ultima_compra,
+    DATEDIFF(CURRENT_DATE, COALESCE(v.ultima_venta, d.ultima_venta)) as dias_sin_venta
+FROM mart_productos_dormidos d
+LEFT JOIN (
+    SELECT sku, MAX(fecha) as ultima_venta
+    FROM fact_ventas_detalle
+    GROUP BY sku
+) v ON d.sku = v.sku
+WHERE DATEDIFF(CURRENT_DATE, COALESCE(v.ultima_venta, d.ultima_venta)) > 90
+ORDER BY dias_sin_venta DESC
+LIMIT 500
+"""
+```
+
+**Criterio de aceptación**:
+- Cada item tiene `ultima_compra` (formato YYYY-MM-DD)
+- Cada item tiene `dias_sin_venta` (entero, días desde última compra)
+- Query no tiene LIMIT 50 (ya corregido en Fase 2)
+
+**Commit**: `feat(fase-3): dormidos retorna ultima_compra y dias_sin_venta`
 
 ---
 
@@ -782,12 +943,14 @@ LIMIT 500
 Cuando termines todas las tareas:
 1. Todos los commits pusheados a `main`
 2. Servidor reiniciado: `.\start_api.ps1`
-3. Mensaje en Slack: "Dev Backend 1 completó todas las tareas (14h)"
-4. Si terminás antes del deadline, avisá para reasignar tareas
+3. Mensaje en Slack: "Dev Backend 1 completó todas las tareas (24h)"
+4. **CRÍTICO**: Avisar a Dev Frontend 1 y Dev Frontend 2 que los endpoints están listos
 
 ## DEPENDENCIAS Y BLOQUEOS
 
 **No tenés dependencias de otros devs**. Sos el único que trabaja en backend.
+
+**PERO**: Tus tareas de Fase 3 SON dependencia para Dev Frontend 1 y Dev Frontend 2.
 
 **Regla**: Si una query SQL no funciona, verificá directamente en Databricks antes de culpar al código.
 
@@ -799,15 +962,22 @@ cd motoshop-app
 .\check_health.ps1
 # Debe mostrar: API: OK, DB: OK
 
-# Probá todos los endpoints
+# Probá TODOS los endpoints (incluyendo los nuevos)
 curl http://localhost:8000/api/alerts/actions/me?date_from=2026-01-01&date_to=2026-12-31
 curl http://localhost:8000/api/metrics/inventory-summary
 curl http://localhost:8000/api/metrics/sales-trend?periods=12
+curl http://localhost:8000/api/metrics/sales-trend?periods=12&year=2025
 curl http://localhost:8000/api/metrics/cohortes
 curl http://localhost:8000/api/metrics/dormidos
+# NUEVOS FASE 3:
+curl http://localhost:8000/api/metrics/sales-daily?date=2026-05-31
+curl http://localhost:8000/api/metrics/sales-monthly?month=2026-05
+curl http://localhost:8000/api/metrics/sales-historical
+curl http://localhost:8000/api/metrics/vendedores-summary?period=historical
+curl http://localhost:8000/api/metrics/vendedores-summary?vendedor_id=1
 ```
 
-**Deadline final**: Martes EOD Semana 2 (antes de Demo Fase 2 el miércoles)
+**Deadline final**: Lunes Semana 3 EOD (antes de que arranquen los frontends en Fase 3)
 ```
 
 ---
@@ -816,10 +986,12 @@ curl http://localhost:8000/api/metrics/dormidos
 
 | Dev | Tarea | Depende de | Handoff |
 |-----|-------|------------|---------|
-| Dev Frontend 1 | 3.2 VENTAS toggles | Dev Backend 1 endpoints | Si no está listo, usar mock |
-| Dev Frontend 1 | 3.3 VENDEDORES toggles | Dev Backend 1 parámetros | Si no está listo, usar mock |
-| Dev Frontend 2 | 3.1 INICIO gráfica | Dev Backend 1 parámetro `?year=` | Si no está listo, usar mock |
-| Dev Frontend 2 | 3.2 DORMIDOS ordenar | Dev Backend 1 campos adicionales | Si no está listo, usar mock |
+| Dev Frontend 1 | 3.2 VENTAS toggles | Dev Backend 1 endpoints (Tarea 3.1) | Si no está listo, usar mock |
+| Dev Frontend 1 | 3.3 VENDEDORES toggles | Dev Backend 1 parámetros (Tarea 3.2) | Si no está listo, usar mock |
+| Dev Frontend 2 | 3.1 INICIO gráfica | Dev Backend 1 parámetro `?year=` (Tarea 3.3) | Si no está listo, usar mock |
+| Dev Frontend 2 | 3.2 DORMIDOS ordenar | Dev Backend 1 campos `ultima_compra`/`dias_sin_venta` (Tarea 3.4) | Si no está listo, usar mock |
+| Dev Frontend 1 | 1.4 ALERTAS filtro urgencia | Backend endpoint retorna datos para media/baja | Verificar con curl antes de fix |
+| Dev Frontend 1 | ALERTAS "Ver SKU" | Backend retorna producto o EmptyState | **NO ASIGNADO - necesita investigación** |
 
 **Regla general**: Si una dependencia no está lista después de 2 días, escalá en daily standup.
 
@@ -827,6 +999,35 @@ curl http://localhost:8000/api/metrics/dormidos
 
 ## CRONOGRAMA VISUAL
 
+```
+Semana 1 (Fase 1 - Bugs críticos):
+├─ Dev Frontend 1: PLAN COMPRAS + ALERTAS (8h)
+├─ Dev Frontend 2: (sin tareas - familiarización)
+└─ Dev Backend 1: ACCIONES + INVENTARIO (5h)
+
+Semana 2 (Fase 2 - Data quality):
+├─ Dev Frontend 1: (sin tareas - preparar Fase 3)
+├─ Dev Frontend 2: FORECAST buscador (4h)
+└─ Dev Backend 1: VENTAS + COHORTES + DORMIDOS (9h)
+
+⚠️ CRÍTICO: Fase 3 NO arranca sin que Backend complete Fase 2 + Fase 3
+
+Semanas 3-4 (Fase 3 - Enhancements):
+├─ Dev Backend 1: Crear endpoints Fase 3 (10h) ← DEBE IR PRIMERO
+│   ├─ LUN: sales-daily, sales-monthly, sales-historical (4h)
+│   ├─ MAR: vendedores-summary con parámetros (3h)
+│   ├─ MAR: sales-trend con ?year= (1h)
+│   └─ MIÉ: dormidos con ultima_compra/dias_sin_venta (2h)
+│
+├─ Dev Frontend 1: INICIO + VENTAS + VENDEDORES + ABC (19h) ← ARRANCA MIÉRCOLES
+│   ├─ Mié-Jue: INICIO KPIs + VENTAS toggles (10h)
+│   ├─ Vie: VENDEDORES toggles (6h)
+│   └─ Lun: ABC explicación (3h)
+│
+└─ Dev Frontend 2: INICIO gráfica + DORMIDOS + FORECAST + DRIFT (18h) ← ARRANCA MIÉRCOLES
+    ├─ Mié-Jue: INICIO gráfica + DORMIDOS ordenar (10h)
+    ├─ Vie: FORECAST visualización (6h)
+    └─ Lun: DRIFT explicación (2h)
 ```
 Semana 1 (Fase 1 - Bugs críticos):
 ├─ Dev Frontend 1: PLAN COMPRAS + ALERTAS (8h)
