@@ -30,6 +30,7 @@ from motoshop_api.metrics.schemas import (
     CohortesResponse,
     DormidosResponse,
     DriftSummaryResponse,
+    ForecastCategoriaResponse,
     InventorySummary,
     PlanComprasResponse,
     SalesSummary,
@@ -207,6 +208,17 @@ def plan_compras(
 ) -> PlanComprasResponse:
     """Plan de compras: SKUs con stock < demanda, urgencia, ABC, dormidos."""
     return _cached_or_fetch("plan-compras", repo.get_plan_compras)
+
+
+@router.get("/metrics/forecast-categoria", response_model=ForecastCategoriaResponse)
+@limiter.limit("30/minute")
+def forecast_categoria(
+    request: Request,
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+) -> ForecastCategoriaResponse:
+    """Forecast de demanda por categoría: real vs predicho, WAPE, cobertura."""
+    return _cached_or_fetch("forecast-categoria", repo.get_forecast_categoria)
 
 
 @router.post("/metrics/cache/clear")

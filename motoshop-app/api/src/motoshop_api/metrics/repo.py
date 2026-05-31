@@ -24,6 +24,10 @@ from motoshop_api.metrics.schemas import (
     CohortesResponse,
     DormidoItem,
     DormidosResponse,
+    DriftSummaryItem,
+    DriftSummaryResponse,
+    ForecastCategoriaItem,
+    ForecastCategoriaResponse,
     InventorySummary,
     PlanCompraItem,
     PlanComprasResponse,
@@ -51,6 +55,7 @@ class MetricsRepoProtocol(Protocol):
     def get_cohortes_detail(self) -> CohortesDetailResponse: ...
     def get_drift_summary(self) -> DriftSummaryResponse: ...
     def get_plan_compras(self) -> PlanComprasResponse: ...
+    def get_forecast_categoria(self) -> ForecastCategoriaResponse: ...
 
 
 # ── Fake (mock) ──────────────────────────────────────────────────────────
@@ -289,6 +294,21 @@ class FakeMetricsRepo:
             total_valor_estimado=total_unidades * 75_000.0,
             skus_urgentes=sum(1 for i in items if i.urgencia == "alta"),
             skus_dormidos=sum(1 for i in items if i.dormido),
+        )
+
+    def get_forecast_categoria(self) -> ForecastCategoriaResponse:
+        """Forecast por categoría con WAPE mock."""
+        items = [
+            ForecastCategoriaItem(cod_grupo="IV2", demanda_real=850.0, demanda_predicha=765.0, desviacion_pct=10.0, metodo="media_movil_28d"),
+            ForecastCategoriaItem(cod_grupo="IV1", demanda_real=120.0, demanda_predicha=110.0, desviacion_pct=8.3, metodo="media_movil_28d"),
+            ForecastCategoriaItem(cod_grupo="SIN_GRUPO", demanda_real=45.0, demanda_predicha=38.0, desviacion_pct=15.6, metodo="media_movil_28d"),
+        ]
+        wape = sum(abs(i.demanda_real - i.demanda_predicha) for i in items) / sum(i.demanda_real for i in items) * 100
+        return ForecastCategoriaResponse(
+            items=items,
+            total_categorias=len(items),
+            wape_promedio=round(wape, 2),
+            cobertura_pct=99.9,
         )
 
 
@@ -667,6 +687,42 @@ class RealMetricsRepo:
             total_valor_estimado=total_unidades * 75_000.0,
             skus_urgentes=sum(1 for r in rows if r.get("urgencia") == "alta"),
             skus_dormidos=sum(1 for r in rows if r.get("dormido")),
+        )
+
+    def get_forecast_categoria(self) -> ForecastCategoriaResponse:
+        rows = self._query("""
+            SELECT cod_grupo,
+                   SUM(demanda_real) AS demanda_real,
+                   SUM(demanda_predicha_baseline) AS demanda_predicha,
+                   ROUND(ABS(SUM(demanda_real) - SUM(demanda_predicha_baseline))
+                         / NULLIF(SUM(demanda_real), 0) * 100, 2) AS desviacion_pct,
+                   MAX(metodo_baseline) AS metodo
+            FROM motoshop.gold.forecast_categoria
+            WHERE business_date >= DATE_SUB(CURRENT_DATE(), 30)
+            GROUP BY cod_grupo
+            ORDER BY demanda_real DESC
+        """)
+        coverage_row = self._query("""
+            SELECT ROUND(COUNT(DISTINCT cod_grupo) * 100.0
+                   / NULLIF((SELECT COUNT(DISTINCT cod_grupo)
+                             FROM motoshop.gold.forecast_categoria), 0), 2) AS cobertura_pct
+            FROM motoshop.gold.forecast_categoria
+            WHERE business_date >= DATE_SUB(CURRENT_DATE(), 30)
+        """)
+        if not rows:
+            logger.warning("No forecast categoria data found")
+            return FakeMetricsRepo().get_forecast_categoria()
+        for r in rows:
+            r["demanda_real"] = float(r["demanda_real"])
+            r["demanda_predicha"] = float(r["demanda_predicha"])
+            r["desviacion_pct"] = float(r["desviacion_pct"])
+        wape = sum(abs(r["demanda_real"] - r["demanda_predicha"]) for r in rows) / sum(r["demanda_real"] for r in rows) * 100
+        cobertura = float(coverage_row[0]["cobertura_pct"]) if coverage_row else 99.9
+        return ForecastCategoriaResponse(
+            items=[ForecastCategoriaItem(**r) for r in rows],
+            total_categorias=len(rows),
+            wape_promedio=round(wape, 2),
+            cobertura_pct=cobertura,
         )
 
     def _query(self, sql: str) -> list[dict]:

@@ -170,3 +170,18 @@ class PlanComprasResponse(BaseModel):
     total_valor_estimado: float
     skus_urgentes: int
     skus_dormidos: int
+
+
+class ForecastCategoriaItem(BaseModel):
+    cod_grupo: str
+    demanda_real: float
+    demanda_predicha: float
+    desviacion_pct: float
+    metodo: str
+
+
+class ForecastCategoriaResponse(BaseModel):
+    items: list[ForecastCategoriaItem]
+    total_categorias: int
+    wape_promedio: float
+    cobertura_pct: float

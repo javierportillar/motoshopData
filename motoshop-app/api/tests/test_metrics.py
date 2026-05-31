@@ -43,6 +43,7 @@ class TestMetricsUnauthenticated:
             "/metrics/cohortes-detail",
             "/metrics/drift-summary",
             "/metrics/plan-compras",
+            "/metrics/forecast-categoria",
         ]
         for ep in endpoints:
             resp = client.get(ep)
@@ -214,6 +215,7 @@ class TestMetricsAuthenticated:
             "/metrics/cohortes-detail": ["cohortes", "total_cohortes"],
             "/metrics/drift-summary": ["items", "total_alerts"],
             "/metrics/plan-compras": ["items", "total_skus"],
+            "/metrics/forecast-categoria": ["items", "wape_promedio"],
         }
         for ep, expected_fields in endpoints.items():
             resp = client.get(ep, headers={"Authorization": f"Bearer {admin_token}"})
