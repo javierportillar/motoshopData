@@ -451,7 +451,7 @@ class RealMetricsRepo:
             SELECT cod_producto, nom_producto, dias_sin_venta, stock_actual
             FROM motoshop.gold.mart_productos_dormidos
             ORDER BY dias_sin_venta DESC
-            LIMIT 50
+            LIMIT 500
         """)
         if not rows:
             logger.warning("No dormidos data found in gold mart")
