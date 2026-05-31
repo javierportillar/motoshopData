@@ -685,6 +685,14 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 - **Aprendido:** Los componentes existentes en `lib/ui/` (Button, Card legacy, Badge legacy, etc.) ya consumen los tokens MotoShop automáticamente vía `@theme` — no requieren migración urgente. Los nuevos `components/ui/` son la capa tokenizada para que Dev T2 construya las pages de F7-C.
 - **Próximo paso:** T1-4 componentes secundarios (Chart, Skeleton, ErrorState, EmptyState). Sin bloqueo.
 
+### 2026-05-30 — Sesión 55 · Dev T1 · F7-B T1-1 terminado
+
+> 🟢 [F7-B-T1] Paso T1-1 terminado · tokens + tailwind + globals operativos · commit: 2fa055e · siguiente paso: T1-2 Logo component · sin bloqueo, puedo continuar
+
+- **Hecho:** `lib/design/tokens.ts` (286 líneas, paleta semántica completa con tipos estrictos: colors, spacing, typography, radius, shadow, breakpoints). `app/globals.css` reemplazado: placeholder `#881337` por paleta MotoShop real (`#C83828` rojo marca, `#0EA5E9` cyan acento, `#171717` surfaceDark, escala completa de neutros/superficies/texto/estados/charts/deltas). `app/layout.tsx`: themeColor `#C83828`. Adaptado a Tailwind v4 (CSS-first `@theme`, sin `tailwind.config.ts`). Compatibilidad backward: `primary`/`primary-light`/`primary-dark`, `secondary`/`secondary-light`/`secondary-dark`, `error` preservados para componentes existentes. Build: 0 errores. Smoke test visual verificó render rojo MotoShop.
+- **Aprendido:** El proyecto usa Tailwind v4 (`@tailwindcss/postcss`) que configura colores vía `@theme` en CSS, no vía `tailwind.config.ts`. El plan original pedía crear `tailwind.config.ts` pero en v4 ese archivo es ignorado. Los componentes existentes (`Button.tsx`, `KpiCard.tsx`) usan clases como `bg-primary`, `hover:bg-primary-light`, `text-secondary-dark` — al sobreescribir `@theme` con la paleta real, todos los componentes migran visualmente sin tocar una línea de JSX.
+- **Próximo paso:** T1-2 Logo component (cp logo.png + Logo.tsx + Story). Sin bloqueo.
+
 ### 2026-05-30 — Sesión 55 · Dev T1 · F7-B T1-2 terminado
 
 > 🟢 [F7-B-T1] Paso T1-2 terminado · Logo component + logo.png asset + story · commit: 9a428b6 · siguiente paso: T1-3 MVP componentes · sin bloqueo
@@ -692,14 +700,6 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 - **Hecho:** `Logo.tsx` con variantes `Logo` (sm 32px / md 48px / lg 64px, link opcional a `/`) y `LogoMark` (isotipo solo, para espacios reducidos). Logo copiado a `public/logo.png`. Story en `docs/f7/components/Logo.md` con 4 variantes + WCAG 13.62:1 AAA. Build 0 errores.
 - **Aprendido:** El logo está diseñado para fondo negro — el texto blanco "MOTOSHOP" es invisible sobre `surface` blanco. Solución: wrapper `bg-surface-dark` automático en el componente. Deuda documentada: SVG vectorial diferido a F8.
 - **Próximo paso:** T1-3 MVP componentes (Card + Stat + Table + Badge). **PARAR al terminar — libera a Dev T2.**
-
-### 2026-05-30 — Sesión 55 (cont) · Dev T1 · F7-B Paso T1-1 terminado
-
-> 🟢 [F7-B-T1] Paso T1-1 terminado · tokens + tailwind + globals operativos · commit: 2fa055e · siguiente paso: T1-2 Logo component · sin bloqueo, puedo continuar
-
-- **Hecho:** `lib/design/tokens.ts` (286 líneas, paleta semántica completa con tipos estrictos: colors, spacing, typography, radius, shadow, breakpoints). `app/globals.css` reemplazado: placeholder `#881337` por paleta MotoShop real (`#C83828` rojo marca, `#0EA5E9` cyan acento, `#171717` surfaceDark, escala completa de neutros/superficies/texto/estados/charts/deltas). `app/layout.tsx`: themeColor `#C83828`. Adaptado a Tailwind v4 (CSS-first `@theme`, sin `tailwind.config.ts`). Compatibilidad backward: `primary`/`primary-light`/`primary-dark`, `secondary`/`secondary-light`/`secondary-dark`, `error` preservados para componentes existentes. Build: 0 errores. Smoke test visual verificó render rojo MotoShop.
-- **Aprendido:** El proyecto usa Tailwind v4 (`@tailwindcss/postcss`) que configura colores vía `@theme` en CSS, no vía `tailwind.config.ts`. El plan original pedía crear `tailwind.config.ts` pero en v4 ese archivo es ignorado. Los componentes existentes (`Button.tsx`, `KpiCard.tsx`) usan clases como `bg-primary`, `hover:bg-primary-light`, `text-secondary-dark` — al sobreescribir `@theme` con la paleta real, todos los componentes migran visualmente sin tocar una línea de JSX.
-- **Próximo paso:** T1-2 Logo component (cp logo.png + Logo.tsx + Story). Sin bloqueo.
 
 ### 2026-05-30 — Sesión 53 · Dev A · F6-D-FIX1-A Bug 3 backend
 
