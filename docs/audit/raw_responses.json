@@ -1,0 +1,219 @@
+[
+  {
+    "label": "SALES_SUMMARY",
+    "path": "/api/metrics/sales-summary",
+    "status": 200,
+    "time_s": 2.72,
+    "body": "{\"business_month\":\"2026-05\",\"ventas_mes_actual\":23516508.33,\"ventas_mes_anterior\":26365000.0,\"delta_porcentual\":-10.8,\"ticket_promedio\":25813.95,\"num_facturas\":911,\"top_skus\":[{\"cod_producto\":\"601325\",\"nom_producto\":\"MOBIL SUPER MOTO 4T 20W50 12X1L\",\"cantidad_total\":40.0,\"valor_total\":1160000.0,\"porcentaje_ingreso\":4.5},{\"cod_producto\":\"MOTS1297\",\"nom_producto\":\"ACEITE CASTROS 20 W 50\",\"cantidad_total\":32.0,\"valor_total\":864000.0,\"porcentaje_ingreso\":3.3},{\"cod_producto\":\"14_00021 / 700102/12\",\"nom_producto\":\"AC MAGNA 4T 20W50 MA2/SL CJ 12/L / 700102/12\",\"cantidad_total\":18.0,\"valor_total\":360000.0,\"porcentaje_ingreso\":1.4},{\"cod_producto\":\"VY20116\",\"nom_producto\":\"BOMBA DE GASOLINA BWS 125 F.I\",\"cantidad_total\":1.0,\"valor_total\":357000.0,\"porcentaje_ingreso\":1.4},{\"cod_producto\":\"MOTS1430\",\"nom_producto\":\"SERVICIO-TECNICO MANTENIMIENTO DE MOTOS\",\"cantidad_total\":7.0,\"valor_total\":336800.0,\"porcentaje_ingreso\":1.3},{\"cod_producto\":\"02_00001 / MF-MAGX4L\",\"nom_producto\":\"BATERIA MOTO AGM_POL (- +)_12V_4.3AH_MAGNA_MF- MA\",\"cantidad_total\":4.0,\"valor_total\":297500.0,\"porcentaje_ingreso\":1.1},{\"cod_producto\":\"173052\",\"nom_producto\":\"KIT CAJA CADENA - ECO DELUXE 100 4 HUECOS (PT44G-PD14G- 428-H-120G) DORADA GAVIRIA\",\"cantidad_total\":3.0,\"valor_total\":270000.0,\"porcentaje_ingreso\":1.0},{\"cod_producto\":\"601324\",\"nom_producto\":\"MOBIL SUPER 4T MX 15W50  12X 1L\",\"cantidad_total\":7.0,\"valor_total\":266000.0,\"porcentaje_ingreso\":1.0},{\"cod_producto\":\"IMBRT46\",\"nom_producto\":\"REF: IMBRT46 - BARRA TELESCOPICOS C/TAPON FZ-16/FZ 2.0/FZ 2.5 (PAR) 21CF3110-00\",\"cantidad_total\":2.0,\"valor_total\":248000.0,\"porcentaje_ingreso\":1.0},{\"cod_producto\":\"02_00010 / MF-YB5LB\",\"nom_producto\":\"BATERIA MOTO AGM_POL (- +)_12V_5.2AH_MAGNA_MF- YB\",\"cantidad_total\":3.0,\"valor_total\":245000.0,\"porcentaje_ingreso\":0.9}]}"
+  },
+  {
+    "label": "SALES_TREND_DEFAULT",
+    "path": "/api/metrics/sales-trend",
+    "status": 500,
+    "time_s": 0.37,
+    "body": "Internal Server Error"
+  },
+  {
+    "label": "SALES_TREND_YEAR_2025",
+    "path": "/api/metrics/sales-trend?year=2025",
+    "status": 500,
+    "time_s": 0.26,
+    "body": "Internal Server Error"
+  },
+  {
+    "label": "SALES_TREND_YEAR_2024",
+    "path": "/api/metrics/sales-trend?year=2024",
+    "status": 500,
+    "time_s": 0.27,
+    "body": "Internal Server Error"
+  },
+  {
+    "label": "SALES_DAILY_7",
+    "path": "/api/metrics/sales-daily?days=7",
+    "status": 500,
+    "time_s": 0.37,
+    "body": "Internal Server Error"
+  },
+  {
+    "label": "SALES_DAILY_30",
+    "path": "/api/metrics/sales-daily?days=30",
+    "status": 500,
+    "time_s": 0.3,
+    "body": "Internal Server Error"
+  },
+  {
+    "label": "SALES_MONTHLY",
+    "path": "/api/metrics/sales-monthly",
+    "status": 500,
+    "time_s": 0.27,
+    "body": "Internal Server Error"
+  },
+  {
+    "label": "SALES_HISTORICAL",
+    "path": "/api/metrics/sales-historical",
+    "status": 200,
+    "time_s": 3.37,
+    "body": "{\"total_ventas\":600072943.82,\"total_facturas\":26755,\"meses\":[{\"year\":2024,\"month\":1,\"total_ventas\":106300.0,\"num_facturas\":12,\"ticket_promedio\":8858.33},{\"year\":2024,\"month\":7,\"total_ventas\":1265259.42,\"num_facturas\":91,\"ticket_promedio\":13903.95},{\"year\":2024,\"month\":8,\"total_ventas\":11027349.1,\"num_facturas\":736,\"ticket_promedio\":14982.81},{\"year\":2024,\"month\":9,\"total_ventas\":14494350.0,\"num_facturas\":885,\"ticket_promedio\":16377.8},{\"year\":2024,\"month\":10,\"total_ventas\":16673780.0,\"num_facturas\":958,\"ticket_promedio\":17404.78},{\"year\":2024,\"month\":11,\"total_ventas\":20253702.0,\"num_facturas\":1032,\"ticket_promedio\":19625.68},{\"year\":2024,\"month\":12,\"total_ventas\":23330200.0,\"num_facturas\":1107,\"ticket_promedio\":21075.16},{\"year\":2025,\"month\":1,\"total_ventas\":22918990.0,\"num_facturas\":1033,\"ticket_promedio\":22186.82},{\"year\":2025,\"month\":2,\"total_ventas\":21293000.0,\"num_facturas\":961,\"ticket_promedio\":22157.13},{\"year\":2025,\"month\":3,\"total_ventas\":23247213.08,\"num_facturas\":1231,\"ticket_promedio\":18884.82},{\"year\":2025,\"month\":4,\"total_ventas\":25446616.0,\"num_facturas\":1334,\"ticket_promedio\":19075.42},{\"year\":2025,\"month\":5,\"total_ventas\":35008558.75,\"num_facturas\":1663,\"ticket_promedio\":21051.45},{\"year\":2025,\"month\":6,\"total_ventas\":29280600.0,\"num_facturas\":1382,\"ticket_promedio\":21187.12},{\"year\":2025,\"month\":7,\"total_ventas\":39019437.74,\"num_facturas\":1586,\"ticket_promedio\":24602.42},{\"year\":2025,\"month\":8,\"total_ventas\":34970800.0,\"num_facturas\":1520,\"ticket_promedio\":23007.11},{\"year\":2025,\"month\":9,\"total_ventas\":34298629.4,\"num_facturas\":1358,\"ticket_promedio\":25256.72},{\"year\":2025,\"month\":10,\"total_ventas\":30724800.0,\"num_facturas\":1250,\"ticket_promedio\":24579.84},{\"year\":2025,\"month\":11,\"total_ventas\":27409562.0,\"num_facturas\":1185,\"ticket_promedio\":23130.43},{\"year\":2025,\"month\":12,\"total_ventas\":39473500.0,\"num_facturas\":1541,\"ticket_promedio\":25615.51},{\"year\":2026,\"month\":1,\"total_ventas\":39630388.0,\"num_facturas\":1621,\"ticket_promedio\":24448.11},{\"year\":2026,\"month\":2,\"total_ventas\":27954380.0,\"num_facturas\":1186,\"ticket_promedio\":23570.3},{\"year\":2026,\"month\":3,\"total_ventas\":32364020.0,\"num_facturas\":1183,\"ticket_promedio\":27357.58},{\"year\":2026,\"month\":4,\"total_ventas\":26365000.0,\"num_facturas\":989,\"ticket_promedio\":26658.24},{\"year\":2026,\"month\":5,\"total_ventas\":23516508.33,\"num_facturas\":911,\"ticket_promedio\":25813.95}],\"fecha_primera_venta\":\"2024-01-11\"}"
+  },
+  {
+    "label": "INVENTORY",
+    "path": "/api/metrics/inventory-summary",
+    "status": 200,
+    "time_s": 3.1,
+    "body": "{\"stock_total\":4024.0,\"valor_total\":83128020.24,\"num_productos\":4829,\"por_bodega\":[{\"cod_bodega\":\"\",\"nom_bodega\":\"SIN NOMBRE\",\"cantidad\":4024.0,\"porcentaje\":100.0}]}"
+  },
+  {
+    "label": "ABC",
+    "path": "/api/metrics/abc-segmentation",
+    "status": 200,
+    "time_s": 1.61,
+    "body": "{\"business_month\":\"2026-05-01\",\"total_skus\":503,\"total_ingresos\":23516508.33,\"bucket_a\":{\"categoria\":\"A\",\"num_skus\":170,\"valor_total\":18811800.0,\"porcentaje_ingreso\":80.0},\"bucket_b\":{\"categoria\":\"B\",\"num_skus\":152,\"valor_total\":3523108.33,\"porcentaje_ingreso\":15.0},\"bucket_c\":{\"categoria\":\"C\",\"num_skus\":181,\"valor_total\":1181600.0,\"porcentaje_ingreso\":5.0}}"
+  },
+  {
+    "label": "DORMIDOS_50",
+    "path": "/api/metrics/dormidos?limit=50",
+    "status": 500,
+    "time_s": 1.16,
+    "body": "Internal Server Error"
+  },
+  {
+    "label": "DORMIDOS_500",
+    "path": "/api/metrics/dormidos?limit=500",
+    "status": 500,
+    "time_s": 1.02,
+    "body": "Internal Server Error"
+  },
+  {
+    "label": "COHORTES",
+    "path": "/api/metrics/cohortes",
+    "status": 500,
+    "time_s": 1.32,
+    "body": "Internal Server Error"
+  },
+  {
+    "label": "COHORTES_DETAIL",
+    "path": "/api/metrics/cohortes-detail",
+    "status": 200,
+    "time_s": 3.04,
+    "body": "{\"cohortes\":[{\"cohorte_mes\":\"2024-01-01\",\"total_clientes\":1,\"ltv_promedio\":169375.31,\"retencion\":[{\"mes_observacion\":\"2024-01-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2024-07-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2024-08-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2024-09-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2024-10-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2024-11-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2024-12-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-01-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-02-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-03-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-04-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-05-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-06-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-07-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-08-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-09-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-10-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-11-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-12-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2026-01-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2026-02-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2026-03-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2026-04-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2026-05-01\",\"num_clientes\":1,\"tasa_recurrencia\":1.0}]},{\"cohorte_mes\":\"2024-08-01\",\"total_clientes\":13,\"ltv_promedio\":156974.6,\"retencion\":[{\"mes_observacion\":\"2024-08-01\",\"num_clientes\":13,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2024-09-01\",\"num_clientes\":6,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2024-10-01\",\"num_clientes\":2,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2024-11-01\",\"num_clientes\":4,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2024-12-01\",\"num_clientes\":4,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-01-01\",\"num_clientes\":3,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-02-01\",\"num_clientes\":4,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-03-01\",\"num_clientes\":5,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-04-01\",\"num_clientes\":3,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-05-01\",\"num_clientes\":2,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-06-01\",\"num_clientes\":3,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-07-01\",\"num_clientes\":4,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-08-01\",\"num_clientes\":2,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-09-01\",\"num_clientes\":3,\"tasa_recurrencia\":1.0},{\"mes_observacion\":\"2025-10-01\",\"num_cli"
+  },
+  {
+    "label": "VENDEDORES_NO_PARAM",
+    "path": "/api/metrics/vendedores-summary",
+    "status": 200,
+    "time_s": 1.24,
+    "body": "{\"items\":[{\"nit_vendedor\":\"1116274616\",\"nombre_vendedor\":\"KAROL NATALIA BURGOS BUSTOS\",\"facturas\":151,\"total_ventas\":23516508.33,\"ticket_promedio\":155738.46576158938}]}"
+  },
+  {
+    "label": "VENDEDORES_HISTORICAL",
+    "path": "/api/metrics/vendedores-summary?period=historical",
+    "status": 200,
+    "time_s": 1.42,
+    "body": "{\"items\":[{\"nit_vendedor\":\"1116274616\",\"nombre_vendedor\":\"KAROL NATALIA BURGOS BUSTOS\",\"facturas\":6311,\"total_ventas\":596368614.4000001,\"ticket_promedio\":94496.69060370783},{\"nit_vendedor\":\"\",\"nombre_vendedor\":\"\",\"facturas\":27,\"total_ventas\":3666100.0,\"ticket_promedio\":135781.4814814815},{\"nit_vendedor\":\"12963457\",\"nombre_vendedor\":\"FRANCISCO  JAVIER PORTILLA ERAZO\",\"facturas\":1,\"total_ventas\":42700.0,\"ticket_promedio\":42700.0}]}"
+  },
+  {
+    "label": "VENDEDORES_MONTH",
+    "path": "/api/metrics/vendedores-summary?period=month",
+    "status": 200,
+    "time_s": 0.28,
+    "body": "{\"items\":[{\"nit_vendedor\":\"1116274616\",\"nombre_vendedor\":\"KAROL NATALIA BURGOS BUSTOS\",\"facturas\":151,\"total_ventas\":23516508.33,\"ticket_promedio\":155738.46576158938}]}"
+  },
+  {
+    "label": "VENDEDORES_MONTHLY",
+    "path": "/api/metrics/vendedores-summary?period=monthly",
+    "status": 422,
+    "time_s": 0.27,
+    "body": "{\"detail\":[{\"type\":\"literal_error\",\"loc\":[\"query\",\"period\"],\"msg\":\"Input should be 'month', 'historical' or '6months'\",\"input\":\"monthly\",\"ctx\":{\"expected\":\"'month', 'historical' or '6months'\"}}]}"
+  },
+  {
+    "label": "VENDEDORES_6MONTHS",
+    "path": "/api/metrics/vendedores-summary?period=6months",
+    "status": 200,
+    "time_s": 1.17,
+    "body": "{\"items\":[{\"nit_vendedor\":\"1116274616\",\"nombre_vendedor\":\"KAROL NATALIA BURGOS BUSTOS\",\"facturas\":1392,\"total_ventas\":187634396.33,\"ticket_promedio\":134794.82494971267},{\"nit_vendedor\":\"\",\"nombre_vendedor\":\"\",\"facturas\":8,\"total_ventas\":726400.0,\"ticket_promedio\":90800.0}]}"
+  },
+  {
+    "label": "DRIFT_SUMMARY",
+    "path": "/api/metrics/drift-summary",
+    "status": 200,
+    "time_s": 2.17,
+    "body": "{\"items\":[],\"total_alerts\":0,\"active_count\":0,\"warning_count\":0,\"current_threshold\":30.0}"
+  },
+  {
+    "label": "ALERTS_STOCKOUT_DEFAULT",
+    "path": "/api/alerts/stockout",
+    "status": 200,
+    "time_s": 1.48,
+    "body": "{\"alerts\":[{\"sku\":\"02_00002 / MF-MAGX5L\",\"nom_producto\":\"BATERIA MOTO AGM_POL (- +)_12V_5AH_MAGNA_MF- MAGX\",\"stock_actual\":0.0,\"demanda_predicha\":1.0,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"04Q154M\",\"nom_producto\":\"EXOSTO BOXER(TODAS)-CALIBER115/AGILITY-CITY-LIKE-FLY125-150 /FD-VIVA-BEST-X-Z-115-125/TOWNY-PASSOLA50\",\"stock_actual\":0.0,\"demanda_predicha\":1.1428571428571428,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"1703\",\"nom_producto\":\"CAUCHO TAPA LATERAL KW/AX/AKT\",\"stock_actual\":1.0,\"demanda_predicha\":2.142857142857143,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"1887\",\"nom_producto\":\"ABRAZADERA PLASTICA 30cm x 4.8mm\",\"stock_actual\":2.0,\"demanda_predicha\":4.142857142857143,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"19SA01-CAJAX1\",\"nom_producto\":\"CAJA X 12 SILICONA AUTOMOTRIZ GRIS NEUTRA 50 GR\",\"stock_actual\":1.0,\"demanda_predicha\":2.2,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"2038\",\"nom_producto\":\"CHAPETA GOLOSO (PEQUE\u00d1A)\",\"stock_actual\":1.0,\"demanda_predicha\":6.0,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"21C-E3440-00\",\"nom_producto\":\"FILTRO DE ACEITE FZ16/FZN 2.0/FZN 3.0/SZR16/SZRR15/XTZ150 FI\",\"stock_actual\":1.0,\"demanda_predicha\":4.0,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"278\",\"nom_producto\":\"TORNILLO HEX. 6 x 30 MM\",\"stock_actual\":1.0,\"demanda_predicha\":2.4285714285714284,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"40R108\",\"nom_producto\":\"\\nRETEN 33-46-11 BARRAS YAMAHA/KAWASAKI BWS 125 4T-SZ RR 150/VICTOR 150/KLX 150/BETA WIND 250\",\"stock_actual\":1.0,\"demanda_predicha\":2.4,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"55182\",\"nom_producto\":\"LAMINILLA NEUTRA DELUXE/ECO 100 +/SPLENDOR/C90/C100 BIZ\",\"stock_actual\":1.0,\"demanda_predicha\":4.0,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"6447\",\"nom_producto\":\"ESPARRAGO 6 x 8 x 60 MOTO\",\"stock_actual\":1.0,\"demanda_predicha\":2.25,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"737\",\"nom_producto\":\"ABRAZADERA PLASTICA 20cm x 4.8mm\",\"stock_actual\":1.0,\"demanda_predicha\":2.5714285714285716,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"851\",\"nom_producto\":\"ARANDELA CAUCHO 5 x 11 mm\",\"stock_actual\":1.0,\"demanda_predicha\":2.5,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"91255-169-000RS\",\"nom_producto\":\"RETENEDOR ACEITE 30X42X11 HORQUILLA   TELESCOPICA\",\"stock_actual\":1.0,\"demanda_predicha\":2.4285714285714284,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"94\",\"nom_producto\":\"TORNILLO FLANGE 6 x 15 MM 20001184\",\"stock_actual\":2.0,\"demanda_predicha\":6.428571428571429,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"AV0050\",\"nom_producto\":\"TERMN. HEM. 1/8 \\\"  PLANO CON PIN        COBRE\",\"stock_actual\":2.0,\"demanda_predicha\":6.0,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"BK4340\",\"nom_producto\":\"DRNAL.  TRANS.  DEL/TRAS  SPLENDOR 100 NXG\",\"stock_actual\":1.0,\"demanda_predicha\":2.4285714285714284,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"BK9310\",\"nom_producto\":\"DRNAL.  ANAR.DEL/TRAS.                 YBR 125 DX/ F"
+  },
+  {
+    "label": "ALERTS_STOCKOUT_TODOS",
+    "path": "/api/alerts/stockout?urgencia=todos",
+    "status": 200,
+    "time_s": 0.28,
+    "body": "{\"alerts\":[{\"sku\":\"02_00002 / MF-MAGX5L\",\"nom_producto\":\"BATERIA MOTO AGM_POL (- +)_12V_5AH_MAGNA_MF- MAGX\",\"stock_actual\":0.0,\"demanda_predicha\":1.0,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"04Q154M\",\"nom_producto\":\"EXOSTO BOXER(TODAS)-CALIBER115/AGILITY-CITY-LIKE-FLY125-150 /FD-VIVA-BEST-X-Z-115-125/TOWNY-PASSOLA50\",\"stock_actual\":0.0,\"demanda_predicha\":1.1428571428571428,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"1703\",\"nom_producto\":\"CAUCHO TAPA LATERAL KW/AX/AKT\",\"stock_actual\":1.0,\"demanda_predicha\":2.142857142857143,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"1887\",\"nom_producto\":\"ABRAZADERA PLASTICA 30cm x 4.8mm\",\"stock_actual\":2.0,\"demanda_predicha\":4.142857142857143,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"19SA01-CAJAX1\",\"nom_producto\":\"CAJA X 12 SILICONA AUTOMOTRIZ GRIS NEUTRA 50 GR\",\"stock_actual\":1.0,\"demanda_predicha\":2.2,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"2038\",\"nom_producto\":\"CHAPETA GOLOSO (PEQUE\u00d1A)\",\"stock_actual\":1.0,\"demanda_predicha\":6.0,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"21C-E3440-00\",\"nom_producto\":\"FILTRO DE ACEITE FZ16/FZN 2.0/FZN 3.0/SZR16/SZRR15/XTZ150 FI\",\"stock_actual\":1.0,\"demanda_predicha\":4.0,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"278\",\"nom_producto\":\"TORNILLO HEX. 6 x 30 MM\",\"stock_actual\":1.0,\"demanda_predicha\":2.4285714285714284,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"40R108\",\"nom_producto\":\"\\nRETEN 33-46-11 BARRAS YAMAHA/KAWASAKI BWS 125 4T-SZ RR 150/VICTOR 150/KLX 150/BETA WIND 250\",\"stock_actual\":1.0,\"demanda_predicha\":2.4,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"55182\",\"nom_producto\":\"LAMINILLA NEUTRA DELUXE/ECO 100 +/SPLENDOR/C90/C100 BIZ\",\"stock_actual\":1.0,\"demanda_predicha\":4.0,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"6447\",\"nom_producto\":\"ESPARRAGO 6 x 8 x 60 MOTO\",\"stock_actual\":1.0,\"demanda_predicha\":2.25,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"737\",\"nom_producto\":\"ABRAZADERA PLASTICA 20cm x 4.8mm\",\"stock_actual\":1.0,\"demanda_predicha\":2.5714285714285716,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"851\",\"nom_producto\":\"ARANDELA CAUCHO 5 x 11 mm\",\"stock_actual\":1.0,\"demanda_predicha\":2.5,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"91255-169-000RS\",\"nom_producto\":\"RETENEDOR ACEITE 30X42X11 HORQUILLA   TELESCOPICA\",\"stock_actual\":1.0,\"demanda_predicha\":2.4285714285714284,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"94\",\"nom_producto\":\"TORNILLO FLANGE 6 x 15 MM 20001184\",\"stock_actual\":2.0,\"demanda_predicha\":6.428571428571429,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"AV0050\",\"nom_producto\":\"TERMN. HEM. 1/8 \\\"  PLANO CON PIN        COBRE\",\"stock_actual\":2.0,\"demanda_predicha\":6.0,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"BK4340\",\"nom_producto\":\"DRNAL.  TRANS.  DEL/TRAS  SPLENDOR 100 NXG\",\"stock_actual\":1.0,\"demanda_predicha\":2.4285714285714284,\"dias_hasta_quiebre\":0,\"urgencia\":\"alta\"},{\"sku\":\"BK9310\",\"nom_producto\":\"DRNAL.  ANAR.DEL/TRAS.                 YBR 125 DX/ F"
+  },
+  {
+    "label": "RECOMMENDATIONS",
+    "path": "/api/metrics/recommendations",
+    "status": 500,
+    "time_s": 2.15,
+    "body": "Internal Server Error"
+  },
+  {
+    "label": "PLAN_COMPRAS_NO_FILTER",
+    "path": "/api/metrics/plan-compras",
+    "status": 200,
+    "time_s": 1.53,
+    "body": "{\"items\":[{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"C\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"C\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"601325\",\"nombre\":\"MOBIL SUPER MOTO 4T 20W50 12X1L\",\"stock_actual\":1.0,\"demanda_7d\":5.0,\"cantidad_a_comprar\":4.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"S.A.J DISTRIBUCIONES SAS\"},{\"sku\":\"601325\",\"nombre\":\"MOBIL SUPER MOTO 4T "
+  },
+  {
+    "label": "PLAN_COMPRAS_ABC_A",
+    "path": "/api/metrics/plan-compras?abc=A",
+    "status": 200,
+    "time_s": 0.26,
+    "body": "{\"items\":[{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"C\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"C\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"601325\",\"nombre\":\"MOBIL SUPER MOTO 4T 20W50 12X1L\",\"stock_actual\":1.0,\"demanda_7d\":5.0,\"cantidad_a_comprar\":4.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"S.A.J DISTRIBUCIONES SAS\"},{\"sku\":\"601325\",\"nombre\":\"MOBIL SUPER MOTO 4T "
+  },
+  {
+    "label": "PLAN_COMPRAS_ABC_B",
+    "path": "/api/metrics/plan-compras?abc=B",
+    "status": 200,
+    "time_s": 0.35,
+    "body": "{\"items\":[{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"C\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"C\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"601325\",\"nombre\":\"MOBIL SUPER MOTO 4T 20W50 12X1L\",\"stock_actual\":1.0,\"demanda_7d\":5.0,\"cantidad_a_comprar\":4.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"S.A.J DISTRIBUCIONES SAS\"},{\"sku\":\"601325\",\"nombre\":\"MOBIL SUPER MOTO 4T "
+  },
+  {
+    "label": "PLAN_COMPRAS_URGENCIA_ALTA",
+    "path": "/api/metrics/plan-compras?urgencia=alta",
+    "status": 200,
+    "time_s": 0.31,
+    "body": "{\"items\":[{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"C\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"C\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"601325\",\"nombre\":\"MOBIL SUPER MOTO 4T 20W50 12X1L\",\"stock_actual\":1.0,\"demanda_7d\":5.0,\"cantidad_a_comprar\":4.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"S.A.J DISTRIBUCIONES SAS\"},{\"sku\":\"601325\",\"nombre\":\"MOBIL SUPER MOTO 4T "
+  },
+  {
+    "label": "PLAN_COMPRAS_DORMIDOS_ONLY",
+    "path": "/api/metrics/plan-compras?solo_dormidos=true",
+    "status": 200,
+    "time_s": 0.26,
+    "body": "{\"items\":[{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"C\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"B\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"91204-GBG-850S\",\"nombre\":\"RETENEDOR ACEITE 18.9X28X5\",\"stock_actual\":1.0,\"demanda_7d\":6.0,\"cantidad_a_comprar\":5.0,\"abc\":\"C\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"HERO COLOMBIA SAS\"},{\"sku\":\"601325\",\"nombre\":\"MOBIL SUPER MOTO 4T 20W50 12X1L\",\"stock_actual\":1.0,\"demanda_7d\":5.0,\"cantidad_a_comprar\":4.0,\"abc\":\"A\",\"urgencia\":null,\"dormido\":true,\"supplier\":\"S.A.J DISTRIBUCIONES SAS\"},{\"sku\":\"601325\",\"nombre\":\"MOBIL SUPER MOTO 4T "
+  },
+  {
+    "label": "FORECAST_CATEGORIA",
+    "path": "/api/metrics/forecast-categoria",
+    "status": 200,
+    "time_s": 3.54,
+    "body": "{\"items\":[{\"cod_grupo\":\"IV2\",\"demanda_real\":1161.0,\"demanda_predicha\":1181.5714285714284,\"desviacion_pct\":1.77,\"metodo\":\"moving_average_7d\"},{\"cod_grupo\":\"IV4\",\"demanda_real\":3.0,\"demanda_predicha\":2.7142857142857144,\"desviacion_pct\":9.52,\"metodo\":\"moving_average_7d\"}],\"total_categorias\":2,\"wape_promedio\":1.79,\"cobertura_pct\":66.67}"
+  },
+  {
+    "label": "PRODUCT_VH10025",
+    "path": "/api/products/VH10025",
+    "status": 503,
+    "time_s": 0.49,
+    "body": "{\"detail\":\"Funcionalidad no disponible en cloud. Requiere el sistema operativo encendido. Predicciones y alertas est\u00e1n disponibles 24/7.\",\"status\":\"degraded\",\"available_endpoints\":[\"/health\",\"/api/auth/*\",\"/api/alerts/*\",\"/api/forecast/*\",\"/api/metrics/*\",\"/api/products/*\",\"/api/purchase-plans/*\"]}"
+  },
+  {
+    "label": "STOCK_VH10025",
+    "path": "/api/stock/VH10025",
+    "status": 404,
+    "time_s": 0.32,
+    "body": "{\"detail\":\"Not Found\"}"
+  }
+]

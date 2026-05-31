@@ -506,6 +506,17 @@ class RealMetricsRepo:
         )
 
     def get_sales_daily(self, date: str) -> SalesDailyResponse:
+        # F7-FIX1 bug 1.3b: si la fecha pedida (default = hoy) no tiene ventas,
+        # caer al último día con ventas en vez de tirar RuntimeError → 500.
+        max_date_rows = self._query("""
+            SELECT MAX(business_date) AS max_date
+            FROM motoshop.gold.mart_ventas_diarias_sku
+            WHERE business_date <= :date
+        """, [{"name": "date", "value": {"stringValue": date}, "type": "STRING"}])
+        effective_date = date
+        if max_date_rows and max_date_rows[0].get("max_date"):
+            effective_date = str(max_date_rows[0]["max_date"])
+
         productos = self._query("""
             SELECT
                 cod_producto AS sku,
@@ -516,19 +527,19 @@ class RealMetricsRepo:
             WHERE business_date = :date
             GROUP BY cod_producto, nom_producto
             ORDER BY valor DESC
-        """, [{"name": "date", "value": {"stringValue": date}, "type": "STRING"}])
+        """, [{"name": "date", "value": {"stringValue": effective_date}, "type": "STRING"}])
         totals = self._query("""
             SELECT
-                ROUND(SUM(valor_total), 2) AS total_ventas,
+                ROUND(COALESCE(SUM(valor_total), 0), 2) AS total_ventas,
                 COALESCE(SUM(num_facturas), 0) AS total_facturas
             FROM motoshop.gold.mart_ventas_diarias_sku
             WHERE business_date = :date
-        """, [{"name": "date", "value": {"stringValue": date}, "type": "STRING"}])
+        """, [{"name": "date", "value": {"stringValue": effective_date}, "type": "STRING"}])
         if not totals:
-            raise RuntimeError(f"No sales data found for date {date}")
+            return SalesDailyResponse(date=effective_date, total_ventas=0.0, total_facturas=0, productos_vendidos=[])
         t = totals[0]
         return SalesDailyResponse(
-            date=date,
+            date=effective_date,
             total_ventas=float(t["total_ventas"]),
             total_facturas=int(t["total_facturas"]),
             productos_vendidos=[SalesDailyItem(**r) for r in productos],
@@ -624,14 +635,36 @@ class RealMetricsRepo:
             FROM motoshop.gold.mart_inventario_actual i
             LEFT JOIN latest_cost lc ON i.cod_producto = lc.cod_producto AND lc.rn = 1
         """)
+        # F7-FIX1 bug 4.1: bronze.stock no trae cod_bodega — todos los 4029 productos
+        # están con cod_bodega='' Y nom_bodega='SIN NOMBRE' (sentinel literal del notebook gold).
+        # dim_bodega solo tiene BD01 "BODEGA PRINCIPAL" (single-shop).
+        # Cuando inv.cod_bodega es vacío, REEMPLAZAR cod+nom completamente por la única bodega real,
+        # ignorando el 'SIN NOMBRE' que el notebook ya inyectó.
         bodegas = self._query("""
+            WITH default_bodega AS (
+                SELECT cod_bodega AS def_cod, nombre_bodega AS def_nom
+                FROM motoshop.silver.dim_bodega
+                ORDER BY snapshot_date DESC
+                LIMIT 1
+            )
             SELECT
-                cod_bodega,
-                COALESCE(nom_bodega, CONCAT('Bodega ', cod_bodega)) AS nom_bodega,
-                SUM(cantidad_actual) AS cantidad,
-                ROUND(SUM(cantidad_actual) / NULLIF(SUM(SUM(cantidad_actual)) OVER(), 0) * 100, 1) AS porcentaje
-            FROM motoshop.gold.mart_inventario_actual
-            GROUP BY cod_bodega, nom_bodega
+                CASE
+                    WHEN inv.cod_bodega IS NULL OR inv.cod_bodega = ''
+                        THEN COALESCE(db.def_cod, 'SIN_COD')
+                    ELSE inv.cod_bodega
+                END AS cod_bodega,
+                CASE
+                    WHEN inv.cod_bodega IS NULL OR inv.cod_bodega = ''
+                        THEN COALESCE(db.def_nom, 'Sin clasificar')
+                    WHEN inv.nom_bodega IS NULL OR inv.nom_bodega = '' OR inv.nom_bodega = 'SIN NOMBRE'
+                        THEN COALESCE(db.def_nom, CONCAT('Bodega ', inv.cod_bodega))
+                    ELSE inv.nom_bodega
+                END AS nom_bodega,
+                SUM(inv.cantidad_actual) AS cantidad,
+                ROUND(SUM(inv.cantidad_actual) / NULLIF(SUM(SUM(inv.cantidad_actual)) OVER(), 0) * 100, 1) AS porcentaje
+            FROM motoshop.gold.mart_inventario_actual inv
+            CROSS JOIN default_bodega db
+            GROUP BY 1, 2
             ORDER BY cantidad DESC
         """)
         if not rows:
@@ -695,11 +728,13 @@ class RealMetricsRepo:
             "ultima_venta": "ultima_venta",
         }.get(sort_by, "dias_sin_venta")
         direction = "ASC" if sort_order == "asc" else "DESC"
+        # F7-FIX1 bug 1.1: column in mart is `ultima_fecha_venta`, not `ultima_venta`.
+        # Databricks confirmed via UNRESOLVED_COLUMN suggestion.
         rows = self._query("""
             SELECT d.cod_producto, d.nom_producto, d.stock_actual,
                     CAST(c.ultima_compra AS STRING) AS ultima_compra,
-                    COALESCE(CAST(v.ultima_venta AS STRING), CAST(d.ultima_venta AS STRING)) AS ultima_venta,
-                    DATEDIFF(CURRENT_DATE, COALESCE(v.ultima_venta, d.ultima_venta)) AS dias_sin_venta
+                    COALESCE(CAST(v.ultima_venta AS STRING), CAST(d.ultima_fecha_venta AS STRING)) AS ultima_venta,
+                    DATEDIFF(CURRENT_DATE, COALESCE(v.ultima_venta, d.ultima_fecha_venta)) AS dias_sin_venta
             FROM motoshop.gold.mart_productos_dormidos d
             LEFT JOIN (
                 SELECT cod_producto, MAX(business_date) AS ultima_venta
@@ -797,10 +832,12 @@ class RealMetricsRepo:
         return result
 
     def get_cohortes(self) -> CohortesResponse:
+        # F7-FIX1 bug 1.2: DATE_FORMAT to YYYY-MM so _fill_month_gaps strptime("%Y-%m") works.
+        # Antes devolvía '2024-01-01' (DATE) → ValueError: unconverted data remains: -01.
         rows = self._query("""
             SELECT
-                mes_cohorte AS cohorte_mes,
-                business_month AS mes_observacion,
+                DATE_FORMAT(mes_cohorte, 'yyyy-MM') AS cohorte_mes,
+                DATE_FORMAT(business_month, 'yyyy-MM') AS mes_observacion,
                 COUNT(DISTINCT nit_cliente) AS num_clientes,
                 ROUND(AVG(ticket_promedio), 2) AS ticket_promedio,
                 ROUND(SUM(CASE WHEN compro_este_mes THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 2) AS tasa_recurrencia
@@ -858,14 +895,20 @@ class RealMetricsRepo:
             "historical": "1 = 1",
             "6months": "business_date >= DATE_ADD(CURRENT_DATE(), -180)",
         }.get(period, "business_date >= DATE_TRUNC('MONTH', CURRENT_DATE())")
+        # F7-FIX1 bug 4.2: normalizar NITs vacíos como "Sin asignar" en vez de mostrar fila vacía.
+        # Bronze trae 27 facturas con nit_vendedor='' que distorsionaban el ranking.
         rows = self._query("""
-            SELECT nit_vendedor, nombre_vendedor,
-                    COUNT(*) AS facturas,
-                    SUM(total_factura) AS total_ventas,
-                    AVG(total_factura) AS ticket_promedio
+            SELECT
+                COALESCE(NULLIF(nit_vendedor, ''), 'SIN_ASIGNAR') AS nit_vendedor,
+                COALESCE(NULLIF(nombre_vendedor, ''), 'Sin asignar') AS nombre_vendedor,
+                COUNT(*) AS facturas,
+                SUM(total_factura) AS total_ventas,
+                AVG(total_factura) AS ticket_promedio
             FROM motoshop.silver.fact_ventas
             WHERE """ + where + """
-            GROUP BY nit_vendedor, nombre_vendedor
+            GROUP BY
+                COALESCE(NULLIF(nit_vendedor, ''), 'SIN_ASIGNAR'),
+                COALESCE(NULLIF(nombre_vendedor, ''), 'Sin asignar')
             ORDER BY total_ventas DESC
             LIMIT 10
         """)
@@ -1044,12 +1087,32 @@ class RealMetricsRepo:
         )
 
     def get_plan_compras(self) -> PlanComprasResponse:
+        # F7-FIX1 bug 5.5: el SQL original generaba filas DUPLICADAS por SKU porque
+        # mart_rotacion_abc tiene múltiples filas por SKU (una por mes/categoría).
+        # El mismo SKU aparecía con abc=A y abc=B → filtros frontend rompían.
+        # Fix: agregar mart_rotacion_abc al último mes vía CTE antes del JOIN.
         rows = self._query("""
             WITH demanda_7d AS (
                 SELECT cod_producto, SUM(cantidad) AS qty_7d
                 FROM motoshop.silver.fact_ventas_detalle
                 WHERE business_date >= DATE_SUB(CURRENT_DATE(), 7)
                 GROUP BY cod_producto
+            ),
+            abc_latest AS (
+                SELECT cod_producto, categoria_abc
+                FROM (
+                    SELECT cod_producto, categoria_abc,
+                           ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_month DESC) AS rn
+                    FROM motoshop.gold.mart_rotacion_abc
+                ) WHERE rn = 1
+            ),
+            alertas_latest AS (
+                SELECT sku, urgencia
+                FROM (
+                    SELECT sku, urgencia,
+                           ROW_NUMBER() OVER (PARTITION BY sku ORDER BY urgencia) AS rn
+                    FROM motoshop.gold.alertas_quiebre
+                ) WHERE rn = 1
             ),
             suppliers AS (
                 SELECT d.cod_producto, MAX(c.nombre_proveedor) AS supplier
@@ -1061,7 +1124,7 @@ class RealMetricsRepo:
             )
             SELECT
                 inv.cod_producto AS sku,
-                COALESCE(inv.nom_producto, inv.cod_producto) AS nombre,
+                COALESCE(NULLIF(inv.nom_producto, ''), inv.cod_producto) AS nombre,
                 inv.cantidad_actual AS stock_actual,
                 COALESCE(d.qty_7d, 0) AS demanda_7d,
                 CASE WHEN COALESCE(d.qty_7d, 0) > inv.cantidad_actual
@@ -1073,10 +1136,8 @@ class RealMetricsRepo:
                 COALESCE(s.supplier, 'Sin proveedor') AS supplier
             FROM motoshop.gold.mart_inventario_actual inv
             LEFT JOIN demanda_7d d ON inv.cod_producto = d.cod_producto
-            LEFT JOIN motoshop.gold.mart_rotacion_abc abc
-                ON inv.cod_producto = abc.cod_producto
-            LEFT JOIN motoshop.gold.alertas_quiebre al
-                ON inv.cod_producto = al.sku
+            LEFT JOIN abc_latest abc ON inv.cod_producto = abc.cod_producto
+            LEFT JOIN alertas_latest al ON inv.cod_producto = al.sku
             LEFT JOIN motoshop.gold.mart_productos_dormidos dorm
                 ON inv.cod_producto = dorm.cod_producto
             LEFT JOIN suppliers s ON inv.cod_producto = s.cod_producto
@@ -1144,11 +1205,33 @@ class RealMetricsRepo:
         )
 
     def _query(self, sql: str, parameters: list[dict] = None) -> list[dict]:
+        # F7-FIX1 bug 1.3: databricks-sdk 0.40+ requires StatementParameterListItem objects,
+        # not raw dicts. Translate the legacy [{name, value: {stringValue|intValue}, type}] shape.
+        from databricks.sdk.service.sql import StatementParameterListItem
+
+        typed_params: list[StatementParameterListItem] = []
+        for p in parameters or []:
+            v = p.get("value", {})
+            if isinstance(v, dict):
+                value_str = v.get("stringValue") if "stringValue" in v else (
+                    str(v.get("intValue")) if "intValue" in v else (
+                        str(v.get("doubleValue")) if "doubleValue" in v else None
+                    )
+                )
+            else:
+                value_str = str(v) if v is not None else None
+            typed_params.append(
+                StatementParameterListItem(
+                    name=p["name"],
+                    value=value_str,
+                    type=p.get("type", "STRING"),
+                )
+            )
         result = self._w.statement_execution.execute_statement(
             statement=sql,
             warehouse_id=self._wh_id,
             wait_timeout="50s",
-            parameters=parameters or [],
+            parameters=typed_params,
         )
         if result.status.state.name != "SUCCEEDED":
             error_detail = result.status.error.message if hasattr(result.status, 'error') and result.status.error else 'unknown'

@@ -1,0 +1,96 @@
+# MotoShop F7 audit — raw responses (admin token)
+Generated: Sun May 31 16:56:50 -05 2026
+
+
+=== SALES_SUMMARY === /api/metrics/sales-summary ===
+
+
+=== SALES_TREND_DEFAULT === /api/metrics/sales-trend ===
+
+
+=== SALES_TREND_YEAR_2025 === /api/metrics/sales-trend?year=2025 ===
+
+
+=== SALES_TREND_YEAR_2024 === /api/metrics/sales-trend?year=2024 ===
+
+
+=== SALES_DAILY_7 === /api/metrics/sales-daily?days=7 ===
+
+
+=== SALES_DAILY_30 === /api/metrics/sales-daily?days=30 ===
+
+
+=== SALES_MONTHLY === /api/metrics/sales-monthly ===
+
+
+=== SALES_HISTORICAL === /api/metrics/sales-historical ===
+
+
+=== INVENTORY === /api/metrics/inventory-summary ===
+
+
+=== ABC === /api/metrics/abc-segmentation ===
+
+
+=== DORMIDOS_50 === /api/metrics/dormidos?limit=50 ===
+
+
+=== DORMIDOS_500 === /api/metrics/dormidos?limit=500 ===
+
+
+=== COHORTES === /api/metrics/cohortes ===
+
+
+=== COHORTES_DETAIL === /api/metrics/cohortes-detail ===
+
+
+=== VENDEDORES_NO_PARAM === /api/metrics/vendedores-summary ===
+
+
+=== VENDEDORES_HISTORICAL === /api/metrics/vendedores-summary?period=historical ===
+
+
+=== VENDEDORES_MONTH === /api/metrics/vendedores-summary?period=month ===
+
+
+=== VENDEDORES_MONTHLY === /api/metrics/vendedores-summary?period=monthly ===
+
+
+=== VENDEDORES_6MONTHS === /api/metrics/vendedores-summary?period=6months ===
+
+
+=== DRIFT_SUMMARY === /api/metrics/drift-summary ===
+
+
+=== ALERTS_STOCKOUT_NO_PARAM === /api/alerts/stockout ===
+
+
+=== ALERTS_STOCKOUT_ALL === /api/alerts/stockout?urgencia=todos ===
+
+
+=== RECOMMENDATIONS === /api/metrics/recommendations ===
+
+
+=== PLAN_COMPRAS_NO_FILTER === /api/metrics/plan-compras ===
+
+
+=== PLAN_COMPRAS_ABC_A === /api/metrics/plan-compras?abc=A ===
+
+
+=== PLAN_COMPRAS_ABC_B === /api/metrics/plan-compras?abc=B ===
+
+
+=== PLAN_COMPRAS_URGENCIA_ALTA === /api/metrics/plan-compras?urgencia=alta ===
+
+
+=== PLAN_COMPRAS_DORMIDOS_ONLY === /api/metrics/plan-compras?solo_dormidos=true ===
+
+
+=== FORECAST_CATEGORIA === /api/metrics/forecast-categoria ===
+
+
+=== PRODUCT_VH10025 === /api/products/VH10025 ===
+
+
+=== PRODUCT_VH10025_STOCK === /api/stock/VH10025 ===
+
