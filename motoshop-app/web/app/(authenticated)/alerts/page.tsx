@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useAlerts } from "@/lib/api/hooks";
 import { useAuthStore } from "@/lib/auth/store";
@@ -31,7 +31,13 @@ export default function AlertsPage(): JSX.Element {
   const role = useAuthStore((s) => s.role);
   const canManage = role === "admin" || role === "gerente";
 
-  const { data, error, isLoading, mutate } = useAlerts(filter);
+  const { data, error, isLoading, mutate } = useAlerts();
+
+  const displayedAlerts = useMemo(() => {
+    if (!data?.alerts) return [];
+    if (!filter) return data.alerts;
+    return data.alerts.filter((a) => a.urgencia === filter);
+  }, [data, filter]);
 
   async function handleEnablePush() {
     setPushStatus("loading");
@@ -132,7 +138,7 @@ export default function AlertsPage(): JSX.Element {
       )}
 
       {/* Lista de alertas */}
-      {data?.alerts.map((alert) => (
+      {displayedAlerts.map((alert) => (
         <div
           key={alert.sku}
           className={`rounded-xl border-l-4 bg-surface p-4 shadow-sm ${URGENCY_BG[alert.urgencia]}`}
@@ -201,7 +207,7 @@ export default function AlertsPage(): JSX.Element {
       ))}
 
       {/* Empty state */}
-      {data && data.alerts.length === 0 && (
+      {data && displayedAlerts.length === 0 && (
         <Card>
           <p className="py-8 text-center text-sm text-text-muted">
             No hay alertas de quiebre
