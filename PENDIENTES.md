@@ -10,9 +10,9 @@
 
 ## Sesión 2026-05-30 (61) · Diagnóstico jobs Databricks — 2 tareas gold rotas
 
-**Estado:** ⬜ pendiente — requiere evaluación del Revisor
+**Estado:** ✅ **Resuelto** — ADR-0022 aprobado + propuesta Dev W aceptada + job legacy eliminado
 
-**🔴 Trabajo unificado `motoshop_full_workflow` — 3 corridas consecutivas FAILED (24/29 tasks pasan, 2 fallan)**
+**🔴 (Histórico) Trabajo unificado `motoshop_full_workflow` — 3 corridas consecutivas FAILED (24/29 tasks pasan, 2 fallan)**
 
 ### Síntoma
 
@@ -37,27 +37,14 @@ El resto (bronze_ingest → 11 silver → gold marts → quality → validate �
   b) O eliminar DEFAULT y manejarlo en el INSERT
   c) O ejecutar ALTER TABLE sobre la tabla existente
 
-### 🟡 Propuesta Dev W — Mantener 1 job unificado (en revisión)
+### ✅ Propuesta Dev W — Aprobada vía ADR-0022
 
-**Contexto:** Los 2 bugs que tumbaban el workflow (classifier y drift) ya están fixeados y pusheados (`a61ab1f`). La próxima corrida debería pasar completa.
+**Resultado:** ADR-0022 aprobado. Se mantiene 1 job unificado (`motoshop_full_workflow`).
 
-**Propuesta de Dev W (quien lo opera):**
-
-> ✅ **Mantener 1 solo job** (`motoshop_full_workflow`) con schedule unificado 19:00 COL.
->
-> **Razones:**
-> 1. Ya no hay bugs conocidos → el job debería pasar todas las noches
-> 2. Un solo schedule = un solo lugar para monitorear
-> 3. Las tasks de silver corren en paralelo entre sí (no son secuenciales), igual que gold
-> 4. Si gold falla, el run se marca FAILED **pero silver ya se ejecutó y actualizó los datos** — la diferencia con tener jobs separados es solo el color del marker en la UI
-> 5. Mantener 3 jobs implica 3 veces más infra (scripts, schedules, alertas, dependencias entre jobs)
-> 6. Para una demo académica con 1 schedule nocturno, la simplicidad pesa más que la segregación
->
-> **Riesgo aceptado:** Si gold falla de noche, silver ya está actualizado, la API sirve datos frescos de silver, y el humano ve el FAILED a la mañana siguiente para corregir.
-
-**Pendiente:** Decisión del Revisor — aprobar propuesta ✅ o pedir separación en jobs independientes.
-
-**Próximo paso si se aprueba:** Marcar como resuelto y eliminar el job legacy `Motoshop Bronze Ingestion` (ID: 810345190577693) que quedó de F2 y ya no se usa.
+**Ejecutado por Dev W:**
+- ✅ Job legacy `Motoshop Bronze Ingestion` (810345190577693) eliminado
+- ✅ Workflow redeployado con 31 tasks y schedule UNPAUSED 19:00 COL
+- ✅ Última corrida manual en progreso — bronze→silver→gold marts→classifier ✅ todo SUCCESS
 
 ---
 
