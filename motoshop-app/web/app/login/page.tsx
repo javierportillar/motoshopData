@@ -7,17 +7,6 @@ import { Button } from "@/lib/ui/Button";
 import { Input } from "@/lib/ui/Input";
 import { useToast } from "@/lib/ui/Toast";
 
-/** Decodifica payload de JWT sin verificar firma (solo para UI). */
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  try {
-    const base64 = token.split(".")[1];
-    if (!base64) return null;
-    return JSON.parse(atob(base64));
-  } catch {
-    return null;
-  }
-}
-
 export default function LoginPage(): JSX.Element {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -55,10 +44,7 @@ export default function LoginPage(): JSX.Element {
         return;
       }
 
-      const payload = decodeJwtPayload(data.access_token);
-      const sub = (payload?.sub as string) ?? username;
-      const role = (payload?.role as string) ?? "vendedor";
-      setUser(sub, role);
+      setUser(data.sub ?? username, data.role ?? "vendedor");
       addToast("Bienvenido", "success");
       router.push("/");
     } catch {

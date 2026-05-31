@@ -2,6 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "https://api.fragloesja.uk";
 
+function decodeToken(token: string): Record<string, unknown> {
+  try {
+    const b64 = token.split(".")[1] ?? "";
+    return JSON.parse(Buffer.from(b64, "base64").toString("utf-8"));
+  } catch {
+    return {};
+  }
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.json();
   const { username, password } = body;
@@ -14,7 +23,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const resp = await fetch(`${API_BASE}/auth/login`, {
+    const resp = await fetch(`${API_BASE}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
@@ -28,10 +37,15 @@ export async function POST(req: NextRequest) {
     const data = await resp.json();
     const { access_token, refresh_token } = data;
 
+    const payload = decodeToken(access_token);
+    const sub = (payload.sub as string) ?? username;
+    const role = (payload.role as string) ?? "vendedor";
+
     const res = NextResponse.json({
       user: username,
+      sub,
+      role,
       message: "Login exitoso",
-      access_token,
     });
 
     res.cookies.set("motoshop_token", access_token, {
@@ -39,7 +53,7 @@ export async function POST(req: NextRequest) {
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       path: "/",
-      maxAge: 15 * 60, // 15 min
+      maxAge: 15 * 60,
     });
 
     if (refresh_token) {
@@ -48,7 +62,7 @@ export async function POST(req: NextRequest) {
         secure: process.env.NODE_ENV === "production",
         sameSite: "lax",
         path: "/",
-        maxAge: 7 * 24 * 60 * 60, // 7 days
+        maxAge: 7 * 24 * 60 * 60,
       });
     }
 

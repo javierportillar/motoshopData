@@ -4,7 +4,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "https://api.fragloesja.uk";
 
 async function proxyRequest(req: NextRequest, path: string): Promise<NextResponse> {
   const url = new URL(req.url);
-  const targetUrl = `${API_BASE}/${path}${url.search}`;
+  const targetUrl = `${API_BASE}/api/${path}${url.search}`;
 
   const headers = new Headers();
   const cookieHeader = req.headers.get("cookie");
