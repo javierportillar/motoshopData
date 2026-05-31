@@ -50,7 +50,7 @@ class MetricsRepoProtocol(Protocol):
     def get_abc_segmentation(self) -> AbcSegmentation: ...
     def get_dormidos(self) -> DormidosResponse: ...
     def get_cohortes(self) -> CohortesResponse: ...
-    def get_sales_trend(self, periods: int) -> SalesTrendResponse: ...
+    def get_sales_trend(self, periods: int, year: int | None = None) -> SalesTrendResponse: ...
     def get_vendedores_summary(self) -> VendedoresSummaryResponse: ...
     def get_cohortes_detail(self) -> CohortesDetailResponse: ...
     def get_drift_summary(self) -> DriftSummaryResponse: ...
@@ -149,12 +149,14 @@ class FakeMetricsRepo:
             CohorteItem(cohorte_mes="2026-04", mes_observacion="2026-04", num_clientes=41, ticket_promedio=50_600.0, tasa_recurrencia=0.0),
         ])
 
-    def get_sales_trend(self, periods: int = 6) -> SalesTrendResponse:
+    def get_sales_trend(self, periods: int = 6, year: int | None = None) -> SalesTrendResponse:
         """Genera tendencia mensual mock con leve crecimiento."""
         items: list[SalesTrendItem] = []
         now = datetime.now()
         for i in range(periods - 1, -1, -1):
             d = (now.replace(day=1) - timedelta(days=i * 31)).replace(day=1)
+            if year is not None and d.year != year:
+                continue
             items.append(SalesTrendItem(
                 year=d.year, month=d.month,
                 total_ventas=48_000_000.0 + (periods - 1 - i) * 500_000.0,
@@ -554,7 +556,10 @@ class RealMetricsRepo:
                 r["muestra_pequena"] = r["num_clientes"] < 5
         return CohortesResponse(cohortes=[CohorteItem(**r) for r in filled])
 
-    def get_sales_trend(self, periods: int = 6) -> SalesTrendResponse:
+    def get_sales_trend(self, periods: int = 6, year: int | None = None) -> SalesTrendResponse:
+        where_year = ""
+        if year is not None:
+            where_year = f"AND YEAR(business_date) = {year}"
         rows = self._query(f"""
             SELECT YEAR(business_date) AS year,
                    MONTH(business_date) AS month,
@@ -563,6 +568,7 @@ class RealMetricsRepo:
                    ROUND(SUM(valor_total) / NULLIF(SUM(num_facturas), 0), 2) AS ticket_promedio
             FROM motoshop.gold.mart_ventas_diarias_sku
             WHERE business_date >= ADD_MONTHS(CURRENT_DATE(), -{periods})
+            {where_year}
             GROUP BY YEAR(business_date), MONTH(business_date)
             ORDER BY year, month
         """)

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from time import time
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -157,13 +157,15 @@ def cohortes(
 def sales_trend(
     request: Request,
     periods: int = 6,
+    year: int | None = Query(default=None),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
 ) -> SalesTrendResponse:
     """Tendencia de ventas mensual: total, facturas y ticket promedio."""
     if periods < 1 or periods > 24:
         raise HTTPException(status_code=422, detail="periods must be between 1 and 24")
-    return _cached_or_fetch(f"sales-trend:{periods}", lambda: repo.get_sales_trend(periods))
+    cache_key = f"sales-trend:{periods}:{year}"
+    return _cached_or_fetch(cache_key, lambda: repo.get_sales_trend(periods, year))
 
 
 @router.get("/metrics/vendedores-summary", response_model=VendedoresSummaryResponse)
