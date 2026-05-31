@@ -50,6 +50,65 @@
 - F7-A Dev A es DIFERENTE de F6-D-FIX1-A Dev A. Si vos solo tenés "un Dev A", usalo primero para F6-D-FIX1-A (30 min) y después arrancalo en F7-D. O abrí 2 chats Dev A distintos en paralelo.
 - Dev W (Runtime Windows) se dispara cada vez que A o D pushean (vos pegás handoff Sesión 49 conocido).
 
+### 🖥️ Handoff · Dev W · F7-D A2-1 + A2-2 post-push (~10 min)
+
+Abrí un chat Claude Code corriendo en la PC Windows. Pegá esto:
+
+```
+Soy Runtime Agent · Windows del proyecto MotoShop.
+Mi rol es operativo: aplicar cambios pendientes que Dev A2
+(backend) acaba de pushear a main.
+
+PRE-FLIGHT:
+1. cd C:\Users\MotoShop\Documents\javidevmoto
+2. git pull --ff-only origin main
+3. Verificar que la API esté corriendo actualmente:
+   Get-Process python | Where-Object {$_.CommandLine -like "*uvicorn*"}
+
+MI MISIÓN:
+Dev A2 terminó 2 endpoints nuevos. Necesito aplicar el pull y
+verificar que la API los sirve correctamente.
+
+ENTREGABLES (en orden):
+
+PASO 1 · git pull (~1 min)
+  cd C:\Users\MotoShop\Documents\javidevmoto
+  git pull --ff-only origin main
+
+PASO 2 · Restart API (~3 min)
+  # Solo si el código cambió (motoshop-app/api/src/):
+  Stop-Process -Name python -Force 2>$null
+  .\infra\start_api.ps1
+  # Esperar 10s
+  Start-Sleep 10
+
+PASO 3 · Smoke test A2-1: sales-trend (~1 min)
+  curl http://127.0.0.1:8000/metrics/sales-trend?periods=6 ^
+    -H "Authorization: Bearer <tu-token-jwt>"
+  # Debe devolver 200 con 6 items mensuales (year, month,
+  # total_ventas, num_facturas, ticket_promedio)
+
+PASO 4 · Smoke test A2-2: vendedores-summary (~1 min)
+  curl http://127.0.0.1:8000/metrics/vendedores-summary ^
+    -H "Authorization: Bearer <tu-token-jwt>"
+  # Debe devolver 200 con ranking de vendedores (nit_vendedor,
+  # nombre_vendedor, facturas, total_ventas, ticket_promedio)
+
+PASO 5 · Reportar (~1 min)
+  Escribí en SEGUIMIENTO.md exactamente esto::
+  > 🟢 [Dev W] Rutina post-push A2-1 + A2-2 aplicada · commits: ec9c30f + 26cf1d5 · API restart OK · sales-trend 200 · vendedores-summary 200
+
+SI ALGO FALLA (401, 500, timeout, API no arranca):
+  - Documentá el error exacto con curl output copiado
+  - Escribí en SEGUIMIENTO.md con 🔴 [Dev W]
+  - El humano lo revisa conmigo
+
+NO TOCO:
+  - Notebooks (eso es para otro handoff de Dev D)
+  - Workflow Databricks
+  - MySQL / sgHermes
+```
+
 ---
 
 ### 🤖 Handoff #1 · Dev T1 · F7-B Design System (~5-7 días)
