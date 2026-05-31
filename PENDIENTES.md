@@ -8,6 +8,121 @@
 
 ---
 
+## Sesión 2026-05-31 (63) · F7-E-FIX1 · Workflow Databricks · 3 tasks fallando
+
+**Estado:** F7 sustantivamente cerrada, deploys OK (Vercel + Render + Windows), 13/13 endpoints API 200, 13/13 paths PWA 200. **PERO:** 3 tasks del workflow nocturno `motoshop_full_workflow` fallan en cada corrida (06:39, 06:47, 06:54 hoy). Sin esto, **los snapshots históricos balde B NO se acumulan automáticamente** → bloquea R-V2-16 + entrega académica defendible al 100%.
+
+**Decisión humana:** NO dejar la deuda. Arreglar antes de E5.
+
+**Plan correctivo:** [`docs/plan-f7-e-fix1.md`](docs/plan-f7-e-fix1.md)
+
+### 🤖 Handoff Dev W · F7-E-FIX1 (~30-45 min)
+
+Pegá esto en el chat de Dev W en la PC Windows (puede ser el mismo chat de Ciclos 1-5 si sigue activo):
+
+```
+Hay un nuevo trabajo: F7-E-FIX1 — diagnosticar y arreglar 3 tasks
+fallando en motoshop_full_workflow.
+
+Tasks fallando (últimas 3 corridas hoy: 06:39, 06:47, 06:54):
+- gold_drift (notebook 25_drift_monitor.py)
+- gold_rotacion_promedio (notebook 18_mart_rotacion_promedio.py)
+- gold_abc_xyz (notebook 19_mart_abc_xyz.py)
+
+Hipótesis del Revisor: schema mismatch. Las tablas fueron creadas
+manualmente por Dev D + Dev W antes del workflow, posiblemente sin
+PARTITIONED BY (business_date) que el notebook espera. Cuando el
+workflow corre con INSERT OVERWRITE PARTITION, falla porque la
+tabla existente no está particionada.
+
+Leer plan completo: docs/plan-f7-e-fix1.md
+
+PASO 1 · Diagnóstico exacto (~10 min)
+Para cada task fallida:
+1. Databricks UI → Workflows → motoshop_full_workflow
+2. Click en último Run → click en cada task fallida
+3. Copiar el stacktrace COMPLETO (no resumir)
+4. Reportar los 3 errores en chat al humano antes de aplicar cualquier fix
+
+PASO 2 · Fix según diagnóstico (~15-20 min)
+
+Si stacktraces confirman schema mismatch (Hipótesis A del plan §4):
+
+  En Databricks SQL Editor:
+
+  DROP TABLE IF EXISTS motoshop.gold.mart_rotacion_sku;
+  DROP TABLE IF EXISTS motoshop.gold.mart_abc_xyz;
+  DROP TABLE IF EXISTS motoshop.gold.alertas_drift;
+
+  Verificar drops OK:
+  SHOW TABLES IN motoshop.gold LIKE 'mart_rotacion%';
+  SHOW TABLES IN motoshop.gold LIKE 'mart_abc_xyz%';
+  SHOW TABLES IN motoshop.gold LIKE 'alertas_drift%';
+
+  (Cada SHOW debe devolver 0 filas — confirma drop)
+
+Si la causa es OTRA (Hipótesis B o C del plan §4):
+- Reportar al humano antes de tocar nada
+- Esperar instrucciones
+
+PASO 3 · Re-ejecutar workflow + verificar (~10-15 min)
+1. Databricks UI → motoshop_full_workflow → Run now
+2. Esperar a que las 31 tasks terminen
+3. Verificar que las 3 que fallaban ahora pasen verde
+4. Smoke verificación tablas re-pobladas:
+
+   SELECT COUNT(*), MIN(business_date), MAX(business_date)
+   FROM motoshop.gold.mart_rotacion_sku
+   WHERE business_date = CURRENT_DATE();
+   -- Esperar: ~4,840 filas
+
+   SELECT COUNT(*), MIN(business_date), MAX(business_date)
+   FROM motoshop.gold.mart_abc_xyz
+   WHERE business_date = CURRENT_DATE();
+   -- Esperar: ~1,172 filas
+
+   SELECT COUNT(*), MIN(week_end), MAX(week_end)
+   FROM motoshop.gold.alertas_drift;
+   -- Esperar: 0+ filas (depende si hay drift detectado)
+
+5. Smoke endpoints producción siguen 200:
+   - GET https://api.fragloesja.uk/metrics/drift-summary (con Bearer)
+   - GET https://api.fragloesja.uk/metrics/forecast-categoria (con Bearer)
+   - GET https://api.fragloesja.uk/metrics/plan-compras (con Bearer)
+
+6. Verificar cron UNPAUSED:
+   En Workflows UI: motoshop_full_workflow debe seguir UNPAUSED
+   con schedule '0 0 19 * * ?' (19:00 COL)
+
+REPORTE FINAL en SEGUIMIENTO.md:
+
+> 🟢 [F7-E-FIX1] Workflow operativo · stacktraces previos: <hash o hipótesis confirmada> · fix aplicado: <DROP TABLES o otro> · workflow run final: 31/31 OK · smoke endpoints: drift-summary 200, forecast-categoria 200, plan-compras 200 · cron UNPAUSED · timestamp: <yyyy-MM-dd HH:mm>
+
+Commit: chore(F7-E-FIX1): workflow fix - 3 tasks fallando resueltas
+
+PARAR. No avanzar a otros ciclos. Esperar audit Revisor.
+```
+
+### Próximo paso del revisor (yo)
+
+Cuando Dev W reporte 🟢 F7-E-FIX1:
+
+1. Auditar 6 V-FIX1 (plan §6)
+2. Verificar workflow run history en Databricks
+3. Si PASS → cerrar F7-E-FIX1 oficialmente + actualizar SEGUIMIENTO cabecera (F7 100% sin deudas operativas)
+4. Arrancar E5 memoria final con todas las capturas finales
+
+### Pendiente humano transversal
+
+Mientras Dev W diagnostica + aplica fix (~30-45 min), vos podés en paralelo:
+
+- **Demo 4G (R6)** — grabar desde celular en `app.fragloesja.uk`
+- **Agendar demo gerencia (R8)** — sesión con stakeholder
+
+Ambos son independientes de F7-E-FIX1.
+
+---
+
 ## Sesión 2026-05-30 (61) · Diagnóstico jobs Databricks — 2 tareas gold rotas
 
 **Estado:** ✅ **Resuelto** — ADR-0022 aprobado + propuesta Dev W aceptada + job legacy eliminado
