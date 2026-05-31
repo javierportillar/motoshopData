@@ -76,6 +76,34 @@ export default function CohortesPage(): JSX.Element {
         </p>
       </div>
 
+      {/* F7-FIX1 bug 6.4 + 4.6: explicación pedagógica del componente */}
+      <Card>
+        <details className="text-sm">
+          <summary className="cursor-pointer font-medium text-text-primary">
+            ¿Qué es una cohorte y cómo leer este reporte?
+          </summary>
+          <div className="mt-3 space-y-2 text-text-secondary">
+            <p>
+              <strong>Cohorte</strong> = grupo de clientes que hicieron su primera compra en el mismo mes.
+              Cada fila muestra una cohorte y cómo se comportó en los meses siguientes.
+            </p>
+            <p>
+              <strong>Mes obs.</strong> = el mes en el que observamos a esa cohorte.
+              Si la cohorte 2024-01 tiene fila con mes obs. 2024-05, significa que estamos viendo si esos
+              clientes de enero volvieron en mayo.
+            </p>
+            <p>
+              <strong>Recurrencia</strong> = porcentaje de clientes de la cohorte que volvieron a comprar
+              ese mes. 100% = todos volvieron. 0% = ninguno volvió ese mes.
+            </p>
+            <p className="text-xs text-text-muted">
+              Nota honesta: cohortes con menos de 5 clientes tienen significancia estadística baja.
+              Esto refleja el tamaño actual del dataset, no es un error.
+            </p>
+          </div>
+        </details>
+      </Card>
+
       {/* KPIs */}
       <div className="grid grid-cols-3 gap-3 md:grid-cols-5">
         <Card>
@@ -132,7 +160,16 @@ export default function CohortesPage(): JSX.Element {
               },
               {
                 header: "Clientes",
-                cell: (c) => c.num_clientes,
+                cell: (c) => (
+                  <span className="inline-flex items-center gap-1">
+                    {c.num_clientes}
+                    {c.muestra_pequena && (
+                      <span title="Muestra pequeña (<5 clientes). Significancia baja." className="text-xs text-text-muted">
+                        ⚠
+                      </span>
+                    )}
+                  </span>
+                ),
                 align: "right",
               },
               {

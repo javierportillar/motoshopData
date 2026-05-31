@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuthStore } from "@/lib/auth/store";
-import { useSalesSummary, useInventorySummary, useAlerts, useDormidos, useSalesTrend } from "@/lib/api/hooks";
+import { useSalesSummary, useInventorySummary, useAlerts, useDormidos, useSalesTrend, useSalesTrendByYear } from "@/lib/api/hooks";
 import { formatMoney } from "@/lib/format/currency";
 import { Card } from "@/components/ui/Card";
 import { Stat } from "@/components/ui/Stat";
@@ -23,10 +23,16 @@ function GerenteHome(): JSX.Element {
   const inventory = useInventorySummary();
   const alerts = useAlerts();
   const dormidos = useDormidos();
-  const trend = useSalesTrend(6);
+  // F7-FIX1 bug 5.4: comparativa año actual vs anterior en la tendencia.
+  const currentYear = new Date().getFullYear();
+  const trend = useSalesTrendByYear(currentYear, 24);
+  const trendPrev = useSalesTrendByYear(currentYear - 1, 24);
 
-  const loading =
-    sales.isLoading || inventory.isLoading || alerts.isLoading || dormidos.isLoading || trend.isLoading;
+  // F7-FIX1 bug 5.1: bloquear el render completo solo en la primera carga del KPI
+  // principal (sales). El resto de hooks muestra "—" o skeleton inline mientras
+  // resuelve. Evita el flicker "vacío → data → vacío → data" cuando un hook
+  // tarda más o falla mientras el resto ya tiene datos.
+  const loading = sales.isLoading && !sales.data;
 
   if (loading) {
     return (
@@ -148,17 +154,41 @@ function GerenteHome(): JSX.Element {
         </Link>
       </div>
 
-      {/* Tendencia mensual real */}
-      {trend.data && trend.data.items.length > 0 && (
-        <Card header={<h2 className="font-semibold text-text-primary">Tendencia mensual</h2>}>
-          <SalesTrendChart
-            data={trend.data.items.map((item) => ({
-              label: `${item.year}-${String(item.month).padStart(2, "0")}`,
-              valor: item.total_ventas,
-            }))}
-          />
-        </Card>
-      )}
+      {/* Tendencia mensual: año actual vs año anterior (F7-FIX1 bug 5.4) */}
+      {trend.data && trend.data.items.length > 0 && (() => {
+        const MONTH_LABELS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+        const currMap = new Map(trend.data.items.filter(i => i.year === currentYear).map(i => [i.month, i.total_ventas]));
+        const prevMap = new Map((trendPrev.data?.items ?? []).map(i => [i.month, i.total_ventas]));
+        const currData = Array.from({ length: 12 }, (_, i) => ({ label: MONTH_LABELS[i] ?? "", valor: currMap.get(i + 1) ?? 0 }));
+        const prevData = Array.from({ length: 12 }, (_, i) => ({ label: MONTH_LABELS[i] ?? "", valor: prevMap.get(i + 1) ?? 0 }));
+        const hasPrev = prevData.some(p => p.valor > 0);
+        return (
+          <Card header={
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-text-primary">Tendencia mensual</h2>
+              <div className="flex items-center gap-3 text-xs">
+                <span className="flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full" style={{background:"#7B1818"}}></span>
+                  <span className="text-text-muted">{currentYear}</span>
+                </span>
+                {hasPrev && (
+                  <span className="flex items-center gap-1">
+                    <span className="h-2 w-2 rounded-full bg-gray-400"></span>
+                    <span className="text-text-muted">{currentYear - 1}</span>
+                  </span>
+                )}
+              </div>
+            </div>
+          }>
+            <SalesTrendChart
+              data={currData}
+              previousYearData={hasPrev ? prevData : undefined}
+              currentYearLabel={`${currentYear}`}
+              previousYearLabel={`${currentYear - 1}`}
+            />
+          </Card>
+        );
+      })()}
 
       {/* Decisiones de compra */}
       <div>
@@ -373,6 +403,28 @@ function VendedorHome(): JSX.Element {
 
 export default function HomePage(): JSX.Element {
   const role = useAuthStore((s) => s.role);
+  const hasHydrated = useAuthStore((s) => s.hasHydrated);
+
+  // F7-FIX1 bug 5.1: evitar flicker rol-undefined → GerenteHome → rol-correcto
+  // esperando a que Zustand persist rehidrate antes del primer render con contenido.
+  if (!hasHydrated) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <Logo size="md" />
+          <div>
+            <h1 className="text-xl font-bold text-text-primary">MotoShop</h1>
+            <p className="text-sm text-text-muted">Cargando…</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {[...Array(4)].map((_, i) => (
+            <SkeletonCard key={i} />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   if (role === "vendedor") {
     return <VendedorHome />;

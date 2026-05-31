@@ -170,11 +170,15 @@ export default function AlertsPage(): JSX.Element {
                   Gestionar
                 </button>
               )}
+              {/* F7-FIX1 bug 5.3 / 3.1: el detalle del producto vive en API on-premise
+                  (Windows); en cloud devuelve 503. Reemplazo el link roto por uno al
+                  plan-compras filtrado por SKU, que sí funciona contra Render. */}
               <Link
-                href={`/products/${alert.sku}`}
+                href={`/plan-compras?sku=${encodeURIComponent(alert.sku)}`}
                 className="text-xs text-accent hover:underline"
+                title="Ver en plan de compras"
               >
-                Ver SKU
+                Ver plan
               </Link>
             </div>
           </div>

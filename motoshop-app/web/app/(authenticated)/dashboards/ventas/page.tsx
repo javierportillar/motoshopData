@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   useSalesSummary,
   useSalesTrend,
+  useSalesTrendByYear,
   useSalesDaily,
   useSalesHistorical,
 } from "@/lib/api/hooks";
@@ -32,7 +33,9 @@ const TAB_LABEL: Record<TabView, string> = {
 export default function VentasPage(): JSX.Element {
   const [tab, setTab] = useState<TabView>("mensual");
   const sales = useSalesSummary();
-  const trend = useSalesTrend(9);
+  // F7-FIX1 bug 5.4: traer también el año anterior para comparativa.
+  const trendCurrent = useSalesTrend(12);
+  const trendPrev = useSalesTrendByYear(new Date().getFullYear() - 1);
   const salesDaily = useSalesDaily();
   const salesHistorical = useSalesHistorical();
 
@@ -94,16 +97,34 @@ export default function VentasPage(): JSX.Element {
     );
   }
 
-  const d = sales.data!;
-  const dd = salesDaily.data!;
-  const dh = salesHistorical.data!;
+  // F7-FIX1 bug 5.2: guards explícitos en lugar de non-null assertions —
+  // el endpoint del tab activo pasó el guard, pero los otros pueden estar
+  // pendientes o en error. Acceso seguro previene client-side exception.
+  const d = sales.data;
+  const dd = salesDaily.data;
+  const dh = salesHistorical.data;
 
-  // ── Datos de tendencia real ──────────────────────────────────
+  // ── Datos de tendencia real (comparativa año actual vs anterior) ──
 
-  const trendData = trend.data?.items.map((item) => ({
-    label: `${MONTH_NAMES[item.month - 1]} ${item.year.toString().slice(2)}`,
-    valor: item.total_ventas,
-  })) ?? [];
+  const currentYear = new Date().getFullYear();
+  const trendCurrentByMonth = new Map(
+    (trendCurrent.data?.items ?? [])
+      .filter((it) => it.year === currentYear)
+      .map((it) => [it.month, it.total_ventas])
+  );
+  const trendPrevByMonth = new Map(
+    (trendPrev.data?.items ?? []).map((it) => [it.month, it.total_ventas])
+  );
+
+  const trendData = Array.from({ length: 12 }, (_, i) => ({
+    label: MONTH_NAMES[i] ?? "",
+    valor: trendCurrentByMonth.get(i + 1) ?? 0,
+  }));
+  const prevYearData = Array.from({ length: 12 }, (_, i) => ({
+    label: MONTH_NAMES[i] ?? "",
+    valor: trendPrevByMonth.get(i + 1) ?? 0,
+  }));
+  const hasPrevYearData = prevYearData.some((p) => p.valor > 0);
 
   // ── Render ───────────────────────────────────────────────────
 
@@ -131,6 +152,7 @@ export default function VentasPage(): JSX.Element {
   // ── Vista diaria ────────────────────────────────────────────
 
   function renderDiaria(): JSX.Element {
+    if (!dd) return <ErrorState title="Sin datos" message="No hay ventas para la fecha actual." severity="warning" />;
     const totalUnidades = dd.productos_vendidos.reduce((s, p) => s + p.cantidad, 0);
     const ticketProm = dd.total_facturas > 0 ? dd.total_ventas / dd.total_facturas : 0;
     return (
@@ -172,6 +194,7 @@ export default function VentasPage(): JSX.Element {
   // ── Vista mensual (existente) ───────────────────────────────
 
   function renderMensual(): JSX.Element {
+    if (!d) return <ErrorState title="Sin datos" message="No hay ventas del mes disponibles." severity="warning" />;
     return (
       <>
         {/* KPIs */}
@@ -193,18 +216,39 @@ export default function VentasPage(): JSX.Element {
           </Card>
         </div>
 
-        {/* Tendencia mensual REAL */}
-        {trendData.length > 0 ? (
-          <Card header={<h2 className="font-semibold text-text-primary">Tendencia mensual</h2>}>
-            <SalesTrendChart data={trendData} />
-            {trend.data && (
-              <p className="mt-2 text-center text-xs text-text-muted">
-                Últimos {trend.data.periods} meses
-              </p>
-            )}
-          </Card>
-        ) : (
+        {/* Tendencia mensual: año actual vs año anterior (F7-FIX1 bug 5.4) */}
+        {trendCurrent.isLoading ? (
           <Skeleton className="h-60 rounded-xl" />
+        ) : (
+          <Card header={
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-text-primary">Tendencia mensual</h2>
+              <div className="flex items-center gap-3 text-xs">
+                <span className="flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-primary"></span>
+                  <span className="text-text-muted">{currentYear}</span>
+                </span>
+                {hasPrevYearData && (
+                  <span className="flex items-center gap-1">
+                    <span className="h-2 w-2 rounded-full bg-secondary"></span>
+                    <span className="text-text-muted">{currentYear - 1}</span>
+                  </span>
+                )}
+              </div>
+            </div>
+          }>
+            <SalesTrendChart
+              data={trendData}
+              previousYearData={hasPrevYearData ? prevYearData : undefined}
+              currentYearLabel={`${currentYear}`}
+              previousYearLabel={`${currentYear - 1}`}
+            />
+            <p className="mt-2 text-center text-xs text-text-muted">
+              {hasPrevYearData
+                ? `Comparativa ${currentYear - 1} vs ${currentYear} (enero a diciembre)`
+                : `Datos de ${currentYear}`}
+            </p>
+          </Card>
         )}
 
         {/* Top 10 SKUs */}
@@ -246,6 +290,7 @@ export default function VentasPage(): JSX.Element {
   // ── Vista histórica ─────────────────────────────────────────
 
   function renderHistorica(): JSX.Element {
+    if (!dh) return <ErrorState title="Sin datos" message="No hay histórico de ventas disponible." severity="warning" />;
     const histItems = dh.meses.map((m) => ({
       label: `${MONTH_NAMES[m.month - 1]} ${m.year}`,
       ventas: m.total_ventas,
@@ -295,7 +340,7 @@ export default function VentasPage(): JSX.Element {
 
   // ── Render principal ────────────────────────────────────────
 
-  const totalMesesHist = dh.meses.length;
+  const totalMesesHist = dh?.meses.length ?? 0;
 
   return (
     <div className="space-y-4">
@@ -307,8 +352,8 @@ export default function VentasPage(): JSX.Element {
         <div>
           <h1 className="text-xl font-bold text-text-primary">Ventas</h1>
           <p className="text-sm text-text-muted">
-            {tab === "diaria" && `Ventas del día — ${dd.date}`}
-            {tab === "mensual" && `Período: ${d.business_month}`}
+            {tab === "diaria" && (dd ? `Ventas del día — ${dd.date}` : "Cargando…")}
+            {tab === "mensual" && (d ? `Período: ${d.business_month}` : "Cargando…")}
             {tab === "historica" && `Histórico — ${totalMesesHist} meses`}
           </p>
         </div>

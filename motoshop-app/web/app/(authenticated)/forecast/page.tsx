@@ -134,13 +134,102 @@ export default function ForecastPage(): JSX.Element {
       </Link>
 
       <div>
-        <h1 className="text-xl font-bold text-text-primary">Predicciones</h1>
+        <h1 className="text-xl font-bold text-text-primary">Predicciones de demanda</h1>
         <p className="text-sm text-text-muted">
-          Demanda estimada por SKU
+          Forecast por categoría (vista principal) + drilldown por SKU
         </p>
       </div>
 
       <StaleDataBanner />
+
+      {/* F7-FIX1 bug 6.2 + 4.5: explicación pedagógica de por qué por categoría */}
+      <Card>
+        <details className="text-sm" open>
+          <summary className="cursor-pointer font-medium text-text-primary">
+            ¿Por qué predecimos por categoría y no por producto individual?
+          </summary>
+          <div className="mt-3 space-y-2 text-text-secondary">
+            <p>
+              El catálogo tiene <strong>~6,000 SKUs</strong>. La mayoría tiene menos de 30 ventas al año
+              — demanda intermitente, no se puede predecir cada SKU individual con confianza estadística.
+            </p>
+            <p>
+              <strong>Solución:</strong> agrupar por categoría (cod_grupo). Predicción por categoría
+              tiene WAPE ~34% sostenido; por SKU individual da WAPE 45%+ y métricas inestables.
+              Decisión documentada en ADR-0020.
+            </p>
+            <p>
+              <strong>Drilldown:</strong> abajo podés buscar un SKU específico si querés verlo.
+              Los SKUs con poca historia no devolverán predicción (es honesto, no es bug).
+            </p>
+            <p className="text-xs text-text-muted">
+              Horizonte 7/14/30 días: cada barra es la demanda esperada
+              <strong> acumulada</strong> en esa ventana (no por intervalo).
+            </p>
+          </div>
+        </details>
+      </Card>
+
+      {/* Forecast por categoría — vista principal (F7-FIX1 bug 4.5) */}
+      {categoriaData?.items && categoriaData.items.length > 0 && (
+        <Card header={
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold text-text-primary">Predicción por categoría</h2>
+            <Badge variant="default" size="sm">
+              WAPE: {categoriaData.wape_promedio?.toFixed(1)}% · {categoriaData.total_categorias} categorías
+            </Badge>
+          </div>
+        }>
+          <div className="space-y-2">
+            {categoriaData.items
+              .slice()
+              .sort((a, b) => b.demanda_real - a.demanda_real)
+              .map((cat) => (
+                <div
+                  key={cat.cod_grupo}
+                  className="flex flex-col gap-2 rounded-lg border border-border bg-surface-alt px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-sm font-medium text-text-primary">
+                      {cat.cod_grupo === "SIN_GRUPO" ? "Sin clasificar" : cat.cod_grupo}
+                    </span>
+                    {cat.cod_grupo === "SIN_GRUPO" && (
+                      <Badge variant="warning" size="sm">datos stale</Badge>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 text-xs">
+                    <span className="text-text-muted">
+                      Real: <strong className="text-text-primary">{cat.demanda_real.toFixed(0)}</strong> u.
+                    </span>
+                    <span className="text-text-muted">
+                      Pred: <strong className="text-text-primary">{cat.demanda_predicha.toFixed(0)}</strong> u.
+                    </span>
+                    <Badge
+                      variant={
+                        Math.abs(cat.desviacion_pct) > 20
+                          ? "error"
+                          : Math.abs(cat.desviacion_pct) > 10
+                            ? "warning"
+                            : "success"
+                      }
+                      size="sm"
+                    >
+                      desv. {cat.desviacion_pct > 0 ? "+" : ""}{cat.desviacion_pct.toFixed(1)}%
+                    </Badge>
+                    <span className="text-xs text-text-muted">{cat.metodo}</span>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Drilldown por SKU */}
+      <div className="pt-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-text-muted">
+          Drilldown por SKU (opcional)
+        </h2>
+      </div>
 
       {/* Buscador de SKU */}
       <div className="relative">
@@ -297,53 +386,15 @@ export default function ForecastPage(): JSX.Element {
             </Card>
           )}
 
-          {/* Comparativo por categoría */}
-          {categoriaData?.items && categoriaData.items.length > 0 && (
-            <Card header={<h2 className="font-semibold text-text-primary">Predicción por categoría</h2>}>
-              <div className="space-y-2">
-                {categoriaData.items
-                  .slice()
-                  .sort((a, b) => b.desviacion_pct - a.desviacion_pct)
-                  .map((cat) => (
-                    <div
-                      key={cat.cod_grupo}
-                      className="flex items-center justify-between rounded-lg bg-surface-alt px-3 py-2"
-                    >
-                      <span className="text-xs font-medium text-text-primary">{cat.cod_grupo}</span>
-                      <div className="flex items-center gap-3">
-                        <span className="text-xs text-text-muted">
-                          Real: {cat.demanda_real.toFixed(0)}
-                        </span>
-                        <span className="text-xs text-text-muted">
-                          Pred: {cat.demanda_predicha.toFixed(0)}
-                        </span>
-                        <Badge
-                          variant={
-                            Math.abs(cat.desviacion_pct) > 20
-                              ? "error"
-                              : Math.abs(cat.desviacion_pct) > 10
-                                ? "warning"
-                                : "success"
-                          }
-                          size="sm"
-                        >
-                          {cat.desviacion_pct > 0 ? "+" : ""}
-                          {cat.desviacion_pct.toFixed(0)}%
-                        </Badge>
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            </Card>
-          )}
         </>
       )}
 
-      {/* Estado vacío */}
+      {/* Estado vacío del SKU drilldown */}
       {!selectedSku && !isLoading && (
         <Card>
           <p className="py-8 text-center text-sm text-text-muted">
-            Buscá un SKU para ver sus predicciones de demanda
+            Buscá un SKU específico arriba para ver su predicción individual.
+            La vista principal de categorías ya está mostrando arriba.
           </p>
         </Card>
       )}

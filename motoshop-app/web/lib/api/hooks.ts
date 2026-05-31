@@ -144,7 +144,8 @@ interface CohorteItem {
   mes_observacion: string;
   num_clientes: number;
   ticket_promedio: number;
-  tasa_recurrencia?: number;
+  tasa_recurrencia?: number | null;
+  muestra_pequena?: boolean;
 }
 
 interface CohortesResponse {
@@ -206,6 +207,13 @@ interface SalesTrendResponse {
 export function useSalesTrend(periods = 6) {
   return useMetrics<SalesTrendResponse>(
     `/api/metrics/sales-trend?periods=${periods}`,
+  );
+}
+
+// F7-FIX1 bug 5.4: para comparativa año actual vs año anterior
+export function useSalesTrendByYear(year: number, periods = 24) {
+  return useMetrics<SalesTrendResponse>(
+    `/api/metrics/sales-trend?periods=${periods}&year=${year}`,
   );
 }
 
