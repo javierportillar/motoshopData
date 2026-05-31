@@ -212,15 +212,24 @@ def sales_trend(
     return _cached_or_fetch(cache_key, lambda: repo.get_sales_trend(periods, year))
 
 
-@router.get("/metrics/vendedores-summary", response_model=VendedoresSummaryResponse)
+@router.get("/metrics/vendedores-summary")
 @limiter.limit("30/minute")
 def vendedores_summary(
     request: Request,
+    period: str = "month",
+    vendedor_id: str | None = Query(default=None),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
-) -> VendedoresSummaryResponse:
-    """Ranking top 10 vendedores del mes actual: facturas, ventas, ticket promedio."""
-    return _cached_or_fetch("vendedores-summary", repo.get_vendedores_summary)
+):
+    """Ranking top 10 vendedores o detalle de uno específico.
+    period: month | historical | 6months.
+    vendedor_id: NIT del vendedor para ver detalle.
+    """
+    if vendedor_id:
+        cache_key = f"vendedor-detail:{vendedor_id}:{period}"
+        return _cached_or_fetch(cache_key, lambda: repo.get_vendedor_detail(vendedor_id, period))
+    cache_key = f"vendedores-summary:{period}"
+    return _cached_or_fetch(cache_key, lambda: repo.get_vendedores_summary(period))
 
 
 @router.get("/metrics/cohortes-detail", response_model=CohortesDetailResponse)

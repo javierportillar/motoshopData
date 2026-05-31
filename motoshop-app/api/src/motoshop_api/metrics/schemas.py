@@ -145,6 +145,27 @@ class VendedoresSummaryResponse(BaseModel):
     items: list[VendedorItem]
 
 
+class VendedorCategoriaItem(BaseModel):
+    categoria: str
+    total: float
+
+
+class VendedorComparacion(BaseModel):
+    actual: float
+    anterior: float
+    delta: float | None = None
+
+
+class VendedorDetailResponse(BaseModel):
+    vendedor_id: str
+    nombre: str
+    ventas_total: float
+    ventas_por_categoria: list[VendedorCategoriaItem]
+    ticket_promedio: float
+    productos_vendidos: int
+    comparacion_mes_anterior: VendedorComparacion
+
+
 class CohorteRetencionItem(BaseModel):
     mes_observacion: str
     num_clientes: int

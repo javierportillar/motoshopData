@@ -58,7 +58,8 @@ class MetricsRepoProtocol(Protocol):
     def get_dormidos(self) -> DormidosResponse: ...
     def get_cohortes(self) -> CohortesResponse: ...
     def get_sales_trend(self, periods: int, year: int | None = None) -> SalesTrendResponse: ...
-    def get_vendedores_summary(self) -> VendedoresSummaryResponse: ...
+    def get_vendedores_summary(self, period: str = "month") -> VendedoresSummaryResponse: ...
+    def get_vendedor_detail(self, vendedor_id: str, period: str = "month") -> VendedorDetailResponse: ...
     def get_cohortes_detail(self) -> CohortesDetailResponse: ...
     def get_drift_summary(self) -> DriftSummaryResponse: ...
     def get_plan_compras(self) -> PlanComprasResponse: ...
@@ -205,30 +206,68 @@ class FakeMetricsRepo:
             ))
         return SalesTrendResponse(periods=periods, items=items)
 
-    def get_vendedores_summary(self) -> VendedoresSummaryResponse:
-        """Top 10 vendedores del mes actual con cifras mock realistas."""
+    def get_vendedores_summary(self, period: str = "month") -> VendedoresSummaryResponse:
+        """Top 10 vendedores con cifras mock. period: month | historical | 6months."""
+        escala = {"month": 1, "historical": 12, "6months": 6}.get(period, 1)
         return VendedoresSummaryResponse(items=[
             VendedorItem(
                 nit_vendedor="900123456-7", nombre_vendedor="Carlos MotoPartes",
-                facturas=215, total_ventas=18_500_000.0, ticket_promedio=86_046.0,
+                facturas=int(215 * escala), total_ventas=18_500_000.0 * escala, ticket_promedio=86_046.0,
             ),
             VendedorItem(
                 nit_vendedor="900234567-8", nombre_vendedor="María Repuestos",
-                facturas=178, total_ventas=14_200_000.0, ticket_promedio=79_775.0,
+                facturas=int(178 * escala), total_ventas=14_200_000.0 * escala, ticket_promedio=79_775.0,
             ),
             VendedorItem(
                 nit_vendedor="900345678-9", nombre_vendedor="Juan Talleres",
-                facturas=142, total_ventas=10_800_000.0, ticket_promedio=76_056.0,
+                facturas=int(142 * escala), total_ventas=10_800_000.0 * escala, ticket_promedio=76_056.0,
             ),
             VendedorItem(
                 nit_vendedor="900456789-0", nombre_vendedor="Ana Lubricantes",
-                facturas=98, total_ventas=5_620_000.0, ticket_promedio=57_346.0,
+                facturas=int(98 * escala), total_ventas=5_620_000.0 * escala, ticket_promedio=57_346.0,
             ),
             VendedorItem(
                 nit_vendedor="900567890-1", nombre_vendedor="Pedro Accesorios",
-                facturas=67, total_ventas=3_450_000.0, ticket_promedio=51_492.0,
+                facturas=int(67 * escala), total_ventas=3_450_000.0 * escala, ticket_promedio=51_492.0,
             ),
         ])
+
+    def get_vendedor_detail(self, vendedor_id: str, period: str = "month") -> VendedorDetailResponse:
+        """Detalle de un vendedor específico con datos mock."""
+        vendedores = {
+            "900123456-7": ("Carlos MotoPartes", [
+                ("LLANTAS", 8_500_000.0), ("ACEITES", 5_200_000.0), ("FRENOS", 3_100_000.0), ("SUSPENSIÓN", 1_700_000.0),
+            ]),
+            "900234567-8": ("María Repuestos", [
+                ("MOTORES", 6_200_000.0), ("TRANSMISIÓN", 4_100_000.0), ("ELÉCTRICO", 2_500_000.0), ("FILTROS", 1_400_000.0),
+            ]),
+            "900345678-9": ("Juan Talleres", [
+                ("SUSPENSIÓN", 4_800_000.0), ("DIRECCIÓN", 3_200_000.0), ("FRENOS", 1_900_000.0), ("ESCAPE", 900_000.0),
+            ]),
+            "900456789-0": ("Ana Lubricantes", [
+                ("ACEITES", 2_800_000.0), ("FILTROS", 1_500_000.0), ("LÍQUIDOS", 820_000.0), ("LUBRICANTES", 500_000.0),
+            ]),
+            "900567890-1": ("Pedro Accesorios", [
+                ("ILUMINACIÓN", 1_200_000.0), ("SONIDO", 950_000.0), ("TAPIZADOS", 700_000.0), ("EMBLEMAS", 600_000.0),
+            ]),
+        }
+        info = vendedores.get(vendedor_id, ("Vendedor no encontrado", [("GENÉRICO", 0.0)]))
+        nombre, categorias = info
+        escala = {"month": 1, "historical": 12, "6months": 6}.get(period, 1)
+        total = sum(c[1] for c in categorias) * escala
+        anterior = total * 0.85
+        return VendedorDetailResponse(
+            vendedor_id=vendedor_id,
+            nombre=nombre,
+            ventas_total=total,
+            ventas_por_categoria=[VendedorCategoriaItem(categoria=c[0], total=c[1] * escala) for c in categorias],
+            ticket_promedio=round(total / 150, 2),
+            productos_vendidos=int(45 * escala),
+            comparacion_mes_anterior=VendedorComparacion(
+                actual=total, anterior=anterior,
+                delta=round((total - anterior) / anterior * 100, 1),
+            ),
+        )
 
     def get_cohortes_detail(self) -> CohortesDetailResponse:
         """Detalle agregado de cohortes: LTV, retención por mes, nuevos vs recurrentes."""
@@ -737,26 +776,93 @@ class RealMetricsRepo:
             r["ticket_promedio"] = float(r["ticket_promedio"])
         return SalesTrendResponse(periods=periods, items=[SalesTrendItem(**r) for r in rows])
 
-    def get_vendedores_summary(self) -> VendedoresSummaryResponse:
-        rows = self._query("""
+    def get_vendedores_summary(self, period: str = "month") -> VendedoresSummaryResponse:
+        where = {
+            "month": "business_date >= DATE_TRUNC('MONTH', CURRENT_DATE())",
+            "historical": "1 = 1",
+            "6months": "business_date >= DATE_ADD(CURRENT_DATE(), -180)",
+        }.get(period, "business_date >= DATE_TRUNC('MONTH', CURRENT_DATE())")
+        rows = self._query(f"""
             SELECT nit_vendedor, nombre_vendedor,
                    COUNT(*) AS facturas,
                    SUM(total_factura) AS total_ventas,
                    AVG(total_factura) AS ticket_promedio
             FROM motoshop.silver.fact_ventas
-            WHERE business_date >= DATE_TRUNC('MONTH', CURRENT_DATE())
+            WHERE {where}
             GROUP BY nit_vendedor, nombre_vendedor
             ORDER BY total_ventas DESC
             LIMIT 10
         """)
         if not rows:
             logger.warning("No vendedores data found in silver.fact_ventas")
-            return FakeMetricsRepo().get_vendedores_summary()
+            return FakeMetricsRepo().get_vendedores_summary(period)
         for r in rows:
             r["facturas"] = int(r["facturas"])
             r["total_ventas"] = float(r["total_ventas"])
             r["ticket_promedio"] = float(r["ticket_promedio"])
         return VendedoresSummaryResponse(items=[VendedorItem(**r) for r in rows])
+
+    def get_vendedor_detail(self, vendedor_id: str, period: str = "month") -> VendedorDetailResponse:
+        where = {
+            "month": "business_date >= DATE_TRUNC('MONTH', CURRENT_DATE())",
+            "historical": "1 = 1",
+            "6months": "business_date >= DATE_SUB(CURRENT_DATE(), 180)",
+        }.get(period, "business_date >= DATE_TRUNC('MONTH', CURRENT_DATE())")
+        stats = self._query(f"""
+            SELECT
+                nit_vendedor,
+                nombre_vendedor,
+                COUNT(*) AS facturas,
+                SUM(total_factura) AS ventas_total,
+                AVG(total_factura) AS ticket_promedio
+            FROM motoshop.silver.fact_ventas
+            WHERE nit_vendedor = '{vendedor_id}' AND {where}
+            GROUP BY nit_vendedor, nombre_vendedor
+        """)
+        if not stats:
+            logger.warning("No detail data found for vendedor %s", vendedor_id)
+            return FakeMetricsRepo().get_vendedor_detail(vendedor_id, period)
+        row = stats[0]
+        actual = float(row["ventas_total"])
+
+        # TODO: Reemplazar con JOIN a dim_categoria_producto cuando exista
+        categorias = self._query(f"""
+            SELECT 'GENÉRICO' AS categoria, CAST(SUM(total_factura) AS DOUBLE) AS total
+            FROM motoshop.silver.fact_ventas
+            WHERE nit_vendedor = '{vendedor_id}' AND {where}
+        """)
+        cats = [{"categoria": r["categoria"], "total": float(r["total"])} for r in categorias] if categorias else []
+
+        productos = self._query(f"""
+            SELECT COUNT(DISTINCT cod_producto) AS productos_vendidos
+            FROM motoshop.silver.fact_ventas_detalle d
+            INNER JOIN motoshop.silver.fact_ventas v ON d.num_documento = v.num_documento
+            WHERE v.nit_vendedor = '{vendedor_id}' AND {where.replace('business_date', 'v.business_date')}
+        """)
+        prod_count = int(productos[0]["productos_vendidos"]) if productos and productos[0].get("productos_vendidos") else 0
+
+        ant_val = 0.0
+        if period == "month":
+            anterior_rows = self._query(f"""
+                SELECT COALESCE(SUM(total_factura), 0) AS anterior
+                FROM motoshop.silver.fact_ventas
+                WHERE nit_vendedor = '{vendedor_id}'
+                  AND business_date >= DATE_TRUNC('MONTH', DATE_SUB(CURRENT_DATE(), 30))
+                  AND business_date < DATE_TRUNC('MONTH', CURRENT_DATE())
+            """)
+            if anterior_rows:
+                ant_val = float(anterior_rows[0]["anterior"])
+        delta = round((actual - ant_val) / ant_val * 100, 1) if ant_val else None
+
+        return VendedorDetailResponse(
+            vendedor_id=str(row["nit_vendedor"]),
+            nombre=str(row["nombre_vendedor"]),
+            ventas_total=actual,
+            ventas_por_categoria=[VendedorCategoriaItem(**c) for c in cats],
+            ticket_promedio=round(float(row["ticket_promedio"]), 2),
+            productos_vendidos=prod_count,
+            comparacion_mes_anterior=VendedorComparacion(actual=actual, anterior=ant_val, delta=delta),
+        )
 
     def get_cohortes_detail(self) -> CohortesDetailResponse:
         cohortes_rows = self._query("""

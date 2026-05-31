@@ -1,0 +1,101 @@
+08:30:03 [INFO] Origen:  analytics@localhost:3306/motoshop2024
+08:30:03 [INFO] Destino: /Volumes/motoshop/bronze/_landing  (host https://dbc-e311b140-dab8.cloud.databricks.com)
+08:30:03 [INFO] Fecha:   2026-05-30
+08:30:03 [INFO] Tablas:  facventas, detfventas, productos, auxinventario, bodegas, terceros, compras, detcompras, sucursales, formapago, subproduct, preciosxpro
+08:30:03 [INFO] Modo:    CATCH-UP (subir pendientes antes del dump)
+08:30:03 [INFO] 
+=== Catch-up: buscando Parquets pendientes ===
+08:30:08 [INFO]   catch-up OK: auxinventario/2026-05-28
+08:30:11 [INFO]   catch-up OK: auxinventario/2026-05-29
+08:30:13 [INFO]   catch-up OK: auxinventario/2026-05-30
+08:30:14 [INFO]   catch-up OK: bodegas/2026-05-28
+08:30:15 [INFO]   catch-up OK: bodegas/2026-05-29
+08:30:17 [INFO]   catch-up OK: bodegas/2026-05-30
+08:30:18 [INFO]   catch-up OK: compras/2026-05-28
+08:30:20 [INFO]   catch-up OK: compras/2026-05-29
+08:30:21 [INFO]   catch-up OK: compras/2026-05-30
+08:30:24 [INFO]   catch-up OK: detcompras/2026-05-28
+08:30:27 [INFO]   catch-up OK: detcompras/2026-05-29
+08:30:29 [INFO]   catch-up OK: detcompras/2026-05-30
+08:30:33 [INFO]   catch-up OK: detfventas/2026-05-28
+08:30:36 [INFO]   catch-up OK: detfventas/2026-05-29
+08:30:39 [INFO]   catch-up OK: detfventas/2026-05-30
+08:30:41 [INFO]   catch-up OK: facventas/2026-05-28
+08:30:43 [INFO]   catch-up OK: facventas/2026-05-29
+08:30:44 [INFO]   catch-up OK: facventas/2026-05-30
+08:30:46 [INFO]   catch-up OK: formapago/2026-05-28
+08:30:48 [INFO]   catch-up OK: formapago/2026-05-29
+08:30:50 [INFO]   catch-up OK: formapago/2026-05-30
+08:30:51 [INFO]   catch-up OK: preciosxpro/2026-05-28
+08:30:54 [INFO]   catch-up OK: preciosxpro/2026-05-29
+08:30:55 [INFO]   catch-up OK: preciosxpro/2026-05-30
+08:30:58 [INFO]   catch-up OK: productos/2026-05-28
+08:31:01 [INFO]   catch-up OK: productos/2026-05-29
+08:31:03 [INFO]   catch-up OK: productos/2026-05-30
+08:31:04 [INFO]   catch-up OK: subproduct/2026-05-28
+08:31:06 [INFO]   catch-up OK: subproduct/2026-05-29
+08:31:07 [INFO]   catch-up OK: subproduct/2026-05-30
+08:31:08 [INFO]   catch-up OK: sucursales/2026-05-28
+08:31:10 [INFO]   catch-up OK: sucursales/2026-05-29
+08:31:11 [INFO]   catch-up OK: sucursales/2026-05-30
+08:31:13 [INFO]   catch-up OK: terceros/2026-05-28
+08:31:14 [INFO]   catch-up OK: terceros/2026-05-29
+08:31:16 [INFO]   catch-up OK: terceros/2026-05-30
+08:31:16 [INFO] Catch-up: 36 subidos, 0 fallidos.
+08:31:16 [INFO] === Catch-up completado ===
+
+08:31:16 [INFO] package: mysql.connector.plugins
+08:31:16 [INFO] plugin_name: mysql_native_password
+08:31:16 [INFO] AUTHENTICATION_PLUGIN_CLASS: MySQLNativePasswordAuthPlugin
+08:31:16 [INFO] \u2192 facventas: extrayendo de MySQL...
+08:31:17 [INFO]   · 6,349 filas en 0.6s
+08:31:17 [INFO]   · parquet local: _staging\facventas\ingest_date=2026-05-30\part-0.parquet (173.0 KB) en 0.2s
+08:31:18 [INFO]   · subido a /Volumes/motoshop/bronze/_landing/facventas/ingest_date=2026-05-30/part-0.parquet en 1.5s
+08:31:18 [INFO] \u2192 detfventas: extrayendo de MySQL...
+08:31:20 [INFO]   · 27,806 filas en 1.6s
+08:31:21 [INFO]   · parquet local: _staging\detfventas\ingest_date=2026-05-30\part-0.parquet (451.6 KB) en 0.5s
+08:31:24 [INFO]   · subido a /Volumes/motoshop/bronze/_landing/detfventas/ingest_date=2026-05-30/part-0.parquet en 3.1s
+08:31:24 [INFO] \u2192 productos: extrayendo de MySQL...
+08:31:24 [INFO]   · 6,192 filas en 0.7s
+08:31:25 [INFO]   · parquet local: _staging\productos\ingest_date=2026-05-30\part-0.parquet (365.2 KB) en 0.3s
+08:31:27 [INFO]   · subido a /Volumes/motoshop/bronze/_landing/productos/ingest_date=2026-05-30/part-0.parquet en 1.9s
+08:31:27 [INFO] \u2192 auxinventario: extrayendo de MySQL...
+08:31:28 [INFO]   · 26,174 filas en 1.5s
+08:31:29 [INFO]   · parquet local: _staging\auxinventario\ingest_date=2026-05-30\part-0.parquet (286.2 KB) en 0.4s
+08:31:31 [INFO]   · subido a /Volumes/motoshop/bronze/_landing/auxinventario/ingest_date=2026-05-30/part-0.parquet en 2.1s
+08:31:31 [INFO] \u2192 bodegas: extrayendo de MySQL...
+08:31:31 [INFO]   · 1 filas en 0.0s
+08:31:31 [INFO]   · parquet local: _staging\bodegas\ingest_date=2026-05-30\part-0.parquet (1.3 KB) en 0.0s
+08:31:33 [INFO]   · subido a /Volumes/motoshop/bronze/_landing/bodegas/ingest_date=2026-05-30/part-0.parquet en 1.9s
+08:31:33 [INFO] \u2192 terceros: extrayendo de MySQL...
+08:31:33 [INFO]   · 161 filas en 0.0s
+08:31:33 [INFO]   · parquet local: _staging\terceros\ingest_date=2026-05-30\part-0.parquet (29.2 KB) en 0.1s
+08:31:34 [INFO]   · subido a /Volumes/motoshop/bronze/_landing/terceros/ingest_date=2026-05-30/part-0.parquet en 1.4s
+08:31:34 [INFO] \u2192 compras: extrayendo de MySQL...
+08:31:34 [INFO]   · 763 filas en 0.1s
+08:31:34 [INFO]   · parquet local: _staging\compras\ingest_date=2026-05-30\part-0.parquet (45.3 KB) en 0.1s
+08:31:36 [INFO]   · subido a /Volumes/motoshop/bronze/_landing/compras/ingest_date=2026-05-30/part-0.parquet en 1.4s
+08:31:36 [INFO] \u2192 detcompras: extrayendo de MySQL...
+08:31:36 [INFO]   · 11,640 filas en 0.8s
+08:31:37 [INFO]   · parquet local: _staging\detcompras\ingest_date=2026-05-30\part-0.parquet (384.1 KB) en 0.3s
+08:31:39 [INFO]   · subido a /Volumes/motoshop/bronze/_landing/detcompras/ingest_date=2026-05-30/part-0.parquet en 2.0s
+08:31:39 [INFO] \u2192 sucursales: extrayendo de MySQL...
+08:31:39 [INFO]   · 0 filas en 0.0s
+08:31:39 [INFO]   · parquet local: _staging\sucursales\ingest_date=2026-05-30\part-0.parquet (3.7 KB) en 0.0s
+08:31:40 [INFO]   · subido a /Volumes/motoshop/bronze/_landing/sucursales/ingest_date=2026-05-30/part-0.parquet en 1.4s
+08:31:40 [INFO] \u2192 formapago: extrayendo de MySQL...
+08:31:40 [INFO]   · 20 filas en 0.0s
+08:31:40 [INFO]   · parquet local: _staging\formapago\ingest_date=2026-05-30\part-0.parquet (6.7 KB) en 0.0s
+08:31:42 [INFO]   · subido a /Volumes/motoshop/bronze/_landing/formapago/ingest_date=2026-05-30/part-0.parquet en 1.4s
+08:31:42 [INFO] \u2192 subproduct: extrayendo de MySQL...
+08:31:42 [INFO]   · 0 filas en 0.0s
+08:31:42 [INFO]   · parquet local: _staging\subproduct\ingest_date=2026-05-30\part-0.parquet (1.1 KB) en 0.0s
+08:31:44 [INFO]   · subido a /Volumes/motoshop/bronze/_landing/subproduct/ingest_date=2026-05-30/part-0.parquet en 1.9s
+08:31:44 [INFO] \u2192 preciosxpro: extrayendo de MySQL...
+08:31:44 [INFO]   · 123 filas en 0.0s
+08:31:44 [INFO]   · parquet local: _staging\preciosxpro\ingest_date=2026-05-30\part-0.parquet (3.2 KB) en 0.0s
+08:31:45 [INFO]   · subido a /Volumes/motoshop/bronze/_landing/preciosxpro/ingest_date=2026-05-30/part-0.parquet en 1.8s
+08:31:45 [INFO] 
+Resumen: 12 tablas en 29.4s
+08:31:45 [INFO] Manifiesto local: _staging\manifest_2026-05-30.json
+08:31:47 [INFO] Manifiesto subido a /Volumes/motoshop/bronze/_landing/_manifests/manifest_2026-05-30.json

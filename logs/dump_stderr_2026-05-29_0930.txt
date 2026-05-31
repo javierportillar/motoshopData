@@ -1,0 +1,7 @@
+09:30:02 [INFO] Origen:  analytics@localhost:3306/motoshop2024
+09:30:02 [INFO] Destino: /Volumes/motoshop/bronze/_landing  (host https://dbc-e311b140-dab8.cloud.databricks.com)
+09:30:02 [INFO] Fecha:   2026-05-29
+09:30:02 [INFO] Tablas:  facventas, detfventas, productos, auxinventario, bodegas, terceros, compras, detcompras, sucursales, formapago, subproduct, preciosxpro
+09:30:02 [INFO] Modo:    CATCH-UP (subir pendientes antes del dump)
+09:30:02 [INFO] 
+=== Catch-up: buscando Parquets pendientes ===
