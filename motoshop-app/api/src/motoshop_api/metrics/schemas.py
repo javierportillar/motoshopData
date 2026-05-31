@@ -32,6 +32,7 @@ class BodegaItem(BaseModel):
 class DormidoItem(BaseModel):
     cod_producto: str
     nom_producto: str
+    ultima_compra: str | None = None
     dias_sin_venta: int
     stock_actual: float | None = None
 

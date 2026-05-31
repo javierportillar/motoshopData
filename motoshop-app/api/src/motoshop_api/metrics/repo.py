@@ -95,12 +95,12 @@ _BODEGAS = [
 ]
 
 _DORMIDOS = [
-    DormidoItem(cod_producto="MOTS9912", nom_producto="ESCAPE DEPORTIVO AKRAPOVIC", dias_sin_venta=187, stock_actual=3.0),
-    DormidoItem(cod_producto="MOTS8745", nom_producto="ASIENTO GEL YAMAHA MT09", dias_sin_venta=156, stock_actual=2.0),
-    DormidoItem(cod_producto="MOTS7634", nom_producto="KIT TRANSMISION DID 530", dias_sin_venta=134, stock_actual=5.0),
-    DormidoItem(cod_producto="MOTS6523", nom_producto="FARO LED PROYECTOR 7\"", dias_sin_venta=112, stock_actual=8.0),
-    DormidoItem(cod_producto="MOTS5412", nom_producto="MANILLAR CRUISER 1\"", dias_sin_venta=98, stock_actual=12.0),
-    DormidoItem(cod_producto="MOTS4301", nom_producto="DEFENSA TRASERA HONDA XR190", dias_sin_venta=95, stock_actual=4.0),
+    DormidoItem(cod_producto="MOTS9912", nom_producto="ESCAPE DEPORTIVO AKRAPOVIC", ultima_compra="2025-11-25", dias_sin_venta=187, stock_actual=3.0),
+    DormidoItem(cod_producto="MOTS8745", nom_producto="ASIENTO GEL YAMAHA MT09", ultima_compra="2025-12-26", dias_sin_venta=156, stock_actual=2.0),
+    DormidoItem(cod_producto="MOTS7634", nom_producto="KIT TRANSMISION DID 530", ultima_compra="2026-01-17", dias_sin_venta=134, stock_actual=5.0),
+    DormidoItem(cod_producto="MOTS6523", nom_producto="FARO LED PROYECTOR 7\"", ultima_compra="2026-02-08", dias_sin_venta=112, stock_actual=8.0),
+    DormidoItem(cod_producto="MOTS5412", nom_producto="MANILLAR CRUISER 1\"", ultima_compra="2026-02-22", dias_sin_venta=98, stock_actual=12.0),
+    DormidoItem(cod_producto="MOTS4301", nom_producto="DEFENSA TRASERA HONDA XR190", ultima_compra="2026-02-25", dias_sin_venta=95, stock_actual=4.0),
 ]
 
 
@@ -643,8 +643,15 @@ class RealMetricsRepo:
 
     def get_dormidos(self) -> DormidosResponse:
         rows = self._query("""
-            SELECT cod_producto, nom_producto, dias_sin_venta, stock_actual
-            FROM motoshop.gold.mart_productos_dormidos
+            SELECT d.cod_producto, d.nom_producto, d.stock_actual,
+                   COALESCE(CAST(v.ultima_venta AS STRING), CAST(d.ultima_venta AS STRING)) AS ultima_compra,
+                   DATEDIFF(CURRENT_DATE, COALESCE(v.ultima_venta, d.ultima_venta)) AS dias_sin_venta
+            FROM motoshop.gold.mart_productos_dormidos d
+            LEFT JOIN (
+                SELECT cod_producto, MAX(business_date) AS ultima_venta
+                FROM motoshop.silver.fact_ventas_detalle
+                GROUP BY cod_producto
+            ) v ON d.cod_producto = v.cod_producto
             ORDER BY dias_sin_venta DESC
             LIMIT 500
         """)
@@ -654,6 +661,8 @@ class RealMetricsRepo:
         for r in rows:
             r["dias_sin_venta"] = int(r["dias_sin_venta"])
             r["stock_actual"] = float(r["stock_actual"])
+            if r["ultima_compra"] is not None:
+                r["ultima_compra"] = str(r["ultima_compra"])
         return DormidosResponse(total=len(rows), productos=[DormidoItem(**r) for r in rows])
 
     @staticmethod

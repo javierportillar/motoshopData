@@ -88,3 +88,6 @@ mlruns/
 # ─── Staging del dump local antes de subir a cloud storage ─
 _staging/
 *.parquet
+
+# ─── Logs de dumps automáticos ────────────────────────────
+logs/
