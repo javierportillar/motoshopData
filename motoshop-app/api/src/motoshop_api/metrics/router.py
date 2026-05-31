@@ -26,6 +26,7 @@ from motoshop_api.metrics.repo import (
 )
 from motoshop_api.metrics.schemas import (
     AbcSegmentation,
+    CohortesDetailResponse,
     CohortesResponse,
     DormidosResponse,
     InventorySummary,
@@ -171,6 +172,17 @@ def vendedores_summary(
 ) -> VendedoresSummaryResponse:
     """Ranking top 10 vendedores del mes actual: facturas, ventas, ticket promedio."""
     return _cached_or_fetch("vendedores-summary", repo.get_vendedores_summary)
+
+
+@router.get("/metrics/cohortes-detail", response_model=CohortesDetailResponse)
+@limiter.limit("30/minute")
+def cohortes_detail(
+    request: Request,
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+) -> CohortesDetailResponse:
+    """Detalle de cohortes: LTV, retención por mes, nuevos vs recurrentes."""
+    return _cached_or_fetch("cohortes-detail", repo.get_cohortes_detail)
 
 
 @router.post("/metrics/cache/clear")

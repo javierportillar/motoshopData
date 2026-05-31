@@ -17,7 +17,10 @@ from motoshop_api.metrics.schemas import (
     AbcBucket,
     AbcSegmentation,
     BodegaItem,
+    CohorteDetailItem,
     CohorteItem,
+    CohorteRetencionItem,
+    CohortesDetailResponse,
     CohortesResponse,
     DormidoItem,
     DormidosResponse,
@@ -41,6 +44,7 @@ class MetricsRepoProtocol(Protocol):
     def get_cohortes(self) -> CohortesResponse: ...
     def get_sales_trend(self, periods: int) -> SalesTrendResponse: ...
     def get_vendedores_summary(self) -> VendedoresSummaryResponse: ...
+    def get_cohortes_detail(self) -> CohortesDetailResponse: ...
 
 
 # ── Fake (mock) ──────────────────────────────────────────────────────────
@@ -172,6 +176,59 @@ class FakeMetricsRepo:
                 facturas=67, total_ventas=3_450_000.0, ticket_promedio=51_492.0,
             ),
         ])
+
+    def get_cohortes_detail(self) -> CohortesDetailResponse:
+        """Detalle agregado de cohortes: LTV, retención por mes, nuevos vs recurrentes."""
+        cohortes = [
+            CohorteDetailItem(
+                cohorte_mes="2026-01", total_clientes=45,
+                ltv_promedio=51500.0,
+                retencion=[
+                    CohorteRetencionItem(mes_observacion="2026-01", num_clientes=45, tasa_recurrencia=0.0),
+                    CohorteRetencionItem(mes_observacion="2026-02", num_clientes=10, tasa_recurrencia=0.22),
+                    CohorteRetencionItem(mes_observacion="2026-03", num_clientes=8, tasa_recurrencia=0.18),
+                    CohorteRetencionItem(mes_observacion="2026-04", num_clientes=7, tasa_recurrencia=0.15),
+                ],
+            ),
+            CohorteDetailItem(
+                cohorte_mes="2026-02", total_clientes=38,
+                ltv_promedio=51700.0,
+                retencion=[
+                    CohorteRetencionItem(mes_observacion="2026-02", num_clientes=38, tasa_recurrencia=0.0),
+                    CohorteRetencionItem(mes_observacion="2026-03", num_clientes=8, tasa_recurrencia=0.21),
+                    CohorteRetencionItem(mes_observacion="2026-04", num_clientes=6, tasa_recurrencia=0.16),
+                ],
+            ),
+            CohorteDetailItem(
+                cohorte_mes="2026-03", total_clientes=52,
+                ltv_promedio=47800.0,
+                retencion=[
+                    CohorteRetencionItem(mes_observacion="2026-03", num_clientes=52, tasa_recurrencia=0.0),
+                    CohorteRetencionItem(mes_observacion="2026-04", num_clientes=10, tasa_recurrencia=0.19),
+                ],
+            ),
+            CohorteDetailItem(
+                cohorte_mes="2026-04", total_clientes=41,
+                ltv_promedio=50600.0,
+                retencion=[
+                    CohorteRetencionItem(mes_observacion="2026-04", num_clientes=41, tasa_recurrencia=0.0),
+                ],
+            ),
+            CohorteDetailItem(
+                cohorte_mes="2026-05", total_clientes=35,
+                ltv_promedio=49200.0,
+                retencion=[
+                    CohorteRetencionItem(mes_observacion="2026-05", num_clientes=35, tasa_recurrencia=0.0),
+                ],
+            ),
+        ]
+        return CohortesDetailResponse(
+            cohortes=cohortes,
+            total_cohortes=len(cohortes),
+            nuevos_este_mes=35,
+            recurrentes_este_mes=47,
+            top_recurrentes=12,
+        )
 
 
 # ── Real (Databricks SQL Warehouse vía SDK) ──────────────────────────────
@@ -386,6 +443,67 @@ class RealMetricsRepo:
             r["total_ventas"] = float(r["total_ventas"])
             r["ticket_promedio"] = float(r["ticket_promedio"])
         return VendedoresSummaryResponse(items=[VendedorItem(**r) for r in rows])
+
+    def get_cohortes_detail(self) -> CohortesDetailResponse:
+        cohortes_rows = self._query("""
+            SELECT mes_cohorte AS cohorte_mes,
+                   COUNT(DISTINCT nit_cliente) AS total_clientes,
+                   ROUND(AVG(ticket_promedio), 2) AS ltv_promedio
+            FROM motoshop.gold.mart_cohortes_clientes
+            GROUP BY mes_cohorte
+            ORDER BY mes_cohorte
+        """)
+        retencion_rows = self._query("""
+            SELECT mes_cohorte AS cohorte_mes,
+                   business_month AS mes_observacion,
+                   COUNT(DISTINCT nit_cliente) AS num_clientes,
+                   ROUND(SUM(CASE WHEN compro_este_mes THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 2) AS tasa_recurrencia
+            FROM motoshop.gold.mart_cohortes_clientes
+            GROUP BY mes_cohorte, business_month
+            ORDER BY mes_cohorte, business_month
+        """)
+        nuevos_rows = self._query("""
+            WITH ultimo_mes AS (
+                SELECT MAX(business_month) AS mm FROM motoshop.gold.mart_cohortes_clientes
+            )
+            SELECT
+                COALESCE(SUM(CASE WHEN mes_cohorte = business_month THEN 1 ELSE 0 END), 0) AS nuevos,
+                COALESCE(SUM(CASE WHEN mes_cohorte < business_month AND compro_este_mes THEN 1 ELSE 0 END), 0) AS recurrentes,
+                COALESCE(SUM(CASE WHEN compro_este_mes THEN 1 ELSE 0 END), 0) AS top_recurrentes
+            FROM motoshop.gold.mart_cohortes_clientes, ultimo_mes
+            WHERE business_month = ultimo_mes.mm
+        """)
+        if not cohortes_rows:
+            logger.warning("No cohortes detail data found")
+            return FakeMetricsRepo().get_cohortes_detail()
+        for r in cohortes_rows:
+            r["total_clientes"] = int(r["total_clientes"])
+            r["ltv_promedio"] = float(r["ltv_promedio"])
+        for r in retencion_rows:
+            r["num_clientes"] = int(r["num_clientes"])
+            r["tasa_recurrencia"] = float(r["tasa_recurrencia"])
+        retencion_by_cohorte: dict[str, list[CohorteRetencionItem]] = {}
+        for r in retencion_rows:
+            retencion_by_cohorte.setdefault(r["cohorte_mes"], []).append(
+                CohorteRetencionItem(**r)
+            )
+        cohortes = [
+            CohorteDetailItem(
+                cohorte_mes=c["cohorte_mes"],
+                total_clientes=c["total_clientes"],
+                ltv_promedio=c["ltv_promedio"],
+                retencion=retencion_by_cohorte.get(c["cohorte_mes"], []),
+            )
+            for c in cohortes_rows
+        ]
+        n = nuevos_rows[0] if nuevos_rows else {"nuevos": 0, "recurrentes": 0, "top_recurrentes": 0}
+        return CohortesDetailResponse(
+            cohortes=cohortes,
+            total_cohortes=len(cohortes),
+            nuevos_este_mes=int(n["nuevos"]),
+            recurrentes_este_mes=int(n["recurrentes"]),
+            top_recurrentes=int(n["top_recurrentes"]),
+        )
 
     def _query(self, sql: str) -> list[dict]:
         result = self._w.statement_execution.execute_statement(

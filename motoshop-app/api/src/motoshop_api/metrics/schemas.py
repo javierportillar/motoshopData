@@ -111,3 +111,24 @@ class VendedorItem(BaseModel):
 
 class VendedoresSummaryResponse(BaseModel):
     items: list[VendedorItem]
+
+
+class CohorteRetencionItem(BaseModel):
+    mes_observacion: str
+    num_clientes: int
+    tasa_recurrencia: float
+
+
+class CohorteDetailItem(BaseModel):
+    cohorte_mes: str
+    total_clientes: int
+    ltv_promedio: float
+    retencion: list[CohorteRetencionItem]
+
+
+class CohortesDetailResponse(BaseModel):
+    cohortes: list[CohorteDetailItem]
+    total_cohortes: int
+    nuevos_este_mes: int
+    recurrentes_este_mes: int
+    top_recurrentes: int
