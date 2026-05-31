@@ -23,6 +23,38 @@
 
 ---
 
+## 1.5 · Refinamiento post-screenshots workflow (Sesión 63b)
+
+Tras revisar las capturas del workflow en Databricks UI, refinamos la hipótesis:
+
+### Root cause real son SOLO 2 jobs (no 3)
+
+| Task | Estado real | Acción |
+|------|-------------|--------|
+| `gold_rotacion_promedio` | 🔴 Failed en 2m 27s (durante INSERT OVERWRITE) | **Fix directo** — schema mismatch confirmado |
+| `gold_drift` | 🔴 Failed en 7s (error inmediato) | **Fix directo** — causa distinta a rotación |
+| `gold_abc_xyz` | ⏸️ Upstream failed en 0s | **NO necesita fix propio** — cuando rotación pase, abc_xyz pasa solo en next run |
+
+### Bug adicional detectado en DAG del workflow
+
+`gold_drift` solo depende de `gold_validate` en `infra/create_full_workflow.py` línea 131:
+
+```python
+("gold_drift", "gold/25_drift_monitor", ["gold_validate"])
+```
+
+Pero el notebook `25_drift_monitor.py` **lee de `motoshop.gold.forecast_baseline_sku`** que se actualiza en `gold_baseline` (línea 116-117).
+
+**Conceptualmente, `gold_drift` debería depender también de `gold_baseline`** (o mejor: solo de `gold_baseline` ya que es su fuente real de data). En este run específico todos los upstream están en verde así que no afecta — pero corregir el DAG previene timing bugs futuros.
+
+### Plan refinado para Dev W
+
+1. Concentrarse en `gold_rotacion_promedio` y `gold_drift` (no en abc_xyz).
+2. Después del fix, re-correr workflow → abc_xyz debería pasar solo.
+3. Bonus opcional: agregar `gold_baseline` como dependencia explícita de `gold_drift` en el workflow.
+
+---
+
 ## 2 · Impacto
 
 | Aspecto | Status |

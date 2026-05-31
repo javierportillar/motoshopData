@@ -25,9 +25,13 @@ Hay un nuevo trabajo: F7-E-FIX1 — diagnosticar y arreglar 3 tasks
 fallando en motoshop_full_workflow.
 
 Tasks fallando (últimas 3 corridas hoy: 06:39, 06:47, 06:54):
-- gold_drift (notebook 25_drift_monitor.py)
-- gold_rotacion_promedio (notebook 18_mart_rotacion_promedio.py)
-- gold_abc_xyz (notebook 19_mart_abc_xyz.py)
+- gold_drift (notebook 25_drift_monitor.py) — 7s, error inmediato
+- gold_rotacion_promedio (notebook 18_mart_rotacion_promedio.py) — 2m 27s, falló DURANTE INSERT
+- gold_abc_xyz (notebook 19_mart_abc_xyz.py) — Upstream failed (NO necesita fix propio,
+  pasa solo cuando rotación se arregle)
+
+IMPORTANTE: el root cause real son SOLO 2 jobs (rotación + drift, independientes
+entre sí). abc_xyz está en cascade fail. Cuando rotación pase, abc_xyz pasa solo.
 
 Hipótesis del Revisor: schema mismatch. Las tablas fueron creadas
 manualmente por Dev D + Dev W antes del workflow, posiblemente sin
@@ -64,6 +68,25 @@ Si stacktraces confirman schema mismatch (Hipótesis A del plan §4):
 Si la causa es OTRA (Hipótesis B o C del plan §4):
 - Reportar al humano antes de tocar nada
 - Esperar instrucciones
+
+BONUS opcional (si tenés tiempo después del fix principal):
+El DAG tiene una dependencia faltante:
+
+  ("gold_drift", "gold/25_drift_monitor", ["gold_validate"])  ← actual
+
+El notebook 25_drift_monitor.py lee de motoshop.gold.forecast_baseline_sku
+que se popula en gold_baseline. Conceptualmente debería ser:
+
+  ("gold_drift", "gold/25_drift_monitor", ["gold_baseline"])  ← correcto
+
+(o agregar gold_baseline a la lista). Esto previene timing bugs futuros
+aunque en el run actual no afectó.
+
+Si lo arreglás:
+1. Editar infra/create_full_workflow.py línea 131
+2. Re-ejecutar python infra\create_full_workflow.py para actualizar el job
+3. Commit: chore(F7-E-FIX1): fix gold_drift DAG dependency to gold_baseline
+4. Verificar próximo Run pasa OK
 
 PASO 3 · Re-ejecutar workflow + verificar (~10-15 min)
 1. Databricks UI → motoshop_full_workflow → Run now
