@@ -669,6 +669,17 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ---
 
+### 2026-05-30 — Sesión 57 · Dev A2 · F7-D Paso A2-7 terminado
+
+> 🟢 [F7-D-A2] Paso A2-7 terminado · plan-compras operativo · commit: 8e216ea · siguiente paso: A2-5 forecast-categoria o A2-6 purchase_plans · ACCIÓN HUMANO: avisar Dev W (restart API + smoke) + LIBERA a Dev T2 (/plan-compras real)
+
+- **Hecho:** Endpoint `GET /metrics/plan-compras` implementado: router (Bearer auth, cache 5 min, rate limit 30/min), repo (Fake con 7 items: 5 urgentes + 2 dormidos, Real con query multi-join a 6 fuentes: `mart_inventario_actual` + `fact_ventas` demanda 7d + `mart_rotacion_abc` + `alertas_quiebre` + `mart_productos_dormidos` + `fact_compras_detalle` suppliers), schemas (`PlanCompraItem` con contrato exacto de Dev T2 + `PlanComprasResponse` con summary), tests (7/7 pasan: auth, frontend contract 9 campos, summary, fórmula cantidad_a_comprar = max(0, demanda_7d - stock_actual), orden por prioridad, cache). Total 46/46 tests pasan en metrics.
+- **Aprendido:** Para endpoints que cruzan 5+ marts, separar las subconsultas en CTEs (`WITH demanda_7d AS (...), suppliers AS (...)`) simplifica el SQL y evita subqueries anidadas ilegibles. El campo `supplier` viene de `MAX(nom_proveedor)` en `fact_compras_detalle` — una heurística pragmática (el proveedor más reciente por SKU). La cantidad_a_comprar usa `CASE WHEN` en lugar de `GREATEST()` porque Databricks SQL no tiene `GREATEST` nativo.
+- **Abierto:** Pendiente smoke test en producción. 🔓 **DESBLOQUEA a Dev T2**: la página `/plan-compras` puede reemplazar `MOCK_PLAN` por llamada real a este endpoint.
+- **Próximo paso:** A2-5 forecast-categoria o A2-6 purchase_plans CRUD. Ninguno bloquea a otros devs.
+
+---
+
 ### 2026-05-30 — Sesión 56 · Dev A2 · F7-D Paso A2-4 terminado
 
 > 🟢 [F7-D-A2] Paso A2-4 terminado · drift-summary operativo · commit: e4eb793 · siguiente paso: A2-7 plan-compras (PRIORIDAD: desbloquea Dev T2) · ACCIÓN HUMANO: avisar Dev W (restart API + smoke)
