@@ -647,6 +647,17 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ---
 
+### 2026-05-30 — Sesión 54 · Dev A2 · F7-D Paso A2-2 terminado
+
+> 🟢 [F7-D-A2] Paso A2-2 terminado · vendedores-summary operativo · commit: 26cf1d5 · siguiente paso: A2-3 cohortes-detail · ACCIÓN HUMANO: avisar Dev W (restart API + smoke)
+
+- **Hecho:** Endpoint `GET /metrics/vendedores-summary` implementado: router (Bearer auth, cache 5 min, rate limit 30/min), repo (Fake con 5 vendedores mock ordenados por ventas, Real con query a `silver.fact_ventas` filtrando mes actual con `DATE_TRUNC('MONTH', CURRENT_DATE())`), schemas (`VendedorItem` + `VendedoresSummaryResponse`), tests (6/6 pasan: auth, shape, ranking ordenado descendente, valores positivos, cache). Total 25/25 tests pasan en metrics (11 existentes + 8 sales-trend + 6 vendedores).
+- **Aprendido:** `DATE_TRUNC('MONTH', CURRENT_DATE())` en Databricks SQL devuelve el primer día del mes actual, lo que permite filtrar `business_date >= inicio_mes` sin hardcodear fechas. El Fake repo usa items ordenados manualmente para que el test de ranking sea determinista.
+- **Abierto:** Pendiente smoke test en producción (requiere Dev W restart API).
+- **Próximo paso:** A2-3 cohortes-detail. NO avanzar sin confirmación humana.
+
+---
+
 ### 2026-05-30 — Sesión 53 · Dev A2 · F7-D Paso A2-1 terminado
 
 > 🟢 [F7-D-A2] Paso A2-1 terminado · sales-trend operativo · commit: ec9c30f · siguiente paso: A2-2 vendedores-summary · ACCIÓN HUMANO: avisar Dev W (restart API + smoke) + LIBERA a Dev T2 para usar endpoint en HG2/V1
