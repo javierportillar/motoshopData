@@ -461,6 +461,72 @@ class RealMetricsRepo:
             r["stock_actual"] = float(r["stock_actual"])
         return DormidosResponse(total=len(rows), productos=[DormidoItem(**r) for r in rows])
 
+    @staticmethod
+    def _fill_month_gaps(rows: list[dict]) -> list[dict]:
+        """Rellena meses faltantes con ceros para evitar huecos en la serie.
+
+        Para cada mes_cohorte existente, asegura observaciones continuas
+        desde su primer mes observado hasta el último.
+        """
+        if not rows:
+            return rows
+
+        from collections import defaultdict
+
+        # Agrupar observaciones por cohorte
+        by_cohort: dict[str, dict[str, dict]] = defaultdict(dict)
+        all_months: set[str] = set()
+        for r in rows:
+            cm = r["cohorte_mes"]
+            mo = r["mes_observacion"]
+            by_cohort[cm][mo] = r
+            all_months.add(cm)
+            all_months.add(mo)
+
+        if len(all_months) < 2:
+            return rows
+
+        # Generar todos los meses en orden
+        from datetime import datetime
+
+        def _iter_months(start: str, end: str) -> list[str]:
+            months = []
+            d = datetime.strptime(start, "%Y-%m")
+            end_dt = datetime.strptime(end, "%Y-%m")
+            while d <= end_dt:
+                months.append(d.strftime("%Y-%m"))
+                if d.month == 12:
+                    d = d.replace(year=d.year + 1, month=1)
+                else:
+                    d = d.replace(month=d.month + 1)
+            return months
+
+        sorted_months = sorted(all_months)
+        full_series = _iter_months(sorted_months[0], sorted_months[-1])
+
+        result: list[dict] = []
+        for cm in sorted(by_cohort):
+            obs = by_cohort[cm]
+            obs_months = sorted(obs.keys())
+            for mo in full_series:
+                if mo < cm:
+                    continue  # observacion no puede ser anterior al cohorte
+                if mo > obs_months[-1]:
+                    break  # no generar mas alla del maximo observado para este cohorte
+                if mo in obs:
+                    result.append(obs[mo])
+                else:
+                    result.append({
+                        "cohorte_mes": cm,
+                        "mes_observacion": mo,
+                        "num_clientes": 0,
+                        "ticket_promedio": 0.0,
+                        "tasa_recurrencia": None,
+                        "muestra_pequena": True,
+                    })
+
+        return result
+
     def get_cohortes(self) -> CohortesResponse:
         rows = self._query("""
             SELECT
@@ -480,7 +546,13 @@ class RealMetricsRepo:
             r["num_clientes"] = int(r["num_clientes"])
             r["ticket_promedio"] = float(r["ticket_promedio"])
             r["tasa_recurrencia"] = float(r["tasa_recurrencia"])
-        return CohortesResponse(cohortes=[CohorteItem(**r) for r in rows])
+            r["muestra_pequena"] = r["num_clientes"] < 5
+        filled = self._fill_month_gaps(rows)
+        # Set muestra_pequena on gap-filled entries
+        for r in filled:
+            if "muestra_pequena" not in r:
+                r["muestra_pequena"] = r["num_clientes"] < 5
+        return CohortesResponse(cohortes=[CohorteItem(**r) for r in filled])
 
     def get_sales_trend(self, periods: int = 6) -> SalesTrendResponse:
         rows = self._query(f"""

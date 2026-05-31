@@ -42,6 +42,7 @@ class CohorteItem(BaseModel):
     num_clientes: int
     ticket_promedio: float
     tasa_recurrencia: float | None = None  # % que compró otra vez
+    muestra_pequena: bool = False  # True si num_clientes < 5, para advertencia en frontend
 
 
 class AbcBucket(BaseModel):
