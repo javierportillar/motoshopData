@@ -71,6 +71,48 @@ export default function AbcPage(): JSX.Element {
         </p>
       </div>
 
+      {/* ¿Qué es ABC? */}
+      <Card>
+        <h2 className="mb-2 font-semibold text-text-primary">¿Qué es la segmentación ABC?</h2>
+        <p className="text-sm text-text-muted leading-relaxed">
+          Clasifica tus productos según su impacto en los ingresos. Ayuda a decidir
+          dónde enfocar stock, atención y capital.
+        </p>
+        <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+          <div className="rounded-lg bg-success/10 p-2 text-center">
+            <p className="font-bold text-success">A</p>
+            <p className="text-text-secondary">20% productos → 80% ingresos</p>
+            <p className="text-text-muted">Alta rotación</p>
+          </div>
+          <div className="rounded-lg bg-warning/10 p-2 text-center">
+            <p className="font-bold text-warning">B</p>
+            <p className="text-text-secondary">30% productos → 15% ingresos</p>
+            <p className="text-text-muted">Rotación media</p>
+          </div>
+          <div className="rounded-lg bg-error/10 p-2 text-center">
+            <p className="font-bold text-error">C</p>
+            <p className="text-text-secondary">50% productos → 5% ingresos</p>
+            <p className="text-text-muted">Baja rotación</p>
+          </div>
+        </div>
+      </Card>
+
+      {/* Insight accionable */}
+      <Card>
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 text-lg">💡</span>
+          <div>
+            <p className="text-sm font-semibold text-text-primary">Insight accionable</p>
+            <p className="text-sm text-text-muted">
+              Priorizá stock de productos <strong className="text-success">A</strong> para
+              evitar quiebres de los artículos que más venden. Revisá periódicamente los{" "}
+              <strong className="text-error">C</strong> para evaluar liquidación o
+              descuento.
+            </p>
+          </div>
+        </div>
+      </Card>
+
       {/* Buckets */}
       <div className="grid grid-cols-3 gap-3">
         {[data.bucket_a, data.bucket_b, data.bucket_c].map((b) => (
@@ -97,6 +139,11 @@ export default function AbcPage(): JSX.Element {
           bucketA={data.bucket_a}
           bucketB={data.bucket_b}
           bucketC={data.bucket_c}
+          explanations={{
+            A: "20% productos que generan 80% ingresos — alta rotación",
+            B: "30% productos que generan 15% ingresos — rotación media",
+            C: "50% productos que generan 5% ingresos — baja rotación",
+          }}
         />
       </Card>
 
