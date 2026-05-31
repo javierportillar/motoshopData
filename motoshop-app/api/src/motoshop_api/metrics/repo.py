@@ -396,7 +396,8 @@ class RealMetricsRepo:
         """)
         bodegas = self._query("""
             SELECT
-                cod_bodega, nom_bodega,
+                cod_bodega,
+                COALESCE(nom_bodega, CONCAT('Bodega ', cod_bodega)) AS nom_bodega,
                 SUM(cantidad_actual) AS cantidad,
                 ROUND(SUM(cantidad_actual) / NULLIF(SUM(SUM(cantidad_actual)) OVER(), 0) * 100, 1) AS porcentaje
             FROM motoshop.gold.mart_inventario_actual
