@@ -1,7 +1,7 @@
 # Plan F7-E-FIX1 · Workflow Databricks · 3 tasks fallando
 
 - **Fecha apertura:** 2026-05-31 (Sesión 63)
-- **Estado:** 🟡 ABIERTA
+- **Estado:** ✅ CERRADA
 - **Duración estimada:** Dev W (o Dev D) 30 min · Wall-clock 30-45 min con verificación.
 - **Bloqueante:** balde B snapshots históricos no se acumula mientras workflow falle.
 

@@ -1,20 +1,20 @@
 -- Databricks notebook source
 -- MAGIC %md
--- MAGIC # 18 · mart_rotacion_sku — rotación promedio y días de cobertura
+-- MAGIC # 18 - mart_rotacion_sku - rotacion promedio y dias de cobertura
 -- MAGIC
 -- MAGIC Calcula:
--- MAGIC - `venta_diaria_promedio`: ventas últimos 90 días / 90
+-- MAGIC - `venta_diaria_promedio`: ventas ultimos 90 dias / 90
 -- MAGIC - `dias_de_cobertura`: stock_actual / venta_diaria_promedio
 -- MAGIC
 -- MAGIC Inputs: `mart_ventas_diarias_sku` + `mart_inventario_actual`
--- MAGIC Output: `gold.mart_rotacion_sku` — snapshot diario particionado
+-- MAGIC Output: `gold.mart_rotacion_sku` - snapshot diario particionado
 -- MAGIC
 -- MAGIC Idempotente: INSERT OVERWRITE WHERE business_date = CURRENT_DATE()
 
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## 1 · DDL — gold.mart_rotacion_sku
+-- MAGIC ## 1 - DDL - gold.mart_rotacion_sku
 
 -- COMMAND ----------
 
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS motoshop.gold.mart_rotacion_sku (
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## 2 · INSERT OVERWRITE (idempotente)
+-- MAGIC ## 2 - INSERT OVERWRITE (idempotente)
 
 -- COMMAND ----------
 
@@ -63,7 +63,7 @@ FULL OUTER JOIN ventas_90d vp
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## 3 · Validación — conteos
+-- MAGIC ## 3 - Validacion - conteos
 
 -- COMMAND ----------
 
@@ -79,7 +79,7 @@ WHERE business_date = CURRENT_DATE();
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## 4 · Top 10 — mayor rotación
+-- MAGIC ## 4 - Top 10 - mayor rotacion
 
 -- COMMAND ----------
 
@@ -98,7 +98,7 @@ LIMIT 10;
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## 5 · Top 10 — mayor riesgo (cobertura < 7 días)
+-- MAGIC ## 5 - Top 10 - mayor riesgo (cobertura < 7 dias)
 
 -- COMMAND ----------
 

@@ -1,18 +1,18 @@
 -- Databricks notebook source
 -- MAGIC %md
--- MAGIC # 19 · mart_abc_xyz — matriz ABC × XYZ combinada
+-- MAGIC # 19 - mart_abc_xyz - matriz ABC  XYZ combinada
 -- MAGIC
--- MAGIC Clasificación bidimensional de SKUs:
--- MAGIC - **ABC** (injetado de `mart_rotacion_abc`, mes más reciente): A ≤80% / B ≤95% / C >95% del ingreso acumulado
--- MAGIC - **XYZ** (calculado sobre ventas diarias últimos 90d): X = CV<0.5 / Y = 0.5≤CV<1 / Z = CV≥1
--- MAGIC - **bucket** = CONCAT(abc, xyz) → 9 combinaciones (AX..CZ)
+-- MAGIC Clasificacion bidimensional de SKUs:
+-- MAGIC - **ABC** (injetado de `mart_rotacion_abc`, mes mas reciente): A 80% / B 95% / C >95% del ingreso acumulado
+-- MAGIC - **XYZ** (calculado sobre ventas diarias ultimos 90d): X = CV<0.5 / Y = 0.5CV<1 / Z = CV1
+-- MAGIC - **bucket** = CONCAT(abc, xyz)  9 combinaciones (AX..CZ)
 -- MAGIC
--- MAGIC Output: `gold.mart_abc_xyz` — snapshot diario particionado
+-- MAGIC Output: `gold.mart_abc_xyz` - snapshot diario particionado
 
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## 1 · DDL — gold.mart_abc_xyz
+-- MAGIC ## 1 - DDL - gold.mart_abc_xyz
 
 -- COMMAND ----------
 
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS motoshop.gold.mart_abc_xyz (
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## 2 · INSERT OVERWRITE (idempotente)
+-- MAGIC ## 2 - INSERT OVERWRITE (idempotente)
 
 -- COMMAND ----------
 
@@ -86,7 +86,7 @@ FULL OUTER JOIN abc_mas_reciente a
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## 3 · Validación — distribución 9 buckets
+-- MAGIC ## 3 - Validacion - distribucion 9 buckets
 
 -- COMMAND ----------
 
@@ -102,7 +102,7 @@ ORDER BY bucket;
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## 4 · Resumen dimensional
+-- MAGIC ## 4 - Resumen dimensional
 
 -- COMMAND ----------
 
@@ -118,7 +118,7 @@ ORDER BY abc, xyz;
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## 5 · Top 10 AX (más predecibles y más valiosos)
+-- MAGIC ## 5 - Top 10 AX (mas predecibles y mas valiosos)
 
 -- COMMAND ----------
 

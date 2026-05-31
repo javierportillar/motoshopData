@@ -28,15 +28,17 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **F7 · Rediseño UX + dashboards** (cerrada en lo esencial · pendiente solo D4+D5 diferibles) |
+| Fase activa | **F7 · Rediseño UX + dashboards** (100% cerrada · D4+D5 operativos) |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Cerrar D4+D5 (Dev D) + R6 demo 4G + R8 demo gerencia → E5 memoria final |
-| Avance global | **6+/7 fases cerradas** + 4 hardening + F4/F5/F6-FIX1 ✅ + F7 sustantivamente cerrada |
-| Última actualización | 2026-05-30 (Sesión 53) |
+| Próximo gate | R6 demo 4G + R8 demo gerencia → E5 memoria final |
+| Avance global | **7/7 fases cerradas** + 4 hardening + F4/F5/F6-FIX1 ✅ + F7 100% ✅ |
+| Última actualización | 2026-05-31 (Sesión 63) |
 
 ```
-F0 ✅  F1 ✅ (+F1.5 +F1.9)  F2 ✅  F3 ✅ (+F3.5 +F3.6)  F4 ✅ (+FIX1)  F5 ✅ (+FIX1)  F6 ✅ (+F6-D +FIX1)  F7 🟢 (12 dashboards · D4+D5 diferibles)
+F0 ✅  F1 ✅ (+F1.5 +F1.9)  F2 ✅  F3 ✅ (+F3.5 +F3.6)  F4 ✅ (+FIX1)  F5 ✅ (+FIX1)  F6 ✅ (+F6-D +FIX1)  F7 ✅ (12 dashboards · D4 D5 rotacion+ABC-XYZ)
 ```
+
+> **2026-05-31 (Sesión 63) — F7-E-FIX1 ejecutado · 🟢 Workflow 31/31 OK · F7 100% sin deudas.** Dev W diagnosticó y corrigió 3 tasks del workflow `motoshop_full_workflow` que fallaban en cada corrida. **Diagnóstico real (≠ hipótesis inicial):** (1) `gold_rotacion_promedio` y `gold_abc_xyz` no existían en el workspace con extensión `.py` (subidos sin extensión) — se re-subieron. (2) `gold_drift` tenía bug SQL: `DATE_TRUNC('WEEK', business_date) + 6` incompatible (TIMESTAMP + INT) — fix: `CAST(... AS DATE) + 6`. (3) Ambos notebooks gold tenían caracteres no-ASCII (em dash, acentos) que causaban `SyntaxError` al correrlos con `language: PYTHON` en vez de `SQL`. Fix completo: notebooks re-subidos como `language: SQL` + ASCII clean. **Resultado:** run `986182014721802` → 31/31 tasks SUCCESS · datos verificados: `mart_rotacion_sku` 4,840 filas, `mart_abc_xyz` 1,172 filas, `alertas_drift` 0 filas (sin drift) · smoke 8/8 endpoints 200 OK · cron UNPAUSED 19:00 COL. **F7 100% cerrado sin deudas operativas. GO a E5 memoria final.**
 
 > **2026-05-30 (Sesión 53) — F7 cerrada sustantivamente · 🟢 GO a E5 memoria final.** Audit revisor: 13/13 endpoints API responden 200 en producción · 13/13 paths PWA cargan con datos reales · Sprints cerrados: F7-B Design System (Dev T1), F7-C Pages Implementation con 12 dashboards (Dev T2: 8 migrados + 4 nuevos + home por rol + Skeleton/ErrorState + Navigation adaptable + 71 tests Playwright auth+viewports + Lighthouse Perf 99/A11y 90+), F7-D Backend con 6 endpoints nuevos + purchase_plans CRUD (Dev A2), F7-E parcial D1-D3 (Dev D · snapshots arrancando) · Audit interno security (commit `989613f`): SQL injection sales-trend fixed, users.yaml gitignored, Chart wrapper consistente, error handling estandarizado · Dev W ciclos 1-4 aplicados a Windows incluyendo fix de 4 bugs reales en plan-compras + drift-summary que Dev A2 había introducido sin probar contra Databricks real (commit `a61ab1f`). **ADR-0022:** workflow unificado aprobado (propuesta Dev W). **Diferido como NO bloqueante:** D4 rotación promedio + D5 ABC×XYZ (Dev D entregará en próximo ciclo).
 

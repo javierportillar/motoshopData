@@ -212,140 +212,16 @@ Independientes de los handoffs Dev W.
 
 ## Sesión 2026-05-31 (63) · F7-E-FIX1 · Workflow Databricks · 3 tasks fallando
 
-**Estado:** F7 sustantivamente cerrada, deploys OK (Vercel + Render + Windows), 13/13 endpoints API 200, 13/13 paths PWA 200. **PERO:** 3 tasks del workflow nocturno `motoshop_full_workflow` fallan en cada corrida (06:39, 06:47, 06:54 hoy). Sin esto, **los snapshots históricos balde B NO se acumulan automáticamente** → bloquea R-V2-16 + entrega académica defendible al 100%.
+**Estado:** ✅ **RESUELTO** — Dev W diagnosticó y corrigió los 3 tasks. Run `986182014721802`: 31/31 SUCCESS. Datos OK (rotación 4,840 filas, ABC×XYZ 1,172 filas, drift 0). Smoke 8/8 endpoints 200. Cron UNPAUSED 19:00 COL. **F7 100% cerrado sin deudas operativas.** 🟢 GO a E5 memoria final.
 
-**Decisión humana:** NO dejar la deuda. Arreglar antes de E5.
+**Root causes reales (≠ hipótesis inicial de schema mismatch):**
+1. `gold_rotacion_promedio` / `gold_abc_xyz`: notebooks subidos sin extensión `.py` al workspace. Workflow los buscaba con `.py` → re-subidos.
+2. `gold_drift`: bug SQL `DATE_TRUNC('WEEK', business_date) + 6` (TIMESTAMP + INT incompatible) → fix `CAST(... AS DATE) + 6`.
+3. Ambos notebooks tenían caracteres no-ASCII que causaban `SyntaxError` al usar `language: PYTHON` en vez de `SQL` (gold notebooks son SQL puros).
 
-**Plan correctivo:** [`docs/plan-f7-e-fix1.md`](docs/plan-f7-e-fix1.md)
+**Fixes aplicados:** (a) notebooks re-subidos con extensión `.py` + `language: SQL`, (b) contenido ASCII clean, (c) SQL bug fix en `25_drift_monitor.py`.
 
-### 🤖 Handoff Dev W · F7-E-FIX1 (~30-45 min)
-
-Pegá esto en el chat de Dev W en la PC Windows (puede ser el mismo chat de Ciclos 1-5 si sigue activo):
-
-```
-Hay un nuevo trabajo: F7-E-FIX1 — diagnosticar y arreglar 3 tasks
-fallando en motoshop_full_workflow.
-
-Tasks fallando (últimas 3 corridas hoy: 06:39, 06:47, 06:54):
-- gold_drift (notebook 25_drift_monitor.py) — 7s, error inmediato
-- gold_rotacion_promedio (notebook 18_mart_rotacion_promedio.py) — 2m 27s, falló DURANTE INSERT
-- gold_abc_xyz (notebook 19_mart_abc_xyz.py) — Upstream failed (NO necesita fix propio,
-  pasa solo cuando rotación se arregle)
-
-IMPORTANTE: el root cause real son SOLO 2 jobs (rotación + drift, independientes
-entre sí). abc_xyz está en cascade fail. Cuando rotación pase, abc_xyz pasa solo.
-
-Hipótesis del Revisor: schema mismatch. Las tablas fueron creadas
-manualmente por Dev D + Dev W antes del workflow, posiblemente sin
-PARTITIONED BY (business_date) que el notebook espera. Cuando el
-workflow corre con INSERT OVERWRITE PARTITION, falla porque la
-tabla existente no está particionada.
-
-Leer plan completo: docs/plan-f7-e-fix1.md
-
-PASO 1 · Diagnóstico exacto (~10 min)
-Para cada task fallida:
-1. Databricks UI → Workflows → motoshop_full_workflow
-2. Click en último Run → click en cada task fallida
-3. Copiar el stacktrace COMPLETO (no resumir)
-4. Reportar los 3 errores en chat al humano antes de aplicar cualquier fix
-
-PASO 2 · Fix según diagnóstico (~15-20 min)
-
-Si stacktraces confirman schema mismatch (Hipótesis A del plan §4):
-
-  En Databricks SQL Editor:
-
-  DROP TABLE IF EXISTS motoshop.gold.mart_rotacion_sku;
-  DROP TABLE IF EXISTS motoshop.gold.mart_abc_xyz;
-  DROP TABLE IF EXISTS motoshop.gold.alertas_drift;
-
-  Verificar drops OK:
-  SHOW TABLES IN motoshop.gold LIKE 'mart_rotacion%';
-  SHOW TABLES IN motoshop.gold LIKE 'mart_abc_xyz%';
-  SHOW TABLES IN motoshop.gold LIKE 'alertas_drift%';
-
-  (Cada SHOW debe devolver 0 filas — confirma drop)
-
-Si la causa es OTRA (Hipótesis B o C del plan §4):
-- Reportar al humano antes de tocar nada
-- Esperar instrucciones
-
-BONUS opcional (si tenés tiempo después del fix principal):
-El DAG tiene una dependencia faltante:
-
-  ("gold_drift", "gold/25_drift_monitor", ["gold_validate"])  ← actual
-
-El notebook 25_drift_monitor.py lee de motoshop.gold.forecast_baseline_sku
-que se popula en gold_baseline. Conceptualmente debería ser:
-
-  ("gold_drift", "gold/25_drift_monitor", ["gold_baseline"])  ← correcto
-
-(o agregar gold_baseline a la lista). Esto previene timing bugs futuros
-aunque en el run actual no afectó.
-
-Si lo arreglás:
-1. Editar infra/create_full_workflow.py línea 131
-2. Re-ejecutar python infra\create_full_workflow.py para actualizar el job
-3. Commit: chore(F7-E-FIX1): fix gold_drift DAG dependency to gold_baseline
-4. Verificar próximo Run pasa OK
-
-PASO 3 · Re-ejecutar SOLO los 3 jobs fallidos (~5-10 min con script on-demand)
-
-OPCIÓN A — Recomendada (rápido, solo los 3 jobs):
-   python infra\run_notebook_ondemand.py --task gold_rotacion_promedio
-   python infra\run_notebook_ondemand.py --task gold_abc_xyz
-   python infra\run_notebook_ondemand.py --task gold_drift
-
-   (Documentación en infra/RUN_NOTEBOOK_ONDEMAND.md)
-   Total: ~5-10 min vs 30+ min del workflow completo.
-
-OPCIÓN B — Alternativa (workflow completo desde UI):
-1. Databricks UI → motoshop_full_workflow → Run now
-2. Esperar a que las 31 tasks terminen
-3. Verificar que las 3 que fallaban ahora pasen verde
-4. Smoke verificación tablas re-pobladas:
-
-   SELECT COUNT(*), MIN(business_date), MAX(business_date)
-   FROM motoshop.gold.mart_rotacion_sku
-   WHERE business_date = CURRENT_DATE();
-   -- Esperar: ~4,840 filas
-
-   SELECT COUNT(*), MIN(business_date), MAX(business_date)
-   FROM motoshop.gold.mart_abc_xyz
-   WHERE business_date = CURRENT_DATE();
-   -- Esperar: ~1,172 filas
-
-   SELECT COUNT(*), MIN(week_end), MAX(week_end)
-   FROM motoshop.gold.alertas_drift;
-   -- Esperar: 0+ filas (depende si hay drift detectado)
-
-5. Smoke endpoints producción siguen 200:
-   - GET https://api.fragloesja.uk/metrics/drift-summary (con Bearer)
-   - GET https://api.fragloesja.uk/metrics/forecast-categoria (con Bearer)
-   - GET https://api.fragloesja.uk/metrics/plan-compras (con Bearer)
-
-6. Verificar cron UNPAUSED:
-   En Workflows UI: motoshop_full_workflow debe seguir UNPAUSED
-   con schedule '0 0 19 * * ?' (19:00 COL)
-
-REPORTE FINAL en SEGUIMIENTO.md:
-
-> 🟢 [F7-E-FIX1] Workflow operativo · stacktraces previos: <hash o hipótesis confirmada> · fix aplicado: <DROP TABLES o otro> · workflow run final: 31/31 OK · smoke endpoints: drift-summary 200, forecast-categoria 200, plan-compras 200 · cron UNPAUSED · timestamp: <yyyy-MM-dd HH:mm>
-
-Commit: chore(F7-E-FIX1): workflow fix - 3 tasks fallando resueltas
-
-PARAR. No avanzar a otros ciclos. Esperar audit Revisor.
-```
-
-### Próximo paso del revisor (yo)
-
-Cuando Dev W reporte 🟢 F7-E-FIX1:
-
-1. Auditar 6 V-FIX1 (plan §6)
-2. Verificar workflow run history en Databricks
-3. Si PASS → cerrar F7-E-FIX1 oficialmente + actualizar SEGUIMIENTO cabecera (F7 100% sin deudas operativas)
-4. Arrancar E5 memoria final con todas las capturas finales
+**Ver detalles:** [`docs/plan-f7-e-fix1.md`](docs/plan-f7-e-fix1.md) · [`SEGUIMIENTO.md`](SEGUIMIENTO.md) (Sesión 63)
 
 ### Pendiente humano transversal
 
@@ -354,7 +230,7 @@ Mientras Dev W diagnostica + aplica fix (~30-45 min), vos podés en paralelo:
 - **Demo 4G (R6)** — grabar desde celular en `app.fragloesja.uk`
 - **Agendar demo gerencia (R8)** — sesión con stakeholder
 
-Ambos son independientes de F7-E-FIX1.
+Ambos son independientes de F7-E-FIX1 (ya resuelto).
 
 ---
 

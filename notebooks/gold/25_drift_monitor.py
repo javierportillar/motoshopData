@@ -42,7 +42,7 @@ CREATE OR REPLACE TEMPORARY VIEW weekly_wape AS
 WITH
 semanas AS (
   SELECT DISTINCT
-    DATE_TRUNC('WEEK', business_date) + 6 AS week_end,
+    CAST(DATE_TRUNC('WEEK', business_date) AS DATE) + 6 AS week_end,
     business_date
   FROM motoshop.gold.forecast_baseline_sku
   WHERE business_date >= DATE_ADD(CURRENT_DATE, -56)  -- últimas 8 semanas
@@ -157,7 +157,7 @@ WHERE d.severity IN ('HIGH', 'MEDIUM')
 
 INSERT INTO motoshop.gold.alertas_drift
 SELECT
-  DATE_TRUNC('WEEK', CURRENT_DATE) + 6 AS week_end,
+  CAST(DATE_TRUNC('WEEK', CURRENT_DATE) AS DATE) + 6 AS week_end,
   NULL AS wape_actual,
   NULL AS wape_historico,
   NULL AS desviacion_pct,
