@@ -31,6 +31,8 @@ from motoshop_api.metrics.schemas import (
     ForecastCategoriaItem,
     ForecastCategoriaResponse,
     InventorySummary,
+    ActionRecommendationItem,
+    ActionRecommendationsResponse,
     PlanCompraItem,
     PlanComprasResponse,
     SalesDailyItem,
@@ -55,7 +57,13 @@ class MetricsRepoProtocol(Protocol):
     def get_sales_historical(self) -> SalesHistoricalResponse: ...
     def get_inventory_summary(self) -> InventorySummary: ...
     def get_abc_segmentation(self) -> AbcSegmentation: ...
-    def get_dormidos(self, page: int = 1, page_size: int = 50) -> DormidosResponse: ...
+    def get_dormidos(
+        self,
+        page: int = 1,
+        page_size: int = 50,
+        sort_by: str = "dias_sin_venta",
+        sort_order: str = "desc",
+    ) -> DormidosResponse: ...
     def get_cohortes(self) -> CohortesResponse: ...
     def get_sales_trend(self, periods: int, year: int | None = None) -> SalesTrendResponse: ...
     def get_vendedores_summary(self, period: str = "month") -> VendedoresSummaryResponse: ...
@@ -95,13 +103,24 @@ _BODEGAS = [
 ]
 
 _DORMIDOS = [
-    DormidoItem(cod_producto="MOTS9912", nom_producto="ESCAPE DEPORTIVO AKRAPOVIC", ultima_compra="2025-11-25", dias_sin_venta=187, stock_actual=3.0),
-    DormidoItem(cod_producto="MOTS8745", nom_producto="ASIENTO GEL YAMAHA MT09", ultima_compra="2025-12-26", dias_sin_venta=156, stock_actual=2.0),
-    DormidoItem(cod_producto="MOTS7634", nom_producto="KIT TRANSMISION DID 530", ultima_compra="2026-01-17", dias_sin_venta=134, stock_actual=5.0),
-    DormidoItem(cod_producto="MOTS6523", nom_producto="FARO LED PROYECTOR 7\"", ultima_compra="2026-02-08", dias_sin_venta=112, stock_actual=8.0),
-    DormidoItem(cod_producto="MOTS5412", nom_producto="MANILLAR CRUISER 1\"", ultima_compra="2026-02-22", dias_sin_venta=98, stock_actual=12.0),
-    DormidoItem(cod_producto="MOTS4301", nom_producto="DEFENSA TRASERA HONDA XR190", ultima_compra="2026-02-25", dias_sin_venta=95, stock_actual=4.0),
+    DormidoItem(cod_producto="MOTS9912", nom_producto="ESCAPE DEPORTIVO AKRAPOVIC", ultima_compra="2025-10-25", ultima_venta="2025-11-25", dias_sin_venta=187, stock_actual=3.0),
+    DormidoItem(cod_producto="MOTS8745", nom_producto="ASIENTO GEL YAMAHA MT09", ultima_compra="2025-11-26", ultima_venta="2025-12-26", dias_sin_venta=156, stock_actual=2.0),
+    DormidoItem(cod_producto="MOTS7634", nom_producto="KIT TRANSMISION DID 530", ultima_compra="2025-12-17", ultima_venta="2026-01-17", dias_sin_venta=134, stock_actual=5.0),
+    DormidoItem(cod_producto="MOTS6523", nom_producto="FARO LED PROYECTOR 7\"", ultima_compra="2026-01-08", ultima_venta="2026-02-08", dias_sin_venta=112, stock_actual=8.0),
+    DormidoItem(cod_producto="MOTS5412", nom_producto="MANILLAR CRUISER 1\"", ultima_compra="2026-01-22", ultima_venta="2026-02-22", dias_sin_venta=98, stock_actual=12.0),
+    DormidoItem(cod_producto="MOTS4301", nom_producto="DEFENSA TRASERA HONDA XR190", ultima_compra="2026-01-25", ultima_venta="2026-02-25", dias_sin_venta=95, stock_actual=4.0),
 ]
+
+
+def _sort_dormidos(items: list[DormidoItem], sort_by: str, sort_order: str) -> list[DormidoItem]:
+    reverse = sort_order == "desc"
+    key_map = {
+        "dias_sin_venta": lambda item: item.dias_sin_venta,
+        "ultima_compra": lambda item: item.ultima_compra or "",
+        "ultima_venta": lambda item: item.ultima_venta or "",
+    }
+    key_fn = key_map.get(sort_by, key_map["dias_sin_venta"])
+    return sorted(items, key=key_fn, reverse=reverse)
 
 
 class FakeMetricsRepo:
@@ -173,10 +192,24 @@ class FakeMetricsRepo:
             bucket_c=AbcBucket(categoria="C", num_skus=3_305, valor_total=2_506_000.0, porcentaje_ingreso=5.0),
         )
 
-    def get_dormidos(self, page: int = 1, page_size: int = 50) -> DormidosResponse:
+    def get_dormidos(
+        self,
+        page: int = 1,
+        page_size: int = 50,
+        sort_by: str = "dias_sin_venta",
+        sort_order: str = "desc",
+    ) -> DormidosResponse:
+        ordered = _sort_dormidos(_DORMIDOS, sort_by, sort_order)
         start = (page - 1) * page_size
         end = start + page_size
-        return DormidosResponse(total=len(_DORMIDOS), productos=_DORMIDOS[start:end])
+        page_items = ordered[start:end]
+        return DormidosResponse(
+            page=page,
+            page_size=page_size,
+            total=len(ordered),
+            items=page_items,
+            productos=page_items,
+        )
 
     def get_cohortes(self) -> CohortesResponse:
         return CohortesResponse(cohortes=[
@@ -473,24 +506,24 @@ class RealMetricsRepo:
         )
 
     def get_sales_daily(self, date: str) -> SalesDailyResponse:
-        productos = self._query(f"""
+        productos = self._query("""
             SELECT
                 cod_producto AS sku,
                 nom_producto AS nombre,
                 SUM(cantidad_total) AS cantidad,
                 ROUND(SUM(valor_total), 2) AS valor
             FROM motoshop.gold.mart_ventas_diarias_sku
-            WHERE business_date = '{date}'
+            WHERE business_date = :date
             GROUP BY cod_producto, nom_producto
             ORDER BY valor DESC
-        """)
-        totals = self._query(f"""
+        """, [{"name": "date", "value": {"stringValue": date}, "type": "STRING"}])
+        totals = self._query("""
             SELECT
                 ROUND(SUM(valor_total), 2) AS total_ventas,
                 COALESCE(SUM(num_facturas), 0) AS total_facturas
             FROM motoshop.gold.mart_ventas_diarias_sku
-            WHERE business_date = '{date}'
-        """)
+            WHERE business_date = :date
+        """, [{"name": "date", "value": {"stringValue": date}, "type": "STRING"}])
         if not totals:
             raise RuntimeError(f"No sales data found for date {date}")
         t = totals[0]
@@ -502,19 +535,19 @@ class RealMetricsRepo:
         )
 
     def get_sales_monthly(self, month: str) -> SalesMonthlyResponse:
-        totals = self._query(f"""
+        totals = self._query("""
             SELECT
                 ROUND(SUM(valor_total), 2) AS total_ventas,
                 COALESCE(SUM(num_facturas), 0) AS total_facturas
             FROM motoshop.gold.mart_ventas_diarias_sku
-            WHERE DATE_FORMAT(business_date, 'yyyy-MM') = '{month}'
-        """)
-        prev_month = self._query(f"""
+            WHERE DATE_FORMAT(business_date, 'yyyy-MM') = :month
+        """, [{"name": "month", "value": {"stringValue": month}, "type": "STRING"}])
+        prev_month = self._query("""
             SELECT ROUND(SUM(valor_total), 2) AS total_ventas
             FROM motoshop.gold.mart_ventas_diarias_sku
-            WHERE DATE_FORMAT(business_date, 'yyyy-MM') = '{_prev_month_str(month)}'
-        """)
-        top = self._query(f"""
+            WHERE DATE_FORMAT(business_date, 'yyyy-MM') = :prev_month
+        """, [{"name": "prev_month", "value": {"stringValue": _prev_month_str(month)}, "type": "STRING"}])
+        top = self._query("""
             SELECT
                 cod_producto AS cod_producto,
                 nom_producto AS nom_producto,
@@ -522,11 +555,11 @@ class RealMetricsRepo:
                 ROUND(SUM(valor_total), 2) AS valor_total,
                 ROUND(SUM(valor_total) / NULLIF(SUM(SUM(valor_total)) OVER(), 0) * 100, 1) AS porcentaje_ingreso
             FROM motoshop.gold.mart_ventas_diarias_sku
-            WHERE DATE_FORMAT(business_date, 'yyyy-MM') = '{month}'
+            WHERE DATE_FORMAT(business_date, 'yyyy-MM') = :month
             GROUP BY cod_producto, nom_producto
             ORDER BY valor_total DESC
             LIMIT 10
-        """)
+        """, [{"name": "month", "value": {"stringValue": month}, "type": "STRING"}])
         if not totals:
             raise RuntimeError(f"No sales data found for month {month}")
         t = totals[0]
@@ -643,35 +676,59 @@ class RealMetricsRepo:
             bucket_c=AbcBucket(**by_cat.get("C", {"categoria": "C", "num_skus": 0, "valor_total": 0, "porcentaje_ingreso": 0})),
         )
 
-    def get_dormidos(self, page: int = 1, page_size: int = 50) -> DormidosResponse:
+    def get_dormidos(
+        self,
+        page: int = 1,
+        page_size: int = 50,
+        sort_by: str = "dias_sin_venta",
+        sort_order: str = "desc",
+    ) -> DormidosResponse:
         count_rows = self._query("""
             SELECT COUNT(*) AS total
             FROM motoshop.gold.mart_productos_dormidos d
         """)
         total = int(count_rows[0]["total"]) if count_rows else 0
         offset = (page - 1) * page_size
-        rows = self._query(f"""
+        sort_column = {
+            "dias_sin_venta": "dias_sin_venta",
+            "ultima_compra": "ultima_compra",
+            "ultima_venta": "ultima_venta",
+        }.get(sort_by, "dias_sin_venta")
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        rows = self._query("""
             SELECT d.cod_producto, d.nom_producto, d.stock_actual,
-                   COALESCE(CAST(v.ultima_venta AS STRING), CAST(d.ultima_venta AS STRING)) AS ultima_compra,
-                   DATEDIFF(CURRENT_DATE, COALESCE(v.ultima_venta, d.ultima_venta)) AS dias_sin_venta
+                    CAST(c.ultima_compra AS STRING) AS ultima_compra,
+                    COALESCE(CAST(v.ultima_venta AS STRING), CAST(d.ultima_venta AS STRING)) AS ultima_venta,
+                    DATEDIFF(CURRENT_DATE, COALESCE(v.ultima_venta, d.ultima_venta)) AS dias_sin_venta
             FROM motoshop.gold.mart_productos_dormidos d
             LEFT JOIN (
                 SELECT cod_producto, MAX(business_date) AS ultima_venta
                 FROM motoshop.silver.fact_ventas_detalle
                 GROUP BY cod_producto
             ) v ON d.cod_producto = v.cod_producto
-            ORDER BY dias_sin_venta DESC
-            LIMIT {page_size} OFFSET {offset}
-        """)
+            LEFT JOIN (
+                SELECT cod_producto, MAX(business_date) AS ultima_compra
+                FROM motoshop.silver.fact_compras_detalle
+                GROUP BY cod_producto
+            ) c ON d.cod_producto = c.cod_producto
+            ORDER BY """ + sort_column + """ """ + direction + """
+            LIMIT :limit OFFSET :offset
+        """, [
+            {"name": "limit", "value": {"intValue": page_size}, "type": "INT"},
+            {"name": "offset", "value": {"intValue": offset}, "type": "INT"}
+        ])
         if not rows:
             logger.warning("No dormidos data found in gold mart")
-            return DormidosResponse(total=0, productos=[])
+            return DormidosResponse(page=page, page_size=page_size, total=0, items=[], productos=[])
         for r in rows:
             r["dias_sin_venta"] = int(r["dias_sin_venta"])
             r["stock_actual"] = float(r["stock_actual"])
             if r["ultima_compra"] is not None:
                 r["ultima_compra"] = str(r["ultima_compra"])
-        return DormidosResponse(total=total, productos=[DormidoItem(**r) for r in rows])
+            if r.get("ultima_venta") is not None:
+                r["ultima_venta"] = str(r["ultima_venta"])
+        items = [DormidoItem(**r) for r in rows]
+        return DormidosResponse(page=page, page_size=page_size, total=total, items=items, productos=items)
 
     @staticmethod
     def _fill_month_gaps(rows: list[dict]) -> list[dict]:
@@ -769,19 +826,21 @@ class RealMetricsRepo:
     def get_sales_trend(self, periods: int = 6, year: int | None = None) -> SalesTrendResponse:
         where_year = ""
         if year is not None:
-            where_year = f"AND YEAR(business_date) = {year}"
-        rows = self._query(f"""
+            where_year = "AND YEAR(business_date) = :year"
+        rows = self._query("""
             SELECT YEAR(business_date) AS year,
-                   MONTH(business_date) AS month,
-                   ROUND(SUM(valor_total), 2) AS total_ventas,
-                   SUM(num_facturas) AS num_facturas,
-                   ROUND(SUM(valor_total) / NULLIF(SUM(num_facturas), 0), 2) AS ticket_promedio
+                    MONTH(business_date) AS month,
+                    ROUND(SUM(valor_total), 2) AS total_ventas,
+                    SUM(num_facturas) AS num_facturas,
+                    ROUND(SUM(valor_total) / NULLIF(SUM(num_facturas), 0), 2) AS ticket_promedio
             FROM motoshop.gold.mart_ventas_diarias_sku
-            WHERE business_date >= ADD_MONTHS(CURRENT_DATE(), -{periods})
-            {where_year}
+            WHERE business_date >= ADD_MONTHS(CURRENT_DATE(), -:periods)
+            """ + where_year + """
             GROUP BY YEAR(business_date), MONTH(business_date)
             ORDER BY year, month
-        """)
+        """, [
+            {"name": "periods", "value": {"intValue": periods}, "type": "INT"}
+        ] + ([{"name": "year", "value": {"intValue": year}, "type": "INT"}] if year is not None else []))
         if not rows:
             logger.warning("No sales trend data found in gold.mart_ventas_diarias_sku")
             return SalesTrendResponse(periods=periods, items=[])
@@ -799,13 +858,13 @@ class RealMetricsRepo:
             "historical": "1 = 1",
             "6months": "business_date >= DATE_ADD(CURRENT_DATE(), -180)",
         }.get(period, "business_date >= DATE_TRUNC('MONTH', CURRENT_DATE())")
-        rows = self._query(f"""
+        rows = self._query("""
             SELECT nit_vendedor, nombre_vendedor,
-                   COUNT(*) AS facturas,
-                   SUM(total_factura) AS total_ventas,
-                   AVG(total_factura) AS ticket_promedio
+                    COUNT(*) AS facturas,
+                    SUM(total_factura) AS total_ventas,
+                    AVG(total_factura) AS ticket_promedio
             FROM motoshop.silver.fact_ventas
-            WHERE {where}
+            WHERE """ + where + """
             GROUP BY nit_vendedor, nombre_vendedor
             ORDER BY total_ventas DESC
             LIMIT 10
@@ -825,7 +884,7 @@ class RealMetricsRepo:
             "historical": "1 = 1",
             "6months": "business_date >= DATE_SUB(CURRENT_DATE(), 180)",
         }.get(period, "business_date >= DATE_TRUNC('MONTH', CURRENT_DATE())")
-        stats = self._query(f"""
+        stats = self._query("""
             SELECT
                 nit_vendedor,
                 nombre_vendedor,
@@ -833,9 +892,9 @@ class RealMetricsRepo:
                 SUM(total_factura) AS ventas_total,
                 AVG(total_factura) AS ticket_promedio
             FROM motoshop.silver.fact_ventas
-            WHERE nit_vendedor = '{vendedor_id}' AND {where}
+            WHERE nit_vendedor = :vendedor_id AND """ + where + """
             GROUP BY nit_vendedor, nombre_vendedor
-        """)
+        """, [{"name": "vendedor_id", "value": {"stringValue": vendedor_id}, "type": "STRING"}])
         if not stats:
             logger.warning("No detail data found for vendedor %s", vendedor_id)
             raise HTTPException(status_code=404, detail="Vendedor no encontrado")
@@ -843,30 +902,31 @@ class RealMetricsRepo:
         actual = float(row["ventas_total"])
 
         # TODO: Reemplazar con JOIN a dim_categoria_producto cuando exista
-        categorias = self._query(f"""
+        categorias = self._query("""
             SELECT 'GENÉRICO' AS categoria, CAST(SUM(total_factura) AS DOUBLE) AS total
             FROM motoshop.silver.fact_ventas
-            WHERE nit_vendedor = '{vendedor_id}' AND {where}
-        """)
+            WHERE nit_vendedor = :vendedor_id AND """ + where + """
+        """, [{"name": "vendedor_id", "value": {"stringValue": vendedor_id}, "type": "STRING"}])
         cats = [{"categoria": r["categoria"], "total": float(r["total"])} for r in categorias] if categorias else []
 
-        productos = self._query(f"""
+        where_v = where.replace('business_date', 'v.business_date')
+        productos = self._query("""
             SELECT COUNT(DISTINCT cod_producto) AS productos_vendidos
             FROM motoshop.silver.fact_ventas_detalle d
             INNER JOIN motoshop.silver.fact_ventas v ON d.num_documento = v.num_documento
-            WHERE v.nit_vendedor = '{vendedor_id}' AND {where.replace('business_date', 'v.business_date')}
-        """)
+            WHERE v.nit_vendedor = :vendedor_id AND """ + where_v + """
+        """, [{"name": "vendedor_id", "value": {"stringValue": vendedor_id}, "type": "STRING"}])
         prod_count = int(productos[0]["productos_vendidos"]) if productos and productos[0].get("productos_vendidos") else 0
 
         ant_val = 0.0
         if period == "month":
-            anterior_rows = self._query(f"""
+            anterior_rows = self._query("""
                 SELECT COALESCE(SUM(total_factura), 0) AS anterior
                 FROM motoshop.silver.fact_ventas
-                WHERE nit_vendedor = '{vendedor_id}'
+                WHERE nit_vendedor = :vendedor_id
                   AND business_date >= DATE_TRUNC('MONTH', DATE_SUB(CURRENT_DATE(), 30))
                   AND business_date < DATE_TRUNC('MONTH', CURRENT_DATE())
-            """)
+            """, [{"name": "vendedor_id", "value": {"stringValue": vendedor_id}, "type": "STRING"}])
             if anterior_rows:
                 ant_val = float(anterior_rows[0]["anterior"])
         delta = round((actual - ant_val) / ant_val * 100, 1) if ant_val else None
@@ -1083,11 +1143,12 @@ class RealMetricsRepo:
             cobertura_pct=cobertura,
         )
 
-    def _query(self, sql: str) -> list[dict]:
+    def _query(self, sql: str, parameters: list[dict] = None) -> list[dict]:
         result = self._w.statement_execution.execute_statement(
             statement=sql,
             warehouse_id=self._wh_id,
             wait_timeout="50s",
+            parameters=parameters or [],
         )
         if result.status.state.name != "SUCCEEDED":
             error_detail = result.status.error.message if hasattr(result.status, 'error') and result.status.error else 'unknown'

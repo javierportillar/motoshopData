@@ -9,6 +9,8 @@ devuelve datos realistas de demo.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -33,6 +35,7 @@ class DormidoItem(BaseModel):
     cod_producto: str
     nom_producto: str
     ultima_compra: str | None = None
+    ultima_venta: str | None = None
     dias_sin_venta: int
     stock_actual: float | None = None
 
@@ -113,7 +116,10 @@ class AbcSegmentation(BaseModel):
 
 
 class DormidosResponse(BaseModel):
+    page: int
+    page_size: int
     total: int
+    items: list[DormidoItem]
     productos: list[DormidoItem]
 
 
@@ -239,3 +245,19 @@ class ForecastCategoriaResponse(BaseModel):
     total_categorias: int
     wape_promedio: float
     cobertura_pct: float
+
+
+class ActionRecommendationItem(BaseModel):
+    sku: str
+    nom_producto: str
+    reason: str
+    priority: Literal["alta", "media", "baja"]
+    period: str
+    status: Literal["open", "monitor", "scheduled"]
+    action_type: Literal["reponer", "liquidar", "comprar"]
+
+
+class ActionRecommendationsResponse(BaseModel):
+    period: str
+    total: int
+    items: list[ActionRecommendationItem]

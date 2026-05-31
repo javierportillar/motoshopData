@@ -10,6 +10,7 @@ está configurado; si no, cae a FakeMetricsRepo (datos mock).
 from __future__ import annotations
 
 from time import time
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from slowapi import Limiter
@@ -17,7 +18,7 @@ from slowapi.util import get_remote_address
 
 from starlette.requests import Request as StarletteRequest
 
-from motoshop_api.auth.deps import get_current_user
+from motoshop_api.auth.deps import get_current_user, require_role
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
 from motoshop_api.metrics.repo import (
@@ -30,6 +31,8 @@ from motoshop_api.metrics.schemas import (
     CohortesResponse,
     DormidosResponse,
     DriftSummaryResponse,
+    ActionRecommendationItem,
+    ActionRecommendationsResponse,
     ForecastCategoriaResponse,
     InventorySummary,
     PlanComprasResponse,
@@ -74,6 +77,17 @@ def _get_workspace():
     return _workspace_client
 
 
+def _get_real_metrics_repo() -> RealMetricsRepo:
+    if not settings.databricks_host or not settings.databricks_token or not settings.databricks_http_path:
+        raise HTTPException(
+            status_code=503,
+            detail="Metrics require Databricks configuration in production",
+        )
+    w = _get_workspace()
+    wh_id = settings.databricks_http_path.split("/")[-1]
+    return RealMetricsRepo(w, wh_id)
+
+
 def _cached_or_fetch(key: str, fetch_fn, ttl: int = _CACHE_TTL):
     now = time()
     if key in _cache:
@@ -90,11 +104,10 @@ def _clear_metrics_cache():
 
 
 def get_repo() -> MetricsRepoProtocol:
-    if settings.databricks_http_path:
-        w = _get_workspace()
-        # Extract warehouse ID from the http_path
-        wh_id = settings.databricks_http_path.split("/")[-1]
-        return RealMetricsRepo(w, wh_id)
+    if settings.env == "prod":
+        return _get_real_metrics_repo()
+    if settings.databricks_http_path and settings.databricks_host and settings.databricks_token:
+        return _get_real_metrics_repo()
     from motoshop_api.metrics.repo import FakeMetricsRepo
 
     return FakeMetricsRepo()
@@ -115,7 +128,7 @@ def sales_summary(
 @limiter.limit("30/minute")
 def sales_daily(
     request: Request,
-    date: str = Query(default=None),
+    date: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="YYYY-MM-DD"),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
 ) -> SalesDailyResponse:
@@ -130,7 +143,7 @@ def sales_daily(
 @limiter.limit("30/minute")
 def sales_monthly(
     request: Request,
-    month: str = Query(default=None),
+    month: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$", description="YYYY-MM"),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
 ) -> SalesMonthlyResponse:
@@ -180,12 +193,17 @@ def dormidos(
     request: Request,
     page: int = Query(default=1, ge=1, description="Número de página"),
     page_size: int = Query(default=50, ge=1, le=200, description="Items por página"),
+    sort_by: Literal["dias_sin_venta", "ultima_compra", "ultima_venta"] = Query(default="dias_sin_venta"),
+    sort_order: Literal["asc", "desc"] = Query(default="desc"),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
 ) -> DormidosResponse:
     """Productos sin venta > 90 días, paginados."""
-    cache_key = f"dormidos:{page}:{page_size}"
-    return _cached_or_fetch(cache_key, lambda: repo.get_dormidos(page=page, page_size=page_size))
+    cache_key = f"dormidos:{page}:{page_size}:{sort_by}:{sort_order}"
+    return _cached_or_fetch(
+        cache_key,
+        lambda: repo.get_dormidos(page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order),
+    )
 
 
 @router.get("/metrics/cohortes", response_model=CohortesResponse)
@@ -219,8 +237,8 @@ def sales_trend(
 @limiter.limit("30/minute")
 def vendedores_summary(
     request: Request,
-    period: str = "month",
-    vendedor_id: str | None = Query(default=None),
+    period: Literal["month", "historical", "6months"] = "month",
+    vendedor_id: str | None = Query(default=None, pattern=r"^[A-Za-z0-9._-]{1,64}$"),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
 ):
@@ -281,8 +299,70 @@ def forecast_categoria(
 
 @router.post("/metrics/cache/clear")
 def clear_metrics_cache(
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(require_role("admin", "gerente")),
 ) -> dict:
     """Invalidar cache de métricas manualmente."""
     _clear_metrics_cache()
     return {"status": "ok", "message": "Cache cleared"}
+
+
+@router.get("/metrics/recommendations", response_model=ActionRecommendationsResponse)
+@limiter.limit("30/minute")
+def action_recommendations(
+    request: Request,
+    period: Literal["today", "week", "month"] = Query(default="month"),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+) -> ActionRecommendationsResponse:
+    """Recomendaciones accionables para la vista de Acciones.
+
+    Combina plan de compras y dormidos para proponer decisiones concretas.
+    """
+    limit = {"today": 5, "week": 10, "month": 15}[period]
+    plan = repo.get_plan_compras()
+    dormidos = repo.get_dormidos(page=1, page_size=limit, sort_by="dias_sin_venta", sort_order="desc")
+
+    items: list[ActionRecommendationItem] = []
+    seen: set[str] = set()
+
+    for item in plan.items[:limit]:
+        if item.sku in seen:
+            continue
+        seen.add(item.sku)
+        priority = item.urgencia or ("alta" if item.cantidad_a_comprar >= 20 else "media")
+        items.append(
+            ActionRecommendationItem(
+                sku=item.sku,
+                nom_producto=item.nombre,
+                reason=(
+                    f"La demanda de 7 días ({item.demanda_7d:.0f}) supera el stock actual "
+                    f"({item.stock_actual:.0f}) y requiere comprar {item.cantidad_a_comprar:.0f} unidades."
+                ),
+                priority=priority if priority in ("alta", "media", "baja") else "media",
+                period=period,
+                status="open" if item.urgencia == "alta" or item.cantidad_a_comprar > 0 else "monitor",
+                action_type="comprar",
+            )
+        )
+
+    for item in dormidos.items[:limit]:
+        if item.cod_producto in seen:
+            continue
+        seen.add(item.cod_producto)
+        priority = "alta" if item.dias_sin_venta >= 180 else "media" if item.dias_sin_venta >= 120 else "baja"
+        items.append(
+            ActionRecommendationItem(
+                sku=item.cod_producto,
+                nom_producto=item.nom_producto,
+                reason=(
+                    f"Producto sin ventas hace {item.dias_sin_venta} días; "
+                    "evaluar liquidación o salida promocional."
+                ),
+                priority=priority,
+                period=period,
+                status="open" if item.dias_sin_venta >= 120 else "monitor",
+                action_type="liquidar",
+            )
+        )
+
+    return ActionRecommendationsResponse(period=period, total=len(items), items=items)
