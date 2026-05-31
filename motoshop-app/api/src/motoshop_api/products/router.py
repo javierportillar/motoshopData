@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -41,3 +41,18 @@ async def list_products(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get("/products/{sku}", response_model=ProductOut)
+@limiter.limit("60/minute")
+async def get_product(
+    request: Request,
+    sku: str,
+    _user: User = Depends(get_current_user),
+    repo: ProductsRepo = Depends(get_products_repo),
+) -> ProductOut:
+    """Retorna detalle de un producto por SKU exacto. Requiere autenticación."""
+    row = repo.get_by_sku(sku)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"SKU '{sku}' no encontrado")
+    return ProductOut(**row)

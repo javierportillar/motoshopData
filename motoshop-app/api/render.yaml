@@ -17,7 +17,7 @@ services:
       - key: DATABRICKS_HTTP_PATH
         value: /sql/1.0/warehouses/43bc044eaef4cca4
       - key: JWT_SECRET
-        sync: false
+        generateValue: true
       - key: CORS_ORIGINS
         value: https://motoshop-web-tau.vercel.app,https://app.fragloesja.uk
       - key: ENV

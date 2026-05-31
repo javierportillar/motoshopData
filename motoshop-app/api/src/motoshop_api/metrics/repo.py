@@ -11,6 +11,8 @@ import logging
 from datetime import datetime, timedelta
 from typing import Protocol
 
+from fastapi import HTTPException
+
 logger = logging.getLogger(__name__)
 
 from motoshop_api.metrics.schemas import (
@@ -38,11 +40,9 @@ from motoshop_api.metrics.schemas import (
     SalesSummary,
     SalesTrendItem,
     SalesTrendResponse,
-    DriftSummaryItem,
-    DriftSummaryResponse,
     TopSkuItem,
-    VendedorItem,
     VendedoresSummaryResponse,
+    VendedorItem,
 )
 
 
@@ -55,7 +55,7 @@ class MetricsRepoProtocol(Protocol):
     def get_sales_historical(self) -> SalesHistoricalResponse: ...
     def get_inventory_summary(self) -> InventorySummary: ...
     def get_abc_segmentation(self) -> AbcSegmentation: ...
-    def get_dormidos(self) -> DormidosResponse: ...
+    def get_dormidos(self, page: int = 1, page_size: int = 50) -> DormidosResponse: ...
     def get_cohortes(self) -> CohortesResponse: ...
     def get_sales_trend(self, periods: int, year: int | None = None) -> SalesTrendResponse: ...
     def get_vendedores_summary(self, period: str = "month") -> VendedoresSummaryResponse: ...
@@ -173,8 +173,10 @@ class FakeMetricsRepo:
             bucket_c=AbcBucket(categoria="C", num_skus=3_305, valor_total=2_506_000.0, porcentaje_ingreso=5.0),
         )
 
-    def get_dormidos(self) -> DormidosResponse:
-        return DormidosResponse(total=len(_DORMIDOS), productos=_DORMIDOS)
+    def get_dormidos(self, page: int = 1, page_size: int = 50) -> DormidosResponse:
+        start = (page - 1) * page_size
+        end = start + page_size
+        return DormidosResponse(total=len(_DORMIDOS), productos=_DORMIDOS[start:end])
 
     def get_cohortes(self) -> CohortesResponse:
         return CohortesResponse(cohortes=[
@@ -454,7 +456,7 @@ class RealMetricsRepo:
         """)
         if not rows:
             logger.warning("No sales data found in gold mart")
-            return FakeMetricsRepo().get_sales_summary()
+            return SalesSummary(business_month="", ventas_mes_actual=0.0, ventas_mes_anterior=0.0, delta_porcentual=None, ticket_promedio=0.0, num_facturas=0, top_skus=[])
         mes_actual, mes_anterior = rows[0], rows[1] if len(rows) > 1 else None
         va_actual = float(mes_actual["ventas_mes"])
         va_anterior = float(mes_anterior["ventas_mes"]) if mes_anterior else 0.0
@@ -626,7 +628,7 @@ class RealMetricsRepo:
         """)
         if not buckets:
             logger.warning("No ABC data found in gold mart")
-            return FakeMetricsRepo().get_abc_segmentation()
+            return AbcSegmentation(business_month="", total_skus=0, total_ingresos=0.0, bucket_a=AbcBucket(categoria="A", num_skus=0, valor_total=0.0, porcentaje_ingreso=0.0), bucket_b=AbcBucket(categoria="B", num_skus=0, valor_total=0.0, porcentaje_ingreso=0.0), bucket_c=AbcBucket(categoria="C", num_skus=0, valor_total=0.0, porcentaje_ingreso=0.0))
         for b in buckets:
             b["num_skus"] = int(b["num_skus"])
             b["valor_total"] = float(b["valor_total"])
@@ -641,8 +643,14 @@ class RealMetricsRepo:
             bucket_c=AbcBucket(**by_cat.get("C", {"categoria": "C", "num_skus": 0, "valor_total": 0, "porcentaje_ingreso": 0})),
         )
 
-    def get_dormidos(self) -> DormidosResponse:
-        rows = self._query("""
+    def get_dormidos(self, page: int = 1, page_size: int = 50) -> DormidosResponse:
+        count_rows = self._query("""
+            SELECT COUNT(*) AS total
+            FROM motoshop.gold.mart_productos_dormidos d
+        """)
+        total = int(count_rows[0]["total"]) if count_rows else 0
+        offset = (page - 1) * page_size
+        rows = self._query(f"""
             SELECT d.cod_producto, d.nom_producto, d.stock_actual,
                    COALESCE(CAST(v.ultima_venta AS STRING), CAST(d.ultima_venta AS STRING)) AS ultima_compra,
                    DATEDIFF(CURRENT_DATE, COALESCE(v.ultima_venta, d.ultima_venta)) AS dias_sin_venta
@@ -653,17 +661,17 @@ class RealMetricsRepo:
                 GROUP BY cod_producto
             ) v ON d.cod_producto = v.cod_producto
             ORDER BY dias_sin_venta DESC
-            LIMIT 500
+            LIMIT {page_size} OFFSET {offset}
         """)
         if not rows:
             logger.warning("No dormidos data found in gold mart")
-            return FakeMetricsRepo().get_dormidos()
+            return DormidosResponse(total=0, productos=[])
         for r in rows:
             r["dias_sin_venta"] = int(r["dias_sin_venta"])
             r["stock_actual"] = float(r["stock_actual"])
             if r["ultima_compra"] is not None:
                 r["ultima_compra"] = str(r["ultima_compra"])
-        return DormidosResponse(total=len(rows), productos=[DormidoItem(**r) for r in rows])
+        return DormidosResponse(total=total, productos=[DormidoItem(**r) for r in rows])
 
     @staticmethod
     def _fill_month_gaps(rows: list[dict]) -> list[dict]:
@@ -745,7 +753,7 @@ class RealMetricsRepo:
         """)
         if not rows:
             logger.warning("No cohortes data found in gold mart")
-            return FakeMetricsRepo().get_cohortes()
+            return CohortesResponse(cohortes=[])
         for r in rows:
             r["num_clientes"] = int(r["num_clientes"])
             r["ticket_promedio"] = float(r["ticket_promedio"])
@@ -776,7 +784,7 @@ class RealMetricsRepo:
         """)
         if not rows:
             logger.warning("No sales trend data found in gold.mart_ventas_diarias_sku")
-            return FakeMetricsRepo().get_sales_trend(periods)
+            return SalesTrendResponse(periods=periods, items=[])
         for r in rows:
             r["year"] = int(r["year"])
             r["month"] = int(r["month"])
@@ -804,7 +812,7 @@ class RealMetricsRepo:
         """)
         if not rows:
             logger.warning("No vendedores data found in silver.fact_ventas")
-            return FakeMetricsRepo().get_vendedores_summary(period)
+            return VendedoresSummaryResponse(items=[])
         for r in rows:
             r["facturas"] = int(r["facturas"])
             r["total_ventas"] = float(r["total_ventas"])
@@ -830,7 +838,7 @@ class RealMetricsRepo:
         """)
         if not stats:
             logger.warning("No detail data found for vendedor %s", vendedor_id)
-            return FakeMetricsRepo().get_vendedor_detail(vendedor_id, period)
+            raise HTTPException(status_code=404, detail="Vendedor no encontrado")
         row = stats[0]
         actual = float(row["ventas_total"])
 
@@ -904,7 +912,7 @@ class RealMetricsRepo:
         """)
         if not cohortes_rows:
             logger.warning("No cohortes detail data found")
-            return FakeMetricsRepo().get_cohortes_detail()
+            return CohortesDetailResponse(cohortes=[], total_cohortes=0, nuevos_este_mes=0, recurrentes_este_mes=0, top_recurrentes=0)
         for r in cohortes_rows:
             r["total_clientes"] = int(r["total_clientes"])
             r["ltv_promedio"] = float(r["ltv_promedio"])
@@ -960,7 +968,7 @@ class RealMetricsRepo:
         """)
         if not rows:
             logger.warning("No drift alerts found in gold.alertas_drift")
-            return FakeMetricsRepo().get_drift_summary()
+            return DriftSummaryResponse(items=[], total_alerts=0, active_count=0, warning_count=0, current_threshold=30.0)
         for r in rows:
             r["drift_magnitude"] = float(r["drift_magnitude"])
             r["threshold"] = float(r["threshold"])
@@ -1023,7 +1031,7 @@ class RealMetricsRepo:
         """)
         if not rows:
             logger.warning("No plan compras data found")
-            return FakeMetricsRepo().get_plan_compras()
+            return PlanComprasResponse(items=[], total_skus=0, total_unidades=0.0, total_valor_estimado=0.0, skus_urgentes=0, skus_dormidos=0)
         for r in rows:
             r["stock_actual"] = float(r["stock_actual"])
             r["demanda_7d"] = float(r["demanda_7d"])
@@ -1061,7 +1069,7 @@ class RealMetricsRepo:
         """)
         if not rows:
             logger.warning("No forecast categoria data found")
-            return FakeMetricsRepo().get_forecast_categoria()
+            return ForecastCategoriaResponse(items=[], total_categorias=0, wape_promedio=0.0, cobertura_pct=0.0)
         for r in rows:
             r["demanda_real"] = float(r["demanda_real"])
             r["demanda_predicha"] = float(r["demanda_predicha"])
@@ -1108,4 +1116,4 @@ def get_metrics_repo(workspace_client=None, warehouse_id=None) -> MetricsRepoPro
     """
     if workspace_client is not None and warehouse_id:
         return RealMetricsRepo(workspace_client, warehouse_id)
-    return FakeMetricsRepo()
+    raise RuntimeError("No Databricks credentials provided — RealMetricsRepo requires workspace_client and warehouse_id")

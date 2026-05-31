@@ -178,11 +178,14 @@ def abc_segmentation(
 @limiter.limit("30/minute")
 def dormidos(
     request: Request,
+    page: int = Query(default=1, ge=1, description="Número de página"),
+    page_size: int = Query(default=50, ge=1, le=200, description="Items por página"),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
 ) -> DormidosResponse:
-    """Productos sin venta > 90 días."""
-    return _cached_or_fetch("dormidos", repo.get_dormidos)
+    """Productos sin venta > 90 días, paginados."""
+    cache_key = f"dormidos:{page}:{page_size}"
+    return _cached_or_fetch(cache_key, lambda: repo.get_dormidos(page=page, page_size=page_size))
 
 
 @router.get("/metrics/cohortes", response_model=CohortesResponse)

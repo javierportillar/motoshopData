@@ -17,9 +17,28 @@ def client():
 def admin_token(client) -> str:
     from motoshop_api.auth.hash import hash_password
     from motoshop_api.auth.users import _users_cache, User
-    _users_cache.clear()
     _users_cache["admin"] = User(username="admin", hashed_password=hash_password("admin123"), email="admin@test.com", role="admin")
     resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+    assert resp.status_code == 200
+    return resp.json()["access_token"]
+
+
+@pytest.fixture()
+def vendedor_token(client) -> str:
+    from motoshop_api.auth.hash import hash_password
+    from motoshop_api.auth.users import _users_cache, User
+    _users_cache["vendedor1"] = User(username="vendedor1", hashed_password=hash_password("vend123"), email="vendedor1@test.com", role="vendedor")
+    resp = client.post("/api/auth/login", json={"username": "vendedor1", "password": "vend123"})
+    assert resp.status_code == 200
+    return resp.json()["access_token"]
+
+
+@pytest.fixture()
+def gerente_token(client) -> str:
+    from motoshop_api.auth.hash import hash_password
+    from motoshop_api.auth.users import _users_cache, User
+    _users_cache["gerente1"] = User(username="gerente1", hashed_password=hash_password("ger123"), email="gerente1@test.com", role="gerente")
+    resp = client.post("/api/auth/login", json={"username": "gerente1", "password": "ger123"})
     assert resp.status_code == 200
     return resp.json()["access_token"]
 
@@ -116,3 +135,56 @@ class TestPurchasePlansCRUD:
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 422
+
+
+class TestPurchasePlansAuthorization:
+    def _create_plan(self, client, token, name="Plan"):
+        return client.post(
+            "/api/purchase-plans",
+            json={"plan_name": name, "items": [{"sku": "A", "nombre": "A", "cantidad": 1}], "total_skus": 1, "total_value": 1000.0},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    def test_vendedor_cannot_read_other_plan(self, client, admin_token, vendedor_token):
+        resp = self._create_plan(client, admin_token)
+        pid = resp.json()["id"]
+        resp2 = client.get(f"/api/purchase-plans/{pid}", headers={"Authorization": f"Bearer {vendedor_token}"})
+        assert resp2.status_code == 403
+
+    def test_vendedor_cannot_update_status(self, client, admin_token, vendedor_token):
+        resp = self._create_plan(client, admin_token)
+        pid = resp.json()["id"]
+        resp2 = client.patch(
+            f"/api/purchase-plans/{pid}/status",
+            json={"status": "approved"},
+            headers={"Authorization": f"Bearer {vendedor_token}"},
+        )
+        assert resp2.status_code == 403  # role check: vendedor no tiene permiso
+
+    def test_admin_can_read_any_plan(self, client, vendedor_token, admin_token):
+        resp = self._create_plan(client, vendedor_token, "VendedorPlan")
+        pid = resp.json()["id"]
+        resp2 = client.get(f"/api/purchase-plans/{pid}", headers={"Authorization": f"Bearer {admin_token}"})
+        assert resp2.status_code == 200
+        assert resp2.json()["plan_name"] == "VendedorPlan"
+
+    def test_gerente_can_update_own_plan(self, client, gerente_token):
+        resp = self._create_plan(client, gerente_token, "GerentePlan")
+        pid = resp.json()["id"]
+        resp2 = client.patch(
+            f"/api/purchase-plans/{pid}/status",
+            json={"status": "approved"},
+            headers={"Authorization": f"Bearer {gerente_token}"},
+        )
+        assert resp2.status_code == 200
+        assert resp2.json()["status"] == "approved"
+
+    def test_gerente_cannot_update_admin_plan(self, client, admin_token, gerente_token):
+        resp = self._create_plan(client, admin_token, "AdminPlan")
+        pid = resp.json()["id"]
+        resp2 = client.patch(
+            f"/api/purchase-plans/{pid}/status",
+            json={"status": "approved"},
+            headers={"Authorization": f"Bearer {gerente_token}"},
+        )
+        assert resp2.status_code == 403

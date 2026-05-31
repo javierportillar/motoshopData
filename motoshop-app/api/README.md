@@ -44,13 +44,7 @@ https://api.fragloesja.uk/demo
 
 Página interactiva para probar la API desde un celular en 4G.
 
-## Credenciales de prueba
-
-| Usuario | Password | Rol |
-|---------|----------|-----|
-| admin | FG28 | admin |
-| vendedor1 | FG28 | vendedor |
-| gerente1 | FG28 | gerente |
+> **Credenciales rotadas durante F7:** las contraseñas se entregan por canal seguro al equipo. No versionar secrets.
 
 ## Tests
 
