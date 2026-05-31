@@ -625,6 +625,17 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ## Notas de sesión
 
+### 2026-05-30 — Sesión 58 · Dev W · Ciclo 2 — combo CASO C + CASO A + CASO D
+
+> 🟢 [Dev W] Ciclo 2 aplicado · commits: `e180aec`, `26cf1d5` · rutinas: C (notebooks sync) + A (restart API, vendedores-summary) + D (workflow redeploy) · notebooks sync OK (40/40) · API restart OK (PID 4896) · vendedores-summary 200 + 1 vendedor real ✅ · workflow redeploy OK (29 tasks, UNPAUSED, 19:00 COL) · timestamp: 2026-05-30 20:45 COL
+
+- **Hecho:**
+  - CASO C: notebooks sincronizados (pre-req de CASO D).
+  - CASO A: API reiniciada con endpoint `GET /metrics/vendedores-summary` — smoke test pasa con datos reales (KAROL NATALIA BURGOS BUSTOS, 151 facturas, $23.5M en mayo 2026).
+  - CASO D: workflow `motoshop_full_workflow` actualizado con 4 tasks snapshot (29 tasks total), UNPAUSED, schedule 19:00 COL.
+- **Incidencias:** (1) Puerto 8000 ocupado por proceso zombie — kill + restart limpio. (2) Endpoint no aparecía en OpenAPI por __pycache__ stale — limpiado y restart.
+- **Pendiente:** Dev D dispara D3 (verificar primera corrida snapshots desde Databricks UI). Dev A2 continúa A2-3 (cohortes-detail).
+
 ### 2026-05-30 — Sesión 53 · Dev D · F7-E Paso D2 terminado
 
 > 🟢 [F7-E-D] Paso D2 terminado · workflow modificado con 4 tasks snapshot · commit: e180aec · siguiente paso: D3 verificar primera corrida · ACCIÓN HUMANO: avisar Dev W para create_full_workflow.py + verificar UNPAUSED
