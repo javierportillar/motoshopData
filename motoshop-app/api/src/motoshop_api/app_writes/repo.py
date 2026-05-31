@@ -6,9 +6,12 @@ Protocol + Real (MySQL InnoDB) + Fake (memoria para tests).
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Protocol
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import select, func, insert, delete
 
@@ -241,6 +244,11 @@ class RealAlertActionsRepo:
             ).fetchone()
             created_at = created_at_row[0]
 
+        logger.info(
+            "create_action user_id=%s alert_id=%s sku=%s action_type=%s id=%s",
+            user_id, alert_id, sku, body.action_type, new_id,
+        )
+
         return AlertActionResponse(
             id=new_id,
             alert_id=alert_id,
@@ -299,6 +307,8 @@ class RealAlertActionsRepo:
 
         where_sql = " AND ".join(where_clauses)
 
+        logger.debug("list_user_actions SQL: COUNT query where=%s params=%s", where_sql, params)
+
         with self._engine.connect() as conn:
             # Total count
             count_row = conn.execute(
@@ -317,6 +327,11 @@ class RealAlertActionsRepo:
                 ),
                 params,
             ).fetchall()
+
+        logger.info(
+            "list_user_actions user_id=%s date_from=%s date_to=%s total=%d limit=%d offset=%d",
+            user_id, date_from, date_to, total, limit, offset,
+        )
 
         items = [
             AlertActionItem(
