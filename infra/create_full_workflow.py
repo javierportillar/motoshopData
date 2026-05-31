@@ -6,8 +6,8 @@ that runs sequentially every day at 19:00 COL (after the last dump):
 
   1. bronze_ingest
   2. silver (dims → facts → quality → validate)
-  3. gold marts (10–14) → snapshots ABC/dormidos (30/31) → feature store (15) →
-     archive forecasts (33) → baseline (16) → classifier (22) →
+  3. gold marts (10–14) → snapshots ABC/dormidos (30/31) → analytics rotación+ABC×XYZ (18/19) →
+     feature store (15) → archive forecasts (33) → baseline (16) → classifier (22) →
      snapshot alertas (32) → quality (20) → validate (30)
   4. drift monitor (25) — final task, optional
 
@@ -101,6 +101,12 @@ FULL_TASKS: list[tuple[str, str, list[str]]] = [
     # ── Gold snapshots · Balde B (después de marts originales) ────────
     ("gold_snapshot_abc", "gold/30_snapshot_abc_mensual", ["gold_abc"]),
     ("gold_snapshot_dormidos", "gold/31_snapshot_dormidos_mensual", ["gold_dormidos"]),
+
+    # ── Gold analytics · F7-E D4+D5 ─────────────────────────────────────
+    ("gold_rotacion_promedio", "gold/18_mart_rotacion_promedio",
+     ["gold_ventas", "gold_inventario", "gold_abc"]),
+    ("gold_abc_xyz", "gold/19_mart_abc_xyz",
+     ["gold_ventas", "gold_abc", "gold_rotacion_promedio"]),
 
     # ── Feature store + archive + baseline + classifier ────────────────
     ("gold_feature_store", "gold/15_feature_store_sku",

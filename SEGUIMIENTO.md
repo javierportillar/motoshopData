@@ -627,6 +627,17 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ## Notas de sesión
 
+### 2026-05-31 — Sesión 60 · Dev D · F7-E Paso D4 terminado
+
+> 🟢 [F7-E-D] Paso D4 terminado · gold.mart_rotacion_sku poblada · commit: 09b416a · siguiente paso: D5 ABC×XYZ · ACCIÓN HUMANO: avisar Dev W para sync notebooks Databricks
+
+- **Hecho:** `18_mart_rotacion_promedio.py` creado y ejecutado en Databricks. Tabla `gold.mart_rotacion_sku` poblada con 4,840 SKUs (1,172 con venta en 90d, 3,469 con stock). Cobertura promedio 511.9 días. Columnas: cod_producto, nom_producto, stock_actual (mapeado desde cantidad_actual), venta_diaria_promedio, dias_de_cobertura, business_date. Evidencia: `notebooks/gold/_runs/v_f7e_d4_rotacion_20260530.md`.
+- **Aprendido:** `mart_inventario_actual` usa `cantidad_actual` (no `stock_actual`) como columna de cantidad. El FULL OUTER JOIN captura tanto SKUs con stock pero sin venta reciente (cobertura 999.9) como SKUs con venta pero sin stock actual (stock 0).
+- **Abierto:** Nada. D5 listo para arrancar.
+- **Próximo paso:** D5 crear `19_mart_abc_xyz.py` con matriz ABC×XYZ.
+
+---
+
 ### 2026-05-30 — Sesión 53 · Dev D · F7-E Paso D3 terminado
 
 > 🟢 [F7-E-D] Paso D3 terminado · snapshots arrancando OK (3/4 ✅, 1 🔄 en cola por bug preexistente corregido) · commit: 7bbcb96 · siguiente paso: D4 rotación promedio · sin bloqueo
