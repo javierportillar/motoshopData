@@ -31,6 +31,7 @@ from motoshop_api.push.router import router as push_router
 from motoshop_api.forecast.router import router as forecast_router
 from motoshop_api.alerts.router import router as alerts_router
 from motoshop_api.app_writes.router import router as app_writes_router
+from motoshop_api.purchase_plans.router import router as purchase_plans_router
 
 
 def _is_localhost() -> bool:
@@ -125,6 +126,7 @@ app.include_router(push_router)
 app.include_router(forecast_router)
 app.include_router(alerts_router)
 app.include_router(app_writes_router)
+app.include_router(purchase_plans_router)
 
 
 class HealthResponse(BaseModel):
