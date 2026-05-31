@@ -31,6 +31,7 @@ export async function POST(req: NextRequest) {
     const res = NextResponse.json({
       user: username,
       message: "Login exitoso",
+      access_token,
     });
 
     res.cookies.set("motoshop_token", access_token, {
