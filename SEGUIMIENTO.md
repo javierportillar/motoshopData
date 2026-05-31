@@ -625,6 +625,13 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ## Notas de sesión
 
+### 2026-05-30 — Sesión 57 · Dev W · Ciclo 1 — combo CASO C + CASO A
+
+> 🟢 [Dev W] Ciclo 1 aplicado · commits: `fee4559`, `ec9c30f`, `57df7d6` · rutinas: C (notebooks sync) + A (restart API) · notebooks sync OK (4 snapshot notebooks en Workspace) · API restart OK (PID 12548) · inventory-summary valor_total=$83.1M ✅ · sales-trend 200 + 6 items ✅ · timestamp: 2026-05-30 20:15 COL
+
+- **Hecho:** CASO C: 4 notebooks snapshot (30_snapshot_abc_mensual, 31_snapshot_dormidos_mensual, 32_snapshot_alertas_diario, 33_archive_forecasts) subidos a Databricks Workspace. CASO A: API reiniciada con fix inventory-summary (`fee4559`, valor_total $83.1M ≠ 0) + nuevo endpoint sales-trend (`ec9c30f`, 6 items mensuales desde Dec 2025). Todos los smoke tests pasan.
+- **Pendiente:** Dev D necesita confirmación para arrancar D2 (modificar workflow con 4 tasks snapshot). Dev A2 espera validación para continuar con A2-2 (vendedores-summary).
+
 ### 2026-05-30 — Sesión 56b · Dev T2 · F7-C 8 pages migradas + 4 dashboards nuevos ⭐ HITO
 
 > 🟢 [F7-C-T2] Migración 8 pages COMPLETA + 4 dashboards nuevos creados · commit: `c328eae` · siguiente paso: esperar endpoints Dev A2 para reemplazar mocks + tests E2E · sin bloqueo
