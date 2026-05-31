@@ -1,4 +1,4 @@
-"""Pruebas del endpoint /metrics/cohortes-detail con FakeMetricsRepo."""
+"""Pruebas del endpoint /api/metrics/cohortes-detail con FakeMetricsRepo."""
 from __future__ import annotations
 
 import pytest
@@ -24,14 +24,14 @@ def admin_token(client) -> str:
         email="admin@test.com",
         role="admin",
     )
-    resp = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
     assert resp.status_code == 200
     return resp.json()["access_token"]
 
 
 def test_cohortes_detail_requires_auth(client: TestClient) -> None:
     """Sin token, el endpoint debe devolver 401."""
-    resp = client.get("/metrics/cohortes-detail")
+    resp = client.get("/api/metrics/cohortes-detail")
     assert resp.status_code == 401
 
 
@@ -39,7 +39,7 @@ class TestCohortesDetail:
     def test_happy_path_returns_cohortes(self, client, admin_token) -> None:
         """Con token válido, devuelve detalle de cohortes."""
         resp = client.get(
-            "/metrics/cohortes-detail",
+            "/api/metrics/cohortes-detail",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -52,7 +52,7 @@ class TestCohortesDetail:
     def test_cohorte_item_fields(self, client, admin_token) -> None:
         """Cada cohorte tiene los campos requeridos con tipos correctos."""
         resp = client.get(
-            "/metrics/cohortes-detail",
+            "/api/metrics/cohortes-detail",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()
@@ -67,7 +67,7 @@ class TestCohortesDetail:
     def test_retencion_item_fields(self, client, admin_token) -> None:
         """Cada item de retención tiene los campos correctos."""
         resp = client.get(
-            "/metrics/cohortes-detail",
+            "/api/metrics/cohortes-detail",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()
@@ -81,7 +81,7 @@ class TestCohortesDetail:
     def test_summary_fields(self, client, admin_token) -> None:
         """Los campos de resumen están presentes y tienen valores coherentes."""
         resp = client.get(
-            "/metrics/cohortes-detail",
+            "/api/metrics/cohortes-detail",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()
@@ -96,7 +96,7 @@ class TestCohortesDetail:
     def test_cohortes_ordered_chronologically(self, client, admin_token) -> None:
         """Las cohortes deben venir ordenadas cronológicamente."""
         resp = client.get(
-            "/metrics/cohortes-detail",
+            "/api/metrics/cohortes-detail",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()
@@ -108,11 +108,11 @@ class TestCohortesDetail:
     def test_cache_returns_same_data(self, client, admin_token) -> None:
         """Dos llamadas seguidas deben devolver los mismos datos (cache)."""
         resp1 = client.get(
-            "/metrics/cohortes-detail",
+            "/api/metrics/cohortes-detail",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         resp2 = client.get(
-            "/metrics/cohortes-detail",
+            "/api/metrics/cohortes-detail",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp1.status_code == 200

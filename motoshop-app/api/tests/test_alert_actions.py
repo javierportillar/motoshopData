@@ -1,4 +1,4 @@
-"""Pruebas de los endpoints POST /alerts/{id}/action + GET /alerts/actions/me."""
+"""Pruebas de los endpoints POST /api/alerts/{id}/action + GET /api/alerts/actions/me."""
 
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ def admin_token(client) -> str:
         email="admin@test.com",
         role="admin",
     )
-    resp = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
     assert resp.status_code == 200
     return resp.json()["access_token"]
 
@@ -72,7 +72,7 @@ def gerente_token(client) -> str:
         email="gerente1@test.com",
         role="gerente",
     )
-    resp = client.post("/auth/login", json={"username": "gerente1", "password": "gerente123"})
+    resp = client.post("/api/auth/login", json={"username": "gerente1", "password": "gerente123"})
     assert resp.status_code == 200
     return resp.json()["access_token"]
 
@@ -89,7 +89,7 @@ def vendedor_token(client) -> str:
         email="vendedor1@test.com",
         role="vendedor",
     )
-    resp = client.post("/auth/login", json={"username": "vendedor1", "password": "vend123"})
+    resp = client.post("/api/auth/login", json={"username": "vendedor1", "password": "vend123"})
     assert resp.status_code == 200
     return resp.json()["access_token"]
 
@@ -107,7 +107,7 @@ def _headers(token: str, idempotency_key: str | None = None) -> dict:
 class TestCreateActionUnauthenticated:
     def test_requires_auth(self, client: TestClient) -> None:
         resp = client.post(
-            f"/alerts/{ALERT_ID}/action",
+            f"/api/alerts/{ALERT_ID}/action",
             json={"action_type": "dismissed", "reason": "ya cubierto"},
             headers={"Idempotency-Key": str(uuid.uuid4())},
         )
@@ -117,7 +117,7 @@ class TestCreateActionUnauthenticated:
 class TestCreateActionAuthorization:
     def test_vendedor_cannot_create_action(self, client: TestClient, vendedor_token: str) -> None:
         resp = client.post(
-            f"/alerts/{ALERT_ID}/action",
+            f"/api/alerts/{ALERT_ID}/action",
             json={"action_type": "dismissed", "reason": "ya cubierto"},
             headers=_headers(vendedor_token, str(uuid.uuid4())),
         )
@@ -125,7 +125,7 @@ class TestCreateActionAuthorization:
 
     def test_gerente_can_create_action(self, client: TestClient, gerente_token: str) -> None:
         resp = client.post(
-            f"/alerts/{ALERT_ID}/action",
+            f"/api/alerts/{ALERT_ID}/action",
             json={"action_type": "dismissed", "reason": "ya cubierto"},
             headers=_headers(gerente_token, str(uuid.uuid4())),
         )
@@ -135,7 +135,7 @@ class TestCreateActionAuthorization:
 class TestCreateActionValidation:
     def test_missing_idempotency_key_returns_422(self, client: TestClient, admin_token: str) -> None:
         resp = client.post(
-            f"/alerts/{ALERT_ID}/action",
+            f"/api/alerts/{ALERT_ID}/action",
             json={"action_type": "dismissed", "reason": "ok"},
             headers={"Authorization": f"Bearer {admin_token}"},
         )
@@ -143,7 +143,7 @@ class TestCreateActionValidation:
 
     def test_invalid_idempotency_key_returns_422(self, client: TestClient, admin_token: str) -> None:
         resp = client.post(
-            f"/alerts/{ALERT_ID}/action",
+            f"/api/alerts/{ALERT_ID}/action",
             json={"action_type": "dismissed", "reason": "ok"},
             headers=_headers(admin_token, idempotency_key="not-a-uuid"),
         )
@@ -151,7 +151,7 @@ class TestCreateActionValidation:
 
     def test_ordered_without_quantity_returns_422(self, client: TestClient, admin_token: str) -> None:
         resp = client.post(
-            f"/alerts/{ALERT_ID}/action",
+            f"/api/alerts/{ALERT_ID}/action",
             json={"action_type": "ordered"},
             headers=_headers(admin_token, str(uuid.uuid4())),
         )
@@ -159,7 +159,7 @@ class TestCreateActionValidation:
 
     def test_dismissed_without_reason_returns_422(self, client: TestClient, admin_token: str) -> None:
         resp = client.post(
-            f"/alerts/{ALERT_ID}/action",
+            f"/api/alerts/{ALERT_ID}/action",
             json={"action_type": "dismissed"},
             headers=_headers(admin_token, str(uuid.uuid4())),
         )
@@ -169,7 +169,7 @@ class TestCreateActionValidation:
         self, client: TestClient, admin_token: str
     ) -> None:
         resp = client.post(
-            f"/alerts/{ALERT_ID}/action",
+            f"/api/alerts/{ALERT_ID}/action",
             json={"action_type": "postponed"},
             headers=_headers(admin_token, str(uuid.uuid4())),
         )
@@ -179,7 +179,7 @@ class TestCreateActionValidation:
 class TestCreateActionSuccess:
     def test_ordered_action_returns_201(self, client: TestClient, admin_token: str) -> None:
         resp = client.post(
-            f"/alerts/{ALERT_ID}/action",
+            f"/api/alerts/{ALERT_ID}/action",
             json={"action_type": "ordered", "quantity": 50, "supplier": "Proveedor X"},
             headers=_headers(admin_token, str(uuid.uuid4())),
         )
@@ -193,7 +193,7 @@ class TestCreateActionSuccess:
 
     def test_dismissed_action_returns_201(self, client: TestClient, admin_token: str) -> None:
         resp = client.post(
-            f"/alerts/{ALERT_ID}/action",
+            f"/api/alerts/{ALERT_ID}/action",
             json={"action_type": "dismissed", "reason": "stock cubierto por otro canal"},
             headers=_headers(admin_token, str(uuid.uuid4())),
         )
@@ -202,7 +202,7 @@ class TestCreateActionSuccess:
 
     def test_postponed_action_returns_201(self, client: TestClient, admin_token: str) -> None:
         resp = client.post(
-            f"/alerts/{ALERT_ID}/action",
+            f"/api/alerts/{ALERT_ID}/action",
             json={"action_type": "postponed", "postponed_to": "2026-06-15"},
             headers=_headers(admin_token, str(uuid.uuid4())),
         )
@@ -215,14 +215,14 @@ class TestCreateActionSuccess:
         key = str(uuid.uuid4())
         body = {"action_type": "dismissed", "reason": "ya gestionado"}
         first = client.post(
-            f"/alerts/{ALERT_ID}/action",
+            f"/api/alerts/{ALERT_ID}/action",
             json=body,
             headers=_headers(admin_token, key),
         )
         assert first.status_code == 201
 
         second = client.post(
-            f"/alerts/{ALERT_ID}/action",
+            f"/api/alerts/{ALERT_ID}/action",
             json=body,
             headers=_headers(admin_token, key),
         )
@@ -231,7 +231,7 @@ class TestCreateActionSuccess:
 
     def test_can_add_notes_and_supplier(self, client: TestClient, admin_token: str) -> None:
         resp = client.post(
-            f"/alerts/{ALERT_ID}/action",
+            f"/api/alerts/{ALERT_ID}/action",
             json={
                 "action_type": "ordered",
                 "quantity": 100,
@@ -248,13 +248,13 @@ class TestListMyActions:
         # Crear 3 acciones
         for i in range(3):
             client.post(
-                f"/alerts/{ALERT_ID}/action",
+                f"/api/alerts/{ALERT_ID}/action",
                 json={"action_type": "dismissed", "reason": f"razón {i}"},
                 headers=_headers(admin_token, str(uuid.uuid4())),
             )
 
         resp = client.get(
-            "/alerts/actions/me",
+            "/api/alerts/actions/me",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -269,13 +269,13 @@ class TestListMyActions:
     def test_list_actions_respects_limit(self, client: TestClient, admin_token: str) -> None:
         for i in range(3):
             client.post(
-                f"/alerts/{ALERT_ID}/action",
+                f"/api/alerts/{ALERT_ID}/action",
                 json={"action_type": "dismissed", "reason": f"limit {i}"},
                 headers=_headers(admin_token, str(uuid.uuid4())),
             )
 
         resp = client.get(
-            "/alerts/actions/me?limit=1",
+            "/api/alerts/actions/me?limit=1",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200

@@ -8,7 +8,7 @@ from motoshop_api.auth.jwt import create_access_token
 
 
 def test_login_success(client, fake_users) -> None:
-    resp = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
     assert resp.status_code == 200
     body = resp.json()
     assert "access_token" in body
@@ -19,23 +19,23 @@ def test_login_success(client, fake_users) -> None:
 
 def test_login_wrong_password_returns_401_without_user_enumeration(client, fake_users) -> None:
     """V4: login con password mala devuelve 401 genérico, sin filtrar si el usuario existe."""
-    resp = client.post("/auth/login", json={"username": "admin", "password": "wrongpassword"})
+    resp = client.post("/api/auth/login", json={"username": "admin", "password": "wrongpassword"})
     assert resp.status_code == 401
     assert resp.json()["detail"] == "Credenciales incorrectas"
 
     # Mismo error para usuario inexistente
-    resp2 = client.post("/auth/login", json={"username": "noexiste", "password": "algo"})
+    resp2 = client.post("/api/auth/login", json={"username": "noexiste", "password": "algo"})
     assert resp2.status_code == 401
     assert resp2.json()["detail"] == "Credenciales incorrectas"
 
 
 def test_login_missing_fields(client) -> None:
-    resp = client.post("/auth/login", json={})
+    resp = client.post("/api/auth/login", json={})
     assert resp.status_code == 422
 
 
 def test_auth_required_without_token(client) -> None:
-    resp = client.get("/products")
+    resp = client.get("/api/products")
     assert resp.status_code == 401
 
 
@@ -50,21 +50,21 @@ def test_auth_expired_token(client, fake_users) -> None:
     finally:
         cfg.settings.jwt_access_ttl_minutes = original_ttl
 
-    resp = client.get("/products", headers={"Authorization": f"Bearer {token}"})
+    resp = client.get("/api/products", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 401
 
 
 def test_auth_invalid_token(client) -> None:
-    resp = client.get("/products", headers={"Authorization": "Bearer invalid.token.here"})
+    resp = client.get("/api/products", headers={"Authorization": "Bearer invalid.token.here"})
     assert resp.status_code == 401
 
 
 def test_auth_refresh_token_works(client, fake_users) -> None:
     """Test refresh con token en body (no query string)."""
-    login_resp = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    login_resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
     refresh = login_resp.json()["refresh_token"]
 
-    resp = client.post("/auth/refresh", json={"token": refresh})
+    resp = client.post("/api/auth/refresh", json={"token": refresh})
     assert resp.status_code == 200
     assert "access_token" in resp.json()
 
@@ -73,12 +73,12 @@ def test_login_timing_is_similar(client, fake_users) -> None:
     """Timing-safe: tiempo similar para usuario existente vs inexistente."""
     # Usuario inexistente
     t0 = time.perf_counter()
-    client.post("/auth/login", json={"username": "noexiste", "password": "x"})
+    client.post("/api/auth/login", json={"username": "noexiste", "password": "x"})
     t_no = time.perf_counter() - t0
 
     # Usuario existente con password mala
     t1 = time.perf_counter()
-    client.post("/auth/login", json={"username": "admin", "password": "wrong"})
+    client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
     t_yes = time.perf_counter() - t1
 
     # Diferencia menor al 50% del menor

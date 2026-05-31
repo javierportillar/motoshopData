@@ -1,4 +1,4 @@
-"""Pruebas del endpoint /metrics/forecast-categoria con FakeMetricsRepo."""
+"""Pruebas del endpoint /api/metrics/forecast-categoria con FakeMetricsRepo."""
 from __future__ import annotations
 
 import pytest
@@ -24,20 +24,20 @@ def admin_token(client) -> str:
         email="admin@test.com",
         role="admin",
     )
-    resp = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
     assert resp.status_code == 200
     return resp.json()["access_token"]
 
 
 def test_forecast_categoria_requires_auth(client: TestClient) -> None:
-    resp = client.get("/metrics/forecast-categoria")
+    resp = client.get("/api/metrics/forecast-categoria")
     assert resp.status_code == 401
 
 
 class TestForecastCategoria:
     def test_happy_path_returns_items(self, client, admin_token) -> None:
         resp = client.get(
-            "/metrics/forecast-categoria",
+            "/api/metrics/forecast-categoria",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -47,7 +47,7 @@ class TestForecastCategoria:
 
     def test_item_fields(self, client, admin_token) -> None:
         resp = client.get(
-            "/metrics/forecast-categoria",
+            "/api/metrics/forecast-categoria",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()
@@ -59,7 +59,7 @@ class TestForecastCategoria:
 
     def test_summary_fields(self, client, admin_token) -> None:
         resp = client.get(
-            "/metrics/forecast-categoria",
+            "/api/metrics/forecast-categoria",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()
@@ -69,11 +69,11 @@ class TestForecastCategoria:
 
     def test_cache_returns_same_data(self, client, admin_token) -> None:
         resp1 = client.get(
-            "/metrics/forecast-categoria",
+            "/api/metrics/forecast-categoria",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         resp2 = client.get(
-            "/metrics/forecast-categoria",
+            "/api/metrics/forecast-categoria",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp1.status_code == 200

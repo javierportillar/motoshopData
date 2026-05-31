@@ -1,4 +1,4 @@
-"""Pruebas de los endpoints /alerts/* con FakeAlertsRepo."""
+"""Pruebas de los endpoints /api/alerts/* con FakeAlertsRepo."""
 from __future__ import annotations
 
 import pytest
@@ -24,21 +24,21 @@ def admin_token(client) -> str:
         email="admin@test.com",
         role="admin",
     )
-    resp = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
     assert resp.status_code == 200
     return resp.json()["access_token"]
 
 
 class TestAlertsUnauthenticated:
     def test_alerts_requires_auth(self, client: TestClient) -> None:
-        resp = client.get("/alerts/stockout")
+        resp = client.get("/api/alerts/stockout")
         assert resp.status_code == 401
 
 
 class TestAlertsAuthenticated:
     def test_alerts_returns_list(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(
-            "/alerts/stockout",
+            "/api/alerts/stockout",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -50,7 +50,7 @@ class TestAlertsAuthenticated:
 
     def test_alert_item_shape(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(
-            "/alerts/stockout",
+            "/api/alerts/stockout",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         item = resp.json()["alerts"][0]
@@ -65,7 +65,7 @@ class TestAlertsAuthenticated:
     def test_alerts_ordered_by_urgency(self, client: TestClient, admin_token: str) -> None:
         """Las alertas deben venir ordenadas: alta → media → baja."""
         resp = client.get(
-            "/alerts/stockout",
+            "/api/alerts/stockout",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         items = resp.json()["alerts"]
@@ -75,7 +75,7 @@ class TestAlertsAuthenticated:
 
     def test_alerts_filter_high(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(
-            "/alerts/stockout?urgency=alta",
+            "/api/alerts/stockout?urgency=alta",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -84,7 +84,7 @@ class TestAlertsAuthenticated:
 
     def test_alerts_filter_low(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(
-            "/alerts/stockout?urgency=baja",
+            "/api/alerts/stockout?urgency=baja",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -93,18 +93,18 @@ class TestAlertsAuthenticated:
 
     def test_alerts_invalid_urgency_returns_400(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(
-            "/alerts/stockout?urgency=supercritica",
+            "/api/alerts/stockout?urgency=supercritica",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 400
 
     def test_alerts_cache_returns_same_data(self, client: TestClient, admin_token: str) -> None:
         resp1 = client.get(
-            "/alerts/stockout",
+            "/api/alerts/stockout",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         resp2 = client.get(
-            "/alerts/stockout",
+            "/api/alerts/stockout",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp1.status_code == 200

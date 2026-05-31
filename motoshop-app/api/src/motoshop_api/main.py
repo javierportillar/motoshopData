@@ -99,7 +99,7 @@ async def mysql_offline_handler(request: Request, _exc: sqlalchemy.exc.Operation
                 "Predicciones y alertas están disponibles 24/7."
             ),
             "status": "degraded",
-            "available_endpoints": ["/health", "/auth/*", "/alerts/*", "/forecast/*", "/metrics/*"],
+            "available_endpoints": ["/health", "/api/auth/*", "/api/alerts/*", "/api/forecast/*", "/api/metrics/*", "/api/products/*", "/api/purchase-plans/*"],
         },
     )
 
@@ -115,18 +115,18 @@ app.add_middleware(
 # Request ID + PII redaction
 app.add_middleware(RequestIDMiddleware)
 
-# Routers
-app.include_router(auth_router)
-app.include_router(products_router)
-app.include_router(stock_router)
-app.include_router(sales_router)
-app.include_router(health_router)
-app.include_router(metrics_router)
-app.include_router(push_router)
-app.include_router(forecast_router)
-app.include_router(alerts_router)
-app.include_router(app_writes_router)
-app.include_router(purchase_plans_router)
+# Routers — todos bajo /api (estándar REST)
+app.include_router(auth_router, prefix="/api")
+app.include_router(products_router, prefix="/api")
+app.include_router(stock_router, prefix="/api")
+app.include_router(sales_router, prefix="/api")
+app.include_router(health_router, prefix="/api")
+app.include_router(metrics_router, prefix="/api")
+app.include_router(push_router, prefix="/api")
+app.include_router(forecast_router, prefix="/api")
+app.include_router(alerts_router, prefix="/api")
+app.include_router(app_writes_router, prefix="/api")
+app.include_router(purchase_plans_router, prefix="/api")
 
 
 class HealthResponse(BaseModel):

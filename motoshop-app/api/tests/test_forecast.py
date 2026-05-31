@@ -1,4 +1,4 @@
-"""Pruebas de los endpoints /forecast/* con FakeForecastRepo."""
+"""Pruebas de los endpoints /api/forecast/* con FakeForecastRepo."""
 from __future__ import annotations
 
 import pytest
@@ -24,22 +24,22 @@ def admin_token(client) -> str:
         email="admin@test.com",
         role="admin",
     )
-    resp = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
     assert resp.status_code == 200
     return resp.json()["access_token"]
 
 
 class TestForecastUnauthenticated:
     def test_forecast_requires_auth(self, client: TestClient) -> None:
-        """Sin token, /forecast/{sku} debe devolver 401."""
-        resp = client.get("/forecast/MOTS1297?horizon=7")
+        """Sin token, /api/forecast/{sku} debe devolver 401."""
+        resp = client.get("/api/forecast/MOTS1297?horizon=7")
         assert resp.status_code == 401
 
 
 class TestForecastAuthenticated:
     def test_forecast_known_sku_returns_200(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(
-            "/forecast/MOTS1297?horizon=7",
+            "/api/forecast/MOTS1297?horizon=7",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -51,14 +51,14 @@ class TestForecastAuthenticated:
 
     def test_forecast_unknown_sku_returns_404(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(
-            "/forecast/INEXISTENTE?horizon=7",
+            "/api/forecast/INEXISTENTE?horizon=7",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 404
 
     def test_forecast_item_shape(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(
-            "/forecast/MOTS1297?horizon=7",
+            "/api/forecast/MOTS1297?horizon=7",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -73,7 +73,7 @@ class TestForecastAuthenticated:
 
     def test_forecast_metrics_shape(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(
-            "/forecast/MOTS1297?horizon=14",
+            "/api/forecast/MOTS1297?horizon=14",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -85,7 +85,7 @@ class TestForecastAuthenticated:
 
     def test_forecast_horizon_respected(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(
-            "/forecast/MOTS1297?horizon=7",
+            "/api/forecast/MOTS1297?horizon=7",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -94,7 +94,7 @@ class TestForecastAuthenticated:
 
     def test_forecast_horizon_30(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(
-            "/forecast/MOTS1297?horizon=30",
+            "/api/forecast/MOTS1297?horizon=30",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -102,18 +102,18 @@ class TestForecastAuthenticated:
     def test_forecast_invalid_horizon(self, client: TestClient, admin_token: str) -> None:
         """Horizontes fuera de rango (7-30) deben dar error de validación."""
         resp = client.get(
-            "/forecast/MOTS1297?horizon=1",
+            "/api/forecast/MOTS1297?horizon=1",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code in (400, 422)
 
     def test_forecast_cache_returns_same_data(self, client: TestClient, admin_token: str) -> None:
         resp1 = client.get(
-            "/forecast/MOTS1297?horizon=7",
+            "/api/forecast/MOTS1297?horizon=7",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         resp2 = client.get(
-            "/forecast/MOTS1297?horizon=7",
+            "/api/forecast/MOTS1297?horizon=7",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp1.status_code == 200

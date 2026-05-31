@@ -1,4 +1,4 @@
-"""Pruebas del endpoint /health/data-freshness."""
+"""Pruebas del endpoint /api/health/data-freshness."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -37,7 +37,7 @@ class TestDataFreshness:
                 MockWC.return_value = mock_w
                 mock_w.files.list_directory_contents.return_value = [manifest]
 
-                resp = client.get("/health/data-freshness")
+                resp = client.get("/api/health/data-freshness")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -60,7 +60,7 @@ class TestDataFreshness:
                 MockWC.return_value = mock_w
                 mock_w.files.list_directory_contents.return_value = [manifest]
 
-                resp = client.get("/health/data-freshness")
+                resp = client.get("/api/health/data-freshness")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -82,7 +82,7 @@ class TestDataFreshness:
                 MockWC.return_value = mock_w
                 mock_w.files.list_directory_contents.return_value = [manifest]
 
-                resp = client.get("/health/data-freshness")
+                resp = client.get("/api/health/data-freshness")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -104,7 +104,7 @@ class TestDataFreshness:
                 MockWC.return_value = mock_w
                 mock_w.files.list_directory_contents.return_value = [manifest]
 
-                resp = client.get("/health/data-freshness")
+                resp = client.get("/api/health/data-freshness")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -122,7 +122,7 @@ class TestDataFreshness:
                 MockWC.return_value = mock_w
                 mock_w.files.list_directory_contents.return_value = []
 
-                resp = client.get("/health/data-freshness")
+                resp = client.get("/api/health/data-freshness")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -134,7 +134,7 @@ class TestDataFreshness:
             mock_settings.databricks_host = ""
             mock_settings.databricks_token = ""
 
-            resp = client.get("/health/data-freshness")
+            resp = client.get("/api/health/data-freshness")
 
         assert resp.status_code == 200
         body = resp.json()
@@ -152,7 +152,7 @@ class TestDataFreshness:
                 MockWC.return_value = mock_w
                 mock_w.files.list_directory_contents.side_effect = Exception("Timeout")
 
-                resp = client.get("/health/data-freshness")
+                resp = client.get("/api/health/data-freshness")
 
         assert resp.status_code == 200
         body = resp.json()

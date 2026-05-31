@@ -33,13 +33,13 @@ def client_with_stock(fake_users):
 
 
 def test_stock_requires_auth(client_with_stock) -> None:
-    resp = client_with_stock.get("/products/MOTS1011/stock")
+    resp = client_with_stock.get("/api/products/MOTS1011/stock")
     assert resp.status_code == 401
 
 
 def test_stock_returns_data(client_with_stock, fake_users, admin_token) -> None:
     resp = client_with_stock.get(
-        "/products/MOTS1011/stock",
+        "/api/products/MOTS1011/stock",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert resp.status_code == 200
@@ -54,7 +54,7 @@ def test_stock_returns_data(client_with_stock, fake_users, admin_token) -> None:
 
 def test_stock_not_found(client_with_stock, fake_users, admin_token) -> None:
     resp = client_with_stock.get(
-        "/products/NOEXISTE/stock",
+        "/api/products/NOEXISTE/stock",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert resp.status_code == 404

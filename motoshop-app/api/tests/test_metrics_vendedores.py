@@ -1,4 +1,4 @@
-"""Pruebas del endpoint /metrics/vendedores-summary con FakeMetricsRepo."""
+"""Pruebas del endpoint /api/metrics/vendedores-summary con FakeMetricsRepo."""
 from __future__ import annotations
 
 import pytest
@@ -24,14 +24,14 @@ def admin_token(client) -> str:
         email="admin@test.com",
         role="admin",
     )
-    resp = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
     assert resp.status_code == 200
     return resp.json()["access_token"]
 
 
 def test_vendedores_requires_auth(client: TestClient) -> None:
     """Sin token, el endpoint debe devolver 401."""
-    resp = client.get("/metrics/vendedores-summary")
+    resp = client.get("/api/metrics/vendedores-summary")
     assert resp.status_code == 401
 
 
@@ -39,7 +39,7 @@ class TestVendedoresSummary:
     def test_happy_path_returns_items(self, client, admin_token) -> None:
         """Con token válido, devuelve ranking de vendedores."""
         resp = client.get(
-            "/metrics/vendedores-summary",
+            "/api/metrics/vendedores-summary",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -50,7 +50,7 @@ class TestVendedoresSummary:
     def test_items_have_correct_fields(self, client, admin_token) -> None:
         """Cada item tiene los campos requeridos con tipos correctos."""
         resp = client.get(
-            "/metrics/vendedores-summary",
+            "/api/metrics/vendedores-summary",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()
@@ -66,7 +66,7 @@ class TestVendedoresSummary:
     def test_ranking_ordered_by_ventas(self, client, admin_token) -> None:
         """El ranking debe venir ordenado por total_ventas descendente."""
         resp = client.get(
-            "/metrics/vendedores-summary",
+            "/api/metrics/vendedores-summary",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()
@@ -78,7 +78,7 @@ class TestVendedoresSummary:
     def test_all_values_positive(self, client, admin_token) -> None:
         """Todos los valores deben ser positivos."""
         resp = client.get(
-            "/metrics/vendedores-summary",
+            "/api/metrics/vendedores-summary",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()
@@ -90,11 +90,11 @@ class TestVendedoresSummary:
     def test_cache_returns_same_data(self, client, admin_token) -> None:
         """Dos llamadas seguidas deben devolver los mismos datos (cache)."""
         resp1 = client.get(
-            "/metrics/vendedores-summary",
+            "/api/metrics/vendedores-summary",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         resp2 = client.get(
-            "/metrics/vendedores-summary",
+            "/api/metrics/vendedores-summary",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp1.status_code == 200

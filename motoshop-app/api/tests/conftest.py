@@ -72,7 +72,7 @@ def fake_users():
 @pytest.fixture()
 def admin_token(client, fake_users) -> str:
     """Obtiene un access token de admin."""
-    resp = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
     assert resp.status_code == 200, f"Login failed: {resp.status_code} {resp.text}"
     return resp.json()["access_token"]
 
@@ -80,6 +80,6 @@ def admin_token(client, fake_users) -> str:
 @pytest.fixture()
 def vendedor_token(client, fake_users) -> str:
     """Obtiene un access token de vendedor."""
-    resp = client.post("/auth/login", json={"username": "vendedor1", "password": "vend123"})
+    resp = client.post("/api/auth/login", json={"username": "vendedor1", "password": "vend123"})
     assert resp.status_code == 200, f"Login failed: {resp.status_code} {resp.text}"
     return resp.json()["access_token"]

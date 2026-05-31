@@ -45,13 +45,13 @@ def client_with_sales(fake_users):
 
 
 def test_sales_requires_auth(client_with_sales) -> None:
-    resp = client_with_sales.get("/sales/recent")
+    resp = client_with_sales.get("/api/sales/recent")
     assert resp.status_code == 401
 
 
 def test_sales_returns_data(client_with_sales, fake_users, admin_token) -> None:
     resp = client_with_sales.get(
-        "/sales/recent?limit=5",
+        "/api/sales/recent?limit=5",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert resp.status_code == 200
@@ -64,7 +64,7 @@ def test_sales_returns_data(client_with_sales, fake_users, admin_token) -> None:
 
 def test_sales_with_limit(client_with_sales, fake_users, admin_token) -> None:
     resp = client_with_sales.get(
-        "/sales/recent?limit=2",
+        "/api/sales/recent?limit=2",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert resp.status_code == 200

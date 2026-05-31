@@ -1,4 +1,4 @@
-"""Pruebas del endpoint /metrics/sales-trend con FakeMetricsRepo."""
+"""Pruebas del endpoint /api/metrics/sales-trend con FakeMetricsRepo."""
 from __future__ import annotations
 
 import pytest
@@ -24,14 +24,14 @@ def admin_token(client) -> str:
         email="admin@test.com",
         role="admin",
     )
-    resp = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
     assert resp.status_code == 200
     return resp.json()["access_token"]
 
 
 def test_sales_trend_requires_auth(client: TestClient) -> None:
     """Sin token, el endpoint debe devolver 401."""
-    resp = client.get("/metrics/sales-trend")
+    resp = client.get("/api/metrics/sales-trend")
     assert resp.status_code == 401
 
 
@@ -39,7 +39,7 @@ class TestSalesTrend:
     def test_happy_path_default_periods(self, client, admin_token) -> None:
         """Con token válido y 6 periodos por defecto, devuelve 200 con datos."""
         resp = client.get(
-            "/metrics/sales-trend",
+            "/api/metrics/sales-trend",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -59,7 +59,7 @@ class TestSalesTrend:
     def test_custom_periods(self, client, admin_token) -> None:
         """Con periods=3 devuelve exactamente 3 items."""
         resp = client.get(
-            "/metrics/sales-trend?periods=3",
+            "/api/metrics/sales-trend?periods=3",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -70,7 +70,7 @@ class TestSalesTrend:
     def test_periods_1(self, client, admin_token) -> None:
         """periods=1 devuelve 1 item."""
         resp = client.get(
-            "/metrics/sales-trend?periods=1",
+            "/api/metrics/sales-trend?periods=1",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -81,7 +81,7 @@ class TestSalesTrend:
     def test_periods_max_24(self, client, admin_token) -> None:
         """periods=24 es el máximo permitido."""
         resp = client.get(
-            "/metrics/sales-trend?periods=24",
+            "/api/metrics/sales-trend?periods=24",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -91,7 +91,7 @@ class TestSalesTrend:
     def test_invalid_periods_zero(self, client, admin_token) -> None:
         """periods=0 → 422."""
         resp = client.get(
-            "/metrics/sales-trend?periods=0",
+            "/api/metrics/sales-trend?periods=0",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 422
@@ -99,7 +99,7 @@ class TestSalesTrend:
     def test_invalid_periods_over_max(self, client, admin_token) -> None:
         """periods=100 → 422."""
         resp = client.get(
-            "/metrics/sales-trend?periods=100",
+            "/api/metrics/sales-trend?periods=100",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 422
@@ -107,7 +107,7 @@ class TestSalesTrend:
     def test_items_are_chronological(self, client, admin_token) -> None:
         """Los items deben venir ordenados cronológicamente."""
         resp = client.get(
-            "/metrics/sales-trend?periods=6",
+            "/api/metrics/sales-trend?periods=6",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()

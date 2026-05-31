@@ -27,13 +27,13 @@ def client_with_fakes(fake_users):
 
 
 def test_products_requires_auth(client_with_fakes) -> None:
-    resp = client_with_fakes.get("/products")
+    resp = client_with_fakes.get("/api/products")
     assert resp.status_code == 401
 
 
 def test_products_list(client_with_fakes, fake_users, admin_token) -> None:
     resp = client_with_fakes.get(
-        "/products?limit=10",
+        "/api/products?limit=10",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert resp.status_code == 200
@@ -45,7 +45,7 @@ def test_products_list(client_with_fakes, fake_users, admin_token) -> None:
 
 def test_products_search(client_with_fakes, fake_users, admin_token) -> None:
     resp = client_with_fakes.get(
-        "/products?q=aceite&limit=10",
+        "/api/products?q=aceite&limit=10",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert resp.status_code == 200
@@ -55,7 +55,7 @@ def test_products_search(client_with_fakes, fake_users, admin_token) -> None:
 
 def test_products_pagination(client_with_fakes, fake_users, admin_token) -> None:
     resp = client_with_fakes.get(
-        "/products?limit=2&offset=0",
+        "/api/products?limit=2&offset=0",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert resp.status_code == 200
@@ -67,7 +67,7 @@ def test_products_pagination(client_with_fakes, fake_users, admin_token) -> None
 
 def test_products_limit_exceeds_max(client_with_fakes, fake_users, admin_token) -> None:
     resp = client_with_fakes.get(
-        "/products?limit=300",
+        "/api/products?limit=300",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert resp.status_code == 422  # Validation error: limit > 200

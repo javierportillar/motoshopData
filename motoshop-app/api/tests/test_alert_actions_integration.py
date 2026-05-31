@@ -269,13 +269,13 @@ class TestRealRepoDockerMySQL:
 
         client = TestClient(app, raise_server_exceptions=False)
         token = client.post(
-            "/auth/login",
+            "/api/auth/login",
             json={"username": "admin", "password": "admin123"},
         ).json()["access_token"]
 
         key = str(uuid.uuid4())
         resp = client.post(
-            "/alerts/HTTP-TEST/action",
+            "/api/alerts/HTTP-TEST/action",
             json={"action_type": "dismissed", "reason": "test"},
             headers={"Authorization": f"Bearer {token}", "Idempotency-Key": key},
         )
@@ -285,7 +285,7 @@ class TestRealRepoDockerMySQL:
 
         # Replay
         resp2 = client.post(
-            "/alerts/HTTP-TEST/action",
+            "/api/alerts/HTTP-TEST/action",
             json={"action_type": "dismissed", "reason": "test"},
             headers={"Authorization": f"Bearer {token}", "Idempotency-Key": key},
         )

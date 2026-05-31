@@ -33,7 +33,7 @@ def test_non_pii_fields_not_redacted() -> None:
     event_dict = {
         "event": "request",
         "method": "GET",
-        "path": "/products",
+        "path": "/api/products",
         "status": 200,
     }
     result = redact_pii(None, None, event_dict)

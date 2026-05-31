@@ -1,4 +1,4 @@
-"""Pruebas del endpoint /metrics/drift-summary con FakeMetricsRepo."""
+"""Pruebas del endpoint /api/metrics/drift-summary con FakeMetricsRepo."""
 from __future__ import annotations
 
 import pytest
@@ -24,14 +24,14 @@ def admin_token(client) -> str:
         email="admin@test.com",
         role="admin",
     )
-    resp = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
     assert resp.status_code == 200
     return resp.json()["access_token"]
 
 
 def test_drift_requires_auth(client: TestClient) -> None:
     """Sin token, el endpoint debe devolver 401."""
-    resp = client.get("/metrics/drift-summary")
+    resp = client.get("/api/metrics/drift-summary")
     assert resp.status_code == 401
 
 
@@ -39,7 +39,7 @@ class TestDriftSummary:
     def test_happy_path_returns_items(self, client, admin_token) -> None:
         """Con token válido, devuelve alertas de drift."""
         resp = client.get(
-            "/metrics/drift-summary",
+            "/api/metrics/drift-summary",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -50,7 +50,7 @@ class TestDriftSummary:
     def test_item_fields_match_frontend_contract(self, client, admin_token) -> None:
         """Cada item tiene los campos que espera Dev T2 en drift/page.tsx."""
         resp = client.get(
-            "/metrics/drift-summary",
+            "/api/metrics/drift-summary",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()
@@ -65,7 +65,7 @@ class TestDriftSummary:
     def test_summary_counts(self, client, admin_token) -> None:
         """Los contadores de resumen son coherentes."""
         resp = client.get(
-            "/metrics/drift-summary",
+            "/api/metrics/drift-summary",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()
@@ -78,7 +78,7 @@ class TestDriftSummary:
     def test_items_ordered_by_date_desc(self, client, admin_token) -> None:
         """Las alertas deben venir ordenadas por fecha descendente."""
         resp = client.get(
-            "/metrics/drift-summary",
+            "/api/metrics/drift-summary",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()
@@ -90,11 +90,11 @@ class TestDriftSummary:
     def test_cache_returns_same_data(self, client, admin_token) -> None:
         """Dos llamadas seguidas deben devolver los mismos datos (cache)."""
         resp1 = client.get(
-            "/metrics/drift-summary",
+            "/api/metrics/drift-summary",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         resp2 = client.get(
-            "/metrics/drift-summary",
+            "/api/metrics/drift-summary",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp1.status_code == 200
@@ -104,7 +104,7 @@ class TestDriftSummary:
     def test_summary_types(self, client, admin_token) -> None:
         """Los campos de resumen tienen tipos correctos."""
         resp = client.get(
-            "/metrics/drift-summary",
+            "/api/metrics/drift-summary",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()

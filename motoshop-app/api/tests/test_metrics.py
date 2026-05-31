@@ -1,4 +1,4 @@
-"""Pruebas de los endpoints /metrics/* con FakeMetricsRepo."""
+"""Pruebas de los endpoints /api/metrics/* con FakeMetricsRepo."""
 from __future__ import annotations
 
 import pytest
@@ -24,26 +24,26 @@ def admin_token(client) -> str:
         email="admin@test.com",
         role="admin",
     )
-    resp = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
     assert resp.status_code == 200
     return resp.json()["access_token"]
 
 
 class TestMetricsUnauthenticated:
     def test_all_metrics_require_auth(self, client: TestClient) -> None:
-        """Sin token, todos los /metrics/* deben devolver 401."""
+        """Sin token, todos los /api/metrics/* deben devolver 401."""
         endpoints = [
-            "/metrics/sales-summary",
-            "/metrics/inventory-summary",
-            "/metrics/abc-segmentation",
-            "/metrics/dormidos",
-            "/metrics/cohortes",
-            "/metrics/sales-trend",
-            "/metrics/vendedores-summary",
-            "/metrics/cohortes-detail",
-            "/metrics/drift-summary",
-            "/metrics/plan-compras",
-            "/metrics/forecast-categoria",
+            "/api/metrics/sales-summary",
+            "/api/metrics/inventory-summary",
+            "/api/metrics/abc-segmentation",
+            "/api/metrics/dormidos",
+            "/api/metrics/cohortes",
+            "/api/metrics/sales-trend",
+            "/api/metrics/vendedores-summary",
+            "/api/metrics/cohortes-detail",
+            "/api/metrics/drift-summary",
+            "/api/metrics/plan-compras",
+            "/api/metrics/forecast-categoria",
         ]
         for ep in endpoints:
             resp = client.get(ep)
@@ -53,7 +53,7 @@ class TestMetricsUnauthenticated:
 class TestMetricsAuthenticated:
     def test_sales_summary_shape(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(
-            "/metrics/sales-summary",
+            "/api/metrics/sales-summary",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -78,7 +78,7 @@ class TestMetricsAuthenticated:
     def test_sales_summary_values(self, client: TestClient, admin_token: str) -> None:
         """Los valores mock son consistentes y el delta se calcula correctamente."""
         resp = client.get(
-            "/metrics/sales-summary",
+            "/api/metrics/sales-summary",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()
@@ -96,7 +96,7 @@ class TestMetricsAuthenticated:
 
     def test_inventory_summary_shape(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(
-            "/metrics/inventory-summary",
+            "/api/metrics/inventory-summary",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -112,7 +112,7 @@ class TestMetricsAuthenticated:
 
     def test_inventory_bodegas_have_fields(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(
-            "/metrics/inventory-summary",
+            "/api/metrics/inventory-summary",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()
@@ -124,7 +124,7 @@ class TestMetricsAuthenticated:
 
     def test_abc_segmentation_shape(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(
-            "/metrics/abc-segmentation",
+            "/api/metrics/abc-segmentation",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -148,7 +148,7 @@ class TestMetricsAuthenticated:
 
     def test_dormidos_shape(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(
-            "/metrics/dormidos",
+            "/api/metrics/dormidos",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -165,7 +165,7 @@ class TestMetricsAuthenticated:
 
     def test_cohortes_shape(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(
-            "/metrics/cohortes",
+            "/api/metrics/cohortes",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -183,7 +183,7 @@ class TestMetricsAuthenticated:
         # Hacer algunas requests rápidas - solo verificamos que responde 200
         for _ in range(3):
             resp = client.get(
-                "/metrics/sales-summary",
+                "/api/metrics/sales-summary",
                 headers={"Authorization": f"Bearer {admin_token}"},
             )
             assert resp.status_code in (200, 429)
@@ -191,11 +191,11 @@ class TestMetricsAuthenticated:
     def test_cache_returns_same_data(self, client: TestClient, admin_token: str) -> None:
         """Dos llamadas seguidas al mismo endpoint deben devolver los mismos datos (cache)."""
         resp1 = client.get(
-            "/metrics/inventory-summary",
+            "/api/metrics/inventory-summary",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         resp2 = client.get(
-            "/metrics/inventory-summary",
+            "/api/metrics/inventory-summary",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp1.status_code == 200
@@ -205,17 +205,17 @@ class TestMetricsAuthenticated:
     def test_all_endpoints_return_fields(self, client: TestClient, admin_token: str) -> None:
         """Todos los endpoints responden 200 con campos esperados."""
         endpoints = {
-            "/metrics/sales-summary": ["business_month", "ventas_mes_actual", "top_skus"],
-            "/metrics/inventory-summary": ["stock_total", "por_bodega"],
-            "/metrics/abc-segmentation": ["bucket_a", "bucket_b", "bucket_c"],
-            "/metrics/dormidos": ["total", "productos"],
-            "/metrics/cohortes": ["cohortes"],
-            "/metrics/sales-trend": ["periods", "items"],
-            "/metrics/vendedores-summary": ["items"],
-            "/metrics/cohortes-detail": ["cohortes", "total_cohortes"],
-            "/metrics/drift-summary": ["items", "total_alerts"],
-            "/metrics/plan-compras": ["items", "total_skus"],
-            "/metrics/forecast-categoria": ["items", "wape_promedio"],
+            "/api/metrics/sales-summary": ["business_month", "ventas_mes_actual", "top_skus"],
+            "/api/metrics/inventory-summary": ["stock_total", "por_bodega"],
+            "/api/metrics/abc-segmentation": ["bucket_a", "bucket_b", "bucket_c"],
+            "/api/metrics/dormidos": ["total", "productos"],
+            "/api/metrics/cohortes": ["cohortes"],
+            "/api/metrics/sales-trend": ["periods", "items"],
+            "/api/metrics/vendedores-summary": ["items"],
+            "/api/metrics/cohortes-detail": ["cohortes", "total_cohortes"],
+            "/api/metrics/drift-summary": ["items", "total_alerts"],
+            "/api/metrics/plan-compras": ["items", "total_skus"],
+            "/api/metrics/forecast-categoria": ["items", "wape_promedio"],
         }
         for ep, expected_fields in endpoints.items():
             resp = client.get(ep, headers={"Authorization": f"Bearer {admin_token}"})

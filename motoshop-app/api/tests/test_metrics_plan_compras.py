@@ -1,4 +1,4 @@
-"""Pruebas del endpoint /metrics/plan-compras con FakeMetricsRepo."""
+"""Pruebas del endpoint /api/metrics/plan-compras con FakeMetricsRepo."""
 from __future__ import annotations
 
 import pytest
@@ -24,14 +24,14 @@ def admin_token(client) -> str:
         email="admin@test.com",
         role="admin",
     )
-    resp = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
     assert resp.status_code == 200
     return resp.json()["access_token"]
 
 
 def test_plan_compras_requires_auth(client: TestClient) -> None:
     """Sin token, el endpoint debe devolver 401."""
-    resp = client.get("/metrics/plan-compras")
+    resp = client.get("/api/metrics/plan-compras")
     assert resp.status_code == 401
 
 
@@ -39,7 +39,7 @@ class TestPlanCompras:
     def test_happy_path_returns_items(self, client, admin_token) -> None:
         """Con token válido, devuelve plan de compras."""
         resp = client.get(
-            "/metrics/plan-compras",
+            "/api/metrics/plan-compras",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp.status_code == 200
@@ -50,7 +50,7 @@ class TestPlanCompras:
     def test_item_fields_match_frontend_contract(self, client, admin_token) -> None:
         """Cada item tiene los campos que espera Dev T2 en plan-compras/page.tsx."""
         resp = client.get(
-            "/metrics/plan-compras",
+            "/api/metrics/plan-compras",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()
@@ -65,7 +65,7 @@ class TestPlanCompras:
     def test_summary_fields(self, client, admin_token) -> None:
         """Los campos de resumen son coherentes."""
         resp = client.get(
-            "/metrics/plan-compras",
+            "/api/metrics/plan-compras",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()
@@ -79,7 +79,7 @@ class TestPlanCompras:
     def test_cantidad_comprar_correcta(self, client, admin_token) -> None:
         """cantidad_a_comprar = max(0, demanda_7d - stock_actual)."""
         resp = client.get(
-            "/metrics/plan-compras",
+            "/api/metrics/plan-compras",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()
@@ -92,7 +92,7 @@ class TestPlanCompras:
     def test_items_ordered_by_priority(self, client, admin_token) -> None:
         """Primero SKUs con más cantidad_a_comprar, urgente primero."""
         resp = client.get(
-            "/metrics/plan-compras",
+            "/api/metrics/plan-compras",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         body = resp.json()
@@ -105,11 +105,11 @@ class TestPlanCompras:
     def test_cache_returns_same_data(self, client, admin_token) -> None:
         """Dos llamadas seguidas deben devolver los mismos datos (cache)."""
         resp1 = client.get(
-            "/metrics/plan-compras",
+            "/api/metrics/plan-compras",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         resp2 = client.get(
-            "/metrics/plan-compras",
+            "/api/metrics/plan-compras",
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert resp1.status_code == 200
