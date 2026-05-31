@@ -8,6 +8,198 @@
 
 ---
 
+## Sesión 2026-05-31 (64) · Auto-pull Windows + F7-E-FIX1 workflow
+
+**Estado:** 2 trabajos para Dev W en este ciclo, INDEPENDIENTES (uno NO bloquea al otro):
+
+### 🤖 Handoff #1 · Dev W · Instalar auto-pull Windows (~15 min) [ALTA PRIORIDAD]
+
+**Por qué:** cierra el gap operativo del proyecto. Hoy Vercel y Render auto-deploy al pushear, pero Windows requiere que el humano dispare Dev W manualmente cada vez. Esto resuelve eso: Scheduled Task cada 5 min que detecta cambios + restartea API + sync notebooks automáticamente.
+
+Pegá esto en chat Dev W:
+
+```
+Tarea NUEVA para vos: instalar auto-pull en Windows.
+
+git pull --ff-only origin main
+Leé docs/AUTO_PULL_SETUP.md completo en el repo.
+
+PASOS (resumido):
+
+1. Verificar pre-requisitos:
+   cd C:\Users\MotoShop\Documents\javidevmoto
+   git --version
+   python -c "from databricks.sdk import WorkspaceClient; print('OK')"
+   Get-Content motoshop-app\api\.env | Select-String "DATABRICKS_"
+
+2. Test manual primero (dry-run):
+   powershell -ExecutionPolicy Bypass -File infra\auto_pull_and_apply.ps1 -DryRun -Verbose
+   Get-Content infra\logs\auto_pull.log -Tail 20
+
+3. Si dry-run OK, ejecutar normal:
+   powershell -ExecutionPolicy Bypass -File infra\auto_pull_and_apply.ps1 -Verbose
+   Verificar que el script detecta que no hay cambios (HEAD igual a origin).
+
+4. Crear Scheduled Task (ejecutar PowerShell como admin):
+   El bloque completo está en infra\AUTO_PULL_SETUP.md §3.
+   Copy-paste y ejecutar.
+
+5. Verificar:
+   Get-ScheduledTask -TaskName "MotoShop_AutoPull"
+   Start-ScheduledTask -TaskName "MotoShop_AutoPull"
+   Start-Sleep -Seconds 10
+   Get-Content infra\logs\auto_pull.log -Tail 20
+
+REPORTE en SEGUIMIENTO.md:
+
+> 🟢 [Auto-Pull] Scheduled Task MotoShop_AutoPull instalado · dry-run OK · primer run OK · timestamp: <yyyy-MM-dd HH:mm>
+
+Commit: chore(infra): auto-pull Windows Scheduled Task instalado
+
+CASOS QUE EL SCRIPT NO MANEJA (siguen requiriendo intervención
+manual tuya como Dev W):
+- Migrations SQL nuevas (F7-XXX-*.sql, F8-XXX-*.sql) — backup + apply
+- users.yaml modificaciones — gitignored
+- Rotación tokens Databricks
+- Cambios en .env
+- Cambios al propio script auto_pull_and_apply.ps1
+
+Para deshabilitar temporalmente (mantenimiento):
+   New-Item -ItemType File -Path "C:\...\infra\AUTO_PULL_DISABLED"
+```
+
+### 🤖 Handoff #2 · Dev W · F7-E-FIX1 workflow Databricks (~30-45 min)
+
+**Si el #1 ya está instalado**, el #2 se vuelve más simple: Dev W solo hace el fix Databricks (DROP TABLES + Re-run workflow). NO necesita preocuparse de aplicar a la API después porque el auto-pull lo hace solo si hay commits relevantes.
+
+Pegá esto en el mismo chat:
+
+```
+Hay un nuevo trabajo: F7-E-FIX1 — diagnosticar y arreglar 3 tasks
+fallando en motoshop_full_workflow.
+
+Tasks fallando (últimas 3 corridas hoy: 06:39, 06:47, 06:54):
+- gold_drift (notebook 25_drift_monitor.py) — 7s, error inmediato
+- gold_rotacion_promedio (notebook 18_mart_rotacion_promedio.py) — 2m 27s, falló DURANTE INSERT
+- gold_abc_xyz (notebook 19_mart_abc_xyz.py) — Upstream failed (NO necesita fix propio,
+  pasa solo cuando rotación se arregle)
+
+IMPORTANTE: el root cause real son SOLO 2 jobs (rotación + drift, independientes
+entre sí). abc_xyz está en cascade fail. Cuando rotación pase, abc_xyz pasa solo.
+
+Hipótesis del Revisor: schema mismatch. Las tablas fueron creadas
+manualmente por Dev D + Dev W antes del workflow, posiblemente sin
+PARTITIONED BY (business_date) que el notebook espera. Cuando el
+workflow corre con INSERT OVERWRITE PARTITION, falla porque la
+tabla existente no está particionada.
+
+Leer plan completo: docs/plan-f7-e-fix1.md
+
+PASO 1 · Diagnóstico exacto (~10 min)
+Para cada task fallida:
+1. Databricks UI → Workflows → motoshop_full_workflow
+2. Click en último Run → click en cada task fallida
+3. Copiar el stacktrace COMPLETO (no resumir)
+4. Reportar los 3 errores en chat al humano antes de aplicar cualquier fix
+
+PASO 2 · Fix según diagnóstico (~15-20 min)
+
+Si stacktraces confirman schema mismatch (Hipótesis A del plan §4):
+
+  En Databricks SQL Editor:
+
+  DROP TABLE IF EXISTS motoshop.gold.mart_rotacion_sku;
+  DROP TABLE IF EXISTS motoshop.gold.mart_abc_xyz;
+  DROP TABLE IF EXISTS motoshop.gold.alertas_drift;
+
+  Verificar drops OK:
+  SHOW TABLES IN motoshop.gold LIKE 'mart_rotacion%';
+  SHOW TABLES IN motoshop.gold LIKE 'mart_abc_xyz%';
+  SHOW TABLES IN motoshop.gold LIKE 'alertas_drift%';
+
+  (Cada SHOW debe devolver 0 filas — confirma drop)
+
+Si la causa es OTRA (Hipótesis B o C del plan §4):
+- Reportar al humano antes de tocar nada
+- Esperar instrucciones
+
+BONUS opcional (si tenés tiempo después del fix principal):
+El DAG tiene una dependencia faltante:
+
+  ("gold_drift", "gold/25_drift_monitor", ["gold_validate"])  ← actual
+
+El notebook 25_drift_monitor.py lee de motoshop.gold.forecast_baseline_sku
+que se popula en gold_baseline. Conceptualmente debería ser:
+
+  ("gold_drift", "gold/25_drift_monitor", ["gold_baseline"])  ← correcto
+
+(o agregar gold_baseline a la lista). Esto previene timing bugs futuros
+aunque en el run actual no afectó.
+
+Si lo arreglás:
+1. Editar infra/create_full_workflow.py línea 131
+2. Re-ejecutar python infra\create_full_workflow.py para actualizar el job
+3. Commit: chore(F7-E-FIX1): fix gold_drift DAG dependency to gold_baseline
+4. Verificar próximo Run pasa OK
+
+PASO 3 · Re-ejecutar workflow + verificar (~10-15 min)
+1. Databricks UI → motoshop_full_workflow → Run now
+2. Esperar a que las 31 tasks terminen
+3. Verificar que las 3 que fallaban ahora pasen verde
+4. Smoke verificación tablas re-pobladas:
+
+   SELECT COUNT(*), MIN(business_date), MAX(business_date)
+   FROM motoshop.gold.mart_rotacion_sku
+   WHERE business_date = CURRENT_DATE();
+   -- Esperar: ~4,840 filas
+
+   SELECT COUNT(*), MIN(business_date), MAX(business_date)
+   FROM motoshop.gold.mart_abc_xyz
+   WHERE business_date = CURRENT_DATE();
+   -- Esperar: ~1,172 filas
+
+   SELECT COUNT(*), MIN(week_end), MAX(week_end)
+   FROM motoshop.gold.alertas_drift;
+   -- Esperar: 0+ filas (depende si hay drift detectado)
+
+5. Smoke endpoints producción siguen 200:
+   - GET https://api.fragloesja.uk/metrics/drift-summary (con Bearer)
+   - GET https://api.fragloesja.uk/metrics/forecast-categoria (con Bearer)
+   - GET https://api.fragloesja.uk/metrics/plan-compras (con Bearer)
+
+6. Verificar cron UNPAUSED:
+   En Workflows UI: motoshop_full_workflow debe seguir UNPAUSED
+   con schedule '0 0 19 * * ?' (19:00 COL)
+
+REPORTE FINAL en SEGUIMIENTO.md:
+
+> 🟢 [F7-E-FIX1] Workflow operativo · stacktraces previos: <hash o hipótesis confirmada> · fix aplicado: <DROP TABLES o otro> · workflow run final: 31/31 OK · smoke endpoints: drift-summary 200, forecast-categoria 200, plan-compras 200 · cron UNPAUSED · timestamp: <yyyy-MM-dd HH:mm>
+
+Commit: chore(F7-E-FIX1): workflow fix - 3 tasks fallando resueltas
+
+PARAR. No avanzar a otros ciclos. Esperar audit Revisor.
+```
+
+### Próximo paso del revisor (yo)
+
+Cuando Dev W reporte 🟢 ambos handoffs:
+
+1. Auditar instalación auto-pull (run history del Scheduled Task)
+2. Auditar 6 V-FIX1 de F7-E-FIX1
+3. Verificar workflow Databricks 31/31 OK
+4. Si todo PASS → F7 100% sin deudas operativas + arrancar E5 memoria final
+
+### Pendiente humano transversal
+
+Mientras Dev W trabaja:
+
+- **Demo 4G (R6)** — grabar 5 min en celular en `app.fragloesja.uk`
+- **Agendar demo gerencia (R8)** — stakeholder real o stand-in
+
+Independientes de los handoffs Dev W.
+
+---
+
 ## Sesión 2026-05-31 (63) · F7-E-FIX1 · Workflow Databricks · 3 tasks fallando
 
 **Estado:** F7 sustantivamente cerrada, deploys OK (Vercel + Render + Windows), 13/13 endpoints API 200, 13/13 paths PWA 200. **PERO:** 3 tasks del workflow nocturno `motoshop_full_workflow` fallan en cada corrida (06:39, 06:47, 06:54 hoy). Sin esto, **los snapshots históricos balde B NO se acumulan automáticamente** → bloquea R-V2-16 + entrega académica defendible al 100%.
