@@ -647,6 +647,24 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ---
 
+### 2026-05-30 — Sesión 61 · Dev W · Ciclo 4 — post-push A2-3 + A2-4 + A2-7 + merge F7-C + D3
+
+> 🟢 [Dev W] Rutina post-push A2-3 + A2-4 + A2-7 aplicada · commits: `efb3041`, `e4eb793`, `8e216ea` + merge F7-C (38 files, 1881++/421--) + D3 evidence · API restart OK · smoke: cohortes-detail 200 ✅ · drift-summary 500 🔴 · plan-compras 500 🔴 · timestamp: 2026-05-30 23:00 COL
+
+- **Hecho:**
+  - `git pull --ff-only` desde `24774a8..76dc983` (38 files, Dev A2 + Dev T + Dev D merges).
+  - Migration `F7-001-app_purchase_plans.sql` adaptada para MySQL 5.0 (`TEXT` en vez de `JSON` — no soportado en 5.0) y aplicada.
+  - API restart: uvicorn corriendo en puerto 8000, /health 200.
+  - Smoke cohortes-detail: 200 ✅ 15 cohortes reales desde Databricks.
+  - Smoke drift-summary: 500 🔴 tabla `motoshop.gold.alertas_drift` NO existe en Databricks — el job `gold_drift` falla por feature Delta no habilitada (anotado en PENDIENTES.md).
+  - Smoke plan-compras: 500 🔴 columna `cod_producto` no existe en `motoshop.silver.fact_ventas` — probable naming distinto en Silver. Requiere fix de Dev A2.
+- **🔴 Bloqueantes:**
+  - `GET /metrics/drift-summary` — depende de que Dev D arregle `gold_drift` y el workflow cree `gold.alertas_drift`.
+  - `GET /metrics/plan-compras` — columna incorrecta en la query SQL. Lo arregla Dev A2.
+- **Próximo paso:** Esperar fixes de Dev D (gold_drift) y Dev A2 (plan-compras columna). Cuando pusheen, Ciclo 5.
+
+---
+
 ### 2026-05-30 — Sesión 52 · Dev D · F7-E Paso D2 terminado
 
 > 🟢 [F7-E-D] Paso D2 terminado · workflow modificado con 4 tasks snapshot · commit: e180aec · siguiente paso: D3 verificar primera corrida · ACCIÓN HUMANO: avisar Dev W para create_full_workflow.py + verificar UNPAUSED

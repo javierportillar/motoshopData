@@ -631,15 +631,17 @@ class RealMetricsRepo:
         rows = self._query("""
             WITH demanda_7d AS (
                 SELECT cod_producto, SUM(cantidad) AS qty_7d
-                FROM motoshop.silver.fact_ventas
+                FROM motoshop.silver.fact_ventas_detalle
                 WHERE business_date >= DATE_SUB(CURRENT_DATE(), 7)
                 GROUP BY cod_producto
             ),
             suppliers AS (
-                SELECT cod_producto, MAX(nom_proveedor) AS supplier
-                FROM motoshop.silver.fact_compras_detalle
-                WHERE nom_proveedor IS NOT NULL
-                GROUP BY cod_producto
+                SELECT d.cod_producto, MAX(c.nombre_proveedor) AS supplier
+                FROM motoshop.silver.fact_compras_detalle d
+                INNER JOIN motoshop.silver.fact_compras c
+                    ON d.num_documento = c.num_documento AND d.cod_clase = c.cod_clase
+                WHERE c.nombre_proveedor IS NOT NULL
+                GROUP BY d.cod_producto
             )
             SELECT
                 inv.cod_producto AS sku,
@@ -658,7 +660,7 @@ class RealMetricsRepo:
             LEFT JOIN motoshop.gold.mart_rotacion_abc abc
                 ON inv.cod_producto = abc.cod_producto
             LEFT JOIN motoshop.gold.alertas_quiebre al
-                ON inv.cod_producto = al.cod_producto
+                ON inv.cod_producto = al.sku
             LEFT JOIN motoshop.gold.mart_productos_dormidos dorm
                 ON inv.cod_producto = dorm.cod_producto
             LEFT JOIN suppliers s ON inv.cod_producto = s.cod_producto

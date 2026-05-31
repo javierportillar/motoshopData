@@ -8,7 +8,45 @@
 
 ---
 
-## Sesión 2026-05-30 (47b) · Descubrimiento arquitectónico: Windows = SPOF
+## Sesión 2026-05-30 (61) · Diagnóstico jobs Databricks — 2 tareas gold rotas
+
+**Estado:** ⬜ pendiente — requiere evaluación del Revisor
+
+**🔴 Trabajo unificado `motoshop_full_workflow` — 3 corridas consecutivas FAILED (24/29 tasks pasan, 2 fallan)**
+
+### Síntoma
+
+Últimas 3 corridas del job fallaron con el mismo patrón:
+- **gold_classifier** ❌ — `[UNRESOLVED_COLUMN]` col_name vs column_name
+- **gold_drift** ❌ — `[WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED]` DEFAULT CURRENT_TIMESTAMP sin feature de Delta habilitada
+
+El resto (bronze_ingest → 11 silver → gold marts → quality → validate → snapshots) **todo SUCCESS**.
+
+### gold_classifier — ✅ FIX YA SUBIDO
+
+- Causa: `22_classifier_stockout.py` usaba `col_name` en vez de `column_name`
+- Fix: Dev A2 pusheó en `7bbcb96`, Dev W ya sincronizó a Workspace en Ciclo 3
+- **Próxima corrida debería pasar**
+
+### gold_drift — 🔴 NECESITA FIX DE DEV D
+
+- `25_drift_monitor.py` línea 28: `created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`
+- El workspace Databricks Runtime no tiene habilitada `delta.feature.allowColumnDefaults`
+- Fix posible:
+  a) Agregar `TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')` al CREATE TABLE
+  b) O eliminar DEFAULT y manejarlo en el INSERT
+  c) O ejecutar ALTER TABLE sobre la tabla existente
+
+### ⬜ Pregunta arquitectónica para el Revisor
+
+> ¿Tiene sentido tener 1 solo job (`motoshop_full_workflow`) que va de bronze a gold + classifier + drift + snapshots? O conviene separar:
+> - **Job Bronze** (ingesta)
+> - **Job Silver** (dimensiones + hechos + calidad)
+> - **Job Gold** (marts + classifier + drift + snapshots)
+>
+> Porque hoy: si gold_classifier o gold_drift fallan, todo el workflow se marca FAILED aunque bronze y silver hayan pasado perfecto. Habría que pensar si conviene pipelines independientes con sus propios schedules y alertas.
+
+---
 
 **Estado:** La API vive SOLO en Windows. Si la PC se apaga, la web no funciona.
 

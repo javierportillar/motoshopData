@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS motoshop.gold.alertas_drift (
   threshold_pct DOUBLE,
   severity STRING,
   alert_msg STRING,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP
 ) USING DELTA;
 
 -- COMMAND ----------
