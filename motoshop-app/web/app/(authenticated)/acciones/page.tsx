@@ -6,6 +6,7 @@ import { fetchMyActions, type MyActionItem } from "@/lib/api/alertActions";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Stat } from "@/components/ui/Stat";
+import { Skeleton } from "@/components/ui/Skeleton";
 
 type Period = "today" | "week" | "month";
 
@@ -142,7 +143,7 @@ export default function MyActionsPage(): JSX.Element {
       {loading && (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-20 animate-pulse rounded-xl bg-surface-alt" />
+            <Skeleton key={i} className="h-20 rounded-xl" />
           ))}
         </div>
       )}

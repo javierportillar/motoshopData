@@ -6,6 +6,7 @@ import { useAlerts } from "@/lib/api/hooks";
 import { useAuthStore } from "@/lib/auth/store";
 import { Card } from "@/components/ui/Card";
 import { Badge, AlertBadge } from "@/components/ui/Badge";
+import { Skeleton } from "@/components/ui/Skeleton";
 import { StaleDataBanner } from "@/components/StaleDataBanner";
 import { AlertActionModal } from "@/components/AlertActionModal";
 import { registerPushSubscription } from "@/lib/push/setup";
@@ -116,7 +117,7 @@ export default function AlertsPage(): JSX.Element {
       {isLoading && (
         <div className="space-y-3">
           {[...Array(3)].map((_, i) => (
-            <div key={i} className="h-24 animate-pulse rounded-xl bg-surface-alt" />
+            <Skeleton key={i} className="h-24 rounded-xl" />
           ))}
         </div>
       )}

@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useForecast } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { ErrorState } from "@/components/ui/ErrorState";
 import { StaleDataBanner } from "@/components/StaleDataBanner";
 import {
   LineChart,
@@ -149,20 +151,14 @@ export default function ForecastPage(): JSX.Element {
       {/* Loading */}
       {isLoading && (
         <div className="space-y-3">
-          <div className="h-5 w-48 animate-pulse rounded bg-surface-alt" />
-          <div className="h-60 animate-pulse rounded-xl bg-surface-alt" />
+          <Skeleton className="h-5 w-48" />
+          <Skeleton className="h-60 rounded-xl" />
         </div>
       )}
 
       {/* Error */}
       {error && (
-        <Card>
-          <p className="py-8 text-center text-sm text-error">
-            {error.message?.includes("404")
-              ? `SKU "${selectedSku}" no encontrado`
-              : "Error al cargar predicciones"}
-          </p>
-        </Card>
+        <ErrorState title="Error al cargar" message="No se pudieron obtener los datos de predicciones." severity="warning" />
       )}
 
       {/* Forecast chart */}

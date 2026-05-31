@@ -5,6 +5,7 @@ import { useDormidos } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/Card";
 import { Stat } from "@/components/ui/Stat";
 import { Badge } from "@/components/ui/Badge";
+import { Skeleton } from "@/components/ui/Skeleton";
 
 function dormancyVariant(dias: number): "error" | "warning" | "default" {
   if (dias > 180) return "error";
@@ -23,13 +24,13 @@ export default function DormidosPage(): JSX.Element {
         <Link href="/" className="text-sm text-accent hover:underline">
           ← Volver a inicio
         </Link>
-        <div className="h-5 w-24 animate-pulse rounded bg-surface-alt" />
+        <Skeleton className="h-5 w-24" />
         <div className="grid grid-cols-2 gap-3">
           {[...Array(2)].map((_, i) => (
-            <div key={i} className="h-24 animate-pulse rounded-xl bg-surface-alt" />
+            <Skeleton key={i} className="h-24 rounded-xl" />
           ))}
         </div>
-        <div className="h-60 animate-pulse rounded-xl bg-surface-alt" />
+        <Skeleton className="h-60 rounded-xl" />
       </div>
     );
   }

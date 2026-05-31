@@ -5,6 +5,7 @@ import { useSalesSummary, useInventorySummary, useAbcSegmentation, useDormidos }
 import { formatMoney } from "@/lib/format/currency";
 import { Card } from "@/components/ui/Card";
 import { Stat } from "@/components/ui/Stat";
+import { Skeleton } from "@/components/ui/Skeleton";
 
 export default function DashboardsPage(): JSX.Element {
   const sales = useSalesSummary();
@@ -47,11 +48,11 @@ export default function DashboardsPage(): JSX.Element {
           {[...Array(6)].map((_, i) => (
             <div
               key={i}
-              className="animate-pulse space-y-3 rounded-xl border border-border bg-surface p-4"
+              className="space-y-3 rounded-xl border border-border bg-surface p-4"
             >
-              <div className="h-3 w-20 rounded bg-surface-alt" />
-              <div className="h-7 w-32 rounded bg-surface-alt" />
-              <div className="h-3 w-24 rounded bg-surface-alt" />
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-7 w-32" />
+              <Skeleton className="h-3 w-24" />
             </div>
           ))}
         </div>
