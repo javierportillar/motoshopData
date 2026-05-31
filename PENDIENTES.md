@@ -142,7 +142,17 @@ Si lo arreglás:
 3. Commit: chore(F7-E-FIX1): fix gold_drift DAG dependency to gold_baseline
 4. Verificar próximo Run pasa OK
 
-PASO 3 · Re-ejecutar workflow + verificar (~10-15 min)
+PASO 3 · Re-ejecutar SOLO los 3 jobs fallidos (~5-10 min con script on-demand)
+
+OPCIÓN A — Recomendada (rápido, solo los 3 jobs):
+   python infra\run_notebook_ondemand.py --task gold_rotacion_promedio
+   python infra\run_notebook_ondemand.py --task gold_abc_xyz
+   python infra\run_notebook_ondemand.py --task gold_drift
+
+   (Documentación en infra/RUN_NOTEBOOK_ONDEMAND.md)
+   Total: ~5-10 min vs 30+ min del workflow completo.
+
+OPCIÓN B — Alternativa (workflow completo desde UI):
 1. Databricks UI → motoshop_full_workflow → Run now
 2. Esperar a que las 31 tasks terminen
 3. Verificar que las 3 que fallaban ahora pasen verde
@@ -280,7 +290,17 @@ Si lo arreglás:
 3. Commit: chore(F7-E-FIX1): fix gold_drift DAG dependency to gold_baseline
 4. Verificar próximo Run pasa OK
 
-PASO 3 · Re-ejecutar workflow + verificar (~10-15 min)
+PASO 3 · Re-ejecutar SOLO los 3 jobs fallidos (~5-10 min con script on-demand)
+
+OPCIÓN A — Recomendada (rápido, solo los 3 jobs):
+   python infra\run_notebook_ondemand.py --task gold_rotacion_promedio
+   python infra\run_notebook_ondemand.py --task gold_abc_xyz
+   python infra\run_notebook_ondemand.py --task gold_drift
+
+   (Documentación en infra/RUN_NOTEBOOK_ONDEMAND.md)
+   Total: ~5-10 min vs 30+ min del workflow completo.
+
+OPCIÓN B — Alternativa (workflow completo desde UI):
 1. Databricks UI → motoshop_full_workflow → Run now
 2. Esperar a que las 31 tasks terminen
 3. Verificar que las 3 que fallaban ahora pasen verde
