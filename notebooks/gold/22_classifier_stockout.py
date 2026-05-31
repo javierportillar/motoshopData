@@ -46,10 +46,10 @@ SELECT COUNT(*) AS filas FROM motoshop.gold.alertas_quiebre;
 
 SELECT
   COUNT(*) AS total_columns,
-  SUM(CASE WHEN col_name = 'sku' THEN 1 ELSE 0 END) AS has_sku,
-  SUM(CASE WHEN col_name = 'urgencia' THEN 1 ELSE 0 END) AS has_urgencia,
-  SUM(CASE WHEN col_name = 'dias_hasta_quiebre' THEN 1 ELSE 0 END) AS has_dias,
-  SUM(CASE WHEN col_name = 'business_date' THEN 1 ELSE 0 END) AS has_partition
+  SUM(CASE WHEN column_name = 'sku' THEN 1 ELSE 0 END) AS has_sku,
+  SUM(CASE WHEN column_name = 'urgencia' THEN 1 ELSE 0 END) AS has_urgencia,
+  SUM(CASE WHEN column_name = 'dias_hasta_quiebre' THEN 1 ELSE 0 END) AS has_dias,
+  SUM(CASE WHEN column_name = 'business_date' THEN 1 ELSE 0 END) AS has_partition
 FROM motoshop.information_schema.columns
 WHERE table_catalog = 'motoshop'
   AND table_schema = 'gold'
