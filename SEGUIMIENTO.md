@@ -636,6 +636,15 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 - **Incidencias:** (1) Puerto 8000 ocupado por proceso zombie — kill + restart limpio. (2) Endpoint no aparecía en OpenAPI por __pycache__ stale — limpiado y restart.
 - **Pendiente:** Dev D dispara D3 (verificar primera corrida snapshots desde Databricks UI). Dev A2 continúa A2-3 (cohortes-detail).
 
+### 2026-05-30 — Sesión 59 · Dev W · Ciclo 3 — combo CASO C + CASO A (cohortes-detail)
+
+> 🟢 [Dev W] Ciclo 3 aplicado · commits: `efb3041`, `7bbcb96` · rutinas: C (notebooks sync: fix classifier) + A (restart API, cohortes-detail) · notebooks sync OK (40/40) · API restart OK (PID 6516) · cohortes-detail 200 + 15 cohortes reales ✅ · timestamp: 2026-05-30 20:55 COL
+
+- **Hecho:**
+  - CASO C: notebooks sincronizados — fix en `22_classifier_stockout.py` subido a Workspace.
+  - CASO A: API reiniciada con endpoint `GET /metrics/cohortes-detail` — smoke test pasa con 15 cohortes reales desde Databricks.
+- **Próximo paso:** Dev A2 continúa A2-4 (drift-summary). Cuando pushee, avisame para Ciclo 4.
+
 ### 2026-05-30 — Sesión 53 · Dev D · F7-E Paso D2 terminado
 
 > 🟢 [F7-E-D] Paso D2 terminado · workflow modificado con 4 tasks snapshot · commit: e180aec · siguiente paso: D3 verificar primera corrida · ACCIÓN HUMANO: avisar Dev W para create_full_workflow.py + verificar UNPAUSED
