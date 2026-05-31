@@ -8,6 +8,8 @@ import { Stat } from "@/components/ui/Stat";
 import { Badge } from "@/components/ui/Badge";
 import { Table } from "@/components/ui/Table";
 import { SalesTrendChart } from "@/components/SalesTrendChart";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 const MONTH_NAMES = [
   "Ene", "Feb", "Mar", "Abr", "May", "Jun",
@@ -28,14 +30,14 @@ export default function VentasPage(): JSX.Element {
         <Link href="/" className="text-sm text-accent hover:underline">
           ← Volver a inicio
         </Link>
-        <div className="h-5 w-24 animate-pulse rounded bg-surface-alt" />
+        <Skeleton className="h-5 w-24" />
         <div className="grid grid-cols-2 gap-3">
           {[...Array(2)].map((_, i) => (
-            <div key={i} className="h-24 animate-pulse rounded-xl bg-surface-alt" />
+            <Skeleton key={i} className="h-24 rounded-xl" />
           ))}
         </div>
-        <div className="h-60 animate-pulse rounded-xl bg-surface-alt" />
-        <div className="h-60 animate-pulse rounded-xl bg-surface-alt" />
+        <Skeleton className="h-60 rounded-xl" />
+        <Skeleton className="h-60 rounded-xl" />
       </div>
     );
   }
@@ -48,11 +50,11 @@ export default function VentasPage(): JSX.Element {
         <Link href="/" className="text-sm text-accent hover:underline">
           ← Volver a inicio
         </Link>
-        <Card>
-          <p className="py-8 text-center text-text-muted">
-            Error al cargar datos de ventas
-          </p>
-        </Card>
+        <ErrorState
+          title="Error al cargar"
+          message="No se pudieron obtener los datos de ventas."
+          severity="warning"
+        />
       </div>
     );
   }
@@ -111,11 +113,7 @@ export default function VentasPage(): JSX.Element {
           )}
         </Card>
       ) : (
-        <Card>
-          <p className="py-8 text-center text-sm text-text-muted">
-            Sin datos de tendencia aún
-          </p>
-        </Card>
+        <Skeleton className="h-60 rounded-xl" />
       )}
 
       {/* Top 10 SKUs */}
