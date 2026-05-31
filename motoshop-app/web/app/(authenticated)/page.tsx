@@ -84,60 +84,68 @@ function GerenteHome(): JSX.Element {
 
       {/* KPIs principales */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Card>
-          <Stat
-            label="Ventas del mes"
-            value={sales.data ? formatMoney(sales.data.ventas_mes_actual) : "—"}
-            delta={sales.data?.delta_porcentual ?? null}
-            deltaLabel="vs mes anterior"
-            icon={
-              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polyline points="22,12 18,12 15,21 9,3 6,12 2,12" />
-              </svg>
-            }
-          />
-        </Card>
+        <Link href="/dashboards/ventas" className="block">
+          <Card hover className="cursor-pointer">
+            <Stat
+              label="Ventas del mes"
+              value={sales.data ? formatMoney(sales.data.ventas_mes_actual) : "—"}
+              delta={sales.data?.delta_porcentual ?? null}
+              deltaLabel="vs mes anterior"
+              icon={
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polyline points="22,12 18,12 15,21 9,3 6,12 2,12" />
+                </svg>
+              }
+            />
+          </Card>
+        </Link>
 
-        <Card>
-          <Stat
-            label="Facturas"
-            value={sales.data ? sales.data.num_facturas.toLocaleString("es-CO") : "—"}
-            subtitle="este mes"
-            icon={
-              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-                <polyline points="14,2 14,8 20,8" />
-              </svg>
-            }
-          />
-        </Card>
+        <Link href="/dashboards/ventas" className="block">
+          <Card hover className="cursor-pointer">
+            <Stat
+              label="Facturas"
+              value={sales.data ? sales.data.num_facturas.toLocaleString("es-CO") : "—"}
+              subtitle="este mes"
+              icon={
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                  <polyline points="14,2 14,8 20,8" />
+                </svg>
+              }
+            />
+          </Card>
+        </Link>
 
-        <Card>
-          <Stat
-            label="Ticket promedio"
-            value={sales.data ? formatMoney(sales.data.ticket_promedio) : "—"}
-            subtitle="por factura"
-            icon={
-              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="12" y1="1" x2="12" y2="23" />
-                <path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" />
-              </svg>
-            }
-          />
-        </Card>
+        <Link href="/dashboards/ventas" className="block">
+          <Card hover className="cursor-pointer">
+            <Stat
+              label="Ticket promedio"
+              value={sales.data ? formatMoney(sales.data.ticket_promedio) : "—"}
+              subtitle="por factura"
+              icon={
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="12" y1="1" x2="12" y2="23" />
+                  <path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" />
+                </svg>
+              }
+            />
+          </Card>
+        </Link>
 
-        <Card>
-          <Stat
-            label="Valor inventario"
-            value={inventory.data ? formatMoney(inventory.data.valor_total) : "—"}
-            subtitle={`${inventory.data?.num_productos ?? "—"} productos`}
-            icon={
-              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" />
-              </svg>
-            }
-          />
-        </Card>
+        <Link href="/dashboards/inventario" className="block">
+          <Card hover className="cursor-pointer">
+            <Stat
+              label="Valor inventario"
+              value={inventory.data ? formatMoney(inventory.data.valor_total) : "—"}
+              subtitle={`${inventory.data?.num_productos ?? "—"} productos`}
+              icon={
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" />
+                </svg>
+              }
+            />
+          </Card>
+        </Link>
       </div>
 
       {/* Tendencia mensual real */}
