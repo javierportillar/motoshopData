@@ -131,6 +131,7 @@ interface DormidoItem {
   nom_producto: string;
   dias_sin_venta: number;
   stock_actual?: number;
+  ultimo_movimiento?: string;
 }
 
 interface DormidosResponse {

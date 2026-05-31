@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 type ColumnAlignment = "left" | "center" | "right";
 
 interface Column<T> {
-  /** Header text */
-  header: string;
+  /** Header content (string or ReactNode) */
+  header: ReactNode;
   /** Render function for each row */
   cell: (row: T, index: number) => ReactNode;
   /** Column alignment (default: left) */

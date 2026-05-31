@@ -1,11 +1,16 @@
 "use client";
 
+import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useDormidos } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/Card";
 import { Stat } from "@/components/ui/Stat";
 import { Badge } from "@/components/ui/Badge";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { Table } from "@/components/ui/Table";
+
+type SortField = "dias_sin_venta" | "ultimo_movimiento";
+type SortDir = "asc" | "desc";
 
 function dormancyVariant(dias: number): "error" | "warning" | "default" {
   if (dias > 180) return "error";
@@ -13,8 +18,23 @@ function dormancyVariant(dias: number): "error" | "warning" | "default" {
   return "default";
 }
 
+function sortIcon(dir: SortDir): string {
+  return dir === "desc" ? " ↓" : " ↑";
+}
+
 export default function DormidosPage(): JSX.Element {
   const { data, error, isLoading } = useDormidos();
+  const [sortField, setSortField] = useState<SortField>("dias_sin_venta");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  function toggleSort(field: SortField) {
+    if (sortField === field) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDir("desc");
+    }
+  }
 
   // ── Loading ──────────────────────────────────────────────────
 
@@ -54,6 +74,24 @@ export default function DormidosPage(): JSX.Element {
 
   const criticos = data.productos.filter((p) => p.dias_sin_venta > 180).length;
 
+  // ── Sort ─────────────────────────────────────────────────────
+
+  const sortedItems = useMemo(() => {
+    const items = [...data.productos];
+    items.sort((a, b) => {
+      let cmp = 0;
+      if (sortField === "dias_sin_venta") {
+        cmp = a.dias_sin_venta - b.dias_sin_venta;
+      } else if (sortField === "ultimo_movimiento") {
+        const da = a.ultimo_movimiento ?? "";
+        const db = b.ultimo_movimiento ?? "";
+        cmp = da.localeCompare(db);
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return items;
+  }, [data, sortField, sortDir]);
+
   // ── Render ───────────────────────────────────────────────────
 
   return (
@@ -89,39 +127,72 @@ export default function DormidosPage(): JSX.Element {
         </Card>
       </div>
 
-      {/* Lista de dormidos */}
+      {/* Tabla de dormidos */}
       <Card header={<h2 className="font-semibold text-text-primary">Lista de dormidos</h2>}>
-        {data.productos.length === 0 ? (
-          <p className="py-8 text-center text-sm text-text-muted">
-            No hay productos dormidos en este período
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {data.productos.map((p) => (
-              <div
-                key={p.cod_producto}
-                className="flex items-center justify-between rounded-lg bg-surface-alt p-3"
-              >
-                <div className="min-w-0 flex-1">
+        <Table
+          columns={[
+            {
+              header: "SKU",
+              cell: (p) => (
+                <div>
                   <p className="truncate text-sm font-medium text-text-primary">
                     {p.nom_producto}
                   </p>
                   <p className="font-mono text-xs text-text-muted">{p.cod_producto}</p>
                 </div>
-                <div className="ml-2 shrink-0 text-right">
-                  <Badge variant={dormancyVariant(p.dias_sin_venta)} size="md">
-                    {p.dias_sin_venta}d
-                  </Badge>
-                  {p.stock_actual != null && (
-                    <p className="mt-1 text-xs text-text-muted">
-                      Stock: {p.stock_actual.toLocaleString("es-CO")}
-                    </p>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+              ),
+            },
+            {
+              header: (
+                <button
+                  onClick={() => toggleSort("dias_sin_venta")}
+                  className="flex items-center gap-1 font-medium text-text-secondary hover:text-text-primary"
+                >
+                  Días sin venta{sortField === "dias_sin_venta" ? sortIcon(sortDir) : ""}
+                </button>
+              ),
+              cell: (p) => (
+                <Badge variant={dormancyVariant(p.dias_sin_venta)} size="md">
+                  {p.dias_sin_venta}d
+                </Badge>
+              ),
+              align: "center",
+            },
+            {
+              header: (
+                <button
+                  onClick={() => toggleSort("ultimo_movimiento")}
+                  className="flex items-center gap-1 font-medium text-text-secondary hover:text-text-primary"
+                >
+                  Última compra{sortField === "ultimo_movimiento" ? sortIcon(sortDir) : ""}
+                </button>
+              ),
+              cell: (p) =>
+                p.ultimo_movimiento ? (
+                  <span className="text-sm text-text-primary">{p.ultimo_movimiento}</span>
+                ) : (
+                  <span className="text-xs text-text-muted">—</span>
+                ),
+              align: "center",
+            },
+            {
+              header: "Stock",
+              cell: (p) =>
+                p.stock_actual != null ? (
+                  <span className="text-sm text-text-primary">
+                    {p.stock_actual.toLocaleString("es-CO")}
+                  </span>
+                ) : (
+                  <span className="text-xs text-text-muted">—</span>
+                ),
+              align: "right",
+            },
+          ]}
+          data={sortedItems}
+          keyFn={(p) => p.cod_producto}
+          striped
+          emptyMessage="No hay productos dormidos en este período"
+        />
       </Card>
     </div>
   );
