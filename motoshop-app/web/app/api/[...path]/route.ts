@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "https://api.fragloesja.uk";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "https://motoshop-cloud-api.onrender.com";
 
 async function proxyRequest(req: NextRequest, path: string): Promise<NextResponse> {
   const url = new URL(req.url);

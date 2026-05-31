@@ -19,7 +19,7 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: CORS_ORIGINS
-        value: https://motoshop-web-tau.vercel.app,https://app.fragloesja.uk
+        value: https://app.fragloesja.uk,https://motoshop-web-tau.vercel.app
       - key: ENV
         value: dev
       - key: USERS_FILE_PATH

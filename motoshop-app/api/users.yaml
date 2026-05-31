@@ -5,7 +5,7 @@
 
 users:
   - username: admin
-    hashed_password: "$2b$12$YPcNMv4sO0WyIzMhfXyW3OzqbrskNe8AwFqkm9a7XElRaoGadRQr6"
+    hashed_password: "$2b$12$tUp2h9S/OHIGhe45FsQ/m.ZYGlyxf72hyK6vE22S0Vb4BqQzl0Hm6"
     email: admin@motoshop.local
     role: admin
   - username: vendedor1
