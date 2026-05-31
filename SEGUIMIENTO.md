@@ -658,6 +658,17 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ---
 
+### 2026-05-30 — Sesión 55 · Dev A2 · F7-D Paso A2-3 terminado
+
+> 🟢 [F7-D-A2] Paso A2-3 terminado · cohortes-detail operativo · commit: efb3041 · siguiente paso: A2-4 drift-summary · ACCIÓN HUMANO: avisar Dev W (restart API + smoke)
+
+- **Hecho:** Endpoint `GET /metrics/cohortes-detail` implementado: router (Bearer auth, cache 5 min, rate limit 30/min), repo (Fake con 5 cohortes mock + retención decreciente por mes, Real con 3 queries Databricks SQL a `gold.mart_cohortes_clientes` combinadas en Python: cohortes agregados con LTV, retención por mes de observación, nuevos vs recurrentes este mes), schemas (`CohorteRetencionItem` + `CohorteDetailItem` + `CohortesDetailResponse`), tests (7/7 pasan: auth, shape, retencion fields, summary fields, orden cronológico, cache). Total 32/32 tests pasan en metrics.
+- **Aprendido:** Para endpoints que requieren múltiples agregaciones del mismo mart, hacer queries separadas y combinar en Python es más limpio que un solo query monstruoso con CTEs anidadas. El campo `top_recurrentes` cuenta clientes que compraron este mes (sean nuevos o recurrentes) — útil para CO5 (distribución nuevos vs recurrentes).
+- **Abierto:** Pendiente smoke test en producción (requiere Dev W restart API).
+- **Próximo paso:** A2-4 drift-summary. NO avanzar sin confirmación humana.
+
+---
+
 ### 2026-05-30 — Sesión 54 · Dev A2 · F7-D Paso A2-2 terminado
 
 > 🟢 [F7-D-A2] Paso A2-2 terminado · vendedores-summary operativo · commit: 26cf1d5 · siguiente paso: A2-3 cohortes-detail · ACCIÓN HUMANO: avisar Dev W (restart API + smoke)
