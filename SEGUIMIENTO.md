@@ -627,6 +627,18 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ## Notas de sesión
 
+### 2026-05-31 — Sesión 61 · Dev D · F7-E COMPLETO
+
+> 🟢 [F7-E-D] F7-E COMPLETO · D4 mart_rotacion_sku + D5 mart_abc_xyz + D6 workflow actualizado (32 tasks) · commits: 09b416a (D4+D5), 811e46f (D6) · sprint cerrado · ACCIÓN HUMANO: avisar Dev W para re-deploy workflow (CASO D) + avisar Revisor para audit final F7
+
+- **Hecho D4:** `18_mart_rotacion_promedio.py` — `gold.mart_rotacion_sku` con 4,840 SKUs, venta_diaria_promedio y dias_de_cobertura.
+- **Hecho D5:** `19_mart_abc_xyz.py` — `gold.mart_abc_xyz` con 1,172 SKUs, 9 buckets ABC×XYZ (AX 8.45% → CZ 46.67%).
+- **Hecho D6:** `infra/create_full_workflow.py` actualizado: +2 tasks (gold_rotacion_promedio, gold_abc_xyz), total 32 tasks. Según ADR-0022: mismo `motoshop_full_workflow` (ID 272152121206178).
+- **Aprendido:** `mart_inventario_actual` usa `cantidad_actual` (no `stock_actual`). La matriz ABC×XYZ revela dominio de CZ (cola larga, alta variabilidad) típico de autopartes — solo 8.45% son AX (forecasting confiable).
+- **Próximo paso:** NA. Sprint F7-E cerrado. Humano avisa a Revisor + Dev W.
+
+---
+
 ### 2026-05-31 — Sesión 60 · Dev D · F7-E Paso D4 terminado
 
 > 🟢 [F7-E-D] Paso D4 terminado · gold.mart_rotacion_sku poblada · commit: 09b416a · siguiente paso: D5 ABC×XYZ · ACCIÓN HUMANO: avisar Dev W para sync notebooks Databricks
