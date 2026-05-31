@@ -486,16 +486,16 @@ class RealMetricsRepo:
         rows = self._query(f"""
             SELECT YEAR(business_date) AS year,
                    MONTH(business_date) AS month,
-                   SUM(total_factura) AS total_ventas,
-                   COUNT(*) AS num_facturas,
-                   AVG(total_factura) AS ticket_promedio
-            FROM motoshop.silver.fact_ventas
+                   ROUND(SUM(valor_total), 2) AS total_ventas,
+                   SUM(num_facturas) AS num_facturas,
+                   ROUND(SUM(valor_total) / NULLIF(SUM(num_facturas), 0), 2) AS ticket_promedio
+            FROM motoshop.gold.mart_ventas_diarias_sku
             WHERE business_date >= ADD_MONTHS(CURRENT_DATE(), -{periods})
-            GROUP BY year, month
+            GROUP BY YEAR(business_date), MONTH(business_date)
             ORDER BY year, month
         """)
         if not rows:
-            logger.warning("No sales trend data found in silver.fact_ventas")
+            logger.warning("No sales trend data found in gold.mart_ventas_diarias_sku")
             return FakeMetricsRepo().get_sales_trend(periods)
         for r in rows:
             r["year"] = int(r["year"])
