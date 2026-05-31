@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
-import { useForecast } from "@/lib/api/hooks";
+import { useForecast, useProducts } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -23,11 +23,6 @@ import { formatMoney } from "@/lib/format/currency";
 
 const HORIZON_OPTIONS = [7, 14, 30] as const;
 
-const MOCK_SUGGESTIONS = [
-  { sku: "MOTS1297", label: "ACEITE 20W50 MOTUL 1L" },
-  { sku: "MOTS0412", label: "FILTRO ACEITE YAMAHA YBR125" },
-  { sku: "MOTS0834", label: "PASTILLAS FRENO DELANTERAS" },
-];
 
 export default function ForecastPage(): JSX.Element {
   const [sku, setSku] = useState("");
@@ -35,15 +30,29 @@ export default function ForecastPage(): JSX.Element {
   const [horizon, setHorizon] = useState<number>(7);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
+  const [searchQuery, setSearchQuery] = useState("");
+
   const { data, error, isLoading } = useForecast(selectedSku, horizon);
 
-  const suggestions = useMemo(() => {
-    if (!sku.trim()) return [];
-    const q = sku.trim().toUpperCase();
-    return MOCK_SUGGESTIONS.filter(
-      (s) => s.sku.includes(q) || s.label.toUpperCase().includes(q),
-    );
+  // Debounce search query before sending to API
+  useEffect(() => {
+    const timer = setTimeout(() => setSearchQuery(sku), 300);
+    return () => clearTimeout(timer);
   }, [sku]);
+
+  // Fetch products from API for autocomplete
+  const { data: productsData } = useProducts(
+    !selectedSku && sku.trim() ? searchQuery : "",
+    1,
+    20,
+  );
+
+  const suggestions = useMemo(() => {
+    if (!productsData?.items) return [];
+    return productsData.items
+      .filter((p) => p.has_forecast === true)
+      .map((p) => ({ sku: p.codprod, label: p.nomprod }));
+  }, [productsData]);
 
   const chartData = useMemo(() => {
     if (!data?.forecast) return [];
