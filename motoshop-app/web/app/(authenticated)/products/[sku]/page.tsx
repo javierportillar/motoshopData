@@ -1,6 +1,6 @@
 "use client";
 
-import { useProducts, useStock } from "@/lib/api/hooks";
+import { useStock } from "@/lib/api/hooks";
 import { StockBadge } from "@/lib/ui/Badge";
 import { Card } from "@/lib/ui/Card";
 import { Skeleton } from "@/lib/ui/Skeleton";
@@ -12,11 +12,12 @@ import { useParams, useRouter } from "next/navigation";
 export default function SkuPage(): JSX.Element {
   const { sku } = useParams<{ sku: string }>();
   const router = useRouter();
-  const { data: stock, isLoading: stockLoading, mutate: mutateStock } = useStock(sku);
-  const { data: products, isLoading: productsLoading } = useProducts(sku, 1, 1);
-
-  const product = products?.items?.[0];
-  const stockLoadingState = stockLoading || productsLoading;
+  const {
+    data: stock,
+    error: stockError,
+    isLoading: stockLoading,
+    mutate: mutateStock,
+  } = useStock(sku);
 
   return (
     <div className="space-y-4">
@@ -31,7 +32,7 @@ export default function SkuPage(): JSX.Element {
         Volver
       </button>
 
-      {stockLoadingState && (
+      {stockLoading && (
         <div className="space-y-4">
           <Skeleton className="h-6 w-3/4" />
           <Skeleton className="h-4 w-1/2" />
@@ -39,7 +40,7 @@ export default function SkuPage(): JSX.Element {
         </div>
       )}
 
-      {!stockLoadingState && !stock && (
+      {!stockLoading && stockError && (
         <EmptyState
           icon={
             <svg className="h-12 w-12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -48,22 +49,15 @@ export default function SkuPage(): JSX.Element {
             </svg>
           }
           title="Producto no encontrado"
-          description={`No se encontró stock para el SKU ${sku}`}
+          description={`El SKU ${sku} no existe en el sistema`}
         />
       )}
 
-      {!stockLoadingState && stock && (
+      {!stockLoading && stock && (
         <>
           <div>
-            <h1 className="text-xl font-bold text-secondary-dark">
-              {product?.nomprod ?? sku}
-            </h1>
-            <p className="text-sm text-gray-500">
-              {stock.sku}
-              {product?.codbar && (
-                <span className="ml-2 text-gray-400">| {product.codbar}</span>
-              )}
-            </p>
+            <h1 className="text-xl font-bold text-secondary-dark">{sku}</h1>
+            <p className="text-sm text-gray-500">{stock.sku}</p>
           </div>
 
           {/* Total stock */}
@@ -106,9 +100,13 @@ export default function SkuPage(): JSX.Element {
                   </div>
                 ))}
               </div>
-            ) : (
+            ) : stock.total > 0 ? (
               <p className="py-4 text-center text-sm text-gray-400">
                 Sin datos de bodegas para este SKU
+              </p>
+            ) : (
+              <p className="py-4 text-center text-sm text-gray-400">
+                Producto sin stock — no hay existencias en ninguna bodega
               </p>
             )}
           </Card>

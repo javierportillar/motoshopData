@@ -36,6 +36,27 @@ export default function DormidosPage(): JSX.Element {
     }
   }
 
+  const criticos = data
+    ? data.productos.filter((p) => p.dias_sin_venta > 180).length
+    : 0;
+
+  const sortedItems = useMemo(() => {
+    if (!data) return [];
+    const items = [...data.productos];
+    items.sort((a, b) => {
+      let cmp = 0;
+      if (sortField === "dias_sin_venta") {
+        cmp = a.dias_sin_venta - b.dias_sin_venta;
+      } else if (sortField === "ultimo_movimiento") {
+        const da = a.ultimo_movimiento ?? "";
+        const db = b.ultimo_movimiento ?? "";
+        cmp = da.localeCompare(db);
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return items;
+  }, [data, sortField, sortDir]);
+
   // ── Loading ──────────────────────────────────────────────────
 
   if (isLoading) {
@@ -71,26 +92,6 @@ export default function DormidosPage(): JSX.Element {
       </div>
     );
   }
-
-  const criticos = data.productos.filter((p) => p.dias_sin_venta > 180).length;
-
-  // ── Sort ─────────────────────────────────────────────────────
-
-  const sortedItems = useMemo(() => {
-    const items = [...data.productos];
-    items.sort((a, b) => {
-      let cmp = 0;
-      if (sortField === "dias_sin_venta") {
-        cmp = a.dias_sin_venta - b.dias_sin_venta;
-      } else if (sortField === "ultimo_movimiento") {
-        const da = a.ultimo_movimiento ?? "";
-        const db = b.ultimo_movimiento ?? "";
-        cmp = da.localeCompare(db);
-      }
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return items;
-  }, [data, sortField, sortDir]);
 
   // ── Render ───────────────────────────────────────────────────
 
