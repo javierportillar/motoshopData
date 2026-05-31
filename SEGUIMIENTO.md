@@ -669,6 +669,17 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ---
 
+### 2026-05-30 — Sesión 56 · Dev A2 · F7-D Paso A2-4 terminado
+
+> 🟢 [F7-D-A2] Paso A2-4 terminado · drift-summary operativo · commit: e4eb793 · siguiente paso: A2-7 plan-compras (PRIORIDAD: desbloquea Dev T2) · ACCIÓN HUMANO: avisar Dev W (restart API + smoke)
+
+- **Hecho:** Endpoint `GET /metrics/drift-summary` implementado: router (Bearer auth, cache 5 min, rate limit 30/min), repo (Fake con 4 alertas mock: 2 warning + 2 resolved, Real con query a `gold.alertas_drift` derivando status y recommended_action del threshold), schemas (`DriftSummaryItem` + `DriftSummaryResponse` con contrato exacto de Dev T2: `metric_name`, `detected_at`, `drift_magnitude`, `threshold`, `status`, `recommended_action`), tests (7/7 pasan). Total 39/39 tests pasan en metrics.
+- **Aprendido:** El contrato del frontend define la forma exacta del schema — copiar la interfaz TypeScript de Dev T2 (`drift/page.tsx:11-18`) garantiza que el endpoint calza sin adaptaciones. El campo `status` usa valores fijos (`active`/`resolved`/`warning`) que el frontend mapea a colores de Badge.
+- **Abierto:** Pendiente smoke test en producción. 🔓 **DESBLOQUEA a Dev T2**: la página `/drift` puede reemplazar `MOCK_DRIFT` por llamada real a este endpoint.
+- **Próximo paso:** A2-7 plan-compras (PRIORIDAD porque también bloquea a Dev T2). NO avanzar sin confirmación humana.
+
+---
+
 ### 2026-05-30 — Sesión 55 · Dev A2 · F7-D Paso A2-3 terminado
 
 > 🟢 [F7-D-A2] Paso A2-3 terminado · cohortes-detail operativo · commit: efb3041 · siguiente paso: A2-4 drift-summary · ACCIÓN HUMANO: avisar Dev W (restart API + smoke)
