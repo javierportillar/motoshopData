@@ -149,3 +149,24 @@ class DriftSummaryResponse(BaseModel):
     active_count: int
     warning_count: int
     current_threshold: float
+
+
+class PlanCompraItem(BaseModel):
+    sku: str
+    nombre: str
+    stock_actual: float
+    demanda_7d: float
+    cantidad_a_comprar: float
+    abc: str  # A | B | C
+    urgencia: str | None = None  # alta | media | baja
+    dormido: bool
+    supplier: str
+
+
+class PlanComprasResponse(BaseModel):
+    items: list[PlanCompraItem]
+    total_skus: int
+    total_unidades: float
+    total_valor_estimado: float
+    skus_urgentes: int
+    skus_dormidos: int

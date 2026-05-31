@@ -25,6 +25,8 @@ from motoshop_api.metrics.schemas import (
     DormidoItem,
     DormidosResponse,
     InventorySummary,
+    PlanCompraItem,
+    PlanComprasResponse,
     SalesSummary,
     SalesTrendItem,
     SalesTrendResponse,
@@ -48,6 +50,7 @@ class MetricsRepoProtocol(Protocol):
     def get_vendedores_summary(self) -> VendedoresSummaryResponse: ...
     def get_cohortes_detail(self) -> CohortesDetailResponse: ...
     def get_drift_summary(self) -> DriftSummaryResponse: ...
+    def get_plan_compras(self) -> PlanComprasResponse: ...
 
 
 # ── Fake (mock) ──────────────────────────────────────────────────────────
@@ -265,6 +268,27 @@ class FakeMetricsRepo:
             active_count=active,
             warning_count=warning,
             current_threshold=30.0,
+        )
+
+    def get_plan_compras(self) -> PlanComprasResponse:
+        """Plan de compras mock: SKUs con stock bajo vs demanda."""
+        items = [
+            PlanCompraItem(sku="MOTS1297", nombre="ACEITE 20W50 MOTUL 1L", stock_actual=2, demanda_7d=18, cantidad_a_comprar=16, abc="A", urgencia="alta", dormido=False, supplier="Motul Colombia"),
+            PlanCompraItem(sku="MOTS0412", nombre="FILTRO ACEITE YAMAHA YBR125", stock_actual=0, demanda_7d=12, cantidad_a_comprar=12, abc="A", urgencia="alta", dormido=False, supplier="Yamaha Parts SA"),
+            PlanCompraItem(sku="MOTS0834", nombre="PASTILLAS FRENO DELANTERAS", stock_actual=3, demanda_7d=10, cantidad_a_comprar=7, abc="A", urgencia="media", dormido=False, supplier="Brembo Colombia"),
+            PlanCompraItem(sku="MOTS2109", nombre="CADENA TRANSMISION RK 428", stock_actual=1, demanda_7d=8, cantidad_a_comprar=7, abc="B", urgencia="media", dormido=False, supplier="RK Japan"),
+            PlanCompraItem(sku="MOTS3512", nombre="BUJIA NGK CR8E", stock_actual=5, demanda_7d=12, cantidad_a_comprar=7, abc="A", urgencia="baja", dormido=False, supplier="NGK Colombia"),
+            PlanCompraItem(sku="MOTS8745", nombre="ASIENTO GEL YAMAHA MT09", stock_actual=2, demanda_7d=1, cantidad_a_comprar=0, abc="C", urgencia=None, dormido=True, supplier="Yamaha Parts SA"),
+            PlanCompraItem(sku="MOTS9912", nombre="ESCAPE DEPORTIVO AKRAPOVIC", stock_actual=3, demanda_7d=0, cantidad_a_comprar=0, abc="C", urgencia=None, dormido=True, supplier="Akrapovic EU"),
+        ]
+        total_unidades = sum(i.cantidad_a_comprar for i in items)
+        return PlanComprasResponse(
+            items=items,
+            total_skus=len(items),
+            total_unidades=total_unidades,
+            total_valor_estimado=total_unidades * 75_000.0,
+            skus_urgentes=sum(1 for i in items if i.urgencia == "alta"),
+            skus_dormidos=sum(1 for i in items if i.dormido),
         )
 
 
@@ -581,6 +605,68 @@ class RealMetricsRepo:
             active_count=active,
             warning_count=warning,
             current_threshold=current_threshold,
+        )
+
+    def get_plan_compras(self) -> PlanComprasResponse:
+        rows = self._query("""
+            WITH demanda_7d AS (
+                SELECT cod_producto, SUM(cantidad) AS qty_7d
+                FROM motoshop.silver.fact_ventas
+                WHERE business_date >= DATE_SUB(CURRENT_DATE(), 7)
+                GROUP BY cod_producto
+            ),
+            suppliers AS (
+                SELECT cod_producto, MAX(nom_proveedor) AS supplier
+                FROM motoshop.silver.fact_compras_detalle
+                WHERE nom_proveedor IS NOT NULL
+                GROUP BY cod_producto
+            )
+            SELECT
+                inv.cod_producto AS sku,
+                COALESCE(inv.nom_producto, inv.cod_producto) AS nombre,
+                inv.cantidad_actual AS stock_actual,
+                COALESCE(d.qty_7d, 0) AS demanda_7d,
+                CASE WHEN COALESCE(d.qty_7d, 0) > inv.cantidad_actual
+                     THEN COALESCE(d.qty_7d, 0) - inv.cantidad_actual
+                     ELSE 0 END AS cantidad_a_comprar,
+                COALESCE(abc.categoria_abc, 'C') AS abc,
+                al.urgencia,
+                CASE WHEN dorm.cod_producto IS NOT NULL THEN TRUE ELSE FALSE END AS dormido,
+                COALESCE(s.supplier, 'Sin proveedor') AS supplier
+            FROM motoshop.gold.mart_inventario_actual inv
+            LEFT JOIN demanda_7d d ON inv.cod_producto = d.cod_producto
+            LEFT JOIN motoshop.gold.mart_rotacion_abc abc
+                ON inv.cod_producto = abc.cod_producto
+            LEFT JOIN motoshop.gold.alertas_quiebre al
+                ON inv.cod_producto = al.cod_producto
+            LEFT JOIN motoshop.gold.mart_productos_dormidos dorm
+                ON inv.cod_producto = dorm.cod_producto
+            LEFT JOIN suppliers s ON inv.cod_producto = s.cod_producto
+            WHERE COALESCE(d.qty_7d, 0) > inv.cantidad_actual
+               OR al.urgencia IS NOT NULL
+            ORDER BY cantidad_a_comprar DESC,
+                     CASE WHEN al.urgencia = 'alta' THEN 1
+                          WHEN al.urgencia = 'media' THEN 2
+                          WHEN al.urgencia = 'baja' THEN 3
+                          ELSE 4 END
+            LIMIT 100
+        """)
+        if not rows:
+            logger.warning("No plan compras data found")
+            return FakeMetricsRepo().get_plan_compras()
+        for r in rows:
+            r["stock_actual"] = float(r["stock_actual"])
+            r["demanda_7d"] = float(r["demanda_7d"])
+            r["cantidad_a_comprar"] = float(r["cantidad_a_comprar"])
+            r["dormido"] = bool(r["dormido"]) if isinstance(r["dormido"], (int, float)) else r["dormido"] in (True, "true", "TRUE")
+        total_unidades = sum(r["cantidad_a_comprar"] for r in rows)
+        return PlanComprasResponse(
+            items=[PlanCompraItem(**r) for r in rows],
+            total_skus=len(rows),
+            total_unidades=total_unidades,
+            total_valor_estimado=total_unidades * 75_000.0,
+            skus_urgentes=sum(1 for r in rows if r.get("urgencia") == "alta"),
+            skus_dormidos=sum(1 for r in rows if r.get("dormido")),
         )
 
     def _query(self, sql: str) -> list[dict]:

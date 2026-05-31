@@ -31,6 +31,7 @@ from motoshop_api.metrics.schemas import (
     DormidosResponse,
     DriftSummaryResponse,
     InventorySummary,
+    PlanComprasResponse,
     SalesSummary,
     SalesTrendResponse,
     VendedoresSummaryResponse,
@@ -195,6 +196,17 @@ def drift_summary(
 ) -> DriftSummaryResponse:
     """Alertas de drift: métricas desviadas, severidad y acciones recomendadas."""
     return _cached_or_fetch("drift-summary", repo.get_drift_summary)
+
+
+@router.get("/metrics/plan-compras", response_model=PlanComprasResponse)
+@limiter.limit("30/minute")
+def plan_compras(
+    request: Request,
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+) -> PlanComprasResponse:
+    """Plan de compras: SKUs con stock < demanda, urgencia, ABC, dormidos."""
+    return _cached_or_fetch("plan-compras", repo.get_plan_compras)
 
 
 @router.post("/metrics/cache/clear")
