@@ -28,15 +28,17 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **F6 · Hardening + entrega académica** (abierta, planificación lista) |
+| Fase activa | **F7 · Rediseño UX + dashboards** (cerrada en lo esencial · pendiente solo D4+D5 diferibles) |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Cierre F6 = cierre del proyecto académico (Maestría UAO 2025-2) |
-| Avance global | **5/7 fases cerradas** + 4 hardening sprints + F4-FIX1 ✅ + F5-FIX1 ✅ |
-| Última actualización | 2026-05-30 |
+| Próximo gate | Cerrar D4+D5 (Dev D) + R6 demo 4G + R8 demo gerencia → E5 memoria final |
+| Avance global | **6+/7 fases cerradas** + 4 hardening + F4/F5/F6-FIX1 ✅ + F7 sustantivamente cerrada |
+| Última actualización | 2026-05-30 (Sesión 53) |
 
 ```
-F0 ✅  F1 ✅ (+ F1.5 ✅ + F1.9 ✅)  F2 ✅  F3 ✅  F3.5 ✅  F3.6 ✅  F4-A ✅  F4-B ✅  F4-C ✅  F4-FIX1 ✅  F5 ✅ (+ F5-FIX1 ✅)  F6 🟡
+F0 ✅  F1 ✅ (+F1.5 +F1.9)  F2 ✅  F3 ✅ (+F3.5 +F3.6)  F4 ✅ (+FIX1)  F5 ✅ (+FIX1)  F6 ✅ (+F6-D +FIX1)  F7 🟢 (12 dashboards · D4+D5 diferibles)
 ```
+
+> **2026-05-30 (Sesión 53) — F7 cerrada sustantivamente · 🟢 GO a E5 memoria final.** Audit revisor: 13/13 endpoints API responden 200 en producción · 13/13 paths PWA cargan con datos reales · Sprints cerrados: F7-B Design System (Dev T1), F7-C Pages Implementation con 12 dashboards (Dev T2: 8 migrados + 4 nuevos + home por rol + Skeleton/ErrorState + Navigation adaptable + 71 tests Playwright auth+viewports + Lighthouse Perf 99/A11y 90+), F7-D Backend con 6 endpoints nuevos + purchase_plans CRUD (Dev A2), F7-E parcial D1-D3 (Dev D · snapshots arrancando) · Audit interno security (commit `989613f`): SQL injection sales-trend fixed, users.yaml gitignored, Chart wrapper consistente, error handling estandarizado · Dev W ciclos 1-4 aplicados a Windows incluyendo fix de 4 bugs reales en plan-compras + drift-summary que Dev A2 había introducido sin probar contra Databricks real (commit `a61ab1f`). **ADR-0022:** workflow unificado aprobado (propuesta Dev W). **Diferido como NO bloqueante:** D4 rotación promedio + D5 ABC×XYZ (Dev D entregará en próximo ciclo).
 
 > **2026-05-30 (Sesión 42) — F4-FIX1 abierta tras auditoría revisor fresco.** Auditoría con contexto independiente sobre el cierre F4-B/F4-C levantó 2 bloqueantes + 4 observaciones: (B1) **Prophet MAPE 3540%** no es "peor que baseline" sino modelo/métrica rota — probable división por cero en demanda intermitente y SKUs con <30 puntos; (B2) **Classifier F1=0.9924** sospechoso de data leakage o desbalance — reporte sin target distribution, split temporal explícito ni top features; (O3) F4-C cerró con FakeRepos en lugar de validar contra Gold real; (O4) R10 PC Windows offline "se documenta", no se alerta al usuario; (O5) sin ADR de split temporal; (O6) lección F3.5 §10 nunca se propagó a `INICIAR_REVIEWER.md` (que de hecho no existía). Plan correctivo: [docs/plan-f4-fix1.md](docs/plan-f4-fix1.md). **3 agentes paralelos:** Dev A (ML diagnosis + ADR-0017 + lecciones), Dev T (PWA real repos + StaleDataBanner + E2E), Revisor (INICIAR_REVIEWER.md + tracking docs). Wall-clock ~3 h.
 
