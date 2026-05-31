@@ -1,7 +1,7 @@
 # MASTER · Índice maestro del proyecto MotoShop
 
 > Entry point para revisar el proyecto end-to-end. Si abrís este archivo, vas a poder navegar a cualquier parte del proyecto sin tener que cazar archivos.  
-> Última actualización: 2026-05-30 (Sesión 47).
+> Última actualización: 2026-05-31 (Sesión 65).
 
 ---
 
@@ -9,16 +9,18 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **F6 · Hardening + entrega académica** (último sprint del proyecto) |
+| Fase activa | **Cierre V1 · Revisor GO/NO-GO** |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Cierre F6 = **cierre del proyecto académico** (Maestría UAO 2025-2) |
-| Avance global | **5/7 fases cerradas** + 4 hardening sprints + F4-FIX1 ✅ + F5-FIX1 ✅ |
-| ADRs aceptados | 19 (D1-D14 + ADR-0015..0019) — ADR-0020/0021 a redactar en F6 |
-| Riesgos vivos | 10 (R1, R2, R4, R5, R6, R7, R8, R14, R15, R16) — R11/R12/R13 resueltos en F4-FIX1 |
+| Próximo gate | Producción F7-C real + Workflow Databricks 31/31 OK + auto-pull Windows + evidencia humana |
+| Avance global | F0-F6 cerradas · F7 sustantiva lista pero **NO-GO final** hasta pasar gates de producción/operación |
+| ADRs aceptados | 22 |
+| Riesgos vivos | Producción frontend stale, workflow Databricks F7-E-FIX1, demo 4G/gerencia pendiente |
 
 ```
-F0 ✅  F1 ✅ (+F1.5 ✅ +F1.9 ✅)  F2 ✅  F3 ✅ (+F3.5 ✅ +F3.6 ✅)  F4-A ✅  F4-B ✅  F4-C ✅  F4-FIX1 ✅  F5 ✅ (+F5-FIX1 ✅)  F6 🟡
+F0 ✅  F1 ✅ (+F1.5 +F1.9)  F2 ✅  F3 ✅ (+F3.5 +F3.6)  F4 ✅ (+FIX1)  F5 ✅ (+FIX1)  F6 ✅  F7 🟡 (pendiente gates de cierre V1)
 ```
+
+**Documento canónico de cierre actual:** [`docs/plan-cierre-v1-reviewer.md`](plan-cierre-v1-reviewer.md) — handoffs, gates y GO/NO-GO de revisor.
 
 **Documento canónico de tracking:** [`SEGUIMIENTO.md`](../SEGUIMIENTO.md) — bitácora viva por sesión + tablero de riesgos.
 
@@ -52,6 +54,7 @@ F0 ✅  F1 ✅ (+F1.5 ✅ +F1.9 ✅)  F2 ✅  F3 ✅ (+F3.5 ✅ +F3.6 ✅)  F4-A
 | [`SEGUIMIENTO.md`](../SEGUIMIENTO.md) | Bitácora viva: cabecera + decisiones + checklist por fase + tablero riesgos + notas de sesión | Para entender qué pasó y qué pasa ahora |
 | [`PENDIENTES.md`](../PENDIENTES.md) | Tareas humanas + handoffs Dev/Revisor entre sesiones | Para saber qué tengo que hacer yo o qué ejecutan los devs |
 | [`docs/contexto-proyecto.md`](contexto-proyecto.md) | Snapshot ejecutivo: arquitectura + entregables + riesgos + resumen | Para onboarding rápido o defensa académica |
+| [`docs/plan-cierre-v1-reviewer.md`](plan-cierre-v1-reviewer.md) | **Plan activo de cierre V1: handoffs, gates y GO/NO-GO** | Para coordinar devs y cerrar el proyecto sin aceptar humo |
 | [`docs/plan-f4-fix1.md`](plan-f4-fix1.md) | Plan de la fase activa (F4-FIX1) | Mientras esté abierta |
 | [`docs/roadmap-v2-produccion.md`](roadmap-v2-produccion.md) | **⭐ CORE · V2 producción seria · todas las deudas V1 y cómo se cierran** | Para visión post-V1, defensa académica como anexo, kick-off V2 |
 | [`docs/MASTER.md`](MASTER.md) | Este archivo — índice de navegación | Como entry point cuando volvés después de tiempo |

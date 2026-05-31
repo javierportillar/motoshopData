@@ -8,6 +8,146 @@
 
 ---
 
+## Sesión 2026-05-31 (65) · Cierre V1 · Revisor GO/NO-GO
+
+**Estado:** V1 todavía **NO está cerrada**. El revisor detectó que F7-C existe en el repo local y compila, pero producción `https://app.fragloesja.uk` no sirve todavía las rutas nuevas. Además, F7-E-FIX1 y auto-pull Windows siguen pendientes de evidencia.
+
+**Plan canónico:** [`docs/plan-cierre-v1-reviewer.md`](docs/plan-cierre-v1-reviewer.md)
+
+### Orden de ejecución obligatorio
+
+1. Dev Frontend corrige deploy F7-C en Vercel.
+2. Revisor audita producción PWA.
+3. Dev W cierra Databricks F7-E-FIX1.
+4. Dev W instala auto-pull Windows.
+5. Revisor audita operación.
+6. Javier entrega demo 4G + demo gerencia.
+7. Revisor marca F7 cerrada.
+8. Revisor planifica y valida E5 memoria final.
+
+### 🤖 Handoff #1 · Dev Frontend · Deploy productivo F7-C [BLOQUEANTE]
+
+Pegá esto en el chat del dev frontend:
+
+```
+Necesito evidencia de deploy productivo F7-C.
+
+Producción hoy falla:
+- /cohortes → 404
+- /vendedores → 404
+- /drift → 404
+- /plan-compras → 404
+
+Acciones obligatorias:
+1. Confirmar que origin/main contiene los commits F7-C.
+2. Confirmar qué commit está desplegado actualmente en Vercel.
+3. Forzar deploy producción desde motoshop-app/web.
+4. Confirmar que el alias app.fragloesja.uk apunta al deploy nuevo.
+5. Ejecutar smoke autenticado de 13 rutas:
+   - /dashboards
+   - /dashboards/ventas
+   - /dashboards/inventario
+   - /dashboards/abc
+   - /dashboards/dormidos
+   - /cohortes
+   - /vendedores
+   - /drift
+   - /plan-compras
+   - /forecast
+   - /alerts
+   - /acciones
+   - /products
+
+Entregables:
+- Commit hash desplegado.
+- Vercel deployment URL.
+- Resultado HTTP 200 para cada ruta.
+- Screenshot de navegación nueva F7-C.
+
+No reportar “listo” sin URL, hash y evidencia.
+```
+
+### 🤖 Handoff #2 · Dev W · Workflow Databricks F7-E-FIX1 [BLOQUEANTE]
+
+Pegá esto en el chat de Dev W:
+
+```
+Cerrar F7-E-FIX1 según docs/plan-f7-e-fix1.md.
+
+Acciones obligatorias:
+1. Copiar stacktrace exacto de:
+   - gold_rotacion_promedio
+   - gold_drift
+   - gold_abc_xyz
+2. Confirmar si es schema mismatch.
+3. Si confirma schema mismatch, aplicar DROP TABLES del plan.
+4. Re-correr tasks con infra/run_notebook_ondemand.py o workflow completo.
+5. Confirmar workflow 31/31 OK.
+6. Confirmar cron 19:00 COL UNPAUSED.
+
+Entregables:
+- Stacktraces previos documentados.
+- Fix aplicado y explicado.
+- Run final verde.
+- Conteos de tablas gold repobladas.
+- Smoke endpoints:
+  - /metrics/drift-summary
+  - /metrics/forecast-categoria
+  - /metrics/plan-compras
+```
+
+### 🤖 Handoff #3 · Dev W · Auto-pull Windows [ALTA PRIORIDAD]
+
+Pegá esto en el chat de Dev W:
+
+```
+Instalar MotoShop_AutoPull siguiendo infra/AUTO_PULL_SETUP.md.
+
+Entregables:
+- Dry-run OK.
+- Scheduled Task creada.
+- Primer run manual OK.
+- Log infra/logs/auto_pull.log con timestamp.
+
+No modificar credenciales, .env ni users.yaml.
+Si aparece una migración SQL nueva, parar y pedir instrucciones.
+```
+
+### 👤 Pendiente Javier · Evidencia humana
+
+```
+Necesito dos evidencias humanas:
+
+1. Demo 4G:
+   - Celular fuera de WiFi.
+   - Login.
+   - Dashboards.
+   - Búsqueda SKU.
+   - Forecast/alertas.
+   - Video o screenshots.
+
+2. Demo gerencia:
+   - Feedback de stakeholder o stand-in.
+   - Qué decisiones permitiría tomar.
+   - Qué queda para V2.
+```
+
+### Gate del revisor
+
+El revisor solo puede dar **GO a cierre V1** si:
+
+- PWA producción muestra F7-C completa.
+- 13/13 rutas PWA responden 200 autenticadas.
+- API producción responde endpoints críticos.
+- Databricks workflow corre `31/31 OK`.
+- Auto-pull Windows está instalado y probado.
+- Evidencia demo está registrada.
+- E5 memoria final queda escrita con riesgos y lecciones aprendidas.
+
+Si alguno falla, el veredicto es **NO-GO**. Producción, logs, screenshots y hashes mandan.
+
+---
+
 ## Sesión 2026-05-31 (64) · Auto-pull Windows + F7-E-FIX1 workflow
 
 **Estado:** 2 trabajos para Dev W en este ciclo, INDEPENDIENTES (uno NO bloquea al otro):
