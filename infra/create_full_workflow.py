@@ -6,7 +6,9 @@ that runs sequentially every day at 19:00 COL (after the last dump):
 
   1. bronze_ingest
   2. silver (dims → facts → quality → validate)
-  3. gold marts (10–14) → feature store (15) → baseline (16) → classifier (22) → quality (20) → validate (30)
+  3. gold marts (10–14) → snapshots ABC/dormidos (30/31) → feature store (15) →
+     archive forecasts (33) → baseline (16) → classifier (22) →
+     snapshot alertas (32) → quality (20) → validate (30)
   4. drift monitor (25) — final task, optional
 
 This replaces the previous two-job setup (motoshop_bronze_silver + motoshop_gold_workflow).
@@ -96,13 +98,22 @@ FULL_TASKS: list[tuple[str, str, list[str]]] = [
     ("gold_cohortes", "gold/13_mart_cohortes_clientes", ["silver_validate"]),
     ("gold_dormidos", "gold/14_mart_productos_dormidos", ["silver_validate"]),
 
-    # ── Feature store + baseline + classifier ────────────────────────
+    # ── Gold snapshots · Balde B (después de marts originales) ────────
+    ("gold_snapshot_abc", "gold/30_snapshot_abc_mensual", ["gold_abc"]),
+    ("gold_snapshot_dormidos", "gold/31_snapshot_dormidos_mensual", ["gold_dormidos"]),
+
+    # ── Feature store + archive + baseline + classifier ────────────────
     ("gold_feature_store", "gold/15_feature_store_sku",
      ["gold_ventas", "gold_inventario"]),
+    # ── Balde B · Archive forecast ANTES de overwrite ──────────────────
+    ("gold_archive_forecasts", "gold/33_archive_forecasts", ["gold_feature_store"]),
     ("gold_baseline", "gold/16_forecast_baseline_sku",
-     ["gold_feature_store"]),
+     ["gold_feature_store", "gold_archive_forecasts"]),
     ("gold_classifier", "gold/22_classifier_stockout",
      ["gold_feature_store"]),
+
+    # ── Gold snapshot alertas diario (después de classifier) ───────────
+    ("gold_snapshot_alertas", "gold/32_snapshot_alertas_diario", ["gold_classifier"]),
 
     # ── Gold quality + validate ───────────────────────────────────────
     ("gold_quality", "gold/20_quality_gold", [
