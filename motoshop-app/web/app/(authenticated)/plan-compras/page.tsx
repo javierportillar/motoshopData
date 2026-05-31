@@ -61,9 +61,13 @@ export default function PlanComprasPage(): JSX.Element {
   // ── Filtros ──────────────────────────────────────────────────
 
   let items = data.items;
-  if (filterAbc) items = items.filter((i) => i.abc === filterAbc);
-  if (filterUrgencia) items = items.filter((i) => i.urgencia === filterUrgencia);
-  if (filterDormido !== null) items = items.filter((i) => i.dormido === filterDormido);
+  if (filterAbc) items = items.filter((i) => i.abc?.toUpperCase() === filterAbc);
+  if (filterUrgencia) items = items.filter((i) => i.urgencia?.toLowerCase() === filterUrgencia);
+  if (filterDormido !== null)
+    items = items.filter((i) => {
+      const val = i as unknown as Record<string, unknown>;
+      return (val.dormido === true || val.is_dormido === true || val.dormido === 1) === filterDormido;
+    });
 
   // ── Render ───────────────────────────────────────────────────
 
