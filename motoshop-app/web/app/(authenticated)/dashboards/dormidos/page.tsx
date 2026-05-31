@@ -1,15 +1,17 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useDormidos } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/Card";
 import { Stat } from "@/components/ui/Stat";
 import { Badge } from "@/components/ui/Badge";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { ErrorState } from "@/components/ui/ErrorState";
 import { Table } from "@/components/ui/Table";
+import { Pagination } from "@/components/Pagination";
 
-type SortField = "dias_sin_venta" | "ultimo_movimiento";
+type SortField = "dias_sin_venta" | "ultima_compra";
 type SortDir = "asc" | "desc";
 
 function dormancyVariant(dias: number): "error" | "warning" | "default" {
@@ -22,10 +24,13 @@ function sortIcon(dir: SortDir): string {
   return dir === "desc" ? " ↓" : " ↑";
 }
 
+const PAGE_SIZE = 10;
+
 export default function DormidosPage(): JSX.Element {
-  const { data, error, isLoading } = useDormidos();
+  const [page, setPage] = useState(1);
   const [sortField, setSortField] = useState<SortField>("dias_sin_venta");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const { data, error, isLoading } = useDormidos(page, PAGE_SIZE);
 
   function toggleSort(field: SortField) {
     if (sortField === field) {
@@ -36,26 +41,23 @@ export default function DormidosPage(): JSX.Element {
     }
   }
 
+  const sortedItems = data
+    ? [...data.productos].sort((a, b) => {
+        let cmp = 0;
+        if (sortField === "dias_sin_venta") {
+          cmp = a.dias_sin_venta - b.dias_sin_venta;
+        } else if (sortField === "ultima_compra") {
+          const da = a.ultima_compra ?? "";
+          const db = b.ultima_compra ?? "";
+          cmp = da.localeCompare(db);
+        }
+        return sortDir === "asc" ? cmp : -cmp;
+      })
+    : [];
+
   const criticos = data
     ? data.productos.filter((p) => p.dias_sin_venta > 180).length
     : 0;
-
-  const sortedItems = useMemo(() => {
-    if (!data) return [];
-    const items = [...data.productos];
-    items.sort((a, b) => {
-      let cmp = 0;
-      if (sortField === "dias_sin_venta") {
-        cmp = a.dias_sin_venta - b.dias_sin_venta;
-      } else if (sortField === "ultimo_movimiento") {
-        const da = a.ultimo_movimiento ?? "";
-        const db = b.ultimo_movimiento ?? "";
-        cmp = da.localeCompare(db);
-      }
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return items;
-  }, [data, sortField, sortDir]);
 
   // ── Loading ──────────────────────────────────────────────────
 
@@ -84,11 +86,11 @@ export default function DormidosPage(): JSX.Element {
         <Link href="/" className="text-sm text-accent hover:underline">
           ← Volver a inicio
         </Link>
-        <Card>
-          <p className="py-8 text-center text-text-muted">
-            Error al cargar datos de productos dormidos
-          </p>
-        </Card>
+        <ErrorState
+          title="Error al cargar"
+          message="No se pudieron obtener los datos de productos dormidos."
+          severity="warning"
+        />
       </div>
     );
   }
@@ -162,15 +164,15 @@ export default function DormidosPage(): JSX.Element {
             {
               header: (
                 <button
-                  onClick={() => toggleSort("ultimo_movimiento")}
+                  onClick={() => toggleSort("ultima_compra")}
                   className="flex items-center gap-1 font-medium text-text-secondary hover:text-text-primary"
                 >
-                  Última compra{sortField === "ultimo_movimiento" ? sortIcon(sortDir) : ""}
+                  Última compra{sortField === "ultima_compra" ? sortIcon(sortDir) : ""}
                 </button>
               ),
               cell: (p) =>
-                p.ultimo_movimiento ? (
-                  <span className="text-sm text-text-primary">{p.ultimo_movimiento}</span>
+                p.ultima_compra ? (
+                  <span className="text-sm text-text-primary">{p.ultima_compra}</span>
                 ) : (
                   <span className="text-xs text-text-muted">—</span>
                 ),
@@ -193,6 +195,12 @@ export default function DormidosPage(): JSX.Element {
           keyFn={(p) => p.cod_producto}
           striped
           emptyMessage="No hay productos dormidos en este período"
+        />
+        <Pagination
+          page={page}
+          total={data.total}
+          limit={PAGE_SIZE}
+          onPageChange={setPage}
         />
       </Card>
     </div>

@@ -129,9 +129,9 @@ interface AbcSegmentation {
 interface DormidoItem {
   cod_producto: string;
   nom_producto: string;
+  ultima_compra: string | null;
   dias_sin_venta: number;
-  stock_actual?: number;
-  ultimo_movimiento?: string;
+  stock_actual: number | null;
 }
 
 interface DormidosResponse {
@@ -180,8 +180,10 @@ export function useAbcSegmentation() {
   return useMetrics<AbcSegmentation>("/api/metrics/abc-segmentation");
 }
 
-export function useDormidos() {
-  return useMetrics<DormidosResponse>("/api/metrics/dormidos");
+export function useDormidos(page = 1, pageSize = 10) {
+  return useMetrics<DormidosResponse>(
+    `/api/metrics/dormidos?page=${page}&page_size=${pageSize}`,
+  );
 }
 
 export function useCohortes() {
