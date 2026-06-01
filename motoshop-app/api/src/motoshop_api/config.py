@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     databricks_http_path: str = Field(default="")
     databricks_volume_path: str = Field(default="/Volumes/motoshop/bronze/_landing")
 
+    # ─── DuckDB backend (V1.5) ────────────────────────────────────────
+    data_backend: str = Field(default="databricks", description="databricks | duckdb")
+    duckdb_path: str = Field(default="/tmp/motoshop_gold.duckdb", description="Path al archivo DuckDB local")
+
     @field_validator("jwt_secret")
     @classmethod
     def validate_jwt_secret(cls, v: str, info) -> str:

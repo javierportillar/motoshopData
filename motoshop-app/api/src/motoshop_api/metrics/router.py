@@ -25,6 +25,7 @@ from motoshop_api.metrics.repo import (
     MetricsRepoProtocol,
     RealMetricsRepo,
 )
+from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
 from motoshop_api.metrics.schemas import (
     AbcSegmentation,
     CohortesDetailResponse,
@@ -104,6 +105,12 @@ def _clear_metrics_cache():
 
 
 def get_repo() -> MetricsRepoProtocol:
+    # V1.5: DATA_BACKEND env var determina el backend
+    if settings.data_backend == "duckdb":
+        return DuckDBMetricsRepo(
+            db_path=settings.duckdb_path or "/tmp/motoshop_gold.duckdb"
+        )
+    # Legacy: Databricks
     if settings.env == "prod":
         return _get_real_metrics_repo()
     if settings.databricks_http_path and settings.databricks_host and settings.databricks_token:
