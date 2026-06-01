@@ -1,7 +1,7 @@
 # MASTER · Índice maestro del proyecto MotoShop
 
-> Entry point para revisar el proyecto end-to-end. Si abrís este archivo, vas a poder navegar a cualquier parte del proyecto sin tener que cazar archivos.  
-> Última actualización: 2026-05-31 (Sesión 65).
+> Entry point para revisar el proyecto end-to-end. Si abrís este archivo, vas a poder navegar a cualquier parte del proyecto sin tener que cazar archivos.
+> Última actualización: 2026-05-31 (Sesión 66 · V1.5 migración).
 
 ---
 
@@ -9,20 +9,36 @@
 
 | Campo | Valor |
 |-------|-------|
-| Fase activa | **Cierre V1 · Revisor GO/NO-GO** |
+| Fase activa | **V1.5 · Migración a DuckDB-first** |
 | Inicio del proyecto | 2026-05-27 |
-| Próximo gate | Producción F7-C real + Workflow Databricks 31/31 OK + auto-pull Windows + evidencia humana |
-| Avance global | F0-F6 cerradas · F7 sustantiva lista pero **NO-GO final** hasta pasar gates de producción/operación |
-| ADRs aceptados | 22 |
-| Riesgos vivos | Producción frontend stale, workflow Databricks F7-E-FIX1, demo 4G/gerencia pendiente |
+| Próximo gate | Sprint 0 spike de validación (DuckDBMetricsRepo con 1 endpoint) |
+| Avance global | F0-F7 backend cerrado · App productiva caída por revocación Databricks Serverless · V1.5 plan aprobado |
+| ADRs aceptados | 22 (0023 pendiente cierre Sprint 4) |
+| Riesgos vivos | RV1-RV7 documentados en `docs/plan-v1.5-duckdb.md` §6 |
 
 ```
-F0 ✅  F1 ✅ (+F1.5 +F1.9)  F2 ✅  F3 ✅ (+F3.5 +F3.6)  F4 ✅ (+FIX1)  F5 ✅ (+FIX1)  F6 ✅  F7 🟡 (pendiente gates de cierre V1)
+F0 ✅  F1 ✅ (+F1.5 +F1.9)  F2 ✅  F3 ✅ (+F3.5 +F3.6)  F4 ✅ (+FIX1)  F5 ✅ (+FIX1)  F6 ✅  F7 ✅
+─────────────────────────────────────────────────────────────────────────
+V1.5 🟡 Migración DuckDB — Sprints 0-5 pendientes, plan aprobado
+   └── Sprint 5 incluye búsqueda semántica de productos (DuckDB+vss+OpenAI embeddings)
+─────────────────────────────────────────────────────────────────────────
+V1.6 ⬜ IA aplicada (LLM) — Sprints A (briefing) → B (narrativa) → C (Q&A chat)
+   └── Trigger: V1.5 cerrado completo
+─────────────────────────────────────────────────────────────────────────
+V2  ⬜ Roadmap docs/roadmap-v2-produccion.md
 ```
 
-**Documento canónico de cierre actual:** [`docs/plan-cierre-v1-reviewer.md`](plan-cierre-v1-reviewer.md) — handoffs, gates y GO/NO-GO de revisor.
+**Documento canónico de plan activo:** [`docs/plan-v1.5-duckdb.md`](plan-v1.5-duckdb.md) — arquitectura, sprints, riesgos, DoD.
+
+**Plan post-V1.5 aprobado:** [`docs/plan-v1.6-llm.md`](plan-v1.6-llm.md) — capa de IA (briefing diario gerente, forecast narrativa, Q&A chat).
+
+**Handoffs de devs:** [`docs/handoffs-v1.5.md`](handoffs-v1.5.md) — briefs listos para pegar en chat de Dev D y Dev F. Handoff V1.6 (Dev L) se genera al activarse.
+
+**Audit forensic 2026-05-31:** [`docs/audit/F7-AUDIT.md`](audit/F7-AUDIT.md) — 26 bugs catalogados, root causes confirmados via SQL directo.
 
 **Documento canónico de tracking:** [`SEGUIMIENTO.md`](../SEGUIMIENTO.md) — bitácora viva por sesión + tablero de riesgos.
+
+**Doc canónico anterior (DEPRECATED):** ~~`docs/plan-cierre-v1-reviewer.md`~~ — reemplazado por V1.5 cuando Databricks revocó Serverless.
 
 ---
 

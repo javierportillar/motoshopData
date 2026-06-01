@@ -290,17 +290,23 @@ export default function VentasPage(): JSX.Element {
   // ── Vista histórica ─────────────────────────────────────────
 
   function renderHistorica(): JSX.Element {
-    if (!dh) return <ErrorState title="Sin datos" message="No hay histórico de ventas disponible." severity="warning" />;
-    const histItems = dh.meses.map((m) => ({
-      label: `${MONTH_NAMES[m.month - 1]} ${m.year}`,
+    // F7-FIX1 bug 5.2b: incógnito reportó "Cannot read 'meses' of undefined" —
+    // doble guard: dh puede existir pero meses puede ser undefined si el deploy
+    // sirvió un bundle intermedio. Defensa explícita en todos los accesos.
+    if (!dh || !Array.isArray(dh.meses)) {
+      return <ErrorState title="Sin datos" message="No hay histórico de ventas disponible." severity="warning" />;
+    }
+    const meses = dh.meses;
+    const histItems = meses.map((m) => ({
+      label: `${MONTH_NAMES[m.month - 1] ?? ""} ${m.year}`,
       ventas: m.total_ventas,
       facturas: m.num_facturas,
     }));
-    const numMeses = dh.meses.length;
+    const numMeses = meses.length;
     const promMensual = numMeses > 0 ? dh.total_ventas / numMeses : 0;
-    const primer = numMeses > 0 ? dh.meses[0] : null;
+    const primer = numMeses > 0 ? meses[0] : null;
     const primerMes = primer
-      ? `${MONTH_NAMES[primer.month - 1]} ${primer.year}`
+      ? `${MONTH_NAMES[primer.month - 1] ?? ""} ${primer.year}`
       : dh.fecha_primera_venta ?? "—";
     return (
       <>
@@ -340,7 +346,7 @@ export default function VentasPage(): JSX.Element {
 
   // ── Render principal ────────────────────────────────────────
 
-  const totalMesesHist = dh?.meses.length ?? 0;
+  const totalMesesHist = Array.isArray(dh?.meses) ? dh.meses.length : 0;
 
   return (
     <div className="space-y-4">

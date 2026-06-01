@@ -8,7 +8,92 @@
 
 ---
 
+## Sesión 2026-05-31 (66) · V1.5 Migración DuckDB · Kickoff pendiente
+
+**Estado:** Plan V1.5 aprobado por PO (humano). Ejecución pendiente de arranque por Dev D. Backend Olas 1-4 del audit F7 ya están cerradas y deployadas. App productiva está caída por revocación de Serverless Compute en Databricks Free Edition (no es bug nuestro, es decisión de Databricks).
+
+**Plan canónico V1.5:** [`docs/plan-v1.5-duckdb.md`](docs/plan-v1.5-duckdb.md)
+**Plan post-V1.5 aprobado V1.6 IA:** [`docs/plan-v1.6-llm.md`](docs/plan-v1.6-llm.md) (kickoff diferido hasta cerrar V1.5)
+**Handoffs devs:** [`docs/handoffs-v1.5.md`](docs/handoffs-v1.5.md)
+**Audit forensic del 31-05:** [`docs/audit/F7-AUDIT.md`](docs/audit/F7-AUDIT.md)
+
+### Contexto duro
+
+- ✅ Backend F7 auditado: 26 bugs catalogados, 21 cerrados (commits `a1c337c` + `d5016b0` en main)
+- ✅ Pre-migración: 17/17 endpoints respondían HTTP 200 contra Databricks (último snapshot en `docs/audit/raw_responses.json`)
+- 🔴 2026-05-31 14:00 COL: Databricks revocó Serverless Compute al workspace → warehouse no arranca → 100% endpoints 500
+- ❌ Workaround Databricks pago descartado por PO (objetivo "para siempre" sin pagar)
+- ✅ Decisión arquitectónica: migrar a DuckDB-first ($0/mes for ever)
+- ⬜ ADR-0023 redactar y firmar como parte del Sprint 4
+
+### Pendientes del humano (Javier · PO)
+
+| # | Tarea | Bloqueante | Acción concreta |
+|---|-------|------------|-----------------|
+| 1 | **Kickoff Sprint 0 con Dev D** | Todo el plan | Abrir chat con Dev D, pegar Handoff #1 de `docs/handoffs-v1.5.md`, esperar GO de revisor para Sprint 1 |
+| 2 | **Crear bucket Cloudflare R2** | Sprint 0 | En dashboard Cloudflare → R2 → Create bucket `motoshop-gold` → generar API token con permiso write → guardar en `.env` |
+| 3 | **Decidir bridge mientras migramos** | UX externa | B.1 (FakeMetricsRepo con header DEMO MODE, 30 min) o B.2 (app dura 24-48h). Revisor recomienda B.2 si no hay stakeholder mirando |
+| 4 | **Demos a stakeholder** | Defensa académica | Solo después de Sprint 4 (cutover). Antes no muestra cifras reales |
+| 5 | **Kickoff Sprint 5 con Dev F** | Sprint 4 cerrado | Pegar Handoff #2 cuando Dev D termine y revisor firme GO |
+| 6 | **Coordinar Dev W para Scheduled Task** | Sprint 3 cerrado | Pegar Handoff opcional de `docs/handoffs-v1.5.md` |
+
+### Pendientes del revisor (IA · agente)
+
+| # | Tarea | Cuándo |
+|---|-------|--------|
+| 1 | Auditar cierre Sprint 0 (spike) | Cuando Dev D reporte cifras vs snapshot |
+| 2 | Auditar cierre Sprint 1 (pipeline) | Cuando paridad tests PASS |
+| 3 | Auditar cierre Sprint 2 (repo) | Cuando 17/17 endpoints local pasen con cifras 0-diff |
+| 4 | Auditar cierre Sprint 3 (refresh) | Cuando refresh manual + automático funcione |
+| 5 | Auditar cierre Sprint 4 (cutover) | Cuando 17/17 endpoints prod 200 con DuckDB |
+| 6 | Redactar ADR-0023 | Como parte del cierre Sprint 4 |
+| 7 | Auditar cierre Sprint 5 (frontend) | Después de los 7 bugs cerrados con screenshots |
+| 8 | Cerrar V1.5 y actualizar E5 memoria final | Cuando todos los sprints cerrados |
+
+### Decisiones diferidas a V2 (ya documentadas)
+
+- R14 — Remover Prophet/LightGBM scripts (post-migración limpiar)
+- R15 — Rotar credenciales `users.yaml` (post-migración)
+- R16 — SPOF Windows en pipeline batch (acotado: app sigue sirviéndose con último DuckDB)
+- Migrar tablas `app_*` de MySQL a Postgres dedicado (post-V1.5)
+
+### Bugs cerrados en sesión 65 antes de la caída de Databricks
+
+Estos están en `main` (commits `a1c337c` y `d5016b0`) y se aplicarán automáticamente cuando DuckDB esté detrás:
+
+- ✅ DORMIDOS 500 (columna `ultima_fecha_venta`)
+- ✅ COHORTES 500 (DATE_FORMAT a YYYY-MM)
+- ✅ SALES_TREND/DAILY/MONTHLY 500 (typed params SDK)
+- ✅ INVENTORY "SIN NOMBRE" (CASE con dim_bodega real)
+- ✅ VENDEDORES NIT vacío (COALESCE → "Sin asignar")
+- ✅ PLAN_COMPRAS duplicados ABC (dedup con ROW_NUMBER)
+- ✅ Home re-render loop (Zustand persist + hasHydrated)
+- ✅ Ventas crash mensual tab (non-null assertion removido)
+- ✅ Ventas crash incógnito (Array.isArray guard adicional, fix local sin push)
+- ✅ Tendencia mensual home + ventas con comparativa año actual vs anterior
+- ✅ Forecast rediseñado: categoría como vista principal + copy ADR-0020
+- ✅ Cohortes empty-state pedagógico + flag muestra_pequena
+- ✅ Alertas "Ver SKU" rota → "Ver plan" hacia plan-compras
+
+### Bugs pendientes confirmados por PO el 2026-05-31 (Sprint 5)
+
+| Bug | Reporte exacto del PO | Asignado | Sprint |
+|-----|-----------------------|----------|--------|
+| ABC detalle | "necesito más información, productos dentro de cada distribución" | Dev F | 5 |
+| Forecast default | "que salga por default las más altas sin necesidad de buscar" | Dev F | 5 |
+| Vendedor detalle | "error no se pudieron cargar los datos del vendedor" | Dev F | 5 |
+| Cohortes ticket=0 | "veo meses con ticket promedio en 0, algo raro" | Dev F | 5 |
+| Alertas media/baja | "no hay alertas media ni baja" | Dev D (Sprint 1) | 1 |
+| Acciones cascada | "solo hay de alertas alta" | Dev D (Sprint 1) | 1 |
+| Drift sin datos | "dice que no se detectaron desviaciones" | Dev D (Sprint 1) | 1 |
+| Plan compras urgencia | "filtros media/baja no funcionan, solo alta" | Dev D (Sprint 1) | 1 |
+| Performance | "la aplicación tarda en cargar" | Dev F + arquitectura DuckDB | 5 (y se mejora solo por la migración) |
+
+---
+
 ## Sesión 2026-05-31 (65) · Cierre V1 · Revisor GO/NO-GO
+
+> **DEPRECATED por sesión 66.** El plan de cierre V1 quedó obsoleto cuando Databricks revocó Serverless Compute el mismo día. Se reemplazó por el plan V1.5 (migración a DuckDB). Lo que está abajo se conserva como audit trail de lo que se intentó antes de la migración.
 
 **Estado:** V1 todavía **NO está cerrada**. El revisor detectó que F7-C existe en el repo local y compila, pero producción `https://app.fragloesja.uk` no sirve todavía las rutas nuevas. Además, F7-E-FIX1 y auto-pull Windows siguen pendientes de evidencia.
 
