@@ -157,3 +157,89 @@ def fact_compras_detalle(con: duckdb.DuckDBPyConnection) -> None:
             ON TRIM(d.numfcom) = h.num_documento
             AND TRIM(d.codclas) = h.cod_clase
     """)
+
+
+def fact_inventario(con: duckdb.DuckDBPyConnection) -> None:
+    """Port de 14_fact_inventario: lee bronze.auxinventario → silver.fact_inventario.
+
+    Solo funciona con MySQL disponible (bronze_auxinventario). En modo seed,
+    esta tabla se crea vacía y gold.py usa dim_producto como fallback.
+    """
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS motoshop_silver_fact_inventario (
+            id_inventario BIGINT,
+            cod_lista VARCHAR,
+            nombre_lista VARCHAR,
+            cod_linea1 VARCHAR,
+            nombre_linea VARCHAR,
+            cod_linea2 VARCHAR,
+            nombre_linea2 VARCHAR,
+            cod_bodega VARCHAR,
+            nombre_bodega VARCHAR,
+            nit_tercero VARCHAR,
+            nombre_tercero VARCHAR,
+            num_documento VARCHAR,
+            nombre_documento VARCHAR,
+            cod_producto VARCHAR,
+            num_serie VARCHAR,
+            nombre_producto VARCHAR,
+            unidad_medida VARCHAR,
+            valor_costo DOUBLE,
+            valor_venta DOUBLE,
+            cantidad DOUBLE,
+            valor4 DOUBLE,
+            valor5 DOUBLE,
+            business_date DATE,
+            num_doc_referencia VARCHAR,
+            nombre_sub VARCHAR,
+            multiplo DOUBLE,
+            cod_centro_costo VARCHAR,
+            nombre_centro_costo VARCHAR
+        )
+    """)
+
+    # Verificar que bronze_auxinventario existe (solo con MySQL)
+    has_bronze = False
+    try:
+        con.execute("SELECT 1 FROM bronze_auxinventario LIMIT 1").fetchone()
+        has_bronze = True
+    except Exception:
+        pass
+
+    if has_bronze:
+        con.execute("""
+            INSERT INTO motoshop_silver_fact_inventario
+            SELECT
+                ROW_NUMBER() OVER ()              AS id_inventario,
+                TRIM(codlis)                      AS cod_lista,
+                TRIM(nomlis)                      AS nombre_lista,
+                TRIM(codlin1)                     AS cod_linea1,
+                TRIM(nomlin)                      AS nombre_linea,
+                TRIM(codlin2)                     AS cod_linea2,
+                TRIM(nomlin2)                     AS nombre_linea2,
+                TRIM(codbod)                      AS cod_bodega,
+                TRIM(nombod)                      AS nombre_bodega,
+                TRIM(nitter)                      AS nit_tercero,
+                TRIM(nomter)                      AS nombre_tercero,
+                TRIM(numdoc)                      AS num_documento,
+                TRIM(nomdoc)                      AS nombre_documento,
+                TRIM(codprod)                     AS cod_producto,
+                TRIM(sernum)                      AS num_serie,
+                TRIM(nomprod)                     AS nombre_producto,
+                TRIM(unimed)                      AS unidad_medida,
+                CAST(valor1 AS DOUBLE)            AS valor_costo,
+                CAST(valor2 AS DOUBLE)            AS valor_venta,
+                CAST(valor3 AS DOUBLE)            AS cantidad,
+                CAST(valor4 AS DOUBLE)            AS valor4,
+                CAST(valor5 AS DOUBLE)            AS valor5,
+                CAST(docfec AS DATE)              AS business_date,
+                TRIM(docnum)                      AS num_doc_referencia,
+                TRIM(nomsub)                      AS nombre_sub,
+                CAST(multiplo AS DOUBLE)          AS multiplo,
+                TRIM(codcos)                      AS cod_centro_costo,
+                TRIM(nomcos)                      AS nombre_centro_costo
+            FROM bronze_auxinventario
+            WHERE docfec IS NOT NULL
+              AND CAST(docfec AS DATE) >= DATE '2020-01-01'
+              AND CAST(docfec AS DATE) <= CURRENT_DATE
+        """)

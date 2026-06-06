@@ -403,11 +403,11 @@ class DuckDBMetricsRepo:
         if not rows:
             raise RuntimeError("No inventory data found in gold mart")
         r = rows[0]
-        valor_total = float(valor[0]["valor_total"])
+        valor_total = float(valor[0]["valor_total"]) if valor else 0.0
         return InventorySummary(
-            stock_total=float(r["stock_total"]),
+            stock_total=float(r["stock_total"] or 0),
             valor_total=valor_total,
-            num_productos=int(r["num_productos"]),
+            num_productos=int(r["num_productos"] or 0),
             por_bodega=[BodegaItem(**b) for b in bodegas],
         )
 
@@ -502,8 +502,8 @@ class DuckDBMetricsRepo:
     def get_cohortes(self) -> CohortesResponse:
         rows = self._query("""
             SELECT
-                STRFTIME(mes_cohorte, '%Y-%m') AS cohorte_mes,
-                STRFTIME(business_month, '%Y-%m') AS mes_observacion,
+                STRFTIME(TRY_CAST(mes_cohorte AS DATE), '%Y-%m') AS cohorte_mes,
+                STRFTIME(TRY_CAST(business_month AS DATE), '%Y-%m') AS mes_observacion,
                 COUNT(DISTINCT nit_cliente) AS num_clientes,
                 ROUND(AVG(ticket_promedio), 2) AS ticket_promedio,
                 ROUND(SUM(CASE WHEN compro_este_mes THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 2) AS tasa_recurrencia
@@ -663,7 +663,7 @@ class DuckDBMetricsRepo:
 
     def get_cohortes_detail(self) -> CohortesDetailResponse:
         cohortes_rows = self._query("""
-            SELECT STRFTIME(mes_cohorte, '%Y-%m-01') AS cohorte_mes,
+            SELECT STRFTIME(TRY_CAST(mes_cohorte AS DATE), '%Y-%m-01') AS cohorte_mes,
                    COUNT(DISTINCT nit_cliente) AS total_clientes,
                    ROUND(AVG(ticket_promedio), 2) AS ltv_promedio
             FROM motoshop_gold_mart_cohortes_clientes
@@ -671,8 +671,8 @@ class DuckDBMetricsRepo:
             ORDER BY mes_cohorte
         """)
         retencion_rows = self._query("""
-            SELECT STRFTIME(mes_cohorte, '%Y-%m-01') AS cohorte_mes,
-                   STRFTIME(business_month, '%Y-%m-01') AS mes_observacion,
+            SELECT STRFTIME(TRY_CAST(mes_cohorte AS DATE), '%Y-%m-01') AS cohorte_mes,
+                   STRFTIME(TRY_CAST(business_month AS DATE), '%Y-%m-01') AS mes_observacion,
                    COUNT(DISTINCT nit_cliente) AS num_clientes,
                    ROUND(SUM(CASE WHEN compro_este_mes THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 2) AS tasa_recurrencia
             FROM motoshop_gold_mart_cohortes_clientes

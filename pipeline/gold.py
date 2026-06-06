@@ -34,19 +34,63 @@ def mart_ventas_diarias_sku(con: duckdb.DuckDBPyConnection) -> None:
 
 
 def mart_inventario_actual(con: duckdb.DuckDBPyConnection) -> None:
-    con.execute("""
-        CREATE OR REPLACE TABLE motoshop_gold_mart_inventario_actual AS
-        SELECT
-            dp.cod_producto,
-            COALESCE(dp.nombre_producto, 'SIN NOMBRE') AS nom_producto,
-            COALESCE(dp.cod_bodega_default, '') AS cod_bodega,
-            COALESCE(db.nombre_bodega, 'SIN NOMBRE') AS nom_bodega,
-            COALESCE(dp.existencia, 0) AS cantidad_actual,
-            CURRENT_DATE AS snapshot_date
-        FROM motoshop_silver_dim_producto dp
-        LEFT JOIN motoshop_silver_dim_bodega db
-            ON dp.cod_bodega_default = db.cod_bodega
-    """)
+    # Intenta usar fact_inventario (Databricks original). Si no tiene datos
+    # (seed sin MySQL), cae a dim_producto como fallback.
+    has_fact_inventario = False
+    try:
+        count = con.execute("SELECT COUNT(*) FROM motoshop_silver_fact_inventario").fetchone()[0]
+        has_fact_inventario = count > 0
+    except Exception:
+        pass
+
+    if has_fact_inventario:
+        con.execute("""
+            CREATE OR REPLACE TABLE motoshop_gold_mart_inventario_actual AS
+            WITH ultimo_inventario AS (
+                SELECT
+                    cod_producto,
+                    cod_bodega,
+                    cantidad,
+                    valor_costo,
+                    business_date,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY cod_producto, cod_bodega
+                        ORDER BY business_date DESC, id_inventario DESC
+                    ) AS rn
+                FROM motoshop_silver_fact_inventario
+                WHERE business_date >= DATE '2020-01-01'
+                  AND business_date <= CURRENT_DATE
+            )
+            SELECT
+                ui.cod_producto,
+                COALESCE(dp.nombre_producto, 'SIN NOMBRE') AS nom_producto,
+                ui.cod_bodega,
+                COALESCE(db.nombre_bodega, 'SIN NOMBRE') AS nom_bodega,
+                ROUND(ui.cantidad, 2) AS cantidad_actual,
+                CURRENT_DATE AS snapshot_date
+            FROM ultimo_inventario ui
+            LEFT JOIN motoshop_silver_dim_producto dp
+                ON ui.cod_producto = dp.cod_producto
+            LEFT JOIN motoshop_silver_dim_bodega db
+                ON ui.cod_bodega = db.cod_bodega
+            WHERE ui.rn = 1
+        """)
+    else:
+        # Fallback seed: usa dim_producto (todos los productos, no solo los que
+        # tienen registro en fact_inventario). Produce ~6185 filas vs 4829 del export.
+        con.execute("""
+            CREATE OR REPLACE TABLE motoshop_gold_mart_inventario_actual AS
+            SELECT
+                dp.cod_producto,
+                COALESCE(dp.nombre_producto, 'SIN NOMBRE') AS nom_producto,
+                COALESCE(dp.cod_bodega_default, '') AS cod_bodega,
+                COALESCE(db.nombre_bodega, 'SIN NOMBRE') AS nom_bodega,
+                COALESCE(dp.existencia, 0) AS cantidad_actual,
+                CURRENT_DATE AS snapshot_date
+            FROM motoshop_silver_dim_producto dp
+            LEFT JOIN motoshop_silver_dim_bodega db
+                ON dp.cod_bodega_default = db.cod_bodega
+        """)
 
 
 def mart_rotacion_abc(con: duckdb.DuckDBPyConnection) -> None:
@@ -133,10 +177,13 @@ def mart_productos_dormidos(con: duckdb.DuckDBPyConnection) -> None:
 def alertas_quiebre(con: duckdb.DuckDBPyConnection) -> None:
     con.execute("""
         CREATE OR REPLACE TABLE motoshop_gold_alertas_quiebre AS
-        WITH demanda_7d AS (
+        WITH max_date AS (
+            SELECT MAX(business_date) AS max_bd FROM motoshop_silver_fact_ventas_detalle
+        ),
+        demanda_7d AS (
             SELECT cod_producto, SUM(cantidad) / 7.0 AS demanda_promedio
-            FROM motoshop_silver_fact_ventas_detalle
-            WHERE business_date >= CURRENT_DATE - INTERVAL '7' DAY
+            FROM motoshop_silver_fact_ventas_detalle, max_date
+            WHERE business_date >= max_date.max_bd - INTERVAL '7' DAY
             GROUP BY cod_producto
         ),
         stock_actual AS (
