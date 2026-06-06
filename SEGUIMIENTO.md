@@ -1802,6 +1802,51 @@ _(rellenar al cerrar la fase — ver docs/lecciones-aprendidas-f6.md)_
 
 ---
 
+## V1.5 Cutover — DuckDB read backend
+
+> **Fecha:** 2026-06-06 | **PR:** feat/v1.5-spike-sprint0 → main | **ADR:** [0023](docs/decisions/0023-read-backend-duckdb.md)
+
+### Contexto
+Databricks revocó Serverless Free Edition 2026-05-31. Warehouse SQL intermitente. 10/17 endpoints HTTP 500. Se migra el read path completo a DuckDB.
+
+### Sprints cerrados
+
+| Sprint | Commit | Qué |
+|--------|--------|-----|
+| 0 — Spike | `9a901b4` | sales_summary 0-diff, bootstrap R2, push limpio GH |
+| 1 — Pipeline | `47f06f6` | pipeline bronze→silver(7)→gold(10) cableado |
+| 2 — Endpoints | `a072b9c` | 14 endpoints DuckDBMetricsRepo (16/16 HTTP 200) |
+| 3 — Admin | `d2b8767` | POST /api/admin/data/refresh, health DuckDB, COALESCE fix |
+
+### Métricas before/after
+
+| Métrica | Before (Databricks) | After (DuckDB) |
+|---------|---------------------|----------------|
+| Endpoints 200 | 7/17 (41%) | 16/16 (100%) |
+| Latencia avg | 500ms–timeout | **13ms** |
+| Costo mensual | $0 (Free) → roto | $0 (R2 free tier) |
+| Fiabilidad | Intermitente (warehouse) | Determinístico (archivo local) |
+
+### Datos
+- `docs/audit/raw_responses.json` — snapshot pre-V1.5 (Databricks). El revisor lo regenerará post-cutover como nuevo gold standard.
+- DuckDB: `out/motoshop_gold.duckdb` (~15 MB, 105K filas, 15 tablas)
+- R2 bucket: `motoshop-gold/motoshop_gold.duckdb`
+
+### Render env vars requeridas
+```
+DATA_BACKEND=duckdb
+DUCKDB_PATH=/tmp/motoshop_gold.duckdb
+R2_ENDPOINT=<r2-endpoint>
+R2_ACCESS_KEY_ID=<r2-key>
+R2_SECRET_ACCESS_KEY=<r2-secret>
+R2_BUCKET=motoshop-gold
+```
+
+### Rollback
+Si DuckDB falla: `DATA_BACKEND=databricks` → redeploy Render. Sin migración de datos que revertir.
+
+---
+
 ## Reglas de oro del proyecto
 
 > Principios para no perder el norte cuando aparezcan tentaciones de atajos.
