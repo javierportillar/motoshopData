@@ -177,6 +177,100 @@ Asimetría histórica resuelta: ahora los 3 ambientes son self-updating.
 
 ---
 
+## V1.5 Refresh — DuckDB Data Refresh (NEW)
+
+> **Sprint 3** · Reemplaza el nightly push a Databricks con un refresh directo del archivo DuckDB desde R2.
+> El pipeline `run_all.py` corre en Linux/Mac (via GitHub Actions o manual) y sube `motoshop_gold.duckdb` a R2.
+> Windows solo necesita refrescar el archivo local desde R2 sin reiniciar uvicorn.
+
+### Qué hace
+
+1. `POST /api/admin/data/refresh` (admin-only) descarga el nuevo DuckDB desde R2 y limpia el cache
+2. El endpoint NUNCA reinicia uvicorn — la próxima request usa los datos frescos
+3. `/health/data-freshness` reporta el lag desde el último refresh (mtime del archivo)
+
+### Setup (una sola vez)
+
+#### 1. Configurar R2 en el .env
+
+```powershell
+# Agregar a motoshop-app\api\.env:
+R2_ENDPOINT=https://<account>.r2.cloudflarestorage.com
+R2_ACCESS_KEY_ID=<key>
+R2_SECRET_ACCESS_KEY=<secret>
+R2_BUCKET=motoshop-gold
+DATA_BACKEND=duckdb
+DUCKDB_PATH=C:\Users\MotoShop\Documents\javidevmoto\out\motoshop_gold.duckdb
+```
+
+#### 2. Obtener token JWT de admin
+
+```powershell
+# Desde el mismo directorio que la API
+cd motoshop-app\api\src
+$env:JWT_SECRET = "tu-secret-real"
+python -c "
+from motoshop_api.auth.jwt import create_access_token
+print(create_access_token('admin', 'admin'))
+"
+```
+
+Guardar el token como variable de entorno `MOTO_API_TOKEN` en el Scheduled Task.
+
+#### 3. Crear Scheduled Task (02:00 COL diario)
+
+```powershell
+$action = New-ScheduledTaskAction `
+    -Execute "powershell.exe" `
+    -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Users\MotoShop\Documents\javidevmoto\infra\refresh_v15.ps1"
+
+$trigger = New-ScheduledTaskTrigger -Daily -At "02:00"
+
+$principal = New-ScheduledTaskPrincipal `
+    -UserId "MotoShop" `
+    -LogonType S4U `
+    -RunLevel Highest
+
+Register-ScheduledTask `
+    -TaskName "MotoShop_V15_Refresh" `
+    -Action $action `
+    -Trigger $trigger `
+    -Principal $principal `
+    -Description "V1.5 DuckDB refresh from R2 diario a las 02:00 COL"
+```
+
+#### 4. Probar manual
+
+```powershell
+$env:MOTO_API_TOKEN = "tu-token-jwt"
+powershell -ExecutionPolicy Bypass -File infra\refresh_v15.ps1 -Verbose
+
+# Ver log
+Get-Content infra\logs\refresh_v15.log -Tail 20
+```
+
+### Cómo funciona el refresh sin restart
+
+El endpoint `POST /api/admin/data/refresh`:
+1. Borra el archivo DuckDB local
+2. Lo descarga fresco desde R2 via boto3
+3. Llama a `_clear_metrics_cache()` que vacía el TTL cache de todos los endpoints
+4. La próxima request a cualquier `/api/metrics/*` instancia un `DuckDBMetricsRepo` nuevo que abre el archivo actualizado
+
+No hay mutación de singletons ni restart de uvicorn. La arquitectura `Depends(get_repo)` de FastAPI crea una conexión fresh por request.
+
+### Monitoreo
+
+```powershell
+# Ver último refresh
+curl http://localhost:8000/health/data-freshness
+
+# Ver log de refreshes
+Get-Content infra\logs\refresh_v15.log -Tail 20
+```
+
+---
+
 ## Roadmap V2
 
 Esto entra como mitigación parcial de **R-V2-27 (Sin CI/CD pipeline real)** del `docs/roadmap-v2-produccion.md`. En V2 producción, esto se reemplaza por:

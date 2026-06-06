@@ -29,6 +29,7 @@ from motoshop_api.health.router import router as health_router
 from motoshop_api.metrics.router import router as metrics_router
 from motoshop_api.push.router import router as push_router
 from motoshop_api.forecast.router import router as forecast_router
+from motoshop_api.admin.router import router as admin_router
 from motoshop_api.alerts.router import router as alerts_router
 from motoshop_api.app_writes.router import router as app_writes_router
 from motoshop_api.purchase_plans.router import router as purchase_plans_router
@@ -124,6 +125,7 @@ app.include_router(health_router, prefix="/api")
 app.include_router(metrics_router, prefix="/api")
 app.include_router(push_router, prefix="/api")
 app.include_router(forecast_router, prefix="/api")
+app.include_router(admin_router, prefix="/api")
 app.include_router(alerts_router, prefix="/api")
 app.include_router(app_writes_router, prefix="/api")
 app.include_router(purchase_plans_router, prefix="/api")

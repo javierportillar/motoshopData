@@ -222,8 +222,8 @@ class DuckDBMetricsRepo:
         mes_actual = rows[0]
         mes_anterior = rows[1] if len(rows) > 1 else None
 
-        va_actual = float(mes_actual["ventas_mes"])
-        va_anterior = float(mes_anterior["ventas_mes"]) if mes_anterior else 0.0
+        va_actual = float(mes_actual["ventas_mes"] or 0.0)
+        va_anterior = float(mes_anterior["ventas_mes"] or 0.0) if mes_anterior else 0.0
 
         return SalesSummary(
             business_month=str(mes_actual["business_month"]),
@@ -232,7 +232,7 @@ class DuckDBMetricsRepo:
             delta_porcentual=round(
                 (va_actual - va_anterior) / va_anterior * 100, 1
             ) if mes_anterior and va_anterior else None,
-            ticket_promedio=float(mes_actual["ticket_promedio"]),
+            ticket_promedio=float(mes_actual["ticket_promedio"] or 0.0),
             num_facturas=int(mes_actual["num_facturas"]),
             top_skus=[TopSkuItem(**r) for r in top],
         )
@@ -272,8 +272,8 @@ class DuckDBMetricsRepo:
         t = totals[0]
         return SalesDailyResponse(
             date=effective_date,
-            total_ventas=float(t["total_ventas"]),
-            total_facturas=int(t["total_facturas"]),
+            total_ventas=float(t["total_ventas"] or 0.0),
+            total_facturas=int(t["total_facturas"] or 0),
             productos_vendidos=[SalesDailyItem(**r) for r in productos],
         )
 
@@ -282,13 +282,13 @@ class DuckDBMetricsRepo:
     def get_sales_monthly(self, month: str) -> SalesMonthlyResponse:
         totals = self._query("""
             SELECT
-                ROUND(SUM(valor_total), 2) AS total_ventas,
+                ROUND(COALESCE(SUM(valor_total), 0.0), 2) AS total_ventas,
                 COALESCE(SUM(num_facturas), 0) AS total_facturas
             FROM motoshop_gold_mart_ventas_diarias_sku
             WHERE STRFTIME(business_date, '%Y-%m') = ?
         """, [month])
         prev = self._query("""
-            SELECT ROUND(SUM(valor_total), 2) AS total_ventas
+            SELECT ROUND(COALESCE(SUM(valor_total), 0.0), 2) AS total_ventas
             FROM motoshop_gold_mart_ventas_diarias_sku
             WHERE STRFTIME(business_date, '%Y-%m') = ?
         """, [_prev_month_str(month)])
@@ -308,8 +308,8 @@ class DuckDBMetricsRepo:
         if not totals:
             raise RuntimeError(f"No sales data found for month {month}")
         t = totals[0]
-        va_actual = float(t["total_ventas"])
-        va_anterior = float(prev[0]["total_ventas"]) if prev else 0.0
+        va_actual = float(t["total_ventas"] or 0.0)
+        va_anterior = float(prev[0]["total_ventas"] or 0.0) if prev else 0.0
         delta = round((va_actual - va_anterior) / va_anterior * 100, 1) if va_anterior else None
         return SalesMonthlyResponse(
             month=month,
@@ -347,8 +347,8 @@ class DuckDBMetricsRepo:
         t = totals[0]
         fecha_primera = str(first[0]["first_date"]) if first and first[0].get("first_date") else None
         return SalesHistoricalResponse(
-            total_ventas=float(t["total_ventas"]),
-            total_facturas=int(t["total_facturas"]),
+            total_ventas=float(t["total_ventas"] or 0.0),
+            total_facturas=int(t["total_facturas"] or 0),
             meses=[SalesTrendItem(**r) for r in meses],
             fecha_primera_venta=fecha_primera,
         )
@@ -551,9 +551,9 @@ class DuckDBMetricsRepo:
         for r in rows:
             r["year"] = int(r["year"])
             r["month"] = int(r["month"])
-            r["total_ventas"] = float(r["total_ventas"])
-            r["num_facturas"] = int(r["num_facturas"])
-            r["ticket_promedio"] = float(r["ticket_promedio"])
+            r["total_ventas"] = float(r["total_ventas"] or 0.0)
+            r["num_facturas"] = int(r["num_facturas"] or 0)
+            r["ticket_promedio"] = float(r["ticket_promedio"] or 0.0)
         return SalesTrendResponse(periods=periods, items=[SalesTrendItem(**r) for r in rows])
 
     # ── Vendedores Summary ───────────────────────────────────────────────
@@ -585,8 +585,8 @@ class DuckDBMetricsRepo:
             return VendedoresSummaryResponse(items=[])
         for r in rows:
             r["facturas"] = int(r["facturas"])
-            r["total_ventas"] = float(r["total_ventas"])
-            r["ticket_promedio"] = float(r["ticket_promedio"])
+            r["total_ventas"] = float(r["total_ventas"] or 0.0)
+            r["ticket_promedio"] = float(r["ticket_promedio"] or 0.0)
         return VendedoresSummaryResponse(items=[VendedorItem(**r) for r in rows])
 
     # ── Vendedor Detail ────────────────────────────────────────────────
@@ -614,7 +614,7 @@ class DuckDBMetricsRepo:
             from fastapi import HTTPException
             raise HTTPException(status_code=404, detail="Vendedor no encontrado")
         row = stats[0]
-        actual = float(row["ventas_total"])
+        actual = float(row["ventas_total"] or 0.0)
 
         categorias = self._query(f"""
             SELECT 'GENÉRICO' AS categoria, CAST(SUM(total_factura) AS DOUBLE) AS total
@@ -654,7 +654,7 @@ class DuckDBMetricsRepo:
             nombre=str(row["nombre_vendedor"]),
             ventas_total=actual,
             ventas_por_categoria=[VendedorCategoriaItem(**c) for c in cats],
-            ticket_promedio=round(float(row["ticket_promedio"]), 2),
+            ticket_promedio=round(float(row["ticket_promedio"] or 0.0), 2),
             productos_vendidos=prod_count,
             comparacion_mes_anterior=VendedorComparacion(actual=actual, anterior=ant_val, delta=delta),
         )
@@ -875,9 +875,9 @@ class DuckDBMetricsRepo:
             logger.warning("No forecast categoria data found")
             return ForecastCategoriaResponse(items=[], total_categorias=0, wape_promedio=0.0, cobertura_pct=0.0)
         for r in rows:
-            r["demanda_real"] = float(r["demanda_real"])
-            r["demanda_predicha"] = float(r["demanda_predicha"])
-            r["desviacion_pct"] = float(r["desviacion_pct"])
+            r["demanda_real"] = float(r["demanda_real"] or 0.0)
+            r["demanda_predicha"] = float(r["demanda_predicha"] or 0.0)
+            r["desviacion_pct"] = float(r["desviacion_pct"] or 0.0)
         wape = sum(abs(r["demanda_real"] - r["demanda_predicha"]) for r in rows) / sum(r["demanda_real"] for r in rows) * 100
         cobertura = float(coverage_row[0]["cobertura_pct"]) if coverage_row else 99.9
         return ForecastCategoriaResponse(

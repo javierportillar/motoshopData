@@ -7,6 +7,12 @@ Modos:
 - mysql: lee MySQL bronze → silver → gold (produccion Windows, requiere MySQL accesible)
 
 El DuckDB final es out/motoshop_gold.duckdb y contiene tablas bronze, silver y gold.
+
+Usage:
+    python -m pipeline.run_all
+
+No funciona con `python pipeline/run_all.py` directo porque usa imports
+relativos (from pipeline import gold, silver). Siempre usar -m.
 """
 
 from __future__ import annotations
