@@ -56,6 +56,37 @@ _DEFAULT_DB_PATH = Path(os.environ.get(
 ))
 
 
+def _bootstrap_duckdb_from_r2(db_path: Path) -> None:
+    """Descarga motoshop_gold.duckdb desde R2 si no existe localmente."""
+    if db_path.exists():
+        return
+
+    r2_endpoint = os.environ.get("R2_ENDPOINT")
+    r2_key = os.environ.get("R2_ACCESS_KEY_ID")
+    r2_secret = os.environ.get("R2_SECRET_ACCESS_KEY")
+    r2_bucket = os.environ.get("R2_BUCKET", "motoshop-gold")
+
+    if not all([r2_endpoint, r2_key, r2_secret]):
+        logger.warning("R2 credentials not set; skipping bootstrap download")
+        return
+
+    try:
+        import boto3
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=r2_endpoint,
+            aws_access_key_id=r2_key,
+            aws_secret_access_key=r2_secret,
+            region_name="auto",
+        )
+        logger.info("Downloading DuckDB from R2: %s/%s", r2_bucket, "motoshop_gold.duckdb")
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        s3.download_file(r2_bucket, "motoshop_gold.duckdb", str(db_path))
+        logger.info("DuckDB downloaded to %s", db_path)
+    except Exception as exc:
+        logger.warning("Failed to download DuckDB from R2: %s", exc)
+
+
 class DuckDBMetricsRepo:
     """Lee de archivo DuckDB local usando SQL directo.
 
@@ -64,6 +95,7 @@ class DuckDBMetricsRepo:
 
     def __init__(self, db_path: str | Path | None = None) -> None:
         self._path = Path(db_path or _DEFAULT_DB_PATH)
+        _bootstrap_duckdb_from_r2(self._path)
         if not self._path.exists():
             raise FileNotFoundError(
                 f"DuckDB file not found at {self._path}. "
@@ -90,16 +122,16 @@ class DuckDBMetricsRepo:
         """Resumen de ventas mes actual vs mes anterior + top 10 SKUs."""
         rows = self._query("""
             WITH max_dates AS (
-                SELECT MAX(business_date) AS max_date FROM mart_ventas_diarias_sku
+                SELECT MAX(business_date) AS max_date FROM motoshop_gold_mart_ventas_diarias_sku
             )
             SELECT
                 STRFTIME(business_date, '%Y-%m') AS business_month,
-                SUM(valor_total) AS ventas_mes,
-                SUM(cantidad_total) AS cantidad_total,
+                ROUND(SUM(valor_total), 2) AS ventas_mes,
+                ROUND(SUM(cantidad_total), 2) AS cantidad_total,
                 SUM(num_facturas) AS num_facturas,
                 ROUND(SUM(valor_total) / NULLIF(SUM(num_facturas), 0), 2) AS ticket_promedio
-            FROM mart_ventas_diarias_sku, max_dates
-            WHERE business_date >= max_dates.max_date - INTERVAL '60 days'
+            FROM motoshop_gold_mart_ventas_diarias_sku, max_dates
+            WHERE business_date >= max_dates.max_date - INTERVAL '60' DAY
             GROUP BY STRFTIME(business_date, '%Y-%m')
             ORDER BY business_month DESC
             LIMIT 2
@@ -107,15 +139,15 @@ class DuckDBMetricsRepo:
 
         top = self._query("""
             WITH max_dates AS (
-                SELECT MAX(business_date) AS max_date FROM mart_ventas_diarias_sku
+                SELECT MAX(business_date) AS max_date FROM motoshop_gold_mart_ventas_diarias_sku
             )
             SELECT
                 cod_producto, nom_producto,
-                SUM(cantidad_total) AS cantidad_total,
-                SUM(valor_total) AS valor_total,
+                ROUND(SUM(cantidad_total), 2) AS cantidad_total,
+                ROUND(SUM(valor_total), 2) AS valor_total,
                 ROUND(SUM(valor_total) / NULLIF(SUM(SUM(valor_total)) OVER(), 0) * 100, 1) AS porcentaje_ingreso
-            FROM mart_ventas_diarias_sku, max_dates
-            WHERE business_date >= max_dates.max_date - INTERVAL '30 days'
+            FROM motoshop_gold_mart_ventas_diarias_sku, max_dates
+            WHERE business_date >= max_dates.max_date - INTERVAL '30' DAY
             GROUP BY cod_producto, nom_producto
             ORDER BY valor_total DESC
             LIMIT 10

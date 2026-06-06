@@ -24,3 +24,15 @@ services:
         value: dev
       - key: USERS_FILE_PATH
         value: users.yaml
+      - key: DATA_BACKEND
+        value: duckdb
+      - key: DUCKDB_PATH
+        value: /tmp/motoshop_gold.duckdb
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        value: motoshop-gold
+      - key: R2_ENDPOINT
+        value: https://4bd1502b7fa3f33d1d3c45ae2d252cfd.r2.cloudflarestorage.com

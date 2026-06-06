@@ -133,8 +133,8 @@ def build_duckdb(duckdb_path: str | Path) -> str:
             nom_producto VARCHAR,
             cod_bodega VARCHAR,
             nom_bodega VARCHAR,
-            cantidad_total DOUBLE,
-            valor_total DOUBLE,
+            cantidad_total DECIMAL(18,2),
+            valor_total DECIMAL(18,2),
             num_facturas INTEGER
         )
     """)
@@ -170,7 +170,7 @@ def build_duckdb(duckdb_path: str | Path) -> str:
     expected = [(MONTH_CURRENT, TOTAL_CURRENT), (MONTH_PREV, TOTAL_PREV)]
     for i, m in enumerate(monthly):
         exp_month, exp_total = expected[i]
-        diff = abs(m[1] - exp_total)
+        diff = abs(float(m[1]) - exp_total)
         if diff > 0.01:
             print(f"  ❌ DIFF {exp_month}: esperado=${exp_total:,.2f}, obtenido=${m[1]:,.2f} (diff=${diff:.2f})")
             ok = False
@@ -193,7 +193,7 @@ def build_duckdb(duckdb_path: str | Path) -> str:
     for t in top10:
         expected_sku = next((s for s in TOP_SKUS if s["cod_producto"] == t[0]), None)
         if expected_sku:
-            diff_val = abs(t[2] - expected_sku["valor_total"])
+            diff_val = abs(float(t[2]) - expected_sku["valor_total"])
             status = "✅" if diff_val < 0.01 else "❌"
             print(f"  {status} {t[0]}: ${t[2]:,.2f} (esperado ${expected_sku['valor_total']:,.2f}, diff=${diff_val:.2f})")
         else:
