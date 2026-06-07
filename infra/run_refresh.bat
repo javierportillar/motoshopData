@@ -15,6 +15,8 @@ if defined TODAY (
 
 if not defined FRESH (
     echo [1/3] Running pipeline...
+    REM Cargar variables del .env para MySQL, R2, API, etc.
+    for /f "usebackq eol=# tokens=1,* delims==" %%a in (".env") do set "%%a=%%b"
     .venv-infra\Scripts\python.exe pipeline\run_all.py
     if %ERRORLEVEL% neq 0 (
         echo [ERROR] Pipeline failed with exit code %ERRORLEVEL%
