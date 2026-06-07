@@ -77,26 +77,26 @@ def get_repo() -> AlertsRepoProtocol:
 
 @router.get("/alerts/stockout", response_model=AlertsResponse)
 def stockout_alerts(
-    urgency: str | None = Query(default=None, description="Filtrar por urgencia: alta, media, baja"),
+    urgencia: str | None = Query(default=None, description="Filtrar por urgencia: alta, media, baja"),
     repo: AlertsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
 ) -> AlertsResponse:
     """Alertas de quiebre de stock, ordenadas por urgencia (alta → baja) y días hasta quiebre ASC.
 
     - Sin filtro: devuelve todas las alertas
-    - `?urgency=alta`: solo alertas críticas
-    - `?urgency=media`: solo alertas medias
-    - `?urgency=baja`: solo alertas bajas
+    - `?urgencia=alta`: solo alertas críticas
+    - `?urgencia=media`: solo alertas medias
+    - `?urgencia=baja`: solo alertas bajas
     """
-    if urgency and urgency not in ("alta", "media", "baja"):
+    if urgencia and urgencia not in ("alta", "media", "baja"):
         from fastapi import HTTPException
         raise HTTPException(
             status_code=400,
-            detail=f"Urgency must be one of: alta, media, baja (got '{urgency}')",
+            detail=f"Urgency must be one of: alta, media, baja (got '{urgencia}')",
         )
 
-    cache_key = f"alerts:stockout:{urgency or 'all'}"
-    result = _cached_or_fetch(cache_key, lambda: repo.get_stockout_alerts(urgency))
+    cache_key = f"alerts:stockout:{urgencia or 'all'}"
+    result = _cached_or_fetch(cache_key, lambda: repo.get_stockout_alerts(urgencia))
     return result
 
 
