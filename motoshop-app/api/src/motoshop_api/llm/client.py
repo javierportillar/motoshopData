@@ -126,6 +126,15 @@ class LLMClient:
                     usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0),
                 )
 
+                # Log a MySQL (best-effort, no bloquea la llamada)
+                self._log_usage(
+                    endpoint="briefing_generate",
+                    model=backend["model"],
+                    tokens_input=usage.get("prompt_tokens", 0),
+                    tokens_output=usage.get("completion_tokens", 0),
+                    success=True,
+                )
+
                 return {
                     "text": text,
                     "tokens_used": usage.get("total_tokens", 0),
@@ -144,6 +153,33 @@ class LLMClient:
                 last_error = str(exc)
 
         raise RuntimeError(f"LLM call failed after trying {len(self._backends)} backends: {last_error}")
+
+    @staticmethod
+    def _log_usage(endpoint: str, model: str, tokens_input: int, tokens_output: int, success: bool = True):
+        """Inserta registro en app_llm_usage (MySQL). Best-effort, no bloquea."""
+        try:
+            from motoshop_api.config import settings
+            import pymysql
+            conn = pymysql.connect(
+                host=settings.mysql_host,
+                port=settings.mysql_port,
+                user=settings.mysql_user,
+                password=settings.mysql_password,
+                database=settings.mysql_database,
+                charset="utf8mb4",
+                connect_timeout=3,
+            )
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO app_llm_usage
+                       (endpoint, model, tokens_input, tokens_output, cost_usd, success)
+                       VALUES (%s, %s, %s, %s, 0, %s)""",
+                    [endpoint, model, tokens_input, tokens_output, 1 if success else 0],
+                )
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass  # MySQL no disponible (Windows apagado, etc.)
 
     def close(self):
         self._http.close()
