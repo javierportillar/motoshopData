@@ -63,14 +63,14 @@ async def list_products(
 
 @router.get("/products/search-semantic", response_model=SemanticSearchResponse)
 @limiter.limit("30/minute")
-async def search_semantic(
+def search_semantic(
     request: Request,
     q: str = Query(..., min_length=2, description="Búsqueda en lenguaje natural"),
     limit: int = Query(default=10, ge=1, le=50),
     _user: User = Depends(get_current_user),
 ) -> SemanticSearchResponse:
     """Búsqueda semántica de productos."""
-    # Debug temporal: siempre responde
+    logger.info("search_semantic_called", query=q)
     return SemanticSearchResponse(query=q, results=[SemanticMatch(codprod="TEST", nomprod="Prueba", score=1.0)], total=1)
 
 
