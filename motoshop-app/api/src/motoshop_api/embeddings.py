@@ -20,28 +20,33 @@ _HF_MODEL_URL = (
 def _get_query_embedding(text: str) -> list[float]:
     """Genera embedding para UNA query vía HuggingFace Inference API.
 
-    No carga modelos en RAM. Hace HTTP POST al API gratuita de HuggingFace.
-    Útil para buscar productos en tiempo real usando embeddings ya almacenados.
+    No carga modelos en RAM. Usa urllib.request (stdlib, sin pip extra).
     """
-    import requests as _req
+    import json as _json
+    import urllib.request as _req
+    import urllib.error as _err
 
-    resp = _req.post(
-        _HF_MODEL_URL,
-        json={"inputs": text, "options": {"wait_for_model": True}},
-        timeout=30,
-    )
-    if resp.status_code != 200:
-        logger.warning("hf_api_error: status=%s body=%s", resp.status_code, resp.text[:200])
-        raise RuntimeError(f"HuggingFace API returned {resp.status_code}")
+    body = _json.dumps({"inputs": text, "options": {"wait_for_model": True}}).encode()
+    try:
+        resp = _req.urlopen(
+            _HF_MODEL_URL,
+            data=body,
+            timeout=60,
+        )
+        data = _json.loads(resp.read().decode())
+    except _err.HTTPError as e:
+        body = e.read().decode()
+        logger.warning("hf_api_http_error: status=%s body=%s", e.code, body[:200])
+        raise RuntimeError(f"HuggingFace API returned {e.code}: {body[:100]}")
+    except OSError as e:
+        raise RuntimeError(f"HuggingFace API connection failed: {e}")
 
-    data = resp.json()
-    # La API devuelve [[float, ...]] o {error: ...}
     if isinstance(data, dict) and "error" in data:
         raise RuntimeError(f"HuggingFace API error: {data['error']}")
     if not isinstance(data, list) or not data:
-        raise RuntimeError(f"Unexpected HF API response shape: {type(data).__name__}")
+        raise RuntimeError(f"Unexpected HF API response: {type(data).__name__}")
 
-    embedding = data[0]  # primer (y único) elemento = embedding vec
+    embedding = data[0]
     if not isinstance(embedding, list) or len(embedding) != EMBEDDING_DIM:
         raise RuntimeError(f"Unexpected embedding dim: got {len(embedding)} expected {EMBEDDING_DIM}")
 
