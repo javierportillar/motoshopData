@@ -1,7 +1,15 @@
-"""Pipeline de embeddings — wrapper que llama a motoshop_api.embeddings.
+"""Pipeline de embeddings para motoshop_silver_dim_producto.
 
-Reutiliza la lógica del API para evitar duplicación.
-Corre: python -m pipeline.embeddings_skus [--mode full]
+Se corre en la Mac del PO, NO en Render, NO en Windows.
+
+Uso:
+    python -m pipeline.embeddings_skus          # delta (solo faltantes)
+    python -m pipeline.embeddings_skus --full   # regenerar todos
+
+Modelo: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 (384d, español).
+
+Post-condición: subir out/motoshop_gold.duckdb a R2:
+    python scripts/upload_duckdb_to_r2.py
 """
 
 from __future__ import annotations
@@ -9,42 +17,71 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Ensure API package is importable (adjacent to pipeline/ in repo root)
-_API_PATH = os.path.join(os.path.dirname(__file__), "..", "motoshop-app", "api", "src")
-if _API_PATH not in sys.path:
-    sys.path.insert(0, os.path.abspath(_API_PATH))
+# ── Dependencias LOCALES (instaladas en la Mac, NO en pyproject.toml) ──
+# pip install sentence-transformers  (solo en la Mac del PO)
+try:
+    from sentence_transformers import SentenceTransformer
+except ImportError:
+    sys.exit("""
+ERROR: sentence-transformers no instalado.
+  pip install sentence-transformers
+  (Solo necesario en Mac para generar embeddings. NO va en pyproject.toml.)
+""")
+
+EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+EMBEDDING_DIM = 384
+BATCH_SIZE = 256
+
+_model = None
 
 
-def generate_embeddings(con, mode: str = "delta") -> int:
-    """Genera embeddings reutilizando la lógica del API.
+def _get_model():
+    global _model
+    if _model is None:
+        logger.info("Loading embedding model: %s", EMBEDDING_MODEL)
+        _model = SentenceTransformer(EMBEDDING_MODEL)
+        logger.info("Model loaded — dim=%d", _model.get_sentence_embedding_dimension())
+    return _model
 
-    Args:
-        con: duckdb.DuckDBPyConnection (read-write).
-        mode: "delta" (solo embeddings faltantes) | "full" (todos).
 
-    Returns:
-        Número de SKUs procesados.
-    """
-    from motoshop_api.embeddings import (
-        EMBEDDING_DIM,
-        _build_embedding_text,
-        _get_embed_model,
-    )
+def _build_embedding_text(row: dict) -> str:
+    """Texto descriptivo para embedding: nombre + grupo."""
+    parts = [str(row.get("nombre_producto", ""))]
+    grupo = row.get("cod_grupo")
+    if grupo and str(grupo) != "SIN_GRUPO":
+        parts.append(f"categoría {grupo}")
+    desc = row.get("descripcion")
+    if desc:
+        parts.append(str(desc))
+    return " | ".join(parts)
 
-    # Crear columna si no existe
-    col_exists = False
+
+def _add_column(con) -> None:
     try:
         con.execute("SELECT embedding FROM motoshop_silver_dim_producto LIMIT 0")
-        col_exists = True
     except Exception:
-        pass
-
-    if not col_exists:
-        logger.info("Adding embedding column (FLOAT[%d]) to dim_producto", EMBEDDING_DIM)
+        logger.info("Adding embedding column FLOAT[%d]", EMBEDDING_DIM)
         con.execute(f"ALTER TABLE motoshop_silver_dim_producto ADD COLUMN embedding FLOAT[{EMBEDDING_DIM}]")
+
+
+def generate_embeddings(db_path: str | Path, mode: str = "delta") -> int:
+    """Genera embeddings y escribe en DuckDB.
+
+    Args:
+        db_path: Ruta al archivo DuckDB.
+        mode: "delta" | "full"
+
+    Returns:
+        Cantidad de SKUs embedidos.
+    """
+    import duckdb
+
+    con = duckdb.connect(str(db_path))
+    _add_column(con)
 
     if mode == "full":
         con.execute("UPDATE motoshop_silver_dim_producto SET embedding = NULL")
@@ -63,12 +100,13 @@ def generate_embeddings(con, mode: str = "delta") -> int:
 
     if not products:
         logger.info("No products to embed (mode=%s)", mode)
+        con.close()
         return 0
 
-    logger.info("Generating embeddings for %d products (mode=%s)", len(products), mode)
-    model = _get_embed_model()
+    logger.info("Embedding %d products (mode=%s)", len(products), mode)
+    model = _get_model()
     texts = [_build_embedding_text(p) for p in products]
-    embeddings = list(model.embed(texts, batch_size=256))
+    embeddings = model.encode(texts, batch_size=BATCH_SIZE, show_progress_bar=True)
 
     for p, emb in zip(products, embeddings):
         emb_str = str(emb.tolist()).replace("[", "").replace("]", "")
@@ -79,20 +117,15 @@ def generate_embeddings(con, mode: str = "delta") -> int:
             [p["cod_producto"]],
         )
 
-    logger.info("Embeddings complete: %d products", len(products))
+    con.close()
+    logger.info("Done: %d products", len(products))
     return len(products)
 
 
 if __name__ == "__main__":
-    import duckdb
-
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-    mode = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in ("full", "delta") else "delta"
-
+    mode = "full" if "--full" in sys.argv else "delta"
     db_path = os.environ.get("DUCKDB_PATH", "out/motoshop_gold.duckdb")
-    con = duckdb.connect(db_path)
-    try:
-        count = generate_embeddings(con, mode=mode)
-        print(f"Done: {count} embeddings generated (mode={mode})")
-    finally:
-        con.close()
+    count = generate_embeddings(db_path, mode=mode)
+    print(f"\n✅ {count} embeddings generados en {db_path} (mode={mode})")
+    print(f"   → python scripts/upload_duckdb_to_r2.py  para subir a R2")

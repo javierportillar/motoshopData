@@ -245,16 +245,14 @@ def run_all() -> str:
     gold.alertas_quiebre(con)           # depende de silver (dim_producto + fact_ventas_detalle)
     logger.info("Gold: 10/10 transformations complete")
 
-    # ── Paso 4: Embeddings (semantic search) ──────────────────────────────
+    # ── Paso 4: Embeddings (solo si hay productos sin embedding) ──────
     try:
         from pipeline.embeddings_skus import generate_embeddings
-        embed_count = generate_embeddings(con, mode="delta")
+        embed_count = generate_embeddings(str(OUTPUT_PATH), mode="delta")
         if embed_count > 0:
             logger.info("Embeddings: %d SKUs processed", embed_count)
-    except RuntimeError as exc:
-        logger.warning("Embeddings skipped (no OpenAI key?): %s", exc)
-    except ImportError:
-        logger.warning("openai package not installed — semantic search unavailable")
+    except Exception as exc:
+        logger.warning("Embeddings skipped: %s", exc)
 
     con.close()
     return str(OUTPUT_PATH)

@@ -71,7 +71,8 @@ async def lifespan(app: FastAPI):
     else:
         log.warning("users_file_not_found", path=str(users_path))
     yield
-    yield
+    # ── Shutdown: limpiar conexiones pendientes ───────────────────────
+    log.info("shutdown")
 
 
 app = FastAPI(

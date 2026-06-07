@@ -101,7 +101,7 @@ def search_semantic(
                     total=len(rows),
                 )
     except Exception as exc:
-        logger.warning("duckdb_semantic_failed", error=str(exc))
+        logger.warning("duckdb_semantic_failed: %s", exc)
 
     # 2. Fallback: MySQL LIKE search
     try:
@@ -112,7 +112,7 @@ def search_semantic(
         ]
         return SemanticSearchResponse(query=q, results=matches, total=len(matches))
     except Exception as exc:
-        logger.error("mysql_semantic_fallback_failed", error=str(exc))
+        logger.error("mysql_semantic_fallback_failed: %s", exc)
         raise HTTPException(status_code=503, detail="Semantic search no disponible (DuckDB/MySQL offline).")
 
 
