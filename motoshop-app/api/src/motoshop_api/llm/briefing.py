@@ -168,7 +168,7 @@ class BriefingGenerator:
         client = get_llm_client()
         result = client.complete(
             prompt=prompt,
-            max_tokens=500,
+            max_tokens=2000,  # DeepSeek gasta tokens en reasoning antes del content
             system=BRIEFING_SYSTEM,
         )
 

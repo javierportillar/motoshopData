@@ -122,7 +122,9 @@ class LLMClient:
                 data = resp.json()
 
                 choice = data["choices"][0]
-                text = choice["message"]["content"]
+                msg = choice["message"]
+                # DeepSeek models pueden poner la respuesta en reasoning_content
+                text = msg.get("content") or msg.get("reasoning_content") or ""
                 usage = data.get("usage", {})
                 tokens_input = usage.get("prompt_tokens", 0)
                 tokens_output = usage.get("completion_tokens", 0)
