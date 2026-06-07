@@ -156,55 +156,39 @@ class LLMClient:
 
     @staticmethod
     def _log_usage(endpoint: str, model: str, tokens_input: int, tokens_output: int, success: bool = True):
-        """Inserta registro en app_llm_usage. Intenta MySQL, fallback a DuckDB."""
-        # 1. Intentar MySQL (Windows)
+        """Inserta registro de uso. Best-effort, nunca bloquea la llamada principal."""
         try:
-            from motoshop_api.config import settings
-            import pymysql
-            conn = pymysql.connect(
-                host=settings.mysql_host, port=settings.mysql_port,
-                user=settings.mysql_user, password=settings.mysql_password,
-                database=settings.mysql_database, charset="utf8mb4", connect_timeout=3,
-            )
-            with conn.cursor() as cur:
-                cur.execute(
-                    """INSERT INTO app_llm_usage
-                       (endpoint, model, tokens_input, tokens_output, cost_usd, success)
-                       VALUES (%s, %s, %s, %s, 0, %s)""",
-                    [endpoint, model, tokens_input, tokens_output, 1 if success else 0],
+            try:
+                from motoshop_api.config import settings
+                import pymysql
+                conn = pymysql.connect(
+                    host=settings.mysql_host, port=settings.mysql_port,
+                    user=settings.mysql_user, password=settings.mysql_password,
+                    database=settings.mysql_database, charset="utf8mb4", connect_timeout=3,
                 )
-            conn.commit()
-            conn.close()
-            return
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO app_llm_usage
+                           (endpoint, model, tokens_input, tokens_output, cost_usd, success)
+                           VALUES (%s, %s, %s, %s, 0, %s)""",
+                        [endpoint, model, tokens_input, tokens_output, 1 if success else 0],
+                    )
+                conn.commit()
+                conn.close()
+                return
+            except Exception:
+                pass
+
+            # Fallback DuckDB
+            duckdb_path = os.environ.get("DUCKDB_PATH", "/tmp/motoshop_gold.duckdb")
+            cost_path = duckdb_path.replace(".duckdb", "_cost.duckdb")
+            import duckdb
+            con = duckdb.connect(cost_path)
+            con.execute("CREATE TABLE IF NOT EXISTS llm_usage (id INTEGER PRIMARY KEY, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, endpoint VARCHAR, model VARCHAR, tokens_input INTEGER, tokens_output INTEGER, success BOOLEAN DEFAULT TRUE)")
+            con.execute("INSERT INTO llm_usage (endpoint, model, tokens_input, tokens_output, success) VALUES (?, ?, ?, ?, ?)", [endpoint, model, tokens_input, tokens_output, success])
+            con.close()
         except Exception:
             pass
-
-        # 2. Fallback: DuckDB (archivo separado para evitar conflicto read-only)
-        try:
-            import os, duckdb, traceback
-            db_path = os.environ.get("DUCKDB_PATH", "/tmp/motoshop_gold.duckdb")
-            cost_path = db_path.replace(".duckdb", "_cost.duckdb")
-            con = duckdb.connect(cost_path)
-            con.execute("""
-                CREATE TABLE IF NOT EXISTS llm_usage (
-                    id INTEGER PRIMARY KEY,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    endpoint VARCHAR,
-                    model VARCHAR,
-                    tokens_input INTEGER,
-                    tokens_output INTEGER,
-                    success BOOLEAN DEFAULT TRUE
-                )
-            """)
-            con.execute(
-                "INSERT INTO llm_usage (endpoint, model, tokens_input, tokens_output, success) VALUES (?, ?, ?, ?, ?)",
-                [endpoint, model, tokens_input, tokens_output, success],
-            )
-            logger.info("cost_logged: path=%s calls=%d", cost_path,
-                        con.execute("SELECT COUNT(*) FROM llm_usage").fetchone()[0])
-            con.close()
-        except Exception as exc:
-            logger.warning("cost_log_failed: %s", exc)
 
     def close(self):
         self._http.close()
