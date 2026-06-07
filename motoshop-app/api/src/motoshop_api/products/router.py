@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 
 import duckdb
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -84,66 +85,73 @@ async def search_semantic(
     limit: int = Query(default=10, ge=1, le=50),
     _user: User = Depends(get_current_user),
 ) -> SemanticSearchResponse:
-    """Búsqueda semántica de productos vía HuggingFace embeddings + DuckDB cosine similarity.
-
-    Modelo: paraphrase-multilingual-MiniLM-L12-v2 (384d, multilingüe, local y gratis).
-    Ejemplo: "aceite sintético 4 tiempos" → encuentra "MOBIL SUPER MOTO 4T 20W50".
-    """
-    # DuckDB path: igual que DuckDBMetricsRepo usa
+    """Búsqueda semántica de productos — DuckDB (fastembed) o fallback MySQL."""
     from motoshop_api.config import settings as _settings
+
     db_path = _settings.duckdb_path
-    if not os.path.exists(db_path):
-        # Fallback: relativo (dev local)
-        rel = "out/motoshop_gold.duckdb"
-        if os.path.exists(rel):
-            db_path = rel
-        else:
-            raise HTTPException(
-                status_code=503,
-                detail=f"DuckDB not found at {_settings.duckdb_path} or {rel}. Run embeddings pipeline first.",
-            )
+    _ensure_duckdb_file(db_path)
 
-    # 1. Generar embedding de la query con fastembed (ONNX, local, sin API key)
+    # 1. Intentar DuckDB + fastembed
     try:
-        model = _get_embed_model()
-        # fastembed devuelve generator → list → primer elemento
-        query_emb = list(model.embed([q]))[0].tolist()
-    except HTTPException:
-        raise
+        if os.path.exists(db_path):
+            model = _get_embed_model()
+            query_emb = list(model.embed([q]))[0].tolist()
+            emb_str = str(query_emb).replace("[", "").replace("]", "")
+            query_dim = len(query_emb)
+
+            con = duckdb.connect(db_path, read_only=True)
+            rows = con.execute(f"""
+                SELECT cod_producto, nombre_producto AS nomprod,
+                       ROUND(array_cosine_similarity(
+                           embedding, CAST([{emb_str}] AS FLOAT[{query_dim}])
+                       )::DOUBLE, 4) AS score
+                FROM motoshop_silver_dim_producto
+                WHERE embedding IS NOT NULL
+                ORDER BY score DESC LIMIT ?
+            """, [limit]).fetchall()
+            con.close()
+
+            results = [SemanticMatch(codprod=str(r[0]), nomprod=str(r[1]), score=float(r[2])) for r in rows]
+            return SemanticSearchResponse(query=q, results=results, total=len(results))
     except Exception as exc:
-        logger.error("Embedding generation failed: %s", exc)
-        raise HTTPException(status_code=502, detail="Failed to generate query embedding") from exc
+        logger.warning("semantic_search_duckdb_failed", error=str(exc))
 
-    # 2. Cosine similarity en DuckDB
-    emb_str = str(query_emb).replace("[", "").replace("]", "")
-    query_dim = len(query_emb)
+    # 2. Fallback: MySQL LIKE search
+    return _semantic_fallback_mysql(q, limit)
 
+
+def _ensure_duckdb_file(db_path: str) -> None:
+    """Intenta descargar DuckDB de R2 si no existe localmente."""
+    if os.path.exists(db_path):
+        return
+    _p = Path(db_path)
+    _p.parent.mkdir(parents=True, exist_ok=True)
     try:
-        con = duckdb.connect(db_path, read_only=True)
-        rows = con.execute(f"""
-            SELECT
-                cod_producto,
-                nombre_producto AS nomprod,
-                ROUND(array_cosine_similarity(
-                    embedding,
-                    CAST([{emb_str}] AS FLOAT[{query_dim}])
-                )::DOUBLE, 4) AS score
-            FROM motoshop_silver_dim_producto
-            WHERE embedding IS NOT NULL
-            ORDER BY score DESC
-            LIMIT ?
-        """, [limit]).fetchall()
-        con.close()
+        from motoshop_api.metrics.repo_duckdb import _bootstrap_duckdb_from_r2
+        _bootstrap_duckdb_from_r2(_p)
+    except Exception:
+        pass
+    # Fallback a path relativo
+    if not os.path.exists(db_path) and os.path.exists("out/motoshop_gold.duckdb"):
+        os.environ["DUCKDB_PATH"] = os.path.abspath("out/motoshop_gold.duckdb")
+
+
+def _semantic_fallback_mysql(q: str, limit: int) -> SemanticSearchResponse:
+    """Fallback: búsqueda LIKE por MySQL cuando DuckDB embeddings no están disponibles."""
+    try:
+        repo = get_products_repo()
+        results_list = repo.search(query=q, limit=limit, offset=0)
+        matches = [
+            SemanticMatch(codprod=str(r.get("codprod", "")), nomprod=str(r.get("nomprod", "")), score=0.0)
+            for r in results_list
+        ]
+        return SemanticSearchResponse(query=q, results=matches, total=len(matches))
     except Exception as exc:
-        logger.error("DuckDB semantic query failed: %s", exc)
-        raise HTTPException(status_code=500, detail="Semantic search query failed") from exc
-
-    results = [
-        SemanticMatch(codprod=str(r[0]), nomprod=str(r[1]), score=float(r[2]))
-        for r in rows
-    ]
-
-    return SemanticSearchResponse(query=q, results=results, total=len(results))
+        logger.error("semantic_fallback_mysql_failed", error=str(exc))
+        raise HTTPException(
+            status_code=503,
+            detail="Semantic search not available: DuckDB + MySQL offline.",
+        )
 
 
 @router.get("/products/{sku}", response_model=ProductOut)
