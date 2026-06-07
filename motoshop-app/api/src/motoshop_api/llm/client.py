@@ -1,8 +1,10 @@
 """LLMClient — wrapper liviano sobre OpenCode Zen (OpenAI-compatible).
 
-Modelo primario: deepseek-v4-flash-free (multi-idioma, $0)
-Modelo fallback: qwen3.6-plus-free ($0)
+Modelo: deepseek-v4-flash-free (multi-idioma, $0 free forever)
 API: https://opencode.ai/zen/v1 (OpenAI-compatible)
+
+Soporta dual key: OPENCODE_API_KEY (primario, GO) + OPENCODE_API_KEY_FALLBACK (Zen).
+Si el primario falla (401/rate-limit), reintenta con la key fallback mismo modelo.
 
 Uso:
     client = get_llm_client()
@@ -24,10 +26,12 @@ logger = logging.getLogger(__name__)
 # ── Config ────────────────────────────────────────────────────────────────
 
 PRIMARY_MODEL = os.environ.get("LLM_PRIMARY_MODEL", "deepseek-v4-flash-free")
-FALLBACK_MODEL = os.environ.get("LLM_FALLBACK_MODEL", "deepseek-v4-flash-free")
 API_BASE = os.environ.get("LLM_API_BASE", "https://opencode.ai/zen/v1")
-API_KEY = os.environ.get("OPENCODE_API_KEY", "")
-TIMEOUT = 60
+TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "60"))
+
+# Dual key: GO key primario, Zen key secundario (redundancia)
+API_KEY_PRIMARY = os.environ.get("OPENCODE_API_KEY", "")
+API_KEY_FALLBACK = os.environ.get("OPENCODE_API_KEY_FALLBACK", "")
 
 _client_singleton: LLMClient | None = None
 
@@ -43,20 +47,21 @@ def get_llm_client() -> LLMClient:
 
 
 class LLMClient:
-    """Cliente HTTP a OpenCode Zen con fallback automático."""
+    """Cliente HTTP a OpenCode Zen con fallback de API key."""
 
     def __init__(
         self,
         api_base: str = API_BASE,
-        api_key: str = API_KEY,
-        primary_model: str = PRIMARY_MODEL,
-        fallback_model: str = FALLBACK_MODEL,
+        primary_key: str = API_KEY_PRIMARY,
+        fallback_key: str = API_KEY_FALLBACK,
+        model: str = PRIMARY_MODEL,
     ):
         self._api_base = api_base.rstrip("/")
-        self._api_key = api_key
-        self._primary = primary_model
-        self._fallback = fallback_model
+        self._keys = [k for k in (primary_key, fallback_key) if k]  # quitar vacías
+        self._model = model
         self._http = httpx.Client(timeout=httpx.Timeout(TIMEOUT))
+        if not self._keys:
+            logger.warning("No API keys configured — LLM calls will fail")
 
     def complete(self, prompt: str, *, max_tokens: int = 500, system: str = "") -> dict:
         """Chat completion simple. Retorna {text, tokens_used, model, cost_usd}."""
@@ -85,14 +90,13 @@ class LLMClient:
         return result
 
     def _call(self, messages: list[dict], max_tokens: int, response_format: dict | None = None) -> dict:
-        """Llama al modelo primario, con fallback si falla."""
-        models_to_try = [self._primary, self._fallback]
+        """Llama al modelo, probando cada API key configurada."""
         last_error = None
 
-        for model in models_to_try:
+        for key_idx, api_key in enumerate(self._keys):
             try:
                 body = {
-                    "model": model,
+                    "model": self._model,
                     "messages": messages,
                     "max_tokens": max_tokens,
                     "temperature": 0.3,
@@ -104,22 +108,29 @@ class LLMClient:
                     f"{self._api_base}/chat/completions",
                     json=body,
                     headers={
-                        "Authorization": f"Bearer {self._api_key}",
+                        "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json",
                     },
                 )
 
                 if resp.status_code == 401:
-                    logger.error("LLM 401 — API key rejected for model=%s", model)
-                    last_error = f"401: API key rejected"
+                    logger.warning("LLM 401 key_idx=%d — trying next key", key_idx)
+                    last_error = "401: API key rejected"
                     continue
                 if resp.status_code >= 500:
-                    logger.warning("LLM %d from %s — trying fallback", resp.status_code, model)
+                    logger.warning("LLM %d from key_idx=%d — trying next key", resp.status_code, key_idx)
                     last_error = f"{resp.status_code}: {resp.text[:200]}"
                     continue
 
                 resp.raise_for_status()
                 data = resp.json()
+
+                if "error" in data:
+                    err = data["error"]
+                    err_msg = err.get("message", str(err))
+                    logger.warning("LLM API error key_idx=%d: %s", key_idx, err_msg)
+                    last_error = err_msg
+                    continue
 
                 choice = data["choices"][0]
                 msg = choice["message"]
@@ -131,8 +142,8 @@ class LLMClient:
                 tokens_output = usage.get("completion_tokens", 0)
 
                 logger.info(
-                    "llm_call: model=%s tokens_in=%d tokens_out=%d cost=$0",
-                    model, tokens_input, tokens_output,
+                    "llm_call: model=%s key_idx=%d tokens_in=%d tokens_out=%d cost=$0",
+                    self._model, key_idx, tokens_input, tokens_output,
                 )
 
                 return {
@@ -140,18 +151,18 @@ class LLMClient:
                     "tokens_used": tokens_input + tokens_output,
                     "tokens_input": tokens_input,
                     "tokens_output": tokens_output,
-                    "model": model,
-                    "cost_usd": 0.0,  # modelos free forever
+                    "model": self._model,
+                    "cost_usd": 0.0,
                 }
 
             except httpx.TimeoutException:
-                logger.warning("LLM timeout for model=%s", model)
+                logger.warning("LLM timeout key_idx=%d", key_idx)
                 last_error = f"timeout after {TIMEOUT}s"
             except Exception as exc:
-                logger.warning("LLM error for model=%s: %s", model, exc)
+                logger.warning("LLM error key_idx=%d: %s", key_idx, exc)
                 last_error = str(exc)
 
-        raise RuntimeError(f"LLM call failed after trying {models_to_try}: {last_error}")
+        raise RuntimeError(f"LLM call failed after trying {len(self._keys)} keys: {last_error}")
 
     def close(self):
         self._http.close()
