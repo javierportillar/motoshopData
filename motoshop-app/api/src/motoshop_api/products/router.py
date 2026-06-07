@@ -89,18 +89,19 @@ async def search_semantic(
     Modelo: paraphrase-multilingual-MiniLM-L12-v2 (384d, multilingüe, local y gratis).
     Ejemplo: "aceite sintético 4 tiempos" → encuentra "MOBIL SUPER MOTO 4T 20W50".
     """
-    # Mismo path que DuckDBMetricsRepo: DUCKDB_PATH env → fallback según ENV
+    # DuckDB path: igual que DuckDBMetricsRepo usa
     from motoshop_api.config import settings as _settings
-
-    _env = os.environ.get("ENV", _settings.env)
-    db_path = os.environ.get("DUCKDB_PATH") or (
-        "/tmp/motoshop_gold.duckdb" if _env == "prod" else "out/motoshop_gold.duckdb"
-    )
+    db_path = _settings.duckdb_path
     if not os.path.exists(db_path):
-        raise HTTPException(
-            status_code=503,
-            detail=f"DuckDB not found at {db_path}. Run embeddings pipeline first.",
-        )
+        # Fallback: relativo (dev local)
+        rel = "out/motoshop_gold.duckdb"
+        if os.path.exists(rel):
+            db_path = rel
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail=f"DuckDB not found at {_settings.duckdb_path} or {rel}. Run embeddings pipeline first.",
+            )
 
     # 1. Generar embedding de la query con fastembed (ONNX, local, sin API key)
     try:

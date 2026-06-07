@@ -72,12 +72,8 @@ async def lifespan(app: FastAPI):
         log.warning("users_file_not_found", path=str(users_path))
 
     # ── Asegurar embeddings (background, no bloquea startup) ────────
-    if settings.data_backend == "duckdb" or settings.env != "prod":
-        # Same path as DuckDBMetricsRepo
-        _env_embed = os.environ.get("ENV", settings.env)
-        _db_path = os.environ.get("DUCKDB_PATH") or (
-            "/tmp/motoshop_gold.duckdb" if _env_embed == "prod" else "out/motoshop_gold.duckdb"
-        )
+    if settings.data_backend == "duckdb":
+        _db_path = settings.duckdb_path
         if os.path.exists(_db_path):
             def _background_embeddings():
                 import logging as _log
