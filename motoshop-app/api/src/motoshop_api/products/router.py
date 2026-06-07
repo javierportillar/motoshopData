@@ -89,9 +89,13 @@ async def search_semantic(
     Modelo: paraphrase-multilingual-MiniLM-L12-v2 (384d, multilingüe, local y gratis).
     Ejemplo: "aceite sintético 4 tiempos" → encuentra "MOBIL SUPER MOTO 4T 20W50".
     """
-    from motoshop_api.config import settings
+    # Mismo path que DuckDBMetricsRepo: DUCKDB_PATH env → fallback según ENV
+    from motoshop_api.config import settings as _settings
 
-    db_path = settings.duckdb_path or "/tmp/motoshop_gold.duckdb"
+    _env = os.environ.get("ENV", _settings.env)
+    db_path = os.environ.get("DUCKDB_PATH") or (
+        "/tmp/motoshop_gold.duckdb" if _env == "prod" else "out/motoshop_gold.duckdb"
+    )
     if not os.path.exists(db_path):
         raise HTTPException(
             status_code=503,
