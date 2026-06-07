@@ -179,32 +179,31 @@ class LLMClient:
         except Exception:
             pass
 
-        # 2. Fallback: DuckDB (Render cloud, sin conexión a Windows MySQL)
+        # 2. Fallback: DuckDB (archivo separado para evitar conflicto read-only)
         try:
             import os, duckdb
             db_path = os.environ.get("DUCKDB_PATH", "/tmp/motoshop_gold.duckdb")
-            con = duckdb.connect(db_path)
+            # Usar archivo separado para cost tracking (el principal es read-only)
+            cost_path = db_path.replace(".duckdb", "_cost.duckdb")
+            con = duckdb.connect(cost_path)
             con.execute("""
-                CREATE TABLE IF NOT EXISTS app_llm_usage_duckdb (
+                CREATE TABLE IF NOT EXISTS llm_usage (
                     id INTEGER PRIMARY KEY,
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     endpoint VARCHAR,
                     model VARCHAR,
                     tokens_input INTEGER,
                     tokens_output INTEGER,
-                    cost_usd DOUBLE DEFAULT 0,
                     success BOOLEAN DEFAULT TRUE
                 )
             """)
             con.execute(
-                """INSERT INTO app_llm_usage_duckdb
-                   (endpoint, model, tokens_input, tokens_output, success)
-                   VALUES (?, ?, ?, ?, ?)""",
+                "INSERT INTO llm_usage (endpoint, model, tokens_input, tokens_output, success) VALUES (?, ?, ?, ?, ?)",
                 [endpoint, model, tokens_input, tokens_output, success],
             )
             con.close()
         except Exception:
-            pass  # totalmente offline, no hay dónde loguear
+            pass
 
     def close(self):
         self._http.close()

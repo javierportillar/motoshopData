@@ -214,25 +214,23 @@ async def llm_cost(
 
     except Exception as exc:
         logger.warning("llm_cost: MySQL unavailable, trying DuckDB fallback: %s", exc)
-        # Fallback: leer de DuckDB (Render cloud sin conexión a Windows MySQL)
+        # Fallback: leer de DuckDB cost tracking (archivo separado)
         try:
             import duckdb
-            db_path = settings.duckdb_path or (
-                "/tmp/motoshop_gold.duckdb" if os.environ.get("ENV") == "prod" else "out/motoshop_gold.duckdb"
-            )
-            con = duckdb.connect(db_path, read_only=True)
+            cost_path = (settings.duckdb_path or "/tmp/motoshop_gold.duckdb").replace(".duckdb", "_cost.duckdb")
+            con = duckdb.connect(cost_path, read_only=True)
 
-            # Verificar si existe la tabla
             exists = con.execute(
-                "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'app_llm_usage_duckdb'"
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'llm_usage'"
             ).fetchone()[0]
 
             if not exists:
-                raise Exception("app_llm_usage_duckdb table not found in DuckDB")
+                con.close()
+                raise Exception("llm_usage table not found")
 
             totals = con.execute(f"""
                 SELECT COUNT(*), COALESCE(SUM(tokens_input), 0), COALESCE(SUM(tokens_output), 0)
-                FROM app_llm_usage_duckdb
+                FROM llm_usage
                 WHERE STRFTIME(timestamp, '%Y-%m') = ?
             """, [month_str]).fetchone()
 
@@ -240,7 +238,7 @@ async def llm_cost(
                 SELECT model, COUNT(*) AS calls,
                        COALESCE(SUM(tokens_input), 0), COALESCE(SUM(tokens_output), 0),
                        ROUND(SUM(CASE WHEN success THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1)
-                FROM app_llm_usage_duckdb
+                FROM llm_usage
                 WHERE STRFTIME(timestamp, '%Y-%m') = ?
                 GROUP BY model ORDER BY calls DESC
             """, [month_str]).fetchall()
