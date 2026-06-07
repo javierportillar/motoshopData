@@ -26,15 +26,12 @@ EMBEDDING_DIM = 384
 
 
 def _get_embed_model():
-    """Lazy singleton — carga intfloat/multilingual-e5-small una sola vez."""
+    """Lazy singleton — reutiliza el modelo de motoshop_api.embeddings."""
     global _embed_model
     if _embed_model is None:
         try:
-            from fastembed import TextEmbedding
-            model_name = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-            logger.info("Loading embedding model: %s", model_name)
-            _embed_model = TextEmbedding(model_name=model_name)
-            logger.info("Embedding model loaded — dim=%d", EMBEDDING_DIM)
+            from motoshop_api.embeddings import _get_embed_model as _shared_model
+            _embed_model = _shared_model()
         except ImportError:
             raise HTTPException(
                 status_code=503,

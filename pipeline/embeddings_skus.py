@@ -1,89 +1,61 @@
-"""Pipeline de embeddings para búsqueda semántica de productos.
+"""Pipeline de embeddings — wrapper que llama a motoshop_api.embeddings.
 
-Genera embeddings con fastembed (ONNX nativo, sin PyTorch) para cada SKU
-en motoshop_silver_dim_producto y los guarda en columna `embedding`.
-
-Modelo: intfloat/multilingual-e5-small (118MB, 384d, multilingüe).
-¡Gratuito, local, sin API key, sin GPU!
-
-Modos:
-- full:   regenera todos los embeddings
-- delta:  solo SKUs sin embedding (modo por defecto)
-
-Usage desde run_all.py:
-    from pipeline.embeddings_skus import generate_embeddings
-    generate_embeddings(con, mode="delta")
+Reutiliza la lógica del API para evitar duplicación.
+Corre: python -m pipeline.embeddings_skus [--mode full]
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import sys
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-EMBEDDING_DIM = 384
-BATCH_SIZE = 256
-
-# Lazy singleton
-_model = None
-
-
-def _get_model():
-    global _model
-    if _model is None:
-        logger.info("Loading embedding model: %s", EMBEDDING_MODEL)
-        _model = TextEmbedding(model_name=EMBEDDING_MODEL)
-        logger.info("Model loaded — dim=%d", EMBEDDING_DIM)
-    return _model
-
-
-def _add_embedding_column(con) -> None:
-    """Añade columna embedding FLOAT[384] si no existe."""
-    try:
-        con.execute("SELECT embedding FROM motoshop_silver_dim_producto LIMIT 0")
-    except Exception:
-        logger.info("Adding embedding column (FLOAT[%d]) to dim_producto", EMBEDDING_DIM)
-        con.execute(
-            f"ALTER TABLE motoshop_silver_dim_producto ADD COLUMN embedding FLOAT[{EMBEDDING_DIM}]"
-        )
-
-
-def _build_embedding_text(row: dict) -> str:
-    """Construye texto de embedding combinando nombre + grupo."""
-    parts = [row["nombre_producto"]]
-    if row.get("cod_grupo") and row["cod_grupo"] != "SIN_GRUPO":
-        parts.append(f"categoría {row['cod_grupo']}")
-    if row.get("descripcion"):
-        parts.append(row["descripcion"])
-    return " | ".join(parts)
+# Ensure API package is importable (adjacent to pipeline/ in repo root)
+_API_PATH = os.path.join(os.path.dirname(__file__), "..", "motoshop-app", "api", "src")
+if _API_PATH not in sys.path:
+    sys.path.insert(0, os.path.abspath(_API_PATH))
 
 
 def generate_embeddings(con, mode: str = "delta") -> int:
-    """Genera embeddings para dim_producto usando fastembed (ONNX).
+    """Genera embeddings reutilizando la lógica del API.
 
     Args:
         con: duckdb.DuckDBPyConnection (read-write).
-        mode: "delta" (solo SKUs sin embedding) | "full" (todos).
+        mode: "delta" (solo embeddings faltantes) | "full" (todos).
 
     Returns:
         Número de SKUs procesados.
     """
-    _add_embedding_column(con)
+    from motoshop_api.embeddings import (
+        EMBEDDING_DIM,
+        _build_embedding_text,
+        _get_embed_model,
+    )
 
-    if mode == "delta":
-        rows = con.execute(
-            "SELECT cod_producto, nombre_producto, cod_grupo, descripcion "
-            "FROM motoshop_silver_dim_producto "
-            "WHERE embedding IS NULL"
-        ).fetchall()
-    else:
-        # full: null existing embeddings first
+    # Crear columna si no existe
+    col_exists = False
+    try:
+        con.execute("SELECT embedding FROM motoshop_silver_dim_producto LIMIT 0")
+        col_exists = True
+    except Exception:
+        pass
+
+    if not col_exists:
+        logger.info("Adding embedding column (FLOAT[%d]) to dim_producto", EMBEDDING_DIM)
+        con.execute(f"ALTER TABLE motoshop_silver_dim_producto ADD COLUMN embedding FLOAT[{EMBEDDING_DIM}]")
+
+    if mode == "full":
         con.execute("UPDATE motoshop_silver_dim_producto SET embedding = NULL")
         rows = con.execute(
             "SELECT cod_producto, nombre_producto, cod_grupo, descripcion "
             "FROM motoshop_silver_dim_producto"
+        ).fetchall()
+    else:
+        rows = con.execute(
+            "SELECT cod_producto, nombre_producto, cod_grupo, descripcion "
+            "FROM motoshop_silver_dim_producto WHERE embedding IS NULL"
         ).fetchall()
 
     columns = ["cod_producto", "nombre_producto", "cod_grupo", "descripcion"]
@@ -94,11 +66,9 @@ def generate_embeddings(con, mode: str = "delta") -> int:
         return 0
 
     logger.info("Generating embeddings for %d products (mode=%s)", len(products), mode)
-    model = _get_model()
+    model = _get_embed_model()
     texts = [_build_embedding_text(p) for p in products]
-
-    # fastembed devuelve generator de numpy arrays
-    embeddings = list(model.embed(texts, batch_size=BATCH_SIZE))
+    embeddings = list(model.embed(texts, batch_size=256))
 
     for p, emb in zip(products, embeddings):
         emb_str = str(emb.tolist()).replace("[", "").replace("]", "")
@@ -115,14 +85,14 @@ def generate_embeddings(con, mode: str = "delta") -> int:
 
 if __name__ == "__main__":
     import duckdb
-    from fastembed import TextEmbedding
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    mode = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in ("full", "delta") else "delta"
 
     db_path = os.environ.get("DUCKDB_PATH", "out/motoshop_gold.duckdb")
     con = duckdb.connect(db_path)
     try:
-        count = generate_embeddings(con, mode="full")
-        print(f"Done: {count} embeddings generated")
+        count = generate_embeddings(con, mode=mode)
+        print(f"Done: {count} embeddings generated (mode={mode})")
     finally:
         con.close()

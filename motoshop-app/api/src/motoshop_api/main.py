@@ -47,7 +47,7 @@ def _is_localhost() -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: valida ENV guardrail, carga usuarios."""
+    """Startup: valida ENV guardrail, carga usuarios, asegura embeddings."""
     setup_logging()
     log = structlog.get_logger("motoshop")
 
@@ -70,6 +70,23 @@ async def lifespan(app: FastAPI):
         log.info("users_loaded", count=len(users))
     else:
         log.warning("users_file_not_found", path=str(users_path))
+
+    # ── Asegurar embeddings para búsqueda semántica ──────────────────
+    if settings.data_backend == "duckdb" and settings.duckdb_path:
+        try:
+            db_path = settings.duckdb_path
+            if os.path.exists(db_path):
+                log.info("checking_embeddings", db_path=db_path)
+                from motoshop_api.embeddings import ensure_embeddings
+                count = ensure_embeddings(db_path)
+                if count > 0:
+                    log.info("embeddings_generated", count=count)
+                else:
+                    log.info("embeddings_ok")
+            else:
+                log.warning("duckdb_not_found", path=db_path)
+        except Exception as exc:
+            log.warning("embedding_startup_skipped", error=str(exc))
     yield
 
 
