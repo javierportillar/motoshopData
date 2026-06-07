@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
-import { useForecast, useForecastCategoria, useProducts } from "@/lib/api/hooks";
+import { useForecast, useForecastCategoria, useForecastNarrative, useProducts } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -125,6 +125,9 @@ export default function ForecastPage(): JSX.Element {
   // Category-level data for comparative chart
   const { data: categoriaData } = useForecastCategoria();
 
+  // Forecast narrative (V1.6 Sprint B)
+  const { data: narrative, isLoading: narrativeLoading, mutate: refreshNarrative } = useForecastNarrative();
+
   function handleSelect(suggestionSku: string) {
     setSku(suggestionSku);
     setSelectedSku(suggestionSku);
@@ -152,6 +155,39 @@ export default function ForecastPage(): JSX.Element {
       </div>
 
       <StaleDataBanner />
+
+      {/* Forecast Narrative Card (V1.6 Sprint B) */}
+      {narrativeLoading ? (
+        <Card header={<h2 className="font-semibold text-text-primary">Análisis del forecast</h2>}>
+          <div className="space-y-2">
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-3/4" />
+            <Skeleton className="h-4 w-5/6" />
+            <Skeleton className="h-4 w-2/3" />
+          </div>
+        </Card>
+      ) : narrative ? (
+        <Card
+          header={
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-text-primary">Análisis del forecast</h2>
+              <button
+                onClick={() => refreshNarrative()}
+                className="rounded px-2 py-1 text-xs text-text-muted hover:bg-surface-alt hover:text-text-secondary transition-colors"
+              >
+                Regenerar
+              </button>
+            </div>
+          }
+        >
+          <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-line">
+            {narrative.text}
+          </p>
+          <p className="mt-3 text-xs text-text-muted">
+            Generado por IA · {narrative.generated_at ? new Date(narrative.generated_at).toLocaleString("es-CO") : ""}
+          </p>
+        </Card>
+      ) : null}
 
       {/* F7-FIX1 bug 6.2 + 4.5: explicación pedagógica de por qué por categoría */}
       <Card>

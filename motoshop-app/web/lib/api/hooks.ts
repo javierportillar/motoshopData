@@ -490,3 +490,32 @@ export function useAlerts(urgency?: string) {
     },
   );
 }
+
+// ── Forecast Narrative (V1.6 Sprint B) ──────────────────────────────────
+
+interface ForecastNarrativeResponse {
+  text: string;
+  generated_at: string;
+}
+
+export function useForecastNarrative() {
+  return useSWR<ForecastNarrativeResponse>(
+    "/api/llm/forecast/explain",
+    async (url: string) => {
+      const resp = await apiFetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!resp.ok) {
+        const err = await resp.text();
+        throw new Error(err);
+      }
+      return resp.json();
+    },
+    {
+      revalidateOnFocus: false,
+      dedupingInterval: 60 * 60 * 1000, // 1h cache cliente
+      refreshInterval: 0, // no auto-refresh
+    },
+  );
+}
