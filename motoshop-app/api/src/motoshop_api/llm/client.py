@@ -181,9 +181,8 @@ class LLMClient:
 
         # 2. Fallback: DuckDB (archivo separado para evitar conflicto read-only)
         try:
-            import os, duckdb
+            import os, duckdb, traceback
             db_path = os.environ.get("DUCKDB_PATH", "/tmp/motoshop_gold.duckdb")
-            # Usar archivo separado para cost tracking (el principal es read-only)
             cost_path = db_path.replace(".duckdb", "_cost.duckdb")
             con = duckdb.connect(cost_path)
             con.execute("""
@@ -201,9 +200,11 @@ class LLMClient:
                 "INSERT INTO llm_usage (endpoint, model, tokens_input, tokens_output, success) VALUES (?, ?, ?, ?, ?)",
                 [endpoint, model, tokens_input, tokens_output, success],
             )
+            logger.info("cost_logged: path=%s calls=%d", cost_path,
+                        con.execute("SELECT COUNT(*) FROM llm_usage").fetchone()[0])
             con.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("cost_log_failed: %s", exc)
 
     def close(self):
         self._http.close()
