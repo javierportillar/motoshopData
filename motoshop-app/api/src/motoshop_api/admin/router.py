@@ -217,7 +217,7 @@ async def llm_cost(
         # Fallback: leer del archivo JSONL local
         try:
             import json as _json
-            log_path = "/opt/render/project/src/motoshop-app/api/llm_usage.jsonl"
+            log_path = "/tmp/llm_usage.jsonl"
             calls = []
             with open(log_path) as f:
                 for line in f:

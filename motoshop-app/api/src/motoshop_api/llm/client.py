@@ -168,8 +168,8 @@ class LLMClient:
                 "tokens_output": tokens_output,
                 "success": success,
             }
-            # Escribir en el directorio de la app (Render writable)
-            log_path = "/opt/render/project/src/motoshop-app/api/llm_usage.jsonl"
+            # /tmp siempre es escribible en Render
+            log_path = "/tmp/llm_usage.jsonl"
             with open(log_path, "a") as f:
                 f.write(_json.dumps(log_entry) + "\n")
         except Exception:
