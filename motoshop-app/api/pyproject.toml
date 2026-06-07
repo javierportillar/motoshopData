@@ -22,7 +22,6 @@ dependencies = [
   "databricks-sql-connector>=3",
   "duckdb>=1.0",
   "boto3>=1.34",
-  "requests>=2.31",
 ]
 
 [project.optional-dependencies]

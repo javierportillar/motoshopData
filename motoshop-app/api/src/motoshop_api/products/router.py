@@ -69,7 +69,18 @@ async def search_semantic(
     limit: int = Query(default=10, ge=1, le=50),
     _user: User = Depends(get_current_user),
 ) -> SemanticSearchResponse:
-    """Búsqueda semántica de productos — DuckDB (fastembed) o fallback MySQL."""
+    """Búsqueda semántica de productos — DuckDB (HF API) o fallback MySQL."""
+    try:
+        return _search_semantic_impl(q, limit)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("search_semantic_unexpected", error=str(exc))
+        return _semantic_fallback_mysql(q, limit)
+
+
+def _search_semantic_impl(q: str, limit: int) -> SemanticSearchResponse:
+    """Implementación interna del search semántico."""
     from motoshop_api.config import settings as _settings
 
     db_path = _settings.duckdb_path
