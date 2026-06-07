@@ -126,15 +126,6 @@ class LLMClient:
                     usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0),
                 )
 
-                # Log a MySQL (best-effort, no bloquea la llamada)
-                self._log_usage(
-                    endpoint="briefing_generate",
-                    model=backend["model"],
-                    tokens_input=usage.get("prompt_tokens", 0),
-                    tokens_output=usage.get("completion_tokens", 0),
-                    success=True,
-                )
-
                 return {
                     "text": text,
                     "tokens_used": usage.get("total_tokens", 0),
@@ -153,27 +144,6 @@ class LLMClient:
                 last_error = str(exc)
 
         raise RuntimeError(f"LLM call failed after trying {len(self._backends)} backends: {last_error}")
-
-    @staticmethod
-    def _log_usage(endpoint: str, model: str, tokens_input: int, tokens_output: int, success: bool = True):
-        """Log de uso a JSON file (siempre disponible, sin depender de MySQL ni DuckDB)."""
-        try:
-            import json as _json
-            from datetime import datetime, timezone
-            log_entry = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "endpoint": endpoint,
-                "model": model,
-                "tokens_input": tokens_input,
-                "tokens_output": tokens_output,
-                "success": success,
-            }
-            # /tmp siempre es escribible en Render
-            log_path = "/tmp/llm_usage.jsonl"
-            with open(log_path, "a") as f:
-                f.write(_json.dumps(log_entry) + "\n")
-        except Exception:
-            pass  # nunca bloquear la llamada principal
 
     def close(self):
         self._http.close()

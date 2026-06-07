@@ -182,6 +182,9 @@ class BriefingGenerator:
         # ── Anti-hallucination: verificar que cada número del output esté en el contexto ──
         self._validate_numbers(text, context)
 
+        # ── Cost logging (best-effort, nunca bloquea) ──
+        _log_cost(result["model"], result["tokens_input"], result["tokens_output"])
+
         return {
             "briefing_text": text,
             "tokens_used": result["tokens_used"],
@@ -229,3 +232,22 @@ class BriefingGenerator:
 
     def close(self):
         self._con.close()
+
+
+def _log_cost(model: str, tokens_input: int, tokens_output: int) -> None:
+    """Log de uso a JSONL en /tmp/. Best-effort, nunca bloquea."""
+    try:
+        import json as _json
+        from datetime import datetime, timezone
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "endpoint": "briefing",
+            "model": model,
+            "tokens_input": tokens_input,
+            "tokens_output": tokens_output,
+            "success": True,
+        }
+        with open("/tmp/llm_usage.jsonl", "a") as f:
+            f.write(_json.dumps(entry) + "\n")
+    except Exception:
+        pass
