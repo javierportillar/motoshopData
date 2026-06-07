@@ -20,31 +20,31 @@ logger = logging.getLogger(__name__)
 
 limiter = Limiter(key_func=get_remote_address)
 
-# ── Embedding model cache (HuggingFace, local, gratis) ──────────────────
+# ── Embedding model cache (fastembed ONNX, 118MB, sin PyTorch) ────────
 _embed_model = None
 EMBEDDING_DIM = 384
 
 
 def _get_embed_model():
-    """Lazy singleton — carga paraphrase-multilingual-MiniLM-L12-v2 una sola vez."""
+    """Lazy singleton — carga intfloat/multilingual-e5-small una sola vez."""
     global _embed_model
     if _embed_model is None:
         try:
-            from sentence_transformers import SentenceTransformer
+            from fastembed import TextEmbedding
             model_name = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
             logger.info("Loading embedding model: %s", model_name)
-            _embed_model = SentenceTransformer(model_name)
-            logger.info("Embedding model loaded — dim=%d", _embed_model.get_sentence_embedding_dimension())
+            _embed_model = TextEmbedding(model_name=model_name)
+            logger.info("Embedding model loaded — dim=%d", EMBEDDING_DIM)
         except ImportError:
             raise HTTPException(
                 status_code=503,
-                detail="Semantic search not available: sentence-transformers not installed",
+                detail="Semantic search not available: fastembed not installed",
             )
         except Exception as exc:
             logger.error("Failed to load embedding model: %s", exc)
             raise HTTPException(
                 status_code=503,
-                detail=f"Semantic search not available: failed to load embedding model",
+                detail="Semantic search not available: failed to load embedding model",
             )
     return _embed_model
 
@@ -101,10 +101,11 @@ async def search_semantic(
             detail=f"DuckDB not found at {db_path}. Run embeddings pipeline first.",
         )
 
-    # 1. Generar embedding de la query con HuggingFace (local)
+    # 1. Generar embedding de la query con fastembed (ONNX, local, sin API key)
     try:
         model = _get_embed_model()
-        query_emb = model.encode([q], show_progress_bar=False)[0].tolist()
+        # fastembed devuelve generator → list → primer elemento
+        query_emb = list(model.embed([q]))[0].tolist()
     except HTTPException:
         raise
     except Exception as exc:
