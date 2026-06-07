@@ -113,7 +113,11 @@ def search_semantic(
         return SemanticSearchResponse(query=q, results=matches, total=len(matches))
     except Exception as exc:
         logger.error("mysql_semantic_fallback_failed: %s", exc)
-        raise HTTPException(status_code=503, detail="Semantic search no disponible (DuckDB/MySQL offline).")
+        raise HTTPException(
+            status_code=503,
+            detail="Semantic search no disponible (DuckDB embeddings offline, MySQL offline). "
+                   "Verificar HF_API_TOKEN y conectividad HF API.",
+        )
 
 
 def _ensure_duckdb_file(db_path: str) -> None:

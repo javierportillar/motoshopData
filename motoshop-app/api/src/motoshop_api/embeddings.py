@@ -31,12 +31,18 @@ def _get_query_embedding(text: str) -> list[float]:
     token = os.environ.get("HF_API_TOKEN") or os.environ.get("HUGGINGFACEHUB_API_TOKEN")
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 
-    with httpx.Client(timeout=30.0) as client:
-        resp = client.post(
-            HF_MODEL_URL,
-            json={"inputs": text, "options": {"wait_for_model": True}},
-            headers=headers,
-        )
+    logger.info("hf_api_call: token_set=%s model=%s", bool(token), HF_MODEL_URL.split("/")[-1])
+
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.post(
+                HF_MODEL_URL,
+                json={"inputs": text, "options": {"wait_for_model": True}},
+                headers=headers,
+            )
+    except Exception as exc:
+        logger.error("hf_api_connection_failed: %s", exc)
+        raise RuntimeError(f"HuggingFace API connection failed: {exc}") from exc
 
     if resp.status_code != 200:
         logger.warning("hf_api_error: status=%s body=%s", resp.status_code, resp.text[:200])
