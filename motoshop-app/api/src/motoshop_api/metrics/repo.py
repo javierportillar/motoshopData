@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 from motoshop_api.metrics.schemas import (
     AbcBucket,
+    AbcDetalleItem,
+    AbcDetalleResponse,
     AbcSegmentation,
     BodegaItem,
     CohorteDetailItem,
@@ -72,6 +74,7 @@ class MetricsRepoProtocol(Protocol):
     def get_drift_summary(self) -> DriftSummaryResponse: ...
     def get_plan_compras(self) -> PlanComprasResponse: ...
     def get_forecast_categoria(self) -> ForecastCategoriaResponse: ...
+    def get_abc_detalle(self, bucket: str, limit: int = 20) -> AbcDetalleResponse: ...
 
 
 # ── Fake (mock) ──────────────────────────────────────────────────────────
@@ -191,6 +194,33 @@ class FakeMetricsRepo:
             bucket_b=AbcBucket(categoria="B", num_skus=634, valor_total=7_518_000.0, porcentaje_ingreso=15.0),
             bucket_c=AbcBucket(categoria="C", num_skus=3_305, valor_total=2_506_000.0, porcentaje_ingreso=5.0),
         )
+
+    def get_abc_detalle(self, bucket: str, limit: int = 20) -> AbcDetalleResponse:
+        mock_data = {
+            "A": [
+                AbcDetalleItem(cod_producto="MOTS1297", nom_producto="ACEITE 20W50 MOTUL 1L", valor_total=8_550_000.0, porcentaje_bucket=21.3),
+                AbcDetalleItem(cod_producto="MOTS0412", nom_producto="FILTRO ACEITE YAMAHA YBR125", valor_total=5_740_000.0, porcentaje_bucket=14.3),
+                AbcDetalleItem(cod_producto="MOTS2109", nom_producto="CADENA TRANSMISION RK 428", valor_total=4_680_000.0, porcentaje_bucket=11.7),
+                AbcDetalleItem(cod_producto="MOTS0834", nom_producto="PASTILLAS FRENO DELANTERAS", valor_total=3_960_000.0, porcentaje_bucket=9.9),
+                AbcDetalleItem(cod_producto="MOTS3512", nom_producto="BUJIA NGK CR8E", valor_total=3_807_000.0, porcentaje_bucket=9.5),
+                AbcDetalleItem(cod_producto="MOTS1723", nom_producto="CUBIERTA PIRELLI 130/70-17", valor_total=3_375_000.0, porcentaje_bucket=8.4),
+                AbcDetalleItem(cod_producto="MOTS0945", nom_producto="BATERIA YUASA YB14L-A2", valor_total=2_680_000.0, porcentaje_bucket=6.7),
+                AbcDetalleItem(cod_producto="MOTS2618", nom_producto="GUAYA ACELERADOR UNIVERSAL", valor_total=1_872_000.0, porcentaje_bucket=4.7),
+                AbcDetalleItem(cod_producto="MOTS4536", nom_producto="CABLE BUJIA SILICONA 90°", valor_total=1_560_000.0, porcentaje_bucket=3.9),
+                AbcDetalleItem(cod_producto="MOTS3689", nom_producto="CANDADO DISCO 90DB", valor_total=1_470_000.0, porcentaje_bucket=3.7),
+            ],
+            "B": [
+                AbcDetalleItem(cod_producto="MOTS5412", nom_producto="MANILLAR CRUISER 1\"", valor_total=980_000.0, porcentaje_bucket=13.0),
+                AbcDetalleItem(cod_producto="MOTS4301", nom_producto="DEFENSA TRASERA HONDA XR190", valor_total=870_000.0, porcentaje_bucket=11.6),
+            ],
+            "C": [
+                AbcDetalleItem(cod_producto="MOTS9912", nom_producto="ESCAPE DEPORTIVO AKRAPOVIC", valor_total=420_000.0, porcentaje_bucket=16.8),
+                AbcDetalleItem(cod_producto="MOTS8745", nom_producto="ASIENTO GEL YAMAHA MT09", valor_total=350_000.0, porcentaje_bucket=14.0),
+            ],
+        }
+        items = mock_data.get(bucket, [])[:limit]
+        total_valor = sum(i.valor_total for i in items)
+        return AbcDetalleResponse(bucket=bucket, total_skus=len(items), total_valor=total_valor, items=items)
 
     def get_dormidos(
         self,
@@ -708,6 +738,33 @@ class RealMetricsRepo:
             bucket_b=AbcBucket(**by_cat.get("B", {"categoria": "B", "num_skus": 0, "valor_total": 0, "porcentaje_ingreso": 0})),
             bucket_c=AbcBucket(**by_cat.get("C", {"categoria": "C", "num_skus": 0, "valor_total": 0, "porcentaje_ingreso": 0})),
         )
+
+    def get_abc_detalle(self, bucket: str, limit: int = 20) -> AbcDetalleResponse:
+        rows = self._query("""
+            WITH max_month AS (
+                SELECT MAX(business_month) AS mm FROM motoshop.gold.mart_rotacion_abc
+            )
+            SELECT
+                cod_producto,
+                nom_producto,
+                ROUND(valor_total, 2) AS valor_total,
+                ROUND(valor_total / NULLIF(SUM(valor_total) OVER(PARTITION BY categoria_abc), 0) * 100, 1) AS porcentaje_bucket
+            FROM motoshop.gold.mart_rotacion_abc, max_month
+            WHERE business_month = max_month.mm AND categoria_abc = :bucket
+            ORDER BY valor_total DESC
+            LIMIT :limit
+        """, [
+            {"name": "bucket", "value": {"stringValue": bucket}, "type": "STRING"},
+            {"name": "limit", "value": {"intValue": limit}, "type": "INT"},
+        ])
+        if not rows:
+            return AbcDetalleResponse(bucket=bucket, total_skus=0, total_valor=0.0, items=[])
+        for r in rows:
+            r["valor_total"] = float(r["valor_total"])
+            r["porcentaje_bucket"] = float(r["porcentaje_bucket"])
+        items = [AbcDetalleItem(**r) for r in rows]
+        total_valor = sum(i.valor_total for i in items)
+        return AbcDetalleResponse(bucket=bucket, total_skus=len(items), total_valor=total_valor, items=items)
 
     def get_dormidos(
         self,

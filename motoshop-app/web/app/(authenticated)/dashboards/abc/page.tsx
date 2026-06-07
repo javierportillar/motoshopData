@@ -1,7 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import { useAbcSegmentation } from "@/lib/api/hooks";
+import { useAbcSegmentation, useAbcDetalle } from "@/lib/api/hooks";
 import { formatMoney } from "@/lib/format/currency";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -13,6 +14,51 @@ const BUCKET_VARIANTS: Record<string, "error" | "warning" | "success"> = {
   B: "warning",
   C: "error",
 };
+
+function BucketDetail({ bucket }: { bucket: string }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const { data, isLoading } = useAbcDetalle(open ? bucket : null, 20);
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(!open)}
+        className="mt-2 flex w-full items-center justify-between rounded-lg bg-surface-alt px-3 py-2 text-xs font-medium text-text-secondary hover:bg-surface-alt/80"
+      >
+        <span>{open ? "Ocultar detalle" : "Ver detalle de productos"}</span>
+        <span className={`transition-transform ${open ? "rotate-180" : ""}`}>▼</span>
+      </button>
+      {open && (
+        <div className="mt-2 space-y-1">
+          {isLoading && (
+            <div className="space-y-1">
+              {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-8 rounded-lg" />)}
+            </div>
+          )}
+          {data?.items.map((item) => (
+            <div
+              key={item.cod_producto}
+              className="flex items-center justify-between rounded-lg bg-surface px-3 py-1.5"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="font-mono text-xs text-text-muted truncate">{item.cod_producto}</span>
+                <span className="text-xs text-text-primary truncate">{item.nom_producto}</span>
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                <span className="text-xs text-text-muted">{item.porcentaje_bucket.toFixed(1)}%</span>
+                <span className="text-xs font-medium text-text-primary">{formatMoney(item.valor_total)}</span>
+              </div>
+            </div>
+          ))}
+          {data && data.items.length === 0 && (
+            <p className="py-4 text-center text-xs text-text-muted">Sin productos en este bucket</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 export default function AbcPage(): JSX.Element {
   const { data, error, isLoading } = useAbcSegmentation();
@@ -128,6 +174,7 @@ export default function AbcPage(): JSX.Element {
                 {b.porcentaje_ingreso}% ingresos
               </p>
             </div>
+            <BucketDetail bucket={b.categoria} />
           </Card>
         ))}
       </div>

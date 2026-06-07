@@ -49,9 +49,7 @@ async function fetchWithOfflineFallback<T>(
 
 export function useProducts(query: string, page = 1, limit = 20) {
   const offset = (page - 1) * limit;
-  const key = query
-    ? `/api/products?q=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`
-    : null;
+  const key = `/api/products?q=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`;
 
   return useSWR<ProductsResponse>(
     key,
@@ -164,7 +162,7 @@ function useMetrics<T>(key: string | null): {
     revalidateOnFocus: false,
     revalidateOnReconnect: false,
     dedupingInterval: DEDUP_METRICS,
-    refreshInterval: 5 * 60_000, // refresh cada 5 min
+    refreshInterval: 60_000, // refresh cada 60s (F7-PERF-1)
   });
   return { data, error, isLoading, mutate };
 }
@@ -179,6 +177,27 @@ export function useInventorySummary() {
 
 export function useAbcSegmentation() {
   return useMetrics<AbcSegmentation>("/api/metrics/abc-segmentation");
+}
+
+interface AbcDetalleItem {
+  cod_producto: string;
+  nom_producto: string;
+  valor_total: number;
+  porcentaje_bucket: number;
+}
+
+interface AbcDetalleResponse {
+  bucket: string;
+  total_skus: number;
+  total_valor: number;
+  items: AbcDetalleItem[];
+}
+
+export function useAbcDetalle(bucket: string | null, limit = 20) {
+  const key = bucket
+    ? `/api/metrics/abc-detalle?bucket=${bucket}&limit=${limit}`
+    : null;
+  return useMetrics<AbcDetalleResponse>(key);
 }
 
 export function useDormidos(page = 1, pageSize = 10) {

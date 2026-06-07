@@ -27,6 +27,7 @@ from motoshop_api.metrics.repo import (
 )
 from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
 from motoshop_api.metrics.schemas import (
+    AbcDetalleResponse,
     AbcSegmentation,
     CohortesDetailResponse,
     CohortesResponse,
@@ -192,6 +193,20 @@ def abc_segmentation(
 ) -> AbcSegmentation:
     """Segmentación ABC de ingresos (80/15/5) del mes actual."""
     return _cached_or_fetch("abc-segmentation", repo.get_abc_segmentation)
+
+
+@router.get("/metrics/abc-detalle", response_model=AbcDetalleResponse)
+@limiter.limit("30/minute")
+def abc_detalle(
+    request: Request,
+    bucket: str = Query(pattern=r"^[ABC]$", description="Bucket A, B o C"),
+    limit: int = Query(default=20, ge=1, le=100, description="Máx items"),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+) -> AbcDetalleResponse:
+    """Detalle de productos en un bucket ABC específico."""
+    cache_key = f"abc-detalle:{bucket}:{limit}"
+    return _cached_or_fetch(cache_key, lambda: repo.get_abc_detalle(bucket, limit))
 
 
 @router.get("/metrics/dormidos", response_model=DormidosResponse)

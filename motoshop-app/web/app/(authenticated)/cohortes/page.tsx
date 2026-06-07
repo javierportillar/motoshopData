@@ -174,7 +174,9 @@ export default function CohortesPage(): JSX.Element {
               },
               {
                 header: "Ticket prom.",
-                cell: (c) => formatMoney(c.ticket_promedio),
+                cell: (c) => c.num_clientes === 0
+                  ? <span className="text-text-muted">—</span>
+                  : formatMoney(c.ticket_promedio),
                 align: "right",
               },
               {

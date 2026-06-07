@@ -60,10 +60,21 @@ export default function ForecastPage(): JSX.Element {
 
   // Fetch products from API for autocomplete
   const { data: productsData } = useProducts(
-    !selectedSku && sku.trim() ? searchQuery : "",
+    searchQuery,
     1,
     20,
   );
+
+  // Auto-select first product with forecast on initial load
+  useEffect(() => {
+    if (!selectedSku && productsData?.items && productsData.items.length > 0) {
+      const first = productsData.items.find((p: any) => p.has_forecast === true) ?? productsData.items[0];
+      if (first) {
+        setSku(first.codprod);
+        setSelectedSku(first.codprod);
+      }
+    }
+  }, [productsData, selectedSku]);
 
   const suggestions = useMemo(() => {
     if (!productsData?.items) return [];

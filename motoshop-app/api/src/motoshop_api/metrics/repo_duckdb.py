@@ -18,6 +18,8 @@ import duckdb
 from motoshop_api.metrics.repo import MetricsRepoProtocol
 from motoshop_api.metrics.schemas import (
     AbcBucket,
+    AbcDetalleItem,
+    AbcDetalleResponse,
     AbcSegmentation,
     BodegaItem,
     CohorteDetailItem,
@@ -443,6 +445,30 @@ class DuckDBMetricsRepo:
             bucket_b=AbcBucket(**by_cat.get("B", {"categoria": "B", "num_skus": 0, "valor_total": 0, "porcentaje_ingreso": 0})),
             bucket_c=AbcBucket(**by_cat.get("C", {"categoria": "C", "num_skus": 0, "valor_total": 0, "porcentaje_ingreso": 0})),
         )
+
+    def get_abc_detalle(self, bucket: str, limit: int = 20) -> AbcDetalleResponse:
+        rows = self._query("""
+            WITH max_month AS (
+                SELECT MAX(business_month) AS mm FROM motoshop_gold_mart_rotacion_abc
+            )
+            SELECT
+                cod_producto,
+                nom_producto,
+                ROUND(valor_total, 2) AS valor_total,
+                ROUND(valor_total / NULLIF(SUM(valor_total) OVER(PARTITION BY categoria_abc), 0) * 100, 1) AS porcentaje_bucket
+            FROM motoshop_gold_mart_rotacion_abc, max_month
+            WHERE business_month = max_month.mm AND categoria_abc = ?
+            ORDER BY valor_total DESC
+            LIMIT ?
+        """, [bucket, limit])
+        if not rows:
+            return AbcDetalleResponse(bucket=bucket, total_skus=0, total_valor=0.0, items=[])
+        for r in rows:
+            r["valor_total"] = float(r["valor_total"])
+            r["porcentaje_bucket"] = float(r["porcentaje_bucket"])
+        items = [AbcDetalleItem(**r) for r in rows]
+        total_valor = sum(i.valor_total for i in items)
+        return AbcDetalleResponse(bucket=bucket, total_skus=len(items), total_valor=total_valor, items=items)
 
     # ── Dormidos ─────────────────────────────────────────────────────────
 

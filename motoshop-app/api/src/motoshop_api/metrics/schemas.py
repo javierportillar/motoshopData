@@ -247,6 +247,20 @@ class ForecastCategoriaResponse(BaseModel):
     cobertura_pct: float
 
 
+class AbcDetalleItem(BaseModel):
+    cod_producto: str
+    nom_producto: str
+    valor_total: float
+    porcentaje_bucket: float
+
+
+class AbcDetalleResponse(BaseModel):
+    bucket: str
+    total_skus: int
+    total_valor: float
+    items: list[AbcDetalleItem]
+
+
 class ActionRecommendationItem(BaseModel):
     sku: str
     nom_producto: str
