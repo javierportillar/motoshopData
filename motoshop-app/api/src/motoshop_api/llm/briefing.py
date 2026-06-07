@@ -165,13 +165,12 @@ class BriefingGenerator:
         context_str = _json.dumps(context, ensure_ascii=False, indent=2)
         prompt = BRIEFING_PROMPT.format(context_json=context_str)
 
-        # deepseek-v4-flash-free requiere max_tokens alto (~8000) porque el
-        # chain-of-thought reasoning consume la mayoría. Con 2000, el modelo
-        # no termina de pensar y content queda vacío. Con 8000, termina.
+        # El LLMClient usa qwen3.6-plus en GO (primario, sin chain-of-thought)
+        # con fallback a deepseek-v4-flash-free en Zen.
+        # max_tokens=None delega en el default del backend (800 en GO, 8000 en Zen).
         client = get_llm_client()
         result = client.complete(
             prompt=prompt,
-            max_tokens=8000,
             system=BRIEFING_SYSTEM,
         )
 
