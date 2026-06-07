@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime
 from time import time
 
 import httpx
@@ -20,6 +21,7 @@ from slowapi.util import get_remote_address
 from motoshop_api.auth.deps import get_current_user, require_role
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
+from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +159,39 @@ async def briefing_send(
         tokens_used=result["tokens_used"],
         model=result["model"],
         cost_usd=result["cost_usd"],
+    )
+
+
+# ── Forecast explain ────────────────────────────────────────────────────────
+
+class ForecastExplainResponse(BaseModel):
+    text: str
+    generated_at: datetime
+
+
+@router.post("/forecast/explain", response_model=ForecastExplainResponse)
+@limiter.limit("30/minute")
+async def forecast_explain(
+    request: Request,
+    user: User = Depends(require_role("admin")),
+) -> ForecastExplainResponse:
+    """Narrativa explicativa del forecast por categoría. Admin-only.
+
+    Genera un texto en español colombiano que explica el estado del forecast:
+    WAPE, cobertura, categorías con mejor/peor desempeño, y recomendación.
+    """
+    from motoshop_api.llm.forecast_explainer import ForecastExplainer
+    from motoshop_api.llm.client import get_llm_client
+
+    db_path = _get_db_path()
+    repo = DuckDBMetricsRepo(db_path=db_path)
+    llm = get_llm_client()
+    explainer = ForecastExplainer(repo, llm)
+    text = explainer.explain()
+
+    return ForecastExplainResponse(
+        text=text,
+        generated_at=datetime.now(),
     )
 
 
