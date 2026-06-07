@@ -5,10 +5,30 @@ Uses DuckDB SQL with data from MySQL bronze (or JSON exports as fallback).
 
 from __future__ import annotations
 
+import logging
+
 import duckdb
+
+logger = logging.getLogger(__name__)
 
 
 def dim_producto(con: duckdb.DuckDBPyConnection) -> None:
+    # Backup embeddings antes de rebuild (Issue 2 fix)
+    has_embedding = False
+    try:
+        con.execute("SELECT embedding FROM motoshop_silver_dim_producto LIMIT 0")
+        con.execute("""
+            CREATE TEMP TABLE _embed_backup AS
+            SELECT cod_producto, embedding FROM motoshop_silver_dim_producto
+            WHERE embedding IS NOT NULL
+        """)
+        count = con.execute("SELECT COUNT(*) FROM _embed_backup").fetchone()[0]
+        if count > 0:
+            has_embedding = True
+            logger.info("Backed up %d embeddings before dim_producto rebuild", count)
+    except Exception:
+        pass
+
     con.execute("""
         CREATE OR REPLACE TABLE motoshop_silver_dim_producto AS
         SELECT
@@ -36,6 +56,23 @@ def dim_producto(con: duckdb.DuckDBPyConnection) -> None:
         FROM bronze_productos
         WHERE codprod IS NOT NULL
     """)
+
+    # Agregar columna embedding si no existe (la preserva entre corridas)
+    try:
+        con.execute("SELECT embedding FROM motoshop_silver_dim_producto LIMIT 0")
+    except Exception:
+        logger.info("Adding embedding column (FLOAT[384]) to dim_producto")
+        con.execute("ALTER TABLE motoshop_silver_dim_producto ADD COLUMN embedding FLOAT[384]")
+
+    # Restaurar embeddings respaldados
+    if has_embedding:
+        con.execute("""
+            UPDATE motoshop_silver_dim_producto sdp
+            SET embedding = b.embedding
+            FROM _embed_backup b
+            WHERE sdp.cod_producto = b.cod_producto
+        """)
+        logger.info("Restored embeddings for silver_dim_producto")
 
 
 def dim_bodega(con: duckdb.DuckDBPyConnection) -> None:
