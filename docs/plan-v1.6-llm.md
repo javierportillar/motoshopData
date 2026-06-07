@@ -24,11 +24,11 @@ ADRs a generar: **ADR-0024 (LLM provider + cost policy)**, **ADR-0025 (RAG sandb
 
 | Dimensión | Objetivo | Restricción |
 |-----------|----------|-------------|
-| Costo recurrente | < $5/año en LLM API | Si subimos a >$10/año, pausar y re-evaluar |
+| Costo recurrente | **$0/mes para siempre** (regla del proyecto) | OpenCode Zen modelos FREE — sin tarjeta de crédito |
 | Latencia briefing | < 10 s end-to-end (cron) | Usuario no espera, llega push, no es interactivo |
 | Latencia Q&A | < 5 s por turno | Interactivo, usuario espera |
 | Privacidad | No enviar PII de clientes al LLM | nit_cliente queda hasheado o agregado |
-| Defendibilidad | Demo: gerente recibe push en vivo durante la defensa | Reproducible |
+| Disponibilidad | Briefing diario sin falla | Fallback a 2do modelo si el primario está caído |
 | Honestidad | El LLM nunca inventa cifras | Toda cifra que muestre debe venir de DuckDB tool calls |
 
 ---
@@ -71,12 +71,14 @@ ADRs a generar: **ADR-0024 (LLM provider + cost policy)**, **ADR-0025 (RAG sandb
 
 | Decisión | Por qué | Alternativa rechazada |
 |----------|---------|------------------------|
-| **Anthropic Claude Haiku** como LLM principal | Costo ~igual a GPT-4o-mini, mejor tool use, JSON mode estricto, API estable | OpenAI gpt-4o-mini (equivalente, sin diferenciador para nosotros) |
+| **OpenCode Zen** como LLM gateway | API key gratis sin tarjeta, expone 6 modelos free forever (DeepSeek, Qwen, MiMo, MiniMax, Nemotron), OpenAI-compatible API | Anthropic directo ($5 free 2 años, después $2.50/año + tarjeta), Gemini directo (free pero requiere Google Cloud project) |
+| **`deepseek-v4-flash-free`** como modelo primario | Multi-idioma fuerte (español natural), buen razonamiento, JSON output, latencia ~2s | claude-haiku (requiere balance), gpt-mini (requiere balance) |
+| **`qwen3.6-plus-free`** como fallback automático | Si OpenCode degrada DeepSeek free, Qwen sigue funcional. Alibaba mantiene alta disponibilidad | Sin fallback (riesgo single point of failure) |
 | **Tool use con DuckDB tools whitelisted** | El LLM nunca escribe SQL libre; pide tools tipadas que ejecutan SQL pre-validado | Free SQL generation (riesgo de DROP TABLE, inyección) |
 | **Telegram Bot** para delivery | Push real al celular del gerente, gratis, sin app extra | Email (puede ir a spam), PWA notification (requiere PWA abierta) |
 | **GitHub Actions cron** para briefing diario | Free 2,000 min/mes, ya tenemos repo en GH, sin nueva infra | Render cron (Pro tier $$$), Cloudflare Worker (limitado en runtime) |
 | **Sin streaming** en briefing | Es un push, no interactivo | Streaming agregaría complejidad por gusto |
-| **Cost logging en tabla `app_llm_usage`** | Auditable, presupuesto bajo control | Sin logging — perderíamos visibilidad de costo |
+| **Cost logging en tabla `app_llm_usage`** | Aunque sea $0, logueamos uso por modelo + tokens para audit | Sin logging — perderíamos visibilidad |
 
 ---
 
@@ -86,13 +88,15 @@ ADRs a generar: **ADR-0024 (LLM provider + cost policy)**, **ADR-0025 (RAG sandb
 
 | Componente | Tecnología | Justificación |
 |------------|-----------|---------------|
-| LLM API | **Anthropic Claude Haiku** (o `claude-3-5-haiku-latest`) | $0.25/$1.25 por millón tokens. Tool use nativo. JSON mode estricto. |
-| LLM Client en FastAPI | **anthropic** Python SDK | Oficial, con retries y rate limiting. ~50 líneas para wrapper |
+| LLM Gateway | **OpenCode Zen** vía `https://opencode.ai/zen/v1` | OpenAI-compatible API, key gratis sin tarjeta, expone 6 modelos free forever |
+| Modelo primario | `deepseek-v4-flash-free` | Multi-idioma fuerte, español natural, free forever, latencia ~2s |
+| Modelo fallback | `qwen3.6-plus-free` | Alta disponibilidad Alibaba, también free forever |
+| LLM Client en FastAPI | **httpx** + wrapper liviano | OpenAI-compatible. No requiere SDK específico. ~30 líneas |
 | Tool use SQL safety | **sqlglot** | Parser SQL que valida que la query del LLM solo lee de tablas whitelisted |
 | Cron disparo briefing | **GitHub Actions** schedule | Gratis. Curl simple POST al API con admin token |
 | Delivery briefing | **python-telegram-bot** | SDK oficial, gratis, instantáneo. Bot creado vía @BotFather |
-| Cost logging | Nueva tabla `app_llm_usage` (MySQL InnoDB) | `tokens_input INT, tokens_output INT, cost_usd DECIMAL, endpoint VARCHAR, timestamp DATETIME` |
-| Embeddings (ya en V1.5) | OpenAI `text-embedding-3-small` | Reuse del Sprint 5 sub-bloque B |
+| Audit logging | Nueva tabla `app_llm_usage` (MySQL InnoDB) | `tokens_input INT, tokens_output INT, model VARCHAR, endpoint VARCHAR, timestamp DATETIME` (costo=$0 pero seguimos contando) |
+| Embeddings (ya en V1.5) | HuggingFace Inference API (free) | Reuse del Sprint 5 sub-bloque B — sin cambio |
 
 ### Lo que NO se agrega
 
@@ -181,23 +185,22 @@ ADRs a generar: **ADR-0024 (LLM provider + cost policy)**, **ADR-0025 (RAG sandb
 
 ---
 
-## 7. Cost projection (honesto)
+## 7. Cost projection
 
-**Por mes en uso normal:**
+**$0 USD / mes para siempre.** OpenCode Zen `deepseek-v4-flash-free` y `qwen3.6-plus-free` no consumen balance.
 
-| Feature | Llamadas/mes | Tokens/call | Costo/mes |
-|---------|--------------|-------------|-----------|
-| Briefing diario | 30 | ~5K input + 500 output | $0.04 |
-| Forecast narrativa | ~50 (1-2 por uso del dashboard) | ~2K input + 200 output | $0.03 |
-| Q&A chat | ~100 turnos en sesiones | ~3K input + 500 output (con tools) | $0.13 |
-| **Total mensual** | — | — | **~$0.20** |
-| **Total anual** | — | — | **~$2.40** |
+**Lo que SÍ tenemos que vigilar:**
 
-Plus embeddings refresh (mensual): ~$0.001.
+| Recurso | Limit aplicable | Lo que MotoShop usa | Headroom |
+|---------|-----------------|----------------------|----------|
+| OpenCode rate limit free | (no publicado, asumir ~60 RPM por modelo) | Briefing diario 1/día + chat ocasional | x100 |
+| HuggingFace Inference free | ~1000 req/mes | Búsqueda semántica ~100 req/día | Suficiente con margen |
+| GitHub Actions free | 2000 min/mes private | Briefing cron 1 min/día = 30 min/mes | x60 |
+| Telegram Bot | unlimited | Briefing diario + reportes manual | sin riesgo |
+| Render free | 750 hours/mes | UptimeRobot mantiene warm | sin riesgo |
+| Cloudflare R2 free | 10 GB + 10M ops/mes | 22MB DuckDB + ~10K refreshes | x1000 |
 
-**Total anual proyectado: ~$2.50.** Marginal vs cualquier alternativa.
-
-Si subimos por uso intenso a $5-10/año → seguimos en target. Si pasamos $20/año → reviewer pausa y revisa prompts.
+**Riesgo único:** que OpenCode cambie términos del free tier. Mitigación: el wrapper `LLMClient` abstrae el provider, se puede cambiar a Anthropic (con $5 free) o Google Gemini (1500 req/día free) en <1h de trabajo si pasa.
 
 ---
 
