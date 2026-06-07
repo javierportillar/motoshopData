@@ -113,3 +113,112 @@ async def data_refresh(
             status_code=500,
             detail=f"Refresh failed: {exc}",
         )
+
+
+# ── LLM cost dashboard ─────────────────────────────────────────────────
+
+class LLMCostItem(BaseModel):
+    model: str
+    calls: int
+    tokens_input: int
+    tokens_output: int
+    success_rate: float
+    cost_usd: float
+
+
+class LLMCostResponse(BaseModel):
+    month: str
+    total_calls: int
+    total_tokens_input: int
+    total_tokens_output: int
+    total_cost_usd: float
+    per_model: list[LLMCostItem]
+
+
+@router.get("/llm-cost", response_model=LLMCostResponse)
+@limiter.limit("10/minute")
+async def llm_cost(
+    request: Request,
+    user: User = Depends(require_role("admin")),
+) -> LLMCostResponse:
+    """Dashboard de costos LLM del mes actual. Admin-only.
+
+    Lee la tabla app_llm_usage en MySQL. Si MySQL no está disponible,
+    devuelve ceros (el cost logging es best-effort, no bloquea la API).
+    """
+    from datetime import datetime
+
+    month_str = datetime.now().strftime("%Y-%m")
+
+    try:
+        import pymysql
+        conn = pymysql.connect(
+            host=settings.mysql_host,
+            port=settings.mysql_port,
+            user=settings.mysql_user,
+            password=settings.mysql_password,
+            database=settings.mysql_database,
+            charset="utf8mb4",
+            connect_timeout=5,
+        )
+        cur = conn.cursor()
+
+        # Totales del mes
+        cur.execute("""
+            SELECT
+                COUNT(*) AS total_calls,
+                COALESCE(SUM(tokens_input), 0) AS total_tokens_input,
+                COALESCE(SUM(tokens_output), 0) AS total_tokens_output,
+                COALESCE(SUM(cost_usd), 0) AS total_cost_usd
+            FROM app_llm_usage
+            WHERE DATE_FORMAT(timestamp, '%Y-%m') = %s
+        """, [month_str])
+        totals = cur.fetchone()
+
+        # Por modelo
+        cur.execute("""
+            SELECT
+                model,
+                COUNT(*) AS calls,
+                COALESCE(SUM(tokens_input), 0) AS tokens_input,
+                COALESCE(SUM(tokens_output), 0) AS tokens_output,
+                COALESCE(SUM(cost_usd), 0) AS cost_usd,
+                ROUND(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) AS success_rate
+            FROM app_llm_usage
+            WHERE DATE_FORMAT(timestamp, '%Y-%m') = %s
+            GROUP BY model
+            ORDER BY calls DESC
+        """, [month_str])
+        rows = cur.fetchall()
+
+        conn.close()
+
+        return LLMCostResponse(
+            month=month_str,
+            total_calls=int(totals[0]) if totals else 0,
+            total_tokens_input=int(totals[1]) if totals else 0,
+            total_tokens_output=int(totals[2]) if totals else 0,
+            total_cost_usd=float(totals[3]) if totals else 0.0,
+            per_model=[
+                LLMCostItem(
+                    model=r[0],
+                    calls=int(r[1]),
+                    tokens_input=int(r[2]),
+                    tokens_output=int(r[3]),
+                    cost_usd=float(r[4]),
+                    success_rate=float(r[5]),
+                )
+                for r in rows
+            ],
+        )
+
+    except Exception as exc:
+        logger.warning("llm_cost: MySQL unavailable, returning zeros: %s", exc)
+        return LLMCostResponse(
+            month=month_str,
+            total_calls=0,
+            total_tokens_input=0,
+            total_tokens_output=0,
+            total_cost_usd=0.0,
+            per_model=[],
+        )
