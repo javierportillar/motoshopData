@@ -71,22 +71,22 @@ async def lifespan(app: FastAPI):
     else:
         log.warning("users_file_not_found", path=str(users_path))
 
-    # ── Asegurar embeddings para búsqueda semántica ──────────────────
+    # ── Asegurar embeddings (background, no bloquea startup) ────────
     if settings.data_backend == "duckdb" and settings.duckdb_path:
-        try:
-            db_path = settings.duckdb_path
-            if os.path.exists(db_path):
-                log.info("checking_embeddings", db_path=db_path)
-                from motoshop_api.embeddings import ensure_embeddings
-                count = ensure_embeddings(db_path)
-                if count > 0:
-                    log.info("embeddings_generated", count=count)
-                else:
-                    log.info("embeddings_ok")
-            else:
-                log.warning("duckdb_not_found", path=db_path)
-        except Exception as exc:
-            log.warning("embedding_startup_skipped", error=str(exc))
+        if os.path.exists(settings.duckdb_path):
+            def _background_embeddings():
+                import logging as _log
+                try:
+                    from motoshop_api.embeddings import ensure_embeddings
+                    count = ensure_embeddings(settings.duckdb_path)
+                    if count > 0:
+                        _log.info("background_embeddings", count=count)
+                except Exception as exc:
+                    _log.info("background_embeddings_skipped", error=str(exc))
+            import threading
+            t = threading.Thread(target=_background_embeddings, daemon=True)
+            t.start()
+            log.info("embeddings_background_started")
     yield
 
 
