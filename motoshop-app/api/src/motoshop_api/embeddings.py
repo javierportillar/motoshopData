@@ -17,8 +17,10 @@ import httpx
 logger = logging.getLogger(__name__)
 
 EMBEDDING_DIM = 384
+# NOTA: api-inference.huggingface.co ya no existe (NXDOMAIN).
+# El endpoint correcto es router.huggingface.co/hf-inference/models/{model_id}
 HF_MODEL_URL = (
-    "https://api-inference.huggingface.co/pipeline/feature-extraction/"
+    "https://router.huggingface.co/hf-inference/models/"
     "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 )
 

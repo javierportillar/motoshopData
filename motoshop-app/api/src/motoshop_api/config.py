@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Configuración tipada de la API. Lee `.env` por defecto."""
+    """Configuración tipada de la API. Lee `.env` del root del repo."""
+
+    # Busca .env en el root del repo (../../.. desde este archivo)
+    _root = Path(__file__).resolve().parent.parent.parent.parent.parent  # repos/RepoName
+    _env_path = _root / ".env"
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_env_path if os.path.exists(_env_path) else ".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
