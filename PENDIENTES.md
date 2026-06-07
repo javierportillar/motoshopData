@@ -8,6 +8,78 @@
 
 ---
 
+## Sesión 2026-06-07 (67) · V1.5 Pipeline Windows · 2 issues bloqueantes
+
+**Estado:** Dev W instaló el pipeline + Scheduled Task pero el resultado tiene 2 problemas serios.
+
+### Lo que SÍ quedó bien
+
+- ✅ `infra/refresh_v15.ps1` actualizado (auto-load .env, fix encoding PS5.1, fix `/api/` path)
+- ✅ `infra/run_refresh.bat` entry point del Scheduled Task
+- ✅ Scheduled Task `MotoShop_V15_Refresh` instalado (09:00, 12:00, 17:50, AtStartup)
+- ✅ Pipeline corre OK end-to-end (lee MySQL → silver → gold → DuckDB → R2 → refresh API)
+- ✅ Búsqueda semántica RESTAURADA por el revisor (HF_API_TOKEN se había borrado de Render)
+
+### Issues bloqueantes detectados por el revisor
+
+**Issue 1 · MySQL bronze NO tiene ventas de junio**
+
+El pipeline corrió OK pero produjo data hasta 2026-05-28 nada más. Causa: MySQL bronze en Windows también tiene su última venta en 2026-05-28. **Falta un proceso de importación del POS sgHermes → MySQL bronze** que dejó de correr o nunca se programó.
+
+Dev W debe verificar:
+```sql
+SELECT MAX(fecven) FROM fventa;
+SELECT MAX(business_date) FROM bronze_fventa;
+```
+
+Si MAX es <= 2026-05-28 → hay un import paralelo roto. Hay que diagnosticar:
+- ¿Cómo se cargan los datos del POS al MySQL bronze?
+- ¿Era manual (xlsx, dump) o automático?
+- ¿Cuándo dejó de correr?
+- ¿Qué se necesita para reactivarlo?
+
+**Issue 2 · El pipeline rompe las embeddings cada vez que corre**
+
+`pipeline/silver.py` reconstruye `silver_dim_producto` sin preservar la columna `embedding` que el PO genera con `pipeline/embeddings_skus.py`. Esto significa que **cada vez que el cron corra, va a romper la búsqueda semántica**.
+
+Fix requerido en `pipeline/silver.py`:
+
+```python
+# Al construir silver_dim_producto, hacer LEFT JOIN con la versión anterior
+# para preservar la columna embedding:
+
+CREATE TABLE silver_dim_producto AS
+SELECT b.*, existing.embedding
+FROM new_data b
+LEFT JOIN existing_silver_dim_producto existing
+    ON b.cod_producto = existing.cod_producto
+```
+
+Después, paso post-pipeline que llama `embeddings_skus.py` solo para SKUs nuevos sin embedding (delta).
+
+DoD del fix: tras correr pipeline, `SELECT COUNT(*) FROM silver_dim_producto WHERE embedding IS NOT NULL` debe ser igual o mayor al conteo antes del pipeline (6,185 SKUs hoy).
+
+### Acción operativa del PO ahora
+
+**DESACTIVAR el Scheduled Task hasta que Dev W arregle Issue 2.** Si no, mañana 02:00 COL se rompe la búsqueda semántica en producción:
+
+```powershell
+Disable-ScheduledTask -TaskName "MotoShop_V15_Refresh"
+```
+
+Reactivar con `Enable-ScheduledTask` solo después del fix verificado.
+
+### Lo que el revisor arregló inline
+
+Para que la búsqueda semántica siguiera funcional mientras Dev W arregla:
+1. Re-agregó `HF_API_TOKEN` a env vars de Render (lo había borrado Dev L al sobrescribir con OpenCode/Telegram)
+2. Re-subió el DuckDB de Mac (22 MB con 6,185 embeddings) a R2
+3. Disparó `/api/admin/data/refresh` para que Render lo bajara
+
+Estado prod post-fix: `/api/products/search-semantic?q=aceite` → HTTP 200 ✅
+
+---
+
 ## Sesión 2026-05-31 (66) · V1.5 Migración DuckDB · Kickoff pendiente
 
 **Estado:** Plan V1.5 aprobado por PO (humano). Ejecución pendiente de arranque por Dev D. Backend Olas 1-4 del audit F7 ya están cerradas y deployadas. App productiva está caída por revocación de Serverless Compute en Databricks Free Edition (no es bug nuestro, es decisión de Databricks).
