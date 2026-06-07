@@ -20,6 +20,34 @@ logger = logging.getLogger(__name__)
 
 limiter = Limiter(key_func=get_remote_address)
 
+# ── Embedding model cache (HuggingFace, local, gratis) ──────────────────
+_embed_model = None
+EMBEDDING_DIM = 384
+
+
+def _get_embed_model():
+    """Lazy singleton — carga paraphrase-multilingual-MiniLM-L12-v2 una sola vez."""
+    global _embed_model
+    if _embed_model is None:
+        try:
+            from sentence_transformers import SentenceTransformer
+            model_name = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+            logger.info("Loading embedding model: %s", model_name)
+            _embed_model = SentenceTransformer(model_name)
+            logger.info("Embedding model loaded — dim=%d", _embed_model.get_sentence_embedding_dimension())
+        except ImportError:
+            raise HTTPException(
+                status_code=503,
+                detail="Semantic search not available: sentence-transformers not installed",
+            )
+        except Exception as exc:
+            logger.error("Failed to load embedding model: %s", exc)
+            raise HTTPException(
+                status_code=503,
+                detail=f"Semantic search not available: failed to load embedding model",
+            )
+    return _embed_model
+
 
 def get_products_repo() -> ProductsRepo:
     from motoshop_api.db.engine import get_engine
@@ -59,18 +87,12 @@ async def search_semantic(
     limit: int = Query(default=10, ge=1, le=50),
     _user: User = Depends(get_current_user),
 ) -> SemanticSearchResponse:
-    """Búsqueda semántica de productos vía OpenAI embeddings + DuckDB cosine similarity.
+    """Búsqueda semántica de productos vía HuggingFace embeddings + DuckDB cosine similarity.
 
+    Modelo: paraphrase-multilingual-MiniLM-L12-v2 (384d, multilingüe, local y gratis).
     Ejemplo: "aceite sintético 4 tiempos" → encuentra "MOBIL SUPER MOTO 4T 20W50".
     """
     from motoshop_api.config import settings
-
-    openai_key = os.environ.get("OPENAI_API_KEY")
-    if not openai_key:
-        raise HTTPException(
-            status_code=503,
-            detail="Semantic search not available: OPENAI_API_KEY not configured",
-        )
 
     db_path = settings.duckdb_path or "/tmp/motoshop_gold.duckdb"
     if not os.path.exists(db_path):
@@ -79,17 +101,14 @@ async def search_semantic(
             detail=f"DuckDB not found at {db_path}. Run embeddings pipeline first.",
         )
 
-    # 1. Generar embedding de la query
+    # 1. Generar embedding de la query con HuggingFace (local)
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=openai_key)
-        resp = client.embeddings.create(
-            model="text-embedding-3-small",
-            input=[q],
-        )
-        query_emb = resp.data[0].embedding
+        model = _get_embed_model()
+        query_emb = model.encode([q], show_progress_bar=False)[0].tolist()
+    except HTTPException:
+        raise
     except Exception as exc:
-        logger.error("OpenAI embedding failed: %s", exc)
+        logger.error("Embedding generation failed: %s", exc)
         raise HTTPException(status_code=502, detail="Failed to generate query embedding") from exc
 
     # 2. Cosine similarity en DuckDB
