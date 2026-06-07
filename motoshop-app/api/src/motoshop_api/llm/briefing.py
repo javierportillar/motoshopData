@@ -165,12 +165,13 @@ class BriefingGenerator:
         context_str = _json.dumps(context, ensure_ascii=False, indent=2)
         prompt = BRIEFING_PROMPT.format(context_json=context_str)
 
-        # deepseek-v4-flash-free consume ~400 tokens en reasoning_content,
-        # necesita max_tokens alto para que content tenga espacio (único free funcional)
+        # deepseek-v4-flash-free requiere max_tokens alto (~8000) porque el
+        # chain-of-thought reasoning consume la mayoría. Con 2000, el modelo
+        # no termina de pensar y content queda vacío. Con 8000, termina.
         client = get_llm_client()
         result = client.complete(
             prompt=prompt,
-            max_tokens=2000,
+            max_tokens=8000,
             system=BRIEFING_SYSTEM,
         )
 
