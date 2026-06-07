@@ -34,10 +34,17 @@ def _get_client():
 def _get_query_embedding(text: str) -> list[float]:
     """Genera embedding de query via HuggingFace InferenceClient.
 
-    Usa feature_extraction() que retorna el vector de embedding correcto.
+    Expande la query con sinónimos antes de llamar a feature_extraction
+    para mejorar la calidad de los resultados semánticos.
     """
+    from motoshop_api.synonyms import expand_query
+
     client = _get_client()
-    result = client.feature_extraction(text)
+    expanded = expand_query(text)
+    if expanded != text:
+        logger.info("query_expanded: %s → %s", text[:60], expanded[:120])
+
+    result = client.feature_extraction(expanded)
     # feature_extraction devuelve ndarray de shape (384,) o (1, 384)
     if hasattr(result, 'tolist'):
         result = result.tolist()

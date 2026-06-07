@@ -74,23 +74,63 @@ def search_semantic(
     db_path = _settings.duckdb_path
     _ensure_duckdb_file(db_path)
 
-    # 1. Intentar DuckDB embeddings
+    # 1. Intentar DuckDB embeddings con score híbrido
     try:
         if os.path.exists(db_path):
             from motoshop_api.embeddings import _get_query_embedding
+            from motoshop_api.synonyms import split_keywords as _split_keywords
+            from motoshop_api.synonyms import expand_keyword_terms as _expand
+
             query_emb = _get_query_embedding(q)
             emb_str = str(query_emb).replace("[", "").replace("]", "")
             dim = len(query_emb)
 
+            # Armar keyword conditions con términos expandidos
+            keywords = _split_keywords(q)
+            safe_first = keywords[0].replace("'", "''") if len(keywords) >= 1 else q.split()[0].replace("'", "''")
+            safe_second = keywords[1].replace("'", "''") if len(keywords) >= 2 else ""
+
+            # Expandir a términos relacionados (ej: manija → manigueta, clutch)
+            first_terms = _expand(keywords[0]) if len(keywords) >= 1 else [safe_first]
+            second_terms = _expand(keywords[1]) if len(keywords) >= 2 else []
+
+            # Construir LIKEs para cada término expandido
+            first_likes = " OR ".join(
+                f"UPPER(nombre_producto) LIKE UPPER('%{t.replace(chr(39), chr(39)+chr(39))}%')"
+                for t in first_terms
+            )
+            if second_terms:
+                second_likes = " OR ".join(
+                    f"UPPER(nombre_producto) LIKE UPPER('%{t.replace(chr(39), chr(39)+chr(39))}%')"
+                    for t in second_terms
+                )
+                keyword_case = f" CASE WHEN {first_likes} THEN 1.0 ELSE 0.0 END + CASE WHEN {second_likes} THEN 0.5 ELSE 0.0 END"
+            else:
+                keyword_case = f" CASE WHEN {first_likes} THEN 1.0 ELSE 0.0 END"
+
             con = duckdb.connect(db_path, read_only=True)
             rows = con.execute(f"""
-                SELECT cod_producto, nombre_producto AS nomprod,
-                       ROUND(array_cosine_similarity(
-                           embedding, CAST([{emb_str}] AS FLOAT[{dim}])
-                       )::DOUBLE, 4) AS score
-                FROM motoshop_silver_dim_producto
-                WHERE embedding IS NOT NULL
-                ORDER BY score DESC LIMIT ?
+                WITH semantic AS (
+                    SELECT cod_producto, nombre_producto AS nomprod,
+                           array_cosine_similarity(
+                               embedding, CAST([{emb_str}] AS FLOAT[{dim}])
+                           )::DOUBLE AS semantic_score
+                    FROM motoshop_silver_dim_producto
+                    WHERE embedding IS NOT NULL
+                ),
+                keyword AS (
+                    SELECT cod_producto,
+                           {keyword_case} AS keyword_score
+                    FROM motoshop_silver_dim_producto
+                )
+                SELECT s.cod_producto, s.nomprod,
+                       ROUND(0.3 * s.semantic_score + 0.7 * k.keyword_score, 4) AS score,
+                       ROUND(s.semantic_score, 4) AS sem,
+                       ROUND(k.keyword_score, 4) AS kw
+                FROM semantic s
+                LEFT JOIN keyword k ON s.cod_producto = k.cod_producto
+                ORDER BY score DESC
+                LIMIT ?
             """, [limit]).fetchall()
             con.close()
 

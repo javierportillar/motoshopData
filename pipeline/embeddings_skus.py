@@ -49,15 +49,17 @@ def _get_model():
 
 
 def _build_embedding_text(row: dict) -> str:
-    """Texto descriptivo para embedding: nombre + grupo."""
-    parts = [str(row.get("nombre_producto", ""))]
+    """Texto descriptivo para embedding usando diccionario de sinónimos."""
+    import sys, os
+    _api_src = os.path.join(os.path.dirname(__file__), "..", "motoshop-app", "api", "src")
+    if _api_src not in sys.path:
+        sys.path.insert(0, os.path.abspath(_api_src))
+    from motoshop_api.synonyms import enrich_sku_text
+
+    nombre = str(row.get("nombre_producto", ""))
     grupo = row.get("cod_grupo")
-    if grupo and str(grupo) != "SIN_GRUPO":
-        parts.append(f"categoría {grupo}")
-    desc = row.get("descripcion")
-    if desc:
-        parts.append(str(desc))
-    return " | ".join(parts)
+    categoria = grupo if grupo and str(grupo) != "SIN_GRUPO" else None
+    return enrich_sku_text(nombre, categoria)
 
 
 def _add_column(con) -> None:
