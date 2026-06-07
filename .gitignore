@@ -91,3 +91,4 @@ _staging/
 
 # ─── Logs de dumps automáticos ────────────────────────────
 logs/
+.vercel

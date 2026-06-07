@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+import os
+
+import duckdb
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -9,9 +13,10 @@ from slowapi.util import get_remote_address
 from motoshop_api.auth.deps import get_current_user
 from motoshop_api.auth.users import User
 from motoshop_api.products.repo import ProductsRepo
-from motoshop_api.products.schemas import ProductOut, ProductPage
+from motoshop_api.products.schemas import ProductOut, ProductPage, SemanticMatch, SemanticSearchResponse
 
 router = APIRouter(tags=["products"])
+logger = logging.getLogger(__name__)
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -56,3 +61,79 @@ async def get_product(
     if row is None:
         raise HTTPException(status_code=404, detail=f"SKU '{sku}' no encontrado")
     return ProductOut(**row)
+
+
+# ── Semantic search ─────────────────────────────────────────────────────
+
+
+@router.get("/products/search-semantic", response_model=SemanticSearchResponse)
+@limiter.limit("30/minute")
+async def search_semantic(
+    request: Request,
+    q: str = Query(..., min_length=2, description="Búsqueda en lenguaje natural"),
+    limit: int = Query(default=10, ge=1, le=50),
+    _user: User = Depends(get_current_user),
+) -> SemanticSearchResponse:
+    """Búsqueda semántica de productos vía OpenAI embeddings + DuckDB cosine similarity.
+
+    Ejemplo: "aceite sintético 4 tiempos" → encuentra "MOBIL SUPER MOTO 4T 20W50".
+    """
+    from motoshop_api.config import settings
+
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if not openai_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Semantic search not available: OPENAI_API_KEY not configured",
+        )
+
+    db_path = settings.duckdb_path or "/tmp/motoshop_gold.duckdb"
+    if not os.path.exists(db_path):
+        raise HTTPException(
+            status_code=503,
+            detail=f"DuckDB not found at {db_path}. Run embeddings pipeline first.",
+        )
+
+    # 1. Generar embedding de la query
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=openai_key)
+        resp = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=[q],
+        )
+        query_emb = resp.data[0].embedding
+    except Exception as exc:
+        logger.error("OpenAI embedding failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Failed to generate query embedding") from exc
+
+    # 2. Cosine similarity en DuckDB
+    emb_str = str(query_emb).replace("[", "").replace("]", "")
+    query_dim = len(query_emb)
+
+    try:
+        con = duckdb.connect(db_path, read_only=True)
+        rows = con.execute(f"""
+            SELECT
+                cod_producto,
+                nombre_producto AS nomprod,
+                ROUND(array_cosine_similarity(
+                    embedding,
+                    CAST([{emb_str}] AS FLOAT[{query_dim}])
+                )::DOUBLE, 4) AS score
+            FROM motoshop_silver_dim_producto
+            WHERE embedding IS NOT NULL
+            ORDER BY score DESC
+            LIMIT ?
+        """, [limit]).fetchall()
+        con.close()
+    except Exception as exc:
+        logger.error("DuckDB semantic query failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Semantic search query failed") from exc
+
+    results = [
+        SemanticMatch(codprod=str(r[0]), nomprod=str(r[1]), score=float(r[2]))
+        for r in rows
+    ]
+
+    return SemanticSearchResponse(query=q, results=results, total=len(results))

@@ -16,3 +16,15 @@ class ProductPage(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class SemanticMatch(BaseModel):
+    codprod: str
+    nomprod: str
+    score: float  # cosine similarity (0 = unrelated, 1 = identical)
+
+
+class SemanticSearchResponse(BaseModel):
+    query: str
+    results: list[SemanticMatch]
+    total: int

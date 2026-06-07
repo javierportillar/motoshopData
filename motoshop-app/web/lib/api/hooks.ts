@@ -442,6 +442,25 @@ export function useForecast(sku: string | null, horizon: number) {
   });
 }
 
+interface SemanticMatch {
+  codprod: string;
+  nomprod: string;
+  score: number;
+}
+
+interface SemanticSearchResponse {
+  query: string;
+  results: SemanticMatch[];
+  total: number;
+}
+
+export function useSemanticSearch(query: string, limit = 10) {
+  const key = query.trim().length >= 2
+    ? `/api/products/search-semantic?q=${encodeURIComponent(query)}&limit=${limit}`
+    : null;
+  return useMetrics<SemanticSearchResponse>(key);
+}
+
 // ── Alerts / Alertas ──────────────────────────────────────────────────────
 
 interface AlertItem {
