@@ -48,22 +48,7 @@ async def list_products(
     )
 
 
-@router.get("/products/{sku}", response_model=ProductOut)
-@limiter.limit("60/minute")
-async def get_product(
-    request: Request,
-    sku: str,
-    _user: User = Depends(get_current_user),
-    repo: ProductsRepo = Depends(get_products_repo),
-) -> ProductOut:
-    """Retorna detalle de un producto por SKU exacto. Requiere autenticación."""
-    row = repo.get_by_sku(sku)
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"SKU '{sku}' no encontrado")
-    return ProductOut(**row)
-
-
-# ── Semantic search ─────────────────────────────────────────────────────
+# ── Semantic search (BEFORE /{sku} to avoid route conflict) ─────────────
 
 
 @router.get("/products/search-semantic", response_model=SemanticSearchResponse)
@@ -137,3 +122,18 @@ async def search_semantic(
     ]
 
     return SemanticSearchResponse(query=q, results=results, total=len(results))
+
+
+@router.get("/products/{sku}", response_model=ProductOut)
+@limiter.limit("60/minute")
+async def get_product(
+    request: Request,
+    sku: str,
+    _user: User = Depends(get_current_user),
+    repo: ProductsRepo = Depends(get_products_repo),
+) -> ProductOut:
+    """Retorna detalle de un producto por SKU exacto. Requiere autenticación."""
+    row = repo.get_by_sku(sku)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"SKU '{sku}' no encontrado")
+    return ProductOut(**row)
