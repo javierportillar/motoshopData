@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # ── Config ────────────────────────────────────────────────────────────────
 
 PRIMARY_MODEL = os.environ.get("LLM_PRIMARY_MODEL", "deepseek-v4-flash-free")
-FALLBACK_MODEL = os.environ.get("LLM_FALLBACK_MODEL", "qwen3.6-plus-free")
+FALLBACK_MODEL = os.environ.get("LLM_FALLBACK_MODEL", "deepseek-v4-flash-free")
 API_BASE = os.environ.get("LLM_API_BASE", "https://opencode.ai/zen/v1")
 API_KEY = os.environ.get("OPENCODE_API_KEY", "")
 TIMEOUT = 60
@@ -123,7 +123,8 @@ class LLMClient:
 
                 choice = data["choices"][0]
                 msg = choice["message"]
-                # DeepSeek models pueden poner la respuesta en reasoning_content
+                # DeepSeek-R1 models ponen la respuesta en reasoning_content y
+                # content queda vacío. Usamos content si existe, sino reasoning.
                 text = msg.get("content") or msg.get("reasoning_content") or ""
                 usage = data.get("usage", {})
                 tokens_input = usage.get("prompt_tokens", 0)

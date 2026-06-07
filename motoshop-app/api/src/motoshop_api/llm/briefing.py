@@ -159,21 +159,18 @@ class BriefingGenerator:
 
     def generate(self, context: dict) -> dict:
         """Llama al LLM con el contexto y devuelve {briefing_text, tokens_used, model, cost_usd}."""
-        from motoshop_api.llm.client import LLMClient, get_llm_client
+        from motoshop_api.llm.client import get_llm_client
 
         import json as _json
         context_str = _json.dumps(context, ensure_ascii=False, indent=2)
         prompt = BRIEFING_PROMPT.format(context_json=context_str)
 
-        # Usar qwen3.6-plus-free como primario para briefing porque DeepSeek
-        # consume todos los tokens en chain-of-thought (reasoning_content) y
-        # deja content vacío. Qwen genera directo sin reasoning overhead.
-        client = LLMClient(
-            primary_model="qwen3.6-plus-free",
-        )
+        # deepseek-v4-flash-free consume ~400 tokens en reasoning_content,
+        # necesita max_tokens alto para que content tenga espacio (único free funcional)
+        client = get_llm_client()
         result = client.complete(
             prompt=prompt,
-            max_tokens=800,
+            max_tokens=2000,
             system=BRIEFING_SYSTEM,
         )
 
