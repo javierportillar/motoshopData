@@ -32,9 +32,9 @@
 |---|-------|------------|-----------------|
 | 1 | **Kickoff Sprint 0 con Dev D** | Todo el plan | Abrir chat con Dev D, pegar Handoff #1 de `docs/handoffs-v1.5.md`, esperar GO de revisor para Sprint 1 |
 | 2 | **Crear bucket Cloudflare R2** | Sprint 0 | En dashboard Cloudflare → R2 → Create bucket `motoshop-gold` → generar API token con permiso write → guardar en `.env` |
-| 3 | **Decidir bridge mientras migramos** | UX externa | B.1 (FakeMetricsRepo con header DEMO MODE, 30 min) o B.2 (app dura 24-48h). Revisor recomienda B.2 si no hay stakeholder mirando |
-| 4 | **Demos a stakeholder** | Defensa académica | Solo después de Sprint 4 (cutover). Antes no muestra cifras reales |
-| 5 | **Kickoff Sprint 5 con Dev F** | Sprint 4 cerrado | Pegar Handoff #2 cuando Dev D termine y revisor firme GO |
+| 3 | **Decidir bridge mientras migramos** | UX externa | ✅ Cerrado: B.2 elegido — app dura 24-48h, sin mock |
+| 4 | **Demos a stakeholder operacional** | Adopción del producto | Cuando V1.5 Sprint 5 cierre + V1.6 Sprint A esté en producción, mostrar briefing diario al gerente real |
+| 5 | **Kickoff Sprint 5 con Dev F** | ✅ EN CURSO | Búsqueda híbrida con sinónimos + fix bugs frontend |
 | 6 | **Coordinar Dev W para Scheduled Task** | Sprint 3 cerrado | Pegar Handoff opcional de `docs/handoffs-v1.5.md` |
 
 ### Pendientes del revisor (IA · agente)
@@ -48,7 +48,7 @@
 | 5 | Auditar cierre Sprint 4 (cutover) | Cuando 17/17 endpoints prod 200 con DuckDB |
 | 6 | Redactar ADR-0023 | Como parte del cierre Sprint 4 |
 | 7 | Auditar cierre Sprint 5 (frontend) | Después de los 7 bugs cerrados con screenshots |
-| 8 | Cerrar V1.5 y actualizar E5 memoria final | Cuando todos los sprints cerrados |
+| 8 | Cerrar V1.5 + arrancar plan V1.6 (LLM) + V1.7 (pipeline observability) | Cuando V1.5 Sprint 5 cierre |
 
 ### Decisiones diferidas a V2 (ya documentadas)
 

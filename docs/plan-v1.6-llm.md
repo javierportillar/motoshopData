@@ -10,7 +10,7 @@
 
 V1.5 dejó MotoShop sostenible ("para siempre" gratis con DuckDB). V1.6 le agrega **inteligencia aplicada** al negocio sin agregar infraestructura compleja: usamos LLM API como cliente liviano contra servicios externos que ya tienen 0 ops (OpenAI / Anthropic), pagamos por uso real (centavos al mes).
 
-Tres entregables que aportan valor visible al usuario y a la defensa académica:
+Tres entregables que aportan valor real al gerente y al vendedor en su operación diaria:
 
 1. **Briefing diario en lenguaje natural** — el gerente lee 30 segundos en el celu y sabe el estado del negocio
 2. **Forecast con narrativa explicativa** — convierte "WAPE 34.37%" en una oración accionable
@@ -224,7 +224,7 @@ V1.5 Sprint 4 ──► V1.5 Sprint 5 (incluye búsqueda semántica)
                    6-8h           3-4h         10-14h
 ```
 
-**Sprint A primero** porque es el de mayor valor demostrable (push al celular en demo académica).
+**Sprint A primero** porque es el de mayor valor operativo (el gerente recibe el briefing en el celular cada mañana sin entrar a la PWA).
 **Sprint B después** porque reusa el LLMClient ya construido.
 **Sprint C al final** porque es el más complejo y el que más riesgo tiene de no cerrar.
 
@@ -241,7 +241,7 @@ V1.6 cierra cuando:
 - [ ] Costo acumulado < $1 en el mes de validación
 - [ ] ADR-0024 (LLM provider + cost policy) Accepted
 - [ ] ADR-0025 (RAG sandboxing) Accepted o "N/A si Sprint C diferido"
-- [ ] E5 memoria final actualizada con sección "Capa de IA"
+- [ ] SEGUIMIENTO.md bloque V1.6 cierre con métricas de adopción real (cuántos briefings recibidos, cuántas queries chat)
 
 ---
 

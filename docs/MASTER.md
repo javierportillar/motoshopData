@@ -19,18 +19,22 @@
 ```
 F0 ✅  F1 ✅ (+F1.5 +F1.9)  F2 ✅  F3 ✅ (+F3.5 +F3.6)  F4 ✅ (+FIX1)  F5 ✅ (+FIX1)  F6 ✅  F7 ✅
 ─────────────────────────────────────────────────────────────────────────
-V1.5 🟡 Migración DuckDB — Sprints 0-5 pendientes, plan aprobado
-   └── Sprint 5 incluye búsqueda semántica de productos (DuckDB+vss+OpenAI embeddings)
+V1.5 🟡 Sostenibilidad DuckDB — Sprints 0-4 cerrados, Sprint 5 EN CURSO (búsqueda híbrida)
 ─────────────────────────────────────────────────────────────────────────
-V1.6 ⬜ IA aplicada (LLM) — Sprints A (briefing) → B (narrativa) → C (Q&A chat)
-   └── Trigger: V1.5 cerrado completo
+V1.6 ⬜ IA aplicada — Sprints A (briefing Telegram) → B (narrativa forecast) → C (Q&A chat)
+   └── Trigger: V1.5 Sprint 5 cerrado
 ─────────────────────────────────────────────────────────────────────────
-V2  ⬜ Roadmap docs/roadmap-v2-produccion.md
+V1.7 ⬜ Pipeline observability — Página /admin/pipeline nativa en PWA
+   └── Trigger: V1.6 Sprint A en producción 7 días sin falla
+─────────────────────────────────────────────────────────────────────────
+V2   ⬜ Producción seria — docs/roadmap-v2-produccion.md
 ```
 
 **Documento canónico de plan activo:** [`docs/plan-v1.5-duckdb.md`](plan-v1.5-duckdb.md) — arquitectura, sprints, riesgos, DoD.
 
-**Plan post-V1.5 aprobado:** [`docs/plan-v1.6-llm.md`](plan-v1.6-llm.md) — capa de IA (briefing diario gerente, forecast narrativa, Q&A chat).
+**Próximos planes aprobados:**
+- [`docs/plan-v1.6-llm.md`](plan-v1.6-llm.md) — capa de IA (briefing gerente, forecast narrativa, Q&A chat)
+- [`docs/plan-v1.7-observability.md`](plan-v1.7-observability.md) — pipeline jobs UI nativa en PWA
 
 **Handoffs de devs:** [`docs/handoffs-v1.5.md`](handoffs-v1.5.md) — briefs listos para pegar en chat de Dev D y Dev F. Handoff V1.6 (Dev L) se genera al activarse.
 
@@ -69,10 +73,10 @@ V2  ⬜ Roadmap docs/roadmap-v2-produccion.md
 |---------|---------------|----------------|
 | [`SEGUIMIENTO.md`](../SEGUIMIENTO.md) | Bitácora viva: cabecera + decisiones + checklist por fase + tablero riesgos + notas de sesión | Para entender qué pasó y qué pasa ahora |
 | [`PENDIENTES.md`](../PENDIENTES.md) | Tareas humanas + handoffs Dev/Revisor entre sesiones | Para saber qué tengo que hacer yo o qué ejecutan los devs |
-| [`docs/contexto-proyecto.md`](contexto-proyecto.md) | Snapshot ejecutivo: arquitectura + entregables + riesgos + resumen | Para onboarding rápido o defensa académica |
+| [`docs/contexto-proyecto.md`](contexto-proyecto.md) | Snapshot ejecutivo: arquitectura + entregables + riesgos + resumen | Para onboarding rápido al proyecto |
 | [`docs/plan-cierre-v1-reviewer.md`](plan-cierre-v1-reviewer.md) | **Plan activo de cierre V1: handoffs, gates y GO/NO-GO** | Para coordinar devs y cerrar el proyecto sin aceptar humo |
 | [`docs/plan-f4-fix1.md`](plan-f4-fix1.md) | Plan de la fase activa (F4-FIX1) | Mientras esté abierta |
-| [`docs/roadmap-v2-produccion.md`](roadmap-v2-produccion.md) | **⭐ CORE · V2 producción seria · todas las deudas V1 y cómo se cierran** | Para visión post-V1, defensa académica como anexo, kick-off V2 |
+| [`docs/roadmap-v2-produccion.md`](roadmap-v2-produccion.md) | **⭐ CORE · V2 producción seria · deudas técnicas y cómo se cierran** | Para visión de mediano plazo post-V1.7, kick-off V2 |
 | [`docs/MASTER.md`](MASTER.md) | Este archivo — índice de navegación | Como entry point cuando volvés después de tiempo |
 
 ---
@@ -134,21 +138,7 @@ Resumen — detalle en [`SEGUIMIENTO.md`](../SEGUIMIENTO.md) §Tablero y [`docs/
 
 ---
 
-## 7 · Entregables académicos (Maestría UAO 2025-2)
-
-[`docs/entregable/`](entregable/) · estructura consolidada para defensa.
-
-| ID | Título | Estado | Doc |
-|----|--------|--------|-----|
-| **E1** | Diagnóstico + Arquitectura | ✅ Listo | [E1-diagnostico-arquitectura.md](entregable/E1-diagnostico-arquitectura.md) |
-| **E2** | Pipeline operativo | ✅ Listo | [E2-pipeline-operativo.md](entregable/E2-pipeline-operativo.md) |
-| **E3** | Producto descriptivo | ✅ Listo | [E3-producto-descriptivo.md](entregable/E3-producto-descriptivo.md) |
-| **E4** | Producto predictivo | ✅ Listo (cerrado con F4-FIX1) | [E4-producto-predictivo.md](entregable/E4-producto-predictivo.md) |
-| **E5** | Memoria final | ⬜ Pendiente cierre F6 | [E5-memoria-final.md](entregable/E5-memoria-final.md) |
-
----
-
-## 8 · Archivo histórico
+## 7 · Archivo histórico
 
 [`docs/archive/`](archive/) · planes cerrados, handoffs históricos, reportes puntuales. Útiles como audit trail. NO se actualizan.
 
@@ -163,7 +153,7 @@ Resumen — detalle en [`SEGUIMIENTO.md`](../SEGUIMIENTO.md) §Tablero y [`docs/
 
 ---
 
-## 9 · Setup técnico (infra/)
+## 8 · Setup técnico (infra/)
 
 [`infra/`](../infra/) · scripts + docs de setup técnico.
 
@@ -177,7 +167,7 @@ Resumen — detalle en [`SEGUIMIENTO.md`](../SEGUIMIENTO.md) §Tablero y [`docs/
 
 ---
 
-## 10 · Cómo navegar según para qué venís
+## 9 · Cómo navegar según para qué venís
 
 | Vengo a... | Empiezo por |
 |------------|-------------|
@@ -186,7 +176,7 @@ Resumen — detalle en [`SEGUIMIENTO.md`](../SEGUIMIENTO.md) §Tablero y [`docs/
 | Saber qué tengo que hacer yo | `PENDIENTES.md` |
 | Auditar la fase activa | `INICIAR_REVIEWER.md` + `docs/plan-f4-fix1.md` |
 | Ejecutar como dev | `INICIAR_AGENTE.md` + `docs/plan-f4-fix1.md` §8 (handoffs) |
-| Defender la Maestría | `docs/entregable/` E1..E5 |
+| Onboardear a un nuevo dev | `README.md` → `docs/contexto-proyecto.md` → `INICIAR_AGENTE.md` |
 | Ver el audit trail completo | `docs/archive/` + `SEGUIMIENTO.md` §Notas de sesión |
 | Conectarme a la BD | `infra/infollm.md` |
 | Ver decisiones técnicas | `docs/decisions/` o §5 de este archivo |

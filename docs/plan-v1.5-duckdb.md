@@ -31,7 +31,7 @@ ADR pendiente: **ADR-0023 — Read backend DuckDB-first**.
 | Datos | Reales (no mock) | sgHermes intocable (lectura solamente desde bronze) |
 | Latencia | < 200 ms por endpoint | Mejor que los 2-5 s actuales con Databricks |
 | Disponibilidad | 24/7 sin warehouses que duerman | Render free + UptimeRobot ya cubre |
-| Defendibilidad académica | "MotoShop usa datos reales del POS, procesados localmente" | Sigue siendo lakehouse medallion conceptual, ahora con motor adecuado al volumen |
+| Disponibilidad | App 24/7 sin warehouses que duerman | Render Free + UptimeRobot ya cubre |
 | Skills transferibles | Stack estándar (Python + DuckDB + SQL) | Sin lock-in a Databricks |
 
 ---
@@ -305,7 +305,7 @@ V1.5 cierra cuando:
 - [ ] Bug list de PENDIENTES.md cerrada
 - [ ] ADR-0023 Accepted
 - [ ] SEGUIMIENTO.md cierre V1.5 con métricas before/after
-- [ ] E5 memoria final actualizada con sección "Migración V1.5"
+- [ ] SEGUIMIENTO.md bloque V1.5 cerrado con métricas before/after de latencia y disponibilidad
 
 ---
 
@@ -359,7 +359,7 @@ El pipeline lee MySQL bronze directamente. **No depende de tener Databricks oper
 
 **Lo que sigue siendo lakehouse:** la separación lógica medallion (raw → cleaned → business), la idempotencia, los gates de calidad, los snapshots históricos. El **patrón** persiste. El **motor** cambia.
 
-Para la maestría académica esto es defendible y de hecho **superior** porque demuestra criterio de arquitecto: "elegí el motor que el problema necesita, no el motor que mi prestigio académico quería". Eso es lo opuesto de cargo-cult engineering.
+Es decisión de arquitecto: elegir el motor que el problema necesita, no el motor que el prestigio del stack sugería. La complejidad de Spark + Serverless + Lakehouse no la justifica un dataset de 50 MB.
 
 ---
 

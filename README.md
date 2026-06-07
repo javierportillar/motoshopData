@@ -1,6 +1,6 @@
 # MotoShop · Plataforma digital para una motopartes
 
-Proyecto que nació como entrega de la materia **Big Data y Transformación Digital del Negocio** (Maestría UAO 2025-2) y terminó siendo una plataforma de operación real para una tienda de repuestos de moto en Cali. Lakehouse medallion + PWA mobile-first + ML aplicado al inventario.
+Plataforma de operación real para una tienda de repuestos de moto en Cali. Lakehouse medallion + PWA mobile-first + IA aplicada al inventario y la atención al cliente.
 
 > **Estado vivo:** [SEGUIMIENTO.md](SEGUIMIENTO.md) · **Plan canónico actual:** [docs/plan-v1.5-duckdb.md](docs/plan-v1.5-duckdb.md) · **Índice maestro:** [docs/MASTER.md](docs/MASTER.md)
 
@@ -10,10 +10,10 @@ Proyecto que nació como entrega de la materia **Big Data y Transformación Digi
 
 Transformar el flujo de información de una tienda de repuestos de moto que opera con **sgHermes** (POS legacy en MySQL 5.0) en una plataforma analítica + operativa moderna sin tocar el sistema productivo. Dos tracks paralelos en un monorepo:
 
-- **Track A · Analítico** — Lakehouse medallion (bronze → silver → gold) + modelos ML aplicados a inventario y demanda.
-- **Track T · Transaccional** — FastAPI + PWA Next.js para que el vendedor consulte stock, el gerente vea KPIs, y ambos puedan accionar sobre alertas en tiempo real.
+- **Track A · Analítico** — Lakehouse medallion (bronze → silver → gold) que alimenta los dashboards de negocio.
+- **Track T · Transaccional** — FastAPI + PWA Next.js para que el vendedor consulte stock + busque productos, el gerente vea KPIs + reciba briefing diario, y ambos accionen sobre alertas en tiempo real.
 
-**Horizonte:** V1 (entrega académica) → V1.5 (sostenibilidad gratuita "para siempre", arquitectura actual) → V2 (producción seria, post-curso).
+**Roadmap operativo:** V1.5 sostenibilidad gratuita (DuckDB) → V1.6 IA aplicada (briefing + chat) → V1.7 observabilidad (pipeline visible en PWA) → V2 producción seria.
 
 ---
 
@@ -232,37 +232,42 @@ npm run dev
 ## Roadmap de Fases
 
 ```
-F0 ✅ Cimientos — MySQL, Databricks, túnel, backups, hello world
-F1 ✅ Ingesta — Bronze 12 tablas + API endpoints base + PWA scaffold
+F0 ✅ Cimientos — MySQL, Databricks, túnel, backups
+F1 ✅ Ingesta — Bronze 12 tablas + API + PWA scaffold
 F2 ✅ Silver + PWA MVP — 5 dims + 5 facts + búsqueda SKU
 F3 ✅ Gold + Dashboards — 5 marts + 4 dashboards + workflow nocturno
-F4 ✅ Predictivo — Feature store + forecasting (categoría) + alertas quiebre
+F4 ✅ Predictivo — Feature store + forecast (categoría) + alertas quiebre
 F5 ✅ Escritura — PWA → app_* tables + RBAC + idempotency
 F6 ✅ Hardening + cloud — PWA Vercel + API Render + auto-deploy
-F7 ✅ Reestructuración UX — 12 dashboards + branding + 71 tests Playwright
+F7 ✅ Reestructuración UX — 12 dashboards + branding + tests
 ─────────────────────────────────────────────────
-V1.5 🟡 Migración DuckDB — Spike → Pipeline → Repo → Refresh → Cutover → Frontend+SemanticSearch
+V1.5 🟡 Sostenibilidad DuckDB — Spike → Pipeline → Repo → Refresh → Cutover → Frontend+SemanticSearch
 ─────────────────────────────────────────────────
-V1.6 ⬜ IA aplicada (LLM) — Briefing diario gerente → Forecast narrativa → Q&A chat
+V1.6 ⬜ IA aplicada — Briefing diario gerente → Forecast narrativa → Q&A chat
 ─────────────────────────────────────────────────
-V2  ⬜ Producción seria — 40 deudas V1 mapeadas en docs/roadmap-v2-produccion.md
+V1.7 ⬜ Pipeline observability — Jobs UI nativa en PWA (cuándo corrió, qué falló)
+─────────────────────────────────────────────────
+V2   ⬜ Producción seria — Deudas técnicas, escalar, hardening
 ```
 
-**Por qué V1.5 existe:** Databricks Free Edition perdió Serverless Compute el 2026-05-31. App al 100% rota. Migración a DuckDB es la única vía sostenible $0/mes. Plan completo en [`docs/plan-v1.5-duckdb.md`](docs/plan-v1.5-duckdb.md).
+**Por qué V1.5 existe:** Databricks Free Edition perdió Serverless Compute el 2026-05-31. App al 100% rota. Migración a DuckDB es la única vía sostenible $0/mes para siempre, con latencia 10-30x menor. Plan completo en [`docs/plan-v1.5-duckdb.md`](docs/plan-v1.5-duckdb.md).
 
-**Por qué V1.6 existe:** Una vez sostenible, agregamos capa de IA aplicada al negocio: briefing diario en lenguaje natural al gerente (vía Telegram), narrativa explicativa del forecast, y chat conversacional con tool use sobre DuckDB. Costo proyectado <$3/año. Plan completo en [`docs/plan-v1.6-llm.md`](docs/plan-v1.6-llm.md).
+**Por qué V1.6 existe:** Una vez sostenible, agregamos capa de IA aplicada al negocio: el gerente recibe un briefing diario en lenguaje natural por Telegram, el forecast tiene narrativa explicativa, y hay chat conversacional con tool use sobre DuckDB. Costo proyectado <$3/año. Plan en [`docs/plan-v1.6-llm.md`](docs/plan-v1.6-llm.md).
+
+**Por qué V1.7 existe:** Hoy el gerente no tiene forma de saber si los KPIs que está mirando son del refresh de anoche o llevan 3 días sin actualizar. V1.7 agrega una página `/admin/pipeline` en la PWA que muestra cuándo corrió cada job, qué pasos tomó, cuánto tardaron, qué falló. Sin servicios externos, todo nativo. Plan en [`docs/plan-v1.7-observability.md`](docs/plan-v1.7-observability.md).
 
 ---
 
 ## Reglas que no negocio
 
-1. **sgHermes es intocable** — no se modifican esquemas, datos ni permisos del MySQL productivo.
+1. **sgHermes es intocable** — no se modifican esquemas, datos ni permisos del MySQL productivo. Toda escritura va a tablas `app_*` separadas.
 2. **Credenciales fuera de Git** — siempre `.env`, nunca hardcodeadas.
 3. **Toda cifra en pantalla debe cuadrar con sgHermes** con tolerancia documentada.
 4. **Modelo que no supera al baseline no se libera** — prefiero el promedio histórico conocido (ADR-0017).
-5. **Predicciones son sugerencias revisables**, no decisiones autónomas (hasta V2).
+5. **Predicciones son sugerencias revisables**, no decisiones autónomas. El vendedor o gerente confirma siempre.
 6. **Toda tarea cerrada exige evidencia ejecutada** (curl/test/screenshot). Sin eso, queda abierta.
 7. **Revisor firma GO por fase.** El ejecutor no cierra su propio trabajo.
+8. **El costo recurrente de infraestructura es $0/mes para siempre.** Si una decisión nos saca de ahí, hay que justificarla con ROI claro.
 
 ---
 
@@ -295,7 +300,7 @@ Lista completa en [`docs/MASTER.md`](docs/MASTER.md) §5.
 | Saber qué tengo que hacer yo (humano) | [`PENDIENTES.md`](PENDIENTES.md) |
 | Ejecutar como dev | [`INICIAR_AGENTE.md`](INICIAR_AGENTE.md) + handoffs en `docs/handoffs-v1.5.md` |
 | Auditar como revisor | [`INICIAR_REVIEWER.md`](INICIAR_REVIEWER.md) |
-| Defender Maestría | `docs/entregable/E1..E5` |
+| Onboardear a un nuevo dev | `INICIAR_AGENTE.md` + `docs/contexto-proyecto.md` |
 | Ver decisiones técnicas | `docs/decisions/` |
 | Ver el audit forensic del 2026-05-31 | `docs/audit/F7-AUDIT.md` |
 | Setup técnico de infra | `infra/*.md` |
@@ -314,20 +319,6 @@ Cosas que mejoraron al equipo y van como advertencia para V2:
 6. **El dataset es lo que es.** 6,185 SKUs en cola larga → Prophet/LightGBM no superan baseline. → ADR-0020 agregación por categoría.
 7. **Vendor lock-in en Free tier es ilusión.** Databricks Free perdió Serverless de un día para otro. → V1.5 migra a DuckDB self-hosted.
 8. **Commits "feat: X funcionando" sin curl evidence son fraude operativo.** F7 cerró 31 commits sin verificar producción. → Regla nueva: curl + output en cada commit.
-
----
-
-## Entregables académicos (Maestría UAO 2025-2)
-
-| ID | Título | Estado |
-|----|--------|--------|
-| **E1** | Diagnóstico + Arquitectura | ✅ Listo |
-| **E2** | Pipeline operativo | ✅ Listo (revisión V1.5 pendiente) |
-| **E3** | Producto descriptivo | ✅ Listo |
-| **E4** | Producto predictivo | ✅ Listo |
-| **E5** | Memoria final | ⬜ Pendiente cierre V1.5 |
-
-Documentos en `docs/entregable/`.
 
 ---
 
