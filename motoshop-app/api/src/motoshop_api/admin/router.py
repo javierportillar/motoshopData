@@ -213,12 +213,57 @@ async def llm_cost(
         )
 
     except Exception as exc:
-        logger.warning("llm_cost: MySQL unavailable, returning zeros: %s", exc)
-        return LLMCostResponse(
-            month=month_str,
-            total_calls=0,
-            total_tokens_input=0,
-            total_tokens_output=0,
-            total_cost_usd=0.0,
-            per_model=[],
-        )
+        logger.warning("llm_cost: MySQL unavailable, trying DuckDB fallback: %s", exc)
+        # Fallback: leer de DuckDB (Render cloud sin conexión a Windows MySQL)
+        try:
+            import duckdb
+            db_path = settings.duckdb_path or (
+                "/tmp/motoshop_gold.duckdb" if os.environ.get("ENV") == "prod" else "out/motoshop_gold.duckdb"
+            )
+            con = duckdb.connect(db_path, read_only=True)
+
+            # Verificar si existe la tabla
+            exists = con.execute(
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'app_llm_usage_duckdb'"
+            ).fetchone()[0]
+
+            if not exists:
+                raise Exception("app_llm_usage_duckdb table not found in DuckDB")
+
+            totals = con.execute(f"""
+                SELECT COUNT(*), COALESCE(SUM(tokens_input), 0), COALESCE(SUM(tokens_output), 0)
+                FROM app_llm_usage_duckdb
+                WHERE STRFTIME(timestamp, '%Y-%m') = ?
+            """, [month_str]).fetchone()
+
+            rows = con.execute(f"""
+                SELECT model, COUNT(*) AS calls,
+                       COALESCE(SUM(tokens_input), 0), COALESCE(SUM(tokens_output), 0),
+                       ROUND(SUM(CASE WHEN success THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1)
+                FROM app_llm_usage_duckdb
+                WHERE STRFTIME(timestamp, '%Y-%m') = ?
+                GROUP BY model ORDER BY calls DESC
+            """, [month_str]).fetchall()
+
+            con.close()
+
+            return LLMCostResponse(
+                month=month_str,
+                total_calls=int(totals[0]) if totals else 0,
+                total_tokens_input=int(totals[1]) if totals else 0,
+                total_tokens_output=int(totals[2]) if totals else 0,
+                total_cost_usd=0.0,
+                per_model=[
+                    LLMCostItem(
+                        model=r[0], calls=int(r[1]), tokens_input=int(r[2]),
+                        tokens_output=int(r[3]), cost_usd=0.0, success_rate=float(r[4]),
+                    )
+                    for r in rows
+                ],
+            )
+        except Exception as exc2:
+            logger.warning("llm_cost: DuckDB also unavailable: %s", exc2)
+            return LLMCostResponse(
+                month=month_str, total_calls=0, total_tokens_input=0,
+                total_tokens_output=0, total_cost_usd=0.0, per_model=[],
+            )

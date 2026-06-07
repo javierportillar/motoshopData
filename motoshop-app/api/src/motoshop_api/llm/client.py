@@ -156,18 +156,15 @@ class LLMClient:
 
     @staticmethod
     def _log_usage(endpoint: str, model: str, tokens_input: int, tokens_output: int, success: bool = True):
-        """Inserta registro en app_llm_usage (MySQL). Best-effort, no bloquea."""
+        """Inserta registro en app_llm_usage. Intenta MySQL, fallback a DuckDB."""
+        # 1. Intentar MySQL (Windows)
         try:
             from motoshop_api.config import settings
             import pymysql
             conn = pymysql.connect(
-                host=settings.mysql_host,
-                port=settings.mysql_port,
-                user=settings.mysql_user,
-                password=settings.mysql_password,
-                database=settings.mysql_database,
-                charset="utf8mb4",
-                connect_timeout=3,
+                host=settings.mysql_host, port=settings.mysql_port,
+                user=settings.mysql_user, password=settings.mysql_password,
+                database=settings.mysql_database, charset="utf8mb4", connect_timeout=3,
             )
             with conn.cursor() as cur:
                 cur.execute(
@@ -178,8 +175,36 @@ class LLMClient:
                 )
             conn.commit()
             conn.close()
+            return
         except Exception:
-            pass  # MySQL no disponible (Windows apagado, etc.)
+            pass
+
+        # 2. Fallback: DuckDB (Render cloud, sin conexión a Windows MySQL)
+        try:
+            import os, duckdb
+            db_path = os.environ.get("DUCKDB_PATH", "/tmp/motoshop_gold.duckdb")
+            con = duckdb.connect(db_path)
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS app_llm_usage_duckdb (
+                    id INTEGER PRIMARY KEY,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    endpoint VARCHAR,
+                    model VARCHAR,
+                    tokens_input INTEGER,
+                    tokens_output INTEGER,
+                    cost_usd DOUBLE DEFAULT 0,
+                    success BOOLEAN DEFAULT TRUE
+                )
+            """)
+            con.execute(
+                """INSERT INTO app_llm_usage_duckdb
+                   (endpoint, model, tokens_input, tokens_output, success)
+                   VALUES (?, ?, ?, ?, ?)""",
+                [endpoint, model, tokens_input, tokens_output, success],
+            )
+            con.close()
+        except Exception:
+            pass  # totalmente offline, no hay dónde loguear
 
     def close(self):
         self._http.close()
