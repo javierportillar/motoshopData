@@ -35,15 +35,45 @@ if (-not (Test-Path $logDir)) {
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 }
 
+# Cargar vars del .env al entorno
+$envFile = Join-Path $PSScriptRoot "..\.env"
+if (Test-Path $envFile) {
+    Get-Content $envFile | ForEach-Object {
+        if ($_ -match "^\s*([^#=]+)=(.*)$") {
+            $key = $matches[1].Trim()
+            $val = $matches[2].Trim('"', "'")
+            Set-Item -Path "env:$key" -Value $val -ErrorAction SilentlyContinue
+        }
+    }
+    Write-Log "Variables de entorno cargadas desde .env"
+}
+
+# Si el token no vino por parámetro, usar el que cargamos del .env
+if (-not $ApiToken) { $ApiToken = $env:MOTO_API_TOKEN }
+
 if (-not $ApiToken) {
     Write-Log "MOTO_API_TOKEN not set. Export it or pass -ApiToken <token>" "ERROR"
     exit 1
 }
 
 try {
-    Write-Log "Starting DuckDB data refresh from R2..."
+    # 0. Run pipeline: MySQL → bronze → silver → gold → DuckDB
+    $rootDir = Resolve-Path (Join-Path $PSScriptRoot "..")
+    $python = Join-Path $rootDir ".venv-infra\Scripts\python.exe"
+    $env:PYTHONPATH = $rootDir
 
-    # 1. Trigger refresh
+    Write-Log "Running pipeline (run_all.py)..."
+    & $python (Join-Path $rootDir "pipeline\run_all.py") *>> $logFile
+    if ($LASTEXITCODE -ne 0) { throw "Pipeline failed with exit code $LASTEXITCODE" }
+    Write-Log "Pipeline completed" "OK"
+
+    # 0b. Upload DuckDB to R2
+    Write-Log "Uploading DuckDB to R2..."
+    & $python (Join-Path $rootDir "scripts\upload_duckdb_to_r2.py") *>> $logFile
+    if ($LASTEXITCODE -ne 0) { throw "Upload failed with exit code $LASTEXITCODE" }
+    Write-Log "Upload successful" "OK"
+
+    # 1. Trigger API refresh
     $refreshUrl = "$ApiBaseUrl/api/admin/data/refresh"
     $headers = @{
         "Authorization" = "Bearer $ApiToken"
@@ -51,16 +81,16 @@ try {
     }
 
     Write-Log "POST $refreshUrl"
-    $response = Invoke-RestMethod -Uri $refreshUrl -Method Post -Headers $headers -SkipCertificateCheck
+    $response = Invoke-RestMethod -Uri $refreshUrl -Method Post -Headers $headers
 
     Write-Log "Refresh response: $($response | ConvertTo-Json -Compress)"
-    Write-Log "DuckDB refreshed — path=$($response.path) size=$($response.size_bytes) freshness=$($response.freshness_utc)"
+    Write-Log "DuckDB refreshed - path=$($response.path) size=$($response.size_bytes) freshness=$($response.freshness_utc)"
 
     # 2. Verify freshness
     Start-Sleep -Seconds 2
-    $healthUrl = "$ApiBaseUrl/health/data-freshness"
+    $healthUrl = "$ApiBaseUrl/api/health/data-freshness"
     Write-Log "GET $healthUrl"
-    $health = Invoke-RestMethod -Uri $healthUrl -Method Get -SkipCertificateCheck
+    $health = Invoke-RestMethod -Uri $healthUrl -Method Get
 
     Write-Log "Data freshness: status=$($health.status) lag=$($health.lag_hours)h backend=$($health.backend)"
 
