@@ -156,39 +156,24 @@ class LLMClient:
 
     @staticmethod
     def _log_usage(endpoint: str, model: str, tokens_input: int, tokens_output: int, success: bool = True):
-        """Inserta registro de uso. Best-effort, nunca bloquea la llamada principal."""
+        """Log de uso a JSON file (siempre disponible, sin depender de MySQL ni DuckDB)."""
         try:
-            try:
-                from motoshop_api.config import settings
-                import pymysql
-                conn = pymysql.connect(
-                    host=settings.mysql_host, port=settings.mysql_port,
-                    user=settings.mysql_user, password=settings.mysql_password,
-                    database=settings.mysql_database, charset="utf8mb4", connect_timeout=3,
-                )
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """INSERT INTO app_llm_usage
-                           (endpoint, model, tokens_input, tokens_output, cost_usd, success)
-                           VALUES (%s, %s, %s, %s, 0, %s)""",
-                        [endpoint, model, tokens_input, tokens_output, 1 if success else 0],
-                    )
-                conn.commit()
-                conn.close()
-                return
-            except Exception:
-                pass
-
-            # Fallback DuckDB
-            duckdb_path = os.environ.get("DUCKDB_PATH", "/tmp/motoshop_gold.duckdb")
-            cost_path = duckdb_path.replace(".duckdb", "_cost.duckdb")
-            import duckdb
-            con = duckdb.connect(cost_path)
-            con.execute("CREATE TABLE IF NOT EXISTS llm_usage (id INTEGER PRIMARY KEY, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, endpoint VARCHAR, model VARCHAR, tokens_input INTEGER, tokens_output INTEGER, success BOOLEAN DEFAULT TRUE)")
-            con.execute("INSERT INTO llm_usage (endpoint, model, tokens_input, tokens_output, success) VALUES (?, ?, ?, ?, ?)", [endpoint, model, tokens_input, tokens_output, success])
-            con.close()
+            import json as _json
+            from datetime import datetime, timezone
+            log_entry = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "endpoint": endpoint,
+                "model": model,
+                "tokens_input": tokens_input,
+                "tokens_output": tokens_output,
+                "success": success,
+            }
+            # Escribir en el directorio de la app (Render writable)
+            log_path = "/opt/render/project/src/motoshop-app/api/llm_usage.jsonl"
+            with open(log_path, "a") as f:
+                f.write(_json.dumps(log_entry) + "\n")
         except Exception:
-            pass
+            pass  # nunca bloquear la llamada principal
 
     def close(self):
         self._http.close()

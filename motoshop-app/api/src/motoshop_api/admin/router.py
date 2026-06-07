@@ -213,54 +213,50 @@ async def llm_cost(
         )
 
     except Exception as exc:
-        logger.warning("llm_cost: MySQL unavailable, trying DuckDB fallback: %s", exc)
-        # Fallback: leer de DuckDB cost tracking (archivo separado)
+        logger.warning("llm_cost: MySQL unavailable, trying JSONL fallback: %s", exc)
+        # Fallback: leer del archivo JSONL local
         try:
-            import duckdb
-            cost_path = (settings.duckdb_path or "/tmp/motoshop_gold.duckdb").replace(".duckdb", "_cost.duckdb")
-            con = duckdb.connect(cost_path, read_only=True)
-
-            exists = con.execute(
-                "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'llm_usage'"
-            ).fetchone()[0]
-
-            if not exists:
-                con.close()
-                raise Exception("llm_usage table not found")
-
-            totals = con.execute(f"""
-                SELECT COUNT(*), COALESCE(SUM(tokens_input), 0), COALESCE(SUM(tokens_output), 0)
-                FROM llm_usage
-                WHERE STRFTIME(timestamp, '%Y-%m') = ?
-            """, [month_str]).fetchone()
-
-            rows = con.execute(f"""
-                SELECT model, COUNT(*) AS calls,
-                       COALESCE(SUM(tokens_input), 0), COALESCE(SUM(tokens_output), 0),
-                       ROUND(SUM(CASE WHEN success THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1)
-                FROM llm_usage
-                WHERE STRFTIME(timestamp, '%Y-%m') = ?
-                GROUP BY model ORDER BY calls DESC
-            """, [month_str]).fetchall()
-
-            con.close()
+            import json as _json
+            log_path = "/opt/render/project/src/motoshop-app/api/llm_usage.jsonl"
+            calls = []
+            with open(log_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        calls.append(_json.loads(line))
+            
+            # Filtrar por mes actual
+            month_prefix = month_str  # "2026-06"
+            month_calls = [c for c in calls if c.get("timestamp", "").startswith(month_prefix)]
+            
+            per_model = {}
+            for c in month_calls:
+                m = c.get("model", "unknown")
+                if m not in per_model:
+                    per_model[m] = {"calls": 0, "tokens_input": 0, "tokens_output": 0, "success": 0}
+                per_model[m]["calls"] += 1
+                per_model[m]["tokens_input"] += c.get("tokens_input", 0)
+                per_model[m]["tokens_output"] += c.get("tokens_output", 0)
+                if c.get("success"):
+                    per_model[m]["success"] += 1
 
             return LLMCostResponse(
                 month=month_str,
-                total_calls=int(totals[0]) if totals else 0,
-                total_tokens_input=int(totals[1]) if totals else 0,
-                total_tokens_output=int(totals[2]) if totals else 0,
+                total_calls=len(month_calls),
+                total_tokens_input=sum(c.get("tokens_input", 0) for c in month_calls),
+                total_tokens_output=sum(c.get("tokens_output", 0) for c in month_calls),
                 total_cost_usd=0.0,
                 per_model=[
                     LLMCostItem(
-                        model=r[0], calls=int(r[1]), tokens_input=int(r[2]),
-                        tokens_output=int(r[3]), cost_usd=0.0, success_rate=float(r[4]),
+                        model=m, calls=v["calls"], tokens_input=v["tokens_input"],
+                        tokens_output=v["tokens_output"], cost_usd=0.0,
+                        success_rate=round(v["success"] / v["calls"] * 100, 1) if v["calls"] else 100.0,
                     )
-                    for r in rows
+                    for m, v in sorted(per_model.items(), key=lambda x: -x[1]["calls"])
                 ],
             )
         except Exception as exc2:
-            logger.warning("llm_cost: DuckDB also unavailable: %s", exc2)
+            logger.warning("llm_cost: JSONL also unavailable: %s", exc2)
             return LLMCostResponse(
                 month=month_str, total_calls=0, total_tokens_input=0,
                 total_tokens_output=0, total_cost_usd=0.0, per_model=[],
