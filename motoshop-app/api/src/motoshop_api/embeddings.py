@@ -1,7 +1,7 @@
-"""Generación de embeddings para búsqueda semántica (fastembed ONNX).
+"""Embeddings vía HuggingFace Inference API (sin modelo local).
 
-Usa fastembed (sin PyTorch, ONNX runtime nativo).
-Modelo: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 (384d, multilingüe).
+Para generación batch de 6K productos → pipeline/embeddings_skus.py (usa fastembed local).
+Para query en tiempo real → HTTP POST a HuggingFace Inference API (gratis, ~200ms, 0 RAM).
 """
 
 from __future__ import annotations
@@ -10,89 +10,44 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 EMBEDDING_DIM = 384
-BATCH_SIZE = 256
-
-_model = None
-
-
-def _get_embed_model():
-    global _model
-    if _model is None:
-        from fastembed import TextEmbedding
-        logger.info("Loading embedding model: %s", EMBEDDING_MODEL)
-        _model = TextEmbedding(model_name=EMBEDDING_MODEL)
-        logger.info("Model loaded — dim=%d", EMBEDDING_DIM)
-    return _model
+_HF_MODEL_URL = (
+    "https://api-inference.huggingface.co/pipeline/feature-extraction/"
+    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+)
 
 
-def _build_embedding_text(product_row: dict) -> str:
-    """Construye texto descriptivo para embedding."""
-    parts = [str(product_row.get("nombre_producto", ""))]
-    grupo = product_row.get("cod_grupo")
-    if grupo and str(grupo) != "SIN_GRUPO":
-        parts.append(f"categoría {grupo}")
-    desc = product_row.get("descripcion")
-    if desc:
-        parts.append(str(desc))
-    return " | ".join(parts)
+def _get_query_embedding(text: str) -> list[float]:
+    """Genera embedding para UNA query vía HuggingFace Inference API.
+
+    No carga modelos en RAM. Hace HTTP POST al API gratuita de HuggingFace.
+    Útil para buscar productos en tiempo real usando embeddings ya almacenados.
+    """
+    import requests as _req
+
+    resp = _req.post(
+        _HF_MODEL_URL,
+        json={"inputs": text, "options": {"wait_for_model": True}},
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        logger.warning("hf_api_error: status=%s body=%s", resp.status_code, resp.text[:200])
+        raise RuntimeError(f"HuggingFace API returned {resp.status_code}")
+
+    data = resp.json()
+    # La API devuelve [[float, ...]] o {error: ...}
+    if isinstance(data, dict) and "error" in data:
+        raise RuntimeError(f"HuggingFace API error: {data['error']}")
+    if not isinstance(data, list) or not data:
+        raise RuntimeError(f"Unexpected HF API response shape: {type(data).__name__}")
+
+    embedding = data[0]  # primer (y único) elemento = embedding vec
+    if not isinstance(embedding, list) or len(embedding) != EMBEDDING_DIM:
+        raise RuntimeError(f"Unexpected embedding dim: got {len(embedding)} expected {EMBEDDING_DIM}")
+
+    return embedding
 
 
 def ensure_embeddings(db_path: str) -> int:
-    """Genera embeddings faltantes en la tabla motoshop_silver_dim_producto.
-
-    Args:
-        db_path: Ruta al archivo DuckDB.
-
-    Returns:
-        Número de productos embedidos (0 si ya estaban todos).
-    """
-    import duckdb
-
-    con = duckdb.connect(db_path)
-
-    # Crear columna si no existe
-    col_exists = False
-    try:
-        con.execute("SELECT embedding FROM motoshop_silver_dim_producto LIMIT 0")
-        col_exists = True
-    except Exception:
-        pass
-
-    if not col_exists:
-        logger.info("Adding embedding column (FLOAT[%d]) to dim_producto", EMBEDDING_DIM)
-        con.execute(
-            f"ALTER TABLE motoshop_silver_dim_producto ADD COLUMN embedding FLOAT[{EMBEDDING_DIM}]"
-        )
-
-    # Contar productos sin embedding
-    missing = con.execute(
-        "SELECT cod_producto, nombre_producto, cod_grupo, descripcion "
-        "FROM motoshop_silver_dim_producto WHERE embedding IS NULL"
-    ).fetchall()
-
-    if not missing:
-        con.close()
-        return 0
-
-    columns = ["cod_producto", "nombre_producto", "cod_grupo", "descripcion"]
-    products = [dict(zip(columns, r)) for r in missing]
-    logger.info("Generating embeddings for %d products", len(products))
-
-    model = _get_embed_model()
-    texts = [_build_embedding_text(p) for p in products]
-    embeddings = list(model.embed(texts, batch_size=BATCH_SIZE))
-
-    for p, emb in zip(products, embeddings):
-        emb_str = str(emb.tolist()).replace("[", "").replace("]", "")
-        con.execute(
-            f"UPDATE motoshop_silver_dim_producto "
-            f"SET embedding = CAST([{emb_str}] AS FLOAT[{EMBEDDING_DIM}]) "
-            f"WHERE cod_producto = ?",
-            [p["cod_producto"]],
-        )
-
-    con.close()
-    logger.info("Embedded %d products", len(products))
-    return len(products)
+    """No-op en producción. Los embeddings se generan en el pipeline local."""
+    return 0

@@ -21,30 +21,14 @@ logger = logging.getLogger(__name__)
 
 limiter = Limiter(key_func=get_remote_address)
 
-# ── Embedding model cache (fastembed ONNX, 118MB, sin PyTorch) ────────
-_embed_model = None
+# ── Embedding model cache — HuggingFace Inference API (sin modelo local) ──
 EMBEDDING_DIM = 384
 
 
-def _get_embed_model():
-    """Lazy singleton — reutiliza el modelo de motoshop_api.embeddings."""
-    global _embed_model
-    if _embed_model is None:
-        try:
-            from motoshop_api.embeddings import _get_embed_model as _shared_model
-            _embed_model = _shared_model()
-        except ImportError:
-            raise HTTPException(
-                status_code=503,
-                detail="Semantic search not available: fastembed not installed",
-            )
-        except Exception as exc:
-            logger.error("Failed to load embedding model: %s", exc)
-            raise HTTPException(
-                status_code=503,
-                detail="Semantic search not available: failed to load embedding model",
-            )
-    return _embed_model
+def _get_query_embedding(query: str) -> list[float]:
+    """Genera embedding de query vía HF Inference API (HTTP, 0 RAM)."""
+    from motoshop_api.embeddings import _get_query_embedding as _hf
+    return _hf(query)
 
 
 def get_products_repo() -> ProductsRepo:
@@ -91,11 +75,10 @@ async def search_semantic(
     db_path = _settings.duckdb_path
     _ensure_duckdb_file(db_path)
 
-    # 1. Intentar DuckDB + fastembed
+    # 1. Intentar DuckDB + HF Inference API
     try:
         if os.path.exists(db_path):
-            model = _get_embed_model()
-            query_emb = list(model.embed([q]))[0].tolist()
+            query_emb = _get_query_embedding(q)
             emb_str = str(query_emb).replace("[", "").replace("]", "")
             query_dim = len(query_emb)
 
