@@ -49,7 +49,7 @@ La app MotoShop depende de los gold marts para su operación 24/7. Con Databrick
 3. **Read-only en Render**: la API abre el archivo en `read_only=True`, sin locks, multi-request concurrente
 4. **Bootstrap from R2**: cold start descarga automática via `boto3`, sin montaje de volumen
 
-### Implementación (4 sprints)
+### Implementación (5 sprints)
 
 | Sprint | Commit | Qué |
 |--------|--------|-----|
@@ -57,6 +57,7 @@ La app MotoShop depende de los gold marts para su operación 24/7. Con Databrick
 | 1 | `47f06f6` | Pipeline bronze→silver(7)→gold(10) cableado |
 | 2 | `a072b9c` | 14 endpoints DuckDBMetricsRepo |
 | 3 | `d2b8767` | Admin refresh endpoint, health DuckDB, COALESCE fix |
+| 4.1 | `e6c3f01` | DuckDBAlertsRepo (46 alertas), DuckDBForecastRepo (410 discontinued) |
 
 ---
 
@@ -67,11 +68,11 @@ La app MotoShop depende de los gold marts para su operación 24/7. Con Databrick
 | Métrica | Before (Databricks) | After (DuckDB) |
 |---------|---------------------|----------------|
 | Latencia avg | 500ms–timeout (3s+) | **13ms** |
-| Endpoints 200 | 7/17 (41%) | **16/16** (100%) |
+| Endpoints 200 | 7/17 (41%) | **19/19** (100%) |
 | Costo mensual infra | $0 (Free Edition) | **$0** (R2 free tier) |
 | Cold start | 0ms (warehouse siempre "on") | ~2s (download 7MB de R2) |
-| Determinismo | No (CURRENT_DATE warehouse) | Sí (MAX(business_date)) |
-| Refresh | No aplica (live query) | POST /api/admin/data/refresh |
+| Alerts (stockout) | 500 (timeout) | **200** (46 alertas reales) |
+| Forecast per-SKU | 500 (timeout) | **410 Gone** (ADR-0020, usar forecast-categoria) |
 
 ### Negativas
 

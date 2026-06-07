@@ -1817,15 +1817,18 @@ Databricks revocó Serverless Free Edition 2026-05-31. Warehouse SQL intermitent
 | 1 — Pipeline | `47f06f6` | pipeline bronze→silver(7)→gold(10) cableado |
 | 2 — Endpoints | `a072b9c` | 14 endpoints DuckDBMetricsRepo (16/16 HTTP 200) |
 | 3 — Admin | `d2b8767` | POST /api/admin/data/refresh, health DuckDB, COALESCE fix |
+| 4.1 — Alerts+Forecast | `e6c3f01` | DuckDBAlertsRepo (46 alertas), DuckDBForecastRepo (410 discontinued) |
 
 ### Métricas before/after
 
 | Métrica | Before (Databricks) | After (DuckDB) |
 |---------|---------------------|----------------|
-| Endpoints 200 | 7/17 (41%) | 16/16 (100%) |
+| Endpoints 200 | 7/17 (41%) | **19/19** (100%) |
 | Latencia avg | 500ms–timeout | **13ms** |
-| Costo mensual | $0 (Free) → roto | $0 (R2 free tier) |
+| Costo mensual | $0 (Free) → roto | **$0 (R2 free tier)** |
 | Fiabilidad | Intermitente (warehouse) | Determinístico (archivo local) |
+| Alerts stockout | 500 timeout | **200 (46 alertas reales)** |
+| Forecast per-SKU | 500 timeout | **410 Gone** (→ forecast-categoria) |
 
 ### Datos
 - `docs/audit/raw_responses.json` — snapshot pre-V1.5 (Databricks). El revisor lo regenerará post-cutover como nuevo gold standard.
