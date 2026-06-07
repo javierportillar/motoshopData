@@ -14,9 +14,11 @@ from motoshop_api.auth.deps import get_current_user
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
 from motoshop_api.forecast.repo import (
+    DuckDBForecastRepo,
     FakeForecastRepo,
     ForecastRepoProtocol,
     RealForecastRepo,
+    get_forecast_repo,
 )
 from motoshop_api.forecast.schemas import ForecastResponse
 
@@ -60,7 +62,12 @@ def _clear_forecast_cache():
 
 
 def get_repo() -> ForecastRepoProtocol:
-    """Inyección de dependencias: RealForecastRepo en prod/dev, Fake solo en tests."""
+    """Inyección de dependencias: DuckDB si DATA_BACKEND=duckdb, Databricks si no."""
+    if settings.data_backend == "duckdb":
+        db_path = settings.duckdb_path or (
+            "/tmp/motoshop_gold.duckdb" if settings.env == "prod" else "out/motoshop_gold.duckdb"
+        )
+        return DuckDBForecastRepo(db_path)
     if settings.env != "test":
         w = _get_workspace()
         wh_id = settings.databricks_http_path.split("/")[-1] if settings.databricks_http_path else ""
@@ -78,8 +85,14 @@ def forecast_sku(
     """Predicción de demanda para un SKU en un horizonte dado.
 
     - `horizon`: 7, 14, o 30 días
+    - V1.5 DuckDB: forecast por SKU descontinuado (ADR-0020). Usar /api/metrics/forecast-categoria
     - 404 si el SKU no tiene datos de forecast
     """
+    if isinstance(repo, DuckDBForecastRepo):
+        raise HTTPException(
+            status_code=410,
+            detail="Forecast por SKU descontinuado en V1.5 (ADR-0020). Usá /api/metrics/forecast-categoria para forecast agregado por categoría.",
+        )
     cache_key = f"forecast:{sku}:{horizon}"
     result = _cached_or_fetch(cache_key, lambda: repo.get_forecast(sku, horizon))
     if result is None:

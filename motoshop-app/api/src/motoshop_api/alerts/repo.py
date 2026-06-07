@@ -1,12 +1,14 @@
-"""Repositorio de alertas de quiebre — mock + real vía Databricks SQL.
+"""Repositorio de alertas de quiebre — mock + real (Databricks) + DuckDB.
 
-FakeAlertsRepo se usa mientras no exista gold.alertas_quiebre.
+DuckDBAlertsRepo reemplaza RealAlertsRepo cuando DATA_BACKEND=duckdb.
+Lee de motoshop_gold_alertas_quiebre (tabla creada por el pipeline V1.5).
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Literal, Protocol
 
 logger = logging.getLogger(__name__)
@@ -18,7 +20,7 @@ Urgency = Literal["alta", "media", "baja"]
 
 
 class AlertsRepoProtocol(Protocol):
-    """Contrato que cumplen FakeAlertsRepo y RealAlertsRepo."""
+    """Contrato que cumplen FakeAlertsRepo, RealAlertsRepo y DuckDBAlertsRepo."""
 
     def get_stockout_alerts(self, urgency: str | None = None) -> AlertsResponse: ...
 
@@ -132,17 +134,81 @@ class RealAlertsRepo:
         return all_rows
 
 
+# ── DuckDB (V1.5) ────────────────────────────────────────────────────────
+
+_DUCKDB_ALERTS_SQL = """
+SELECT
+    sku,
+    nom_producto,
+    stock_actual,
+    demanda_predicha,
+    dias_hasta_quiebre,
+    urgencia
+FROM motoshop_gold_alertas_quiebre
+{where_clause}
+ORDER BY
+    CASE urgencia
+        WHEN 'alta' THEN 1
+        WHEN 'media' THEN 2
+        WHEN 'baja' THEN 3
+    END,
+    dias_hasta_quiebre ASC
+"""
+
+
+class DuckDBAlertsRepo:
+    """Lee de motoshop_gold_alertas_quiebre en el archivo DuckDB local."""
+
+    def __init__(self, db_path: str | Path) -> None:
+        import duckdb
+        self._con = duckdb.connect(str(db_path), read_only=True)
+        logger.info("DuckDBAlertsRepo connected to %s", db_path)
+
+    def get_stockout_alerts(self, urgency: str | None = None) -> AlertsResponse:
+        where = ""
+        params = []
+        if urgency:
+            where = "WHERE urgencia = ?"
+            params = [urgency]
+
+        sql = _DUCKDB_ALERTS_SQL.format(where_clause=where)
+        result = self._con.execute(sql, params)
+        columns = [desc[0] for desc in result.description]
+        rows = [dict(zip(columns, row)) for row in result.fetchall()]
+
+        alerts = [
+            AlertItem(
+                sku=str(r["sku"]),
+                nom_producto=str(r["nom_producto"]),
+                stock_actual=float(r["stock_actual"] or 0),
+                demanda_predicha=float(r["demanda_predicha"] or 0),
+                dias_hasta_quiebre=int(float(r["dias_hasta_quiebre"] or 0)),
+                urgencia=str(r["urgencia"]),
+            )
+            for r in rows
+        ]
+        return AlertsResponse(alerts=alerts, total=len(alerts), timestamp=datetime.now())
+
+
 # ── Factory ────────────────────────────────────────────────────────────────
 
 def get_alerts_repo(workspace_client=None, warehouse_id=None) -> AlertsRepoProtocol:
     """Devuelve el repo adecuado según configuración.
 
-    Si se pasa workspace_client + warehouse_id, usa RealAlertsRepo.
-    Si no, usa env: RealAlertsRepo en prod/dev, FakeAlertsRepo en test.
+    - DuckDB si DATA_BACKEND=duckdb
+    - Databricks si hay workspace_client + warehouse_id o env != test
+    - Fake solo en test sin Databricks
     """
+    from motoshop_api.config import settings
+
+    if settings.data_backend == "duckdb":
+        db_path = settings.duckdb_path or (
+            "/tmp/motoshop_gold.duckdb" if settings.env == "prod" else "out/motoshop_gold.duckdb"
+        )
+        return DuckDBAlertsRepo(db_path)
+
     if workspace_client is not None and warehouse_id:
         return RealAlertsRepo(workspace_client, warehouse_id)
-    from motoshop_api.config import settings
 
     if settings.env != "test":
         from databricks.sdk import WorkspaceClient

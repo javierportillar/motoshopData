@@ -12,8 +12,10 @@ from fastapi import APIRouter, Depends, Query
 
 from motoshop_api.alerts.repo import (
     AlertsRepoProtocol,
+    DuckDBAlertsRepo,
     FakeAlertsRepo,
     RealAlertsRepo,
+    get_alerts_repo,
 )
 from motoshop_api.alerts.schemas import AlertsResponse
 from motoshop_api.auth.deps import get_current_user
@@ -60,7 +62,12 @@ def _clear_alerts_cache():
 
 
 def get_repo() -> AlertsRepoProtocol:
-    """Inyección de dependencias: RealAlertsRepo en prod/dev, Fake solo en tests."""
+    """Inyección de dependencias: DuckDB si DATA_BACKEND=duckdb, Databricks si no."""
+    if settings.data_backend == "duckdb":
+        db_path = settings.duckdb_path or (
+            "/tmp/motoshop_gold.duckdb" if settings.env == "prod" else "out/motoshop_gold.duckdb"
+        )
+        return DuckDBAlertsRepo(db_path)
     if settings.env != "test":
         w = _get_workspace()
         wh_id = settings.databricks_http_path.split("/")[-1] if settings.databricks_http_path else ""

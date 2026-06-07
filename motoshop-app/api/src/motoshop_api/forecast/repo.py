@@ -1,13 +1,16 @@
-"""Repositorio de forecast — mock (FakeForecastRepo) + real (RealForecastRepo vía Databricks SQL).
+"""Repositorio de forecast — mock + real (Databricks) + DuckDB.
 
-FakeForecastRepo se usa mientras Dev A no tenga gold.forecast_demanda_sku.
-Devuelve datos mock realistas para MOTS1297 (top SKU: aceite 20W50).
+DuckDBForecastRepo: forecast por SKU descontinuado (ADR-0020). Las tablas
+gold.forecast_demanda_sku y gold.forecast_model_metrics no existen en DuckDB
+porque el forecast se hace a nivel categoría. El endpoint devuelve 404 con
+un mensaje claro indicando al consumidor que use /api/metrics/forecast-categoria.
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Protocol
 
 logger = logging.getLogger(__name__)
@@ -16,7 +19,7 @@ from motoshop_api.forecast.schemas import ForecastItem, ForecastMetrics, Forecas
 
 
 class ForecastRepoProtocol(Protocol):
-    """Contrato que cumplen FakeForecastRepo y RealForecastRepo."""
+    """Contrato que cumplen FakeForecastRepo, RealForecastRepo y DuckDBForecastRepo."""
 
     def get_forecast(self, sku: str, horizon: int) -> ForecastResponse | None: ...
 
@@ -178,17 +181,43 @@ class RealForecastRepo:
         return all_rows
 
 
+# ── DuckDB (V1.5) ────────────────────────────────────────────────────────
+
+class DuckDBForecastRepo:
+    """Forecast por SKU descontinuado en V1.5.
+
+    ADR-0020 decidió forecast a nivel categoría (no por SKU). Las tablas
+    gold.forecast_demanda_sku y gold.forecast_model_metrics no existen en
+    el archivo DuckDB. Este repo devuelve siempre None, lo que el router
+    traduce a 404 con un mensaje claro.
+    """
+
+    def __init__(self, db_path: str | Path | None = None) -> None:
+        logger.info("DuckDBForecastRepo: per-SKU forecast discontinued (ADR-0020)")
+
+    def get_forecast(self, sku: str, horizon: int) -> ForecastResponse | None:
+        return None
+
+
 # ── Factory ────────────────────────────────────────────────────────────────
 
 def get_forecast_repo(workspace_client=None, warehouse_id=None) -> ForecastRepoProtocol:
     """Devuelve el repo adecuado según configuración.
 
-    Si se pasa workspace_client + warehouse_id, usa RealForecastRepo.
-    Si no, usa env: RealForecastRepo en prod/dev, FakeForecastRepo en test.
+    - DuckDB si DATA_BACKEND=duckdb (forecast per-SKU descontinuado)
+    - Databricks si hay workspace_client + warehouse_id o env != test
+    - Fake solo en test sin Databricks
     """
+    from motoshop_api.config import settings
+
+    if settings.data_backend == "duckdb":
+        db_path = settings.duckdb_path or (
+            "/tmp/motoshop_gold.duckdb" if settings.env == "prod" else "out/motoshop_gold.duckdb"
+        )
+        return DuckDBForecastRepo(db_path)
+
     if workspace_client is not None and warehouse_id:
         return RealForecastRepo(workspace_client, warehouse_id)
-    from motoshop_api.config import settings
 
     if settings.env != "test":
         from databricks.sdk import WorkspaceClient
