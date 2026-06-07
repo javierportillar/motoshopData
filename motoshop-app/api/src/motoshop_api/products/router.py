@@ -115,8 +115,7 @@ def search_semantic(
         logger.error("mysql_semantic_fallback_failed: %s", exc)
         raise HTTPException(
             status_code=503,
-            detail="Semantic search no disponible (DuckDB embeddings offline, MySQL offline). "
-                   "Verificar HF_API_TOKEN y conectividad HF API.",
+            detail="Semantic search no disponible (DuckDB offline, MySQL offline).",
         )
 
 
