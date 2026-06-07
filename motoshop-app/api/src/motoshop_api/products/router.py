@@ -70,48 +70,45 @@ async def search_semantic(
     _user: User = Depends(get_current_user),
 ) -> SemanticSearchResponse:
     """Búsqueda semántica de productos — DuckDB (HF API) o fallback MySQL."""
-    try:
-        return _search_semantic_impl(q, limit)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error("search_semantic_unexpected", error=str(exc))
-        return _semantic_fallback_mysql(q, limit)
-
-
-def _search_semantic_impl(q: str, limit: int) -> SemanticSearchResponse:
-    """Implementación interna del search semántico."""
     from motoshop_api.config import settings as _settings
 
+    # Intentar DuckDB + HF Inference API
     db_path = _settings.duckdb_path
     _ensure_duckdb_file(db_path)
 
-    # 1. Intentar DuckDB + HF Inference API
     try:
         if os.path.exists(db_path):
             query_emb = _get_query_embedding(q)
             emb_str = str(query_emb).replace("[", "").replace("]", "")
-            query_dim = len(query_emb)
-
             con = duckdb.connect(db_path, read_only=True)
             rows = con.execute(f"""
                 SELECT cod_producto, nombre_producto AS nomprod,
                        ROUND(array_cosine_similarity(
-                           embedding, CAST([{emb_str}] AS FLOAT[{query_dim}])
+                           embedding, CAST([{emb_str}] AS FLOAT[{len(query_emb)}])
                        )::DOUBLE, 4) AS score
                 FROM motoshop_silver_dim_producto
                 WHERE embedding IS NOT NULL
                 ORDER BY score DESC LIMIT ?
             """, [limit]).fetchall()
             con.close()
-
             results = [SemanticMatch(codprod=str(r[0]), nomprod=str(r[1]), score=float(r[2])) for r in rows]
             return SemanticSearchResponse(query=q, results=results, total=len(results))
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.warning("semantic_search_duckdb_failed", error=str(exc))
 
-    # 2. Fallback: MySQL LIKE search
-    return _semantic_fallback_mysql(q, limit)
+    # Fallback: MySQL
+    try:
+        repo = get_products_repo()
+        matches = [SemanticMatch(codprod=str(r.get("codprod","")), nomprod=str(r.get("nomprod","")), score=0.0)
+                   for r in repo.search(query=q, limit=limit, offset=0)]
+        return SemanticSearchResponse(query=q, results=matches, total=len(matches))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("semantic_fallback_mysql_failed", error=str(exc))
+        raise HTTPException(status_code=503, detail="Semantic search no disponible (DuckDB + MySQL offline).")
 
 
 def _ensure_duckdb_file(db_path: str) -> None:
@@ -125,27 +122,8 @@ def _ensure_duckdb_file(db_path: str) -> None:
         _bootstrap_duckdb_from_r2(_p)
     except Exception:
         pass
-    # Fallback a path relativo
     if not os.path.exists(db_path) and os.path.exists("out/motoshop_gold.duckdb"):
         os.environ["DUCKDB_PATH"] = os.path.abspath("out/motoshop_gold.duckdb")
-
-
-def _semantic_fallback_mysql(q: str, limit: int) -> SemanticSearchResponse:
-    """Fallback: búsqueda LIKE por MySQL cuando DuckDB embeddings no están disponibles."""
-    try:
-        repo = get_products_repo()
-        results_list = repo.search(query=q, limit=limit, offset=0)
-        matches = [
-            SemanticMatch(codprod=str(r.get("codprod", "")), nomprod=str(r.get("nomprod", "")), score=0.0)
-            for r in results_list
-        ]
-        return SemanticSearchResponse(query=q, results=matches, total=len(matches))
-    except Exception as exc:
-        logger.error("semantic_fallback_mysql_failed", error=str(exc))
-        raise HTTPException(
-            status_code=503,
-            detail="Semantic search not available: DuckDB + MySQL offline.",
-        )
 
 
 @router.get("/products/{sku}", response_model=ProductOut)
