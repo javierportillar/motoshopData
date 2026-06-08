@@ -47,6 +47,43 @@ function DailyEvoChart({ days }: { days: { date: string; sales: number; accumula
   );
 }
 
+// ── Daily comparison across years (line chart) ───────────────────────
+
+function DailyYearCompareChart({ curr, prev, prev2, currYear, prevYear, prevYear2 }: {
+  curr: { days: { date: string; sales: number; accumulated: number }[] };
+  prev?: { days: { date: string; sales: number; accumulated: number }[] };
+  prev2?: { days: { date: string; sales: number; accumulated: number }[] };
+  currYear: number; prevYear: number; prevYear2: number;
+}) {
+  // Build aligned data: day 1-31, with values from each year
+  const currentMonth = new Date().getMonth() + 1;
+  const daysInMonth = new Date(currYear, currentMonth, 0).getDate();
+  const data = Array.from({ length: daysInMonth }, (_, i) => ({
+    day: i + 1,
+    curr: curr.days.find(d => parseInt(d.date.slice(8)) === i + 1)?.sales ?? null,
+    currAcc: curr.days.find(d => parseInt(d.date.slice(8)) === i + 1)?.accumulated ?? null,
+    prev: prev?.days.find(d => parseInt(d.date.slice(8)) === i + 1)?.sales ?? null,
+    prev2: prev2?.days.find(d => parseInt(d.date.slice(8)) === i + 1)?.sales ?? null,
+  }));
+  const hasPrev = data.some(d => d.prev != null);
+  const hasPrev2 = data.some(d => d.prev2 != null);
+  return (
+    <ResponsiveContainer width="100%" height={280}>
+      <LineChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+        <XAxis dataKey="day" tick={{ fontSize: 10 }} stroke="#a3a3a3" label={{ value: "Día del mes", position: "insideBottom", offset: -2, fontSize: 10 }} />
+        <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" tickFormatter={(v: number) => `$${(v/1e3).toFixed(0)}K`} />
+        <Tooltip contentStyle={{ borderRadius: "8px", fontSize: "12px" }} />
+        <Line type="monotone" dataKey="curr" stroke="#7B1818" strokeWidth={2} dot={false} name={`${currYear}`} connectNulls={false} />
+        {hasPrev && <Line type="monotone" dataKey="prev" stroke="#4B5563" strokeWidth={1.5} dot={false} name={`${prevYear}`} connectNulls={false} strokeDasharray="5 5" />}
+        {hasPrev2 && <Line type="monotone" dataKey="prev2" stroke="#94A3B8" strokeWidth={1} dot={false} name={`${prevYear2}`} connectNulls={false} strokeDasharray="3 3" />}
+        <Line type="monotone" dataKey="currAcc" stroke="#2563EB" strokeWidth={1.5} dot={false} name="Acumulado" yAxisId="right" connectNulls={false} />
+        <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} stroke="#2563EB" tickFormatter={(v: number) => `$${(v/1e6).toFixed(1)}M`} />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
 // ── Year comparison chart (no future zeros, current year with projection) ─
 
 function YearTrendChart({ currentYear, trendCurrData, trendPrevData, forecast }: {
@@ -150,6 +187,8 @@ export default function VentasPage(): JSX.Element {
   const currentMonth = new Date().toISOString().slice(0, 7);
   const currentYear = new Date().getFullYear();
   const salesDaily = useSalesDailyMonth(currentMonth);
+  const salesDailyPrev = useSalesDailyMonth(`${currentYear-1}-${new Date().toISOString().slice(5,7)}`);
+  const salesDailyPrev2 = useSalesDailyMonth(`${currentYear-2}-${new Date().toISOString().slice(5,7)}`);
   const salesHistorical = useSalesHistorical();
   const forecast = useSalesForecastMonthly();
   const trend = useSalesTrend(12);
@@ -221,40 +260,22 @@ export default function VentasPage(): JSX.Element {
             </Card>
           )}
 
-          {/* Comparativa años anteriores por día */}
-          <Card header={<h2 className="font-semibold text-text-primary">Comparativa diaria con años anteriores</h2>}>
-            <p className="text-xs text-text-muted mb-2">Promedio por día en la misma cantidad de días ({d.current_month_days_with_sales}d)</p>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={[
-                { label: `${currentYear}`, valor: d.current_month_accumulated / d.current_month_days_with_sales },
-                ...d.same_month_previous_years
-                  .filter(y => y.same_day_window_amount > 0)
-                  .map(y => ({ label: String(y.year), valor: y.same_day_window_amount / d.current_month_days_with_sales })),
-              ]}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="#a3a3a3" />
-                <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" tickFormatter={(v: number) => `$${(v/1e3).toFixed(0)}K`} />
-                <Tooltip contentStyle={{ borderRadius: "8px", fontSize: "12px" }} />
-                <Bar dataKey="valor" radius={[4,4,0,0]}>
-                  {[
-                    { label: `${currentYear}`, valor: d.current_month_accumulated / d.current_month_days_with_sales },
-                    ...d.same_month_previous_years.filter(y => y.same_day_window_amount > 0).map(y => ({ label: String(y.year), valor: y.same_day_window_amount / d.current_month_days_with_sales })),
-                  ].map((_, idx) => (
-                    <Cell key={idx} fill={idx === 0 ? "#7B1818" : "#4B5563"} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-            <Table
-              columns={[
-                { header: "Año", cell: (r) => String(r.year) },
-                { header: "Total ventana", cell: (r) => formatMoney(r.same_day_window_amount), align: "right" },
-                { header: "Promedio/día", cell: (r) => formatMoney(r.same_day_window_amount / d.current_month_days_with_sales), align: "right" },
-                { header: "Mes completo", cell: (r) => formatMoney(r.full_month_amount), align: "right" },
-                { header: "Delta", cell: (r) => r.delta_same_window_pct != null ? `${r.delta_same_window_pct > 0 ? "+" : ""}${r.delta_same_window_pct}%` : "—", align: "right" },
-              ]}
-              data={d.same_month_previous_years} keyFn={(r) => String(r.year)} striped
-            />
+          {/* Comparativa diaria entre años */}
+          <Card header={<h2 className="font-semibold text-text-primary">Comparativa diaria: {currentYear} vs años anteriores</h2>}>
+            <div className="flex items-center gap-4 mb-2 text-xs text-text-muted">
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{background:"#7B1818"}} /> {currentYear}</span>
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{background:"#4B5563"}} /> {currentYear-1}</span>
+              {salesDailyPrev2.data?.total_days_with_sales ? <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{background:"#94A3B8"}} /> {currentYear-2}</span> : null}
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{background:"#2563EB"}} /> Acum. {currentYear}</span>
+            </div>
+            {dm?.days ? (
+              <DailyYearCompareChart
+                curr={{ days: dm.days }}
+                prev={salesDailyPrev.data?.days ? { days: salesDailyPrev.data.days } : undefined}
+                prev2={salesDailyPrev2.data?.days ? { days: salesDailyPrev2.data.days } : undefined}
+                currYear={currentYear} prevYear={currentYear-1} prevYear2={currentYear-2}
+              />
+            ) : <Skeleton className="h-60 rounded-xl" />}
           </Card>
 
           {/* Tendencia año actual vs anterior */}
