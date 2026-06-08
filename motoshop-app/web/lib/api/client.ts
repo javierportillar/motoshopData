@@ -24,7 +24,14 @@ export async function apiFetch(
 
     const ok = await refreshPromise;
     if (!ok) {
-      if (!window.location.pathname.startsWith("/login")) {
+      // Clear stale auth state before redirecting to login
+      try {
+        const { useAuthStore } = await import("@/lib/auth/store");
+        useAuthStore.getState().logout();
+      } catch {
+        // Zustand might not be available in SSR context, ignore
+      }
+      if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
         window.location.href = "/login";
       }
       return resp;

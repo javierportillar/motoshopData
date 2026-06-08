@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuthStore } from "@/lib/auth/store";
 import { Button } from "@/lib/ui/Button";
 import { Input } from "@/lib/ui/Input";
@@ -14,7 +14,15 @@ export default function LoginPage(): JSX.Element {
   const [errors, setErrors] = useState<{ username?: string; password?: string }>({});
   const router = useRouter();
   const setUser = useAuthStore((s) => s.setUser);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const { addToast } = useToast();
+
+  // If already authenticated, skip login
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.push("/");
+    }
+  }, [isAuthenticated, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
