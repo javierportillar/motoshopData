@@ -116,12 +116,20 @@ class ToolExecutor:
         return {"vendedores": [{"nit": r[0], "nombre": r[1], "facturas": int(r[2]), "total": float(r[3])} for r in rows]}
 
     def get_inventory_value(self) -> dict:
-        """Valor total del inventario y cantidad de productos."""
+        """Valor total del inventario, usando último costo de compra disponible."""
         r = self._con.execute("""
-            SELECT ROUND(COALESCE(SUM(cantidad_actual),0),2) AS stock,
-                   ROUND(COALESCE(SUM(cantidad_actual * costo_promedio),0),0) AS valor_total,
-                   COUNT(DISTINCT cod_producto) AS productos
-            FROM motoshop_gold_mart_inventario_actual
+            WITH latest_cost AS (
+                SELECT cod_producto, costo_producto,
+                       ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_date DESC) AS rn
+                FROM motoshop_silver_fact_compras_detalle
+                WHERE costo_producto > 0
+            )
+            SELECT
+                ROUND(COALESCE(SUM(i.cantidad_actual),0),2) AS stock,
+                ROUND(COALESCE(SUM(i.cantidad_actual * COALESCE(lc.costo_producto, 0)), 0), 0) AS valor_total,
+                COUNT(DISTINCT i.cod_producto) AS productos
+            FROM motoshop_gold_mart_inventario_actual i
+            LEFT JOIN latest_cost lc ON i.cod_producto = lc.cod_producto AND lc.rn = 1
         """).fetchone()
         return {
             "stock_total_unidades": float(r[0] or 0),
