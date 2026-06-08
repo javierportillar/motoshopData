@@ -81,6 +81,7 @@ $env:R2_ACCESS_KEY_ID = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^
 $env:R2_SECRET_ACCESS_KEY = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^R2_SECRET_ACCESS_KEY=(.+)$'} | ForEach-Object {$matches[1]})
 $env:R2_BUCKET = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^R2_BUCKET=(.+)$'} | ForEach-Object {$matches[1]})
 $env:DUCKDB_PATH = "$ProjectRoot\out\motoshop_gold.duckdb"
+$env:PIPELINE_RUNS_DB_PATH = "$ProjectRoot\out\pipeline_runs.duckdb"
 
 $proc = Start-Process -FilePath "$ApiDir\.venv\Scripts\python.exe" `
     -ArgumentList "-m","uvicorn","motoshop_api.main:app","--port","$Port" `

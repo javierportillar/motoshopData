@@ -122,7 +122,7 @@ app.add_middleware(RequestIDMiddleware)
 
 # Routers — todos bajo /api (estándar REST)
 app.include_router(auth_router, prefix="/api")
-app.include_router(pipeline_runs_router)
+app.include_router(pipeline_runs_router, prefix="/api")
 app.include_router(products_router, prefix="/api")
 app.include_router(stock_router, prefix="/api")
 app.include_router(sales_router, prefix="/api")

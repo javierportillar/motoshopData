@@ -2,16 +2,7 @@
 #
 # Programar via Windows Scheduled Task a las 02:00 COL diario.
 # Llama al endpoint POST /api/admin/data/refresh con token de admin.
-#
-# Setup (una sola vez):
-#   1. Asegurate que el .env tiene R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
-#   2. Genera un token JWT de admin y guardalo aca (variable $API_TOKEN abajo)
-#      o exporta la variable de entorno MOTO_API_TOKEN
-#   3. Programa el Scheduled Task:
-#      $action = New-ScheduledTaskAction -Execute "powershell.exe" `
-#          -Argument "-ExecutionPolicy Bypass -File C:\Users\MotoShop\Documents\javidevmoto\infra\refresh_v15.ps1"
-#      $trigger = New-ScheduledTaskTrigger -Daily -At "02:00"
-#      Register-ScheduledTask -TaskName "MotoShop_V15_Refresh" -Action $action -Trigger $trigger
+# Loguea cada step a pipeline_runs.duckdb y lo sube a R2.
 
 param(
     [string]$ApiBaseUrl = "http://localhost:8000",
@@ -20,7 +11,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 $logFile = Join-Path $PSScriptRoot "logs\refresh_v15.log"
-$mysqlExe = "C:\Program Files (x86)\MySQL\MySQL Server 5.0\bin\mysql.exe"
+$rootDir = Resolve-Path (Join-Path $PSScriptRoot "..")
+$python = Join-Path $rootDir ".venv-infra\Scripts\python.exe"
+$dbHelper = Join-Path $rootDir "scripts\pipeline_runs_db.py"
+$uploadScript = Join-Path $rootDir "scripts\upload_duckdb_to_r2.py"
 
 # ── Helpers de logging a archivo ──────────────────────────────────────────────
 function Write-Log {
@@ -31,35 +25,38 @@ function Write-Log {
     Add-Content -Path $logFile -Value $line
 }
 
-# ── Helpers de logging a MySQL (app_pipeline_runs / app_pipeline_steps) ──────
+# ── Helpers de logging a DuckDB (pipeline_runs.duckdb) ───────────────────────
 $global:RunId = $null
 
-function Invoke-MySQL {
-    param([string]$Query)
-    if (-not (Test-Path $mysqlExe)) { return $null }
-    # Pipe via stdin para evitar problemas de parsing de quoting de PowerShell
-    $result = $Query | & $mysqlExe -u root -B -N --database=motoshop2024 2>&1
-    $clean = $result | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }
-    return ($clean | Out-String).Trim()
+function Invoke-DB {
+    param([string]$Arguments)
+    $argList = @($dbHelper) + ($Arguments -split ' ')
+    $result = & $python $argList 2>&1
+    $exitCode = $LASTEXITCODE
+    $lastLine = ($result | Select-Object -Last 1) -join "`n"
+    if ($exitCode -ne 0) {
+        Write-Log "pipeline_runs_db.py failed: $($lastLine -replace '\s+', ' ')" "WARN"
+        return $null
+    }
+    return $lastLine.Trim()
 }
 
 function Start-PipelineRun {
     param($PipelineName, $TriggeredBy)
-    $pname = $PipelineName -replace "'", "''"
-    $tby = $TriggeredBy -replace "'", "''"
-    $sql = "INSERT INTO app_pipeline_runs (pipeline_name, started_at, status, triggered_by) VALUES ('$pname', NOW(), 'running', '$tby'); SELECT LAST_INSERT_ID()"
-    $id = Invoke-MySQL $sql
-    if ($id -match '^\d+$') { return [int]$id }
-    Write-Log "No se pudo crear pipeline run en MySQL: id='$id'" "WARN"
+    $id = Invoke-DB "start-run --pipeline $PipelineName --triggered-by $TriggeredBy"
+    if ($id -match '^\d+$') {
+        $global:RunId = [int]$id
+        Write-Log "Pipeline run #$global:RunId creado en pipeline_runs.duckdb"
+        return $global:RunId
+    }
+    Write-Log "No se pudo crear pipeline run en DuckDB" "WARN"
     return $null
 }
 
 function Start-PipelineStep {
-    param($RunId, $StepOrder, $StepName)
-    if (-not $RunId) { return $null }
-    $sname = $StepName -replace "'", "''"
-    $sql = "INSERT INTO app_pipeline_steps (run_id, step_order, step_name, started_at, status) VALUES ($RunId, $StepOrder, '$sname', NOW(), 'running'); SELECT LAST_INSERT_ID()"
-    $id = Invoke-MySQL $sql
+    param($StepOrder, $StepName)
+    if (-not $global:RunId) { return $null }
+    $id = Invoke-DB "start-step --run-id $global:RunId --step-order $StepOrder --step-name $StepName"
     if ($id -match '^\d+$') { return [int]$id }
     return $null
 }
@@ -67,26 +64,20 @@ function Start-PipelineStep {
 function Complete-PipelineStep {
     param($StepId, $DurationSeconds, $LogExcerpt, $Status = "success", $ErrorMessage = $null)
     if (-not $StepId) { return }
-    # Sanitizar: solo ASCII imprimible, escapar comillas simples
-    $safeExcerpt = if ($LogExcerpt) { ($LogExcerpt -replace "'", "''") -replace '[^\x20-\x7E\r\n\t]', ' ' } else { '' }
-    if ($safeExcerpt.Length -gt 8000) { $safeExcerpt = $safeExcerpt.Substring(0, 8000) }
-    if ($ErrorMessage) {
-        $safeErr = ($ErrorMessage -replace "'", "''") -replace '[^\x20-\x7E\r\n\t]', ' '
-        Invoke-MySQL "UPDATE app_pipeline_steps SET finished_at=NOW(), status='$Status', duration_seconds=$DurationSeconds, log_excerpt='$safeExcerpt', error_message='$safeErr' WHERE id=$StepId"
-    } else {
-        Invoke-MySQL "UPDATE app_pipeline_steps SET finished_at=NOW(), status='$Status', duration_seconds=$DurationSeconds, log_excerpt='$safeExcerpt' WHERE id=$StepId"
-    }
+    # Pasamos log_excerpt y error_message por variables de entorno (pueden contener comillas/spacios)
+    $env:PIPELINE_DB_LOG_EXCERPT = if ($LogExcerpt) { ($LogExcerpt -replace '[^\x20-\x7E\r\n\t]', ' ').Substring(0, [math]::Min($LogExcerpt.Length, 8000)) } else { '' }
+    $env:PIPELINE_DB_ERROR_MSG = if ($ErrorMessage) { ($ErrorMessage -replace '[^\x20-\x7E\r\n\t]', ' ') } else { '' }
+    Invoke-DB "complete-step --step-id $StepId --duration $DurationSeconds --status $Status"
+    Remove-Item "env:PIPELINE_DB_LOG_EXCERPT" -ErrorAction SilentlyContinue
+    Remove-Item "env:PIPELINE_DB_ERROR_MSG" -ErrorAction SilentlyContinue
 }
 
 function Complete-PipelineRun {
-    param($RunId, $DurationSeconds, $Status = "success", $ErrorMessage = $null)
-    if (-not $RunId) { return }
-    if ($ErrorMessage) {
-        $safeErr = ($ErrorMessage -replace "'", "''") -replace '[^\x20-\x7E\r\n\t]', ' '
-        Invoke-MySQL "UPDATE app_pipeline_runs SET finished_at=NOW(), status='$Status', duration_seconds=$DurationSeconds, error_message='$safeErr' WHERE id=$RunId"
-    } else {
-        Invoke-MySQL "UPDATE app_pipeline_runs SET finished_at=NOW(), status='$Status', duration_seconds=$DurationSeconds WHERE id=$RunId"
-    }
+    param($DurationSeconds, $Status = "success", $ErrorMessage = $null)
+    if (-not $global:RunId) { return }
+    $env:PIPELINE_DB_ERROR_MSG = if ($ErrorMessage) { ($ErrorMessage -replace '[^\x20-\x7E\r\n\t]', ' ') } else { '' }
+    Invoke-DB "complete-run --run-id $global:RunId --duration $DurationSeconds --status $Status"
+    Remove-Item "env:PIPELINE_DB_ERROR_MSG" -ErrorAction SilentlyContinue
 }
 
 # ── Helper: ejecutar step con medicion + captura de output ───────────────────
@@ -96,7 +87,7 @@ function Invoke-Step {
         [string]$StepName,
         [int]$StepOrder
     )
-    $stepId = Start-PipelineStep -RunId $global:RunId -StepOrder $StepOrder -StepName $StepName
+    $stepId = Start-PipelineStep -StepOrder $StepOrder -StepName $StepName
     $stepStart = Get-Date
     $stepLog = Join-Path $logDir "step_${StepName}.tmp"
     $savedEA = $ErrorActionPreference
@@ -151,7 +142,6 @@ if (Test-Path $envFile) {
     Write-Log "Variables de entorno cargadas desde .env"
 }
 
-# Si el token no vino por parametro, usar el que cargamos del .env
 if (-not $ApiToken) { $ApiToken = $env:MOTO_API_TOKEN }
 
 if (-not $ApiToken) {
@@ -159,16 +149,11 @@ if (-not $ApiToken) {
     exit 1
 }
 
-$rootDir = Resolve-Path (Join-Path $PSScriptRoot "..")
-$python = Join-Path $rootDir ".venv-infra\Scripts\python.exe"
 $env:PYTHONPATH = $rootDir
 $globalStart = Get-Date
 
-# Inicializar run en MySQL
-if (Test-Path $mysqlExe) {
-    $global:RunId = Start-PipelineRun -PipelineName "refresh_v15" -TriggeredBy "scheduled"
-    if ($global:RunId) { Write-Log "Pipeline run #$global:RunId creado en MySQL" }
-}
+# Inicializar run en DuckDB
+Start-PipelineRun -PipelineName "refresh_v15" -TriggeredBy "scheduled"
 
 try {
     $stepOrder = 0
@@ -179,13 +164,13 @@ try {
         & $python (Join-Path $rootDir "pipeline\run_all.py")
     }
 
-    # ── Step 2: Upload DuckDB to R2 ───────────────────────────────────────
+    # ── Step 2: Upload DuckDB + pipeline_runs.duckdb a R2 ─────────────────
     $stepOrder++
     Invoke-Step -StepOrder $stepOrder -StepName "r2_upload" -ScriptBlock {
-        & $python (Join-Path $rootDir "scripts\upload_duckdb_to_r2.py")
+        & $python $uploadScript
     }
 
-    # ── Step 3: Trigger API refresh + verify freshness ────────────────────
+    # ── Step 3: Trigger API data refresh ──────────────────────────────────
     $stepOrder++
     Invoke-Step -StepOrder $stepOrder -StepName "api_refresh" -ScriptBlock {
         $refreshUrl = "$ApiBaseUrl/api/admin/data/refresh"
@@ -193,17 +178,14 @@ try {
             "Authorization" = "Bearer $ApiToken"
             "Content-Type"  = "application/json"
         }
-
         Write-Host "POST $refreshUrl"
         $response = Invoke-RestMethod -Uri $refreshUrl -Method Post -Headers $headers
         Write-Host "Refresh response: $($response | ConvertTo-Json -Compress)"
-
         Start-Sleep -Seconds 2
         $healthUrl = "$ApiBaseUrl/api/health/data-freshness"
         Write-Host "GET $healthUrl"
         $health = Invoke-RestMethod -Uri $healthUrl -Method Get
         Write-Host "Data freshness: status=$($health.status) lag=$($health.lag_hours)h backend=$($health.backend)"
-
         if ($health.status -eq "OK" -or $health.status -eq "WARN") {
             Write-Log "Refresh successful" "OK"
         } else {
@@ -211,21 +193,28 @@ try {
         }
     }
 
+    # ── Step 4: Trigger API pipeline_runs refresh ─────────────────────────
+    $stepOrder++
+    Invoke-Step -StepOrder $stepOrder -StepName "pipeline_refresh" -ScriptBlock {
+        $refreshUrl = "$ApiBaseUrl/api/admin/pipeline/refresh"
+        $headers = @{
+            "Authorization" = "Bearer $ApiToken"
+            "Content-Type"  = "application/json"
+        }
+        Write-Host "POST $refreshUrl"
+        $response = Invoke-RestMethod -Uri $refreshUrl -Method Post -Headers $headers
+        Write-Host "Pipeline refresh response: $($response | ConvertTo-Json -Compress)"
+    }
+
     # ── Finalizar run como exitoso ────────────────────────────────────────
     $totalDur = [math]::Round(((Get-Date) - $globalStart).TotalSeconds, 1)
-    Complete-PipelineRun -RunId $global:RunId -DurationSeconds $totalDur -Status "success"
+    Complete-PipelineRun -DurationSeconds $totalDur -Status "success"
     Write-Log "Pipeline refresh_v15 completado exitosamente (${totalDur}s)" "OK"
 
 } catch {
     $err = $_.Exception.Message
     Write-Log "Refresh failed: $err" "ERROR"
-
     $totalDur = [math]::Round(((Get-Date) - $globalStart).TotalSeconds, 1)
-    if ($global:RunId) {
-        $safeErr = ($err -replace "'", "''") -replace '[^\x20-\x7E\r\n\t]', ' '
-        Invoke-MySQL "UPDATE app_pipeline_runs SET finished_at=NOW(), status='failed', duration_seconds=$totalDur, error_message='$safeErr' WHERE id=$global:RunId AND status='running'"
-        Invoke-MySQL "UPDATE app_pipeline_steps SET finished_at=NOW(), status='failed', error_message='Parent run failed' WHERE run_id=$global:RunId AND status='running'"
-    }
-
+    Complete-PipelineRun -DurationSeconds $totalDur -Status "failed" -ErrorMessage $err
     exit 1
 }

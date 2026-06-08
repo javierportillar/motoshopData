@@ -115,6 +115,73 @@ async def data_refresh(
         )
 
 
+@router.post("/pipeline/refresh", response_model=RefreshResponse)
+@limiter.limit("3/minute")
+async def pipeline_refresh(
+    request: Request,
+    user: User = Depends(require_role("admin")),
+) -> RefreshResponse:
+    """Recarga pipeline_runs.duckdb desde R2 sin reiniciar uvicorn.
+
+    Solo accesible por usuarios con rol admin.
+    """
+    from motoshop_api.pipeline_runs.repo import _bootstrap_pipeline_db_from_r2
+
+    db_path = Path(os.environ.get(
+        "PIPELINE_RUNS_DB_PATH",
+        "/tmp/pipeline_runs.duckdb" if os.environ.get("ENV") == "prod" else "out/pipeline_runs.duckdb",
+    ))
+
+    r2_endpoint = os.environ.get("R2_ENDPOINT")
+    r2_key = os.environ.get("R2_ACCESS_KEY_ID")
+    r2_secret = os.environ.get("R2_SECRET_ACCESS_KEY")
+
+    if not all([r2_endpoint, r2_key, r2_secret]):
+        raise HTTPException(
+            status_code=503,
+            detail="R2 credentials not configured. Set R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY.",
+        )
+
+    try:
+        if db_path.exists():
+            db_path.unlink()
+            logger.info("Deleted existing pipeline_runs.duckdb at %s before refresh", db_path)
+
+        _bootstrap_pipeline_db_from_r2(db_path)
+
+        if not db_path.exists():
+            raise HTTPException(
+                status_code=503,
+                detail="Refresh failed: pipeline_runs.duckdb not found after download. Check R2 connectivity.",
+            )
+
+        size_bytes = db_path.stat().st_size
+        freshness = None
+        try:
+            from datetime import UTC, datetime
+            mtime = db_path.stat().st_mtime
+            freshness = datetime.fromtimestamp(mtime, UTC).isoformat()
+        except Exception:
+            pass
+
+        return RefreshResponse(
+            status="ok",
+            detail="Pipeline runs DuckDB refreshed from R2.",
+            path=str(db_path),
+            size_bytes=size_bytes,
+            freshness_utc=freshness,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Pipeline refresh failed")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Pipeline refresh failed: {exc}",
+        )
+
+
 # ── LLM cost dashboard ─────────────────────────────────────────────────
 
 class LLMCostItem(BaseModel):
