@@ -1,5 +1,5 @@
 import useSWR, { type KeyedMutator } from "swr";
-import { apiFetchJson } from "./client";
+import { apiFetch, apiFetchJson } from "./client";
 import { getCached, setCache } from "@/lib/offline/cache";
 
 interface Product {
@@ -542,4 +542,66 @@ export function useSendMessage(conversationId: string) {
     }
     return resp.json();
   };
+}
+
+// ── Pipeline Observability (V1.7) ──────────────────────────────────────
+
+export interface PipelineRun {
+  id: number;
+  pipeline_name: string;
+  started_at: string;
+  finished_at: string | null;
+  status: "running" | "success" | "failed";
+  duration_seconds: number | null;
+  rows_processed: number | null;
+  triggered_by: string;
+  error_message: string | null;
+}
+
+export interface PipelineStep {
+  id: number;
+  run_id: number;
+  step_order: number;
+  step_name: string;
+  started_at: string;
+  finished_at: string | null;
+  status: "running" | "success" | "failed";
+  duration_seconds: number | null;
+  rows_processed: number | null;
+  log_excerpt: string | null;
+  error_message: string | null;
+}
+
+export interface PipelineSummary {
+  success_rate_30d_pct: number;
+  avg_duration_seconds: number;
+  total_runs_30d: number;
+  last_run_status: "running" | "success" | "failed" | null;
+  last_run_finished_at: string | null;
+}
+
+interface PipelineRunsResponse {
+  runs: PipelineRun[];
+  total: number;
+}
+
+interface PipelineRunDetail extends PipelineRun {
+  steps: PipelineStep[];
+  log_excerpt: string | null;
+}
+
+export function usePipelineRuns(limit = 30, pipeline?: string, status?: string) {
+  const params = new URLSearchParams();
+  params.set("limit", String(limit));
+  if (pipeline) params.set("pipeline", pipeline);
+  if (status) params.set("status", status);
+  return useMetrics<PipelineRunsResponse>(`/api/admin/pipeline/runs?${params.toString()}`);
+}
+
+export function usePipelineRun(id: number | null) {
+  return useMetrics<PipelineRunDetail>(id ? `/api/admin/pipeline/runs/${id}` : null);
+}
+
+export function usePipelineSummary() {
+  return useMetrics<PipelineSummary>("/api/admin/pipeline/summary");
 }

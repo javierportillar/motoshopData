@@ -39,26 +39,34 @@ ADR a generar: **ADR-0026 — Pipeline observability nativa**.
 
 ## 3. Arquitectura objetivo
 
+> **Actualización 2026-06-08 — cambio post-auditoría:** la lectura cloud de
+> `pipeline_runs` ya no debe depender de MySQL Windows desde Render. Dev W migró
+> el contrato a `pipeline_runs.duckdb` publicado en R2, siguiendo la política
+> DuckDB-first de ADR-0023. MySQL/Windows puede seguir siendo origen operativo
+> para construir la traza, pero la PWA consume exclusivamente FastAPI en Render:
+> `/api/admin/pipeline/*`.
+
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │ WINDOWS · Pipeline batch                                      │
 │                                                               │
 │  refresh_v15.ps1 (Scheduled Task 02:00 COL)                   │
-│  ├─ INSERT INTO app_pipeline_runs ... started_at, 'running'   │
-│  ├─ paso 1 silver → INSERT INTO app_pipeline_steps           │
-│  ├─ paso 2 gold   → INSERT/UPDATE                            │
-│  ├─ paso 3 embeddings → INSERT/UPDATE                        │
-│  ├─ paso 4 upload R2 → INSERT/UPDATE                         │
-│  └─ UPDATE app_pipeline_runs SET finished_at, 'success'      │
+│  ├─ registra app_pipeline_runs/app_pipeline_steps             │
+│  ├─ ejecuta bronze → silver → gold                            │
+│  ├─ sube motoshop_gold.duckdb a R2                            │
+│  ├─ marca steps/run como success|failed                       │
+│  └─ sube pipeline_runs.duckdb FINAL a R2                      │
 │                                                               │
-│  MySQL local (mismas tablas app_*)                            │
-│  ├─ app_pipeline_runs   (cabecera por corrida)               │
-│  └─ app_pipeline_steps  (detalle por paso)                   │
+│  out/pipeline_runs.duckdb                                     │
+│  ├─ app_pipeline_runs   (cabecera por corrida)                │
+│  └─ app_pipeline_steps  (detalle por paso)                    │
 └────────────────┬─────────────────────────────────────────────┘
-                 │ Cloudflare Tunnel
+                 │ Cloudflare R2
                  ▼
 ┌──────────────────────────────────────────────────────────────┐
 │ RENDER · FastAPI                                              │
+│                                                               │
+│  Lee pipeline_runs.duckdb desde R2                            │
 │                                                               │
 │  GET  /api/admin/pipeline/runs?limit=30&pipeline=X&status=Y   │
 │  GET  /api/admin/pipeline/runs/{id}  (con steps)             │
@@ -83,11 +91,11 @@ ADR a generar: **ADR-0026 — Pipeline observability nativa**.
 
 | Decisión | Por qué | Alternativa rechazada |
 |----------|---------|------------------------|
-| MySQL `app_pipeline_*` en Windows | Misma DB que `app_alert_actions`, `app_audit_log`, `app_purchase_plans` — patrón ya probado | Postgres dedicado (agrega infra) |
+| `pipeline_runs.duckdb` publicado en R2 para lectura cloud | Render no puede depender de MySQL Windows; mantiene $0/mes y alinea V1.7 con ADR-0023 DuckDB-first | Render leyendo MySQL Windows vía túnel |
 | Solo lectura desde PWA | Re-ejecutar el pipeline desde la PWA requiere wiring de auth + jobs lock + estado distribuido. **No se justifica** ahora. Si hace falta, se agrega en V1.7.1 | Botón "Re-ejecutar" en PWA |
-| Logs en `log_excerpt TEXT` (últimas ~1000 líneas) | No queremos `LONGTEXT` con MBs de log → MySQL se infla | Log completo en MySQL |
+| Logs en `log_excerpt TEXT` (últimas ~50 líneas / cap 8KB) | Suficiente para diagnosticar sin inflar el DuckDB de observabilidad | Log completo en la PWA |
 | Sin alertas email/push en V1.7 | El gerente revisa la página diariamente; las alertas distraen si no hay falla | Alertas Telegram (lo dejamos para V1.7.1 si hace falta) |
-| Schema en MySQL InnoDB, no en DuckDB | DuckDB se refresca → perdés historia. MySQL persiste para siempre | `app_pipeline_runs` en DuckDB |
+| Publicar el DuckDB de observabilidad solo después de cerrar el run | Si se sube antes, producción muestra `running` eternamente aunque el pipeline haya terminado | Subir `pipeline_runs.duckdb` durante el step `r2_upload` |
 
 ---
 
@@ -97,11 +105,11 @@ ADR a generar: **ADR-0026 — Pipeline observability nativa**.
 
 | Componente | Tecnología | Por qué |
 |------------|-----------|---------|
-| Tablas `app_pipeline_runs` + `app_pipeline_steps` | MySQL InnoDB | Mismo patrón que las otras tablas `app_*` (ADR-0004) |
+| Tablas `app_pipeline_runs` + `app_pipeline_steps` | DuckDB (`pipeline_runs.duckdb`) | Misma estrategia cloud que V1.5: archivo local + R2 + Render |
 | Endpoints `/api/admin/pipeline/*` | FastAPI + Pydantic | Reuso de la arquitectura existente |
 | Página `/admin/pipeline` | Next.js + SWR + Recharts | Reuso de los componentes de dashboard existentes |
-| Logging PowerShell → MySQL | `mysql.exe` CLI o módulo PowerShell SimplySQL | Compatible con Windows Server, no agrega dependencia Python |
-| Logging Python (Mac) → MySQL | `mysql-connector-python` (ya está) | Ya está en el entorno del pipeline |
+| Logging PowerShell → DuckDB | `scripts/pipeline_runs_db.py` | Evita dependencia cloud→Windows |
+| Publicación a R2 | `scripts/upload_duckdb_to_r2.py` + refresh API | Mantiene Render actualizado sin restart manual |
 
 ### Lo que NO se agrega
 
@@ -109,6 +117,7 @@ ADR a generar: **ADR-0026 — Pipeline observability nativa**.
 - ❌ Tabla de logs completa (`LONGTEXT` con MB de output) — solo excerpt
 - ❌ Botón "Re-ejecutar pipeline" desde la PWA — fuera de scope V1.7
 - ❌ Webhooks/integraciones con Slack/Telegram — V1.7.1 si hace falta
+- ❌ Lectura directa desde MySQL Windows en Render — rompe la operación $0 y acopla producción al PC
 
 ---
 
@@ -139,6 +148,12 @@ V1.7 es chico — un solo sprint con 3 sub-bloques.
 
 #### Sub-bloque C · Frontend PWA (~4-5h)
 
+**Estado para Dev F (2026-06-08):** puede arrancar integración contra
+`/api/admin/pipeline/*`. Backend aún no está cerrado formalmente porque hay un
+bug conocido: el último run puede aparecer como `running` si Dev W publica
+`pipeline_runs.duckdb` antes de cerrar el run. El Front debe representar ese
+estado honestamente, pero no intentar corregirlo en UI.
+
 | Tarea | DoD |
 |-------|-----|
 | Ruta `/admin/pipeline` con guard de rol (admin, gerente) | Vendedor no la ve en navegación |
@@ -154,6 +169,104 @@ V1.7 es chico — un solo sprint con 3 sub-bloques.
 - Tabla muestra 30 runs con success rate, duración promedio
 - Performance página < 1.5s First Contentful Paint
 - Sin regresiones en los otros dashboards
+
+### Handoff listo para Dev F · Sub-bloque C Frontend
+
+**Rol:** Dev Frontend V1.7. Implementás la página de observabilidad del pipeline
+en la PWA. No tocás backend, Windows, scripts PowerShell ni R2.
+
+**Contrato API confirmado en producción:**
+
+```text
+GET /api/admin/pipeline/runs?limit=30&pipeline=refresh_v15&status=success
+GET /api/admin/pipeline/runs/{id}
+GET /api/admin/pipeline/summary
+```
+
+Todos requieren Bearer JWT y roles `admin` o `gerente`. `vendedor` debe quedar
+sin acceso visual y, si intenta entrar por URL directa, debe ver una pantalla
+honesta de acceso denegado o redirección segura.
+
+**Shape observado en producción:**
+
+```ts
+type PipelineRun = {
+  id: number;
+  pipeline_name: string;
+  started_at: string;
+  finished_at: string | null;
+  status: "running" | "success" | "failed";
+  duration_seconds: number | null;
+  rows_processed: number | null;
+  triggered_by: string;
+  error_message: string | null;
+};
+
+type PipelineStep = PipelineRun & {
+  run_id: number;
+  step_order: number;
+  step_name: string;
+  log_excerpt: string | null;
+};
+
+type PipelineSummary = {
+  success_rate_30d_pct: number;
+  avg_duration_seconds: number;
+  total_runs_30d: number;
+  last_run_status: "running" | "success" | "failed" | null;
+  last_run_finished_at: string | null;
+};
+```
+
+**Implementación esperada:**
+
+- Crear ruta `motoshop-app/web/app/(authenticated)/admin/pipeline/page.tsx`.
+- Agregar hooks tipados en `motoshop-app/web/lib/api/hooks.ts` usando SWR.
+- Agregar navegación solo para `admin` y `gerente`.
+- Reusar componentes existentes de UI: `Stat`, `Badge`, `Table`, `ErrorState`,
+  wrappers de chart si aplican.
+- Renderizar:
+  - cards: último estado, success rate 30d, duración promedio, total runs 30d;
+  - tabla de últimas 30 corridas con filtros por `pipeline` y `status`;
+  - detalle expandible/modal con steps, duración, estado, error y `log_excerpt`;
+  - estado `running` como “En ejecución” si empezó hace poco y como “Revisar”
+    si lleva más de 60 minutos sin `finished_at`.
+
+**Reglas de UX:**
+
+- No usar jerga DevOps como “artifact”, “bootstrap”, “R2 object”. El gerente
+  debe entender: “Actualización de datos”, “Última corrida”, “Paso fallido”.
+- Si no hay runs: mostrar empty state “Todavía no hay corridas registradas”.
+- Si API responde 401/403: no mostrar datos parciales; mostrar acceso denegado.
+- Si API responde 5xx: mostrar error claro y botón de reintentar.
+- No agregar botón “Re-ejecutar pipeline”.
+- No ocultar `running`; mostrarlo con contexto.
+
+**Bug backend conocido — NO arreglar en Front:**
+
+Producción puede mostrar el último run como `running` aunque el pipeline haya
+terminado, porque Dev W debe republicar `pipeline_runs.duckdb` después de
+`Complete-PipelineRun`. El Front solo debe mostrar ese estado como “Revisar si
+lleva más de 60 min”.
+
+**Validación mínima antes de entregar:**
+
+- `npm run typecheck`
+- `npm run build`
+- Test/smoke Playwright para:
+  - admin ve `/admin/pipeline`;
+  - gerente ve `/admin/pipeline`;
+  - vendedor no ve link y no accede a la página;
+  - tabla renderiza runs mockeados;
+  - modal/detalle muestra steps y `log_excerpt`.
+
+**No tocar:**
+
+- `infra/`
+- `pipeline/`
+- `scripts/`
+- `motoshop-app/api/`
+- configuración de Vercel/Render
 
 ---
 
