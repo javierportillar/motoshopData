@@ -25,6 +25,7 @@ import duckdb
 
 from pipeline import gold, silver
 from pipeline.mysql_source import get_mysql_connection
+from scripts.pipeline_runs_db import capture_layer_stats, start_stats_run, complete_stats_run
 
 logger = logging.getLogger(__name__)
 
@@ -312,14 +313,27 @@ def _build_bronze_from_silver(con: duckdb.DuckDBPyConnection) -> None:
     )
 
 
-def run_all() -> str:
+def run_all(enable_stats: bool = True) -> str:
     """Pipeline completo: bronze → silver → gold.
+
+    Si enable_stats=True, captura estadísticas de tablas en pipeline_runs.duckdb
+    después de cada capa (bronze, silver, gold).
 
     Si out/motoshop_gold.duckdb ya existe (seed via build_duckdb_from_export),
     lo usa como base y corre el pipeline encima. Si no existe, intenta
     construirlo desde los exports JSON.
     """
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    # Iniciar run de estadísticas
+    stats_run_id = None
+    if enable_stats:
+        try:
+            stats_run_id = start_stats_run("run_all")
+            logger.info("Stats capture run #%d started in pipeline_runs.duckdb", stats_run_id)
+        except Exception as exc:
+            logger.warning("Stats capture init failed: %s — continuando sin stats", exc)
+            stats_run_id = None
 
     # ── Paso 0: preparar el DuckDB base ─────────────────────────────────
     if not OUTPUT_PATH.exists():
@@ -360,6 +374,16 @@ def run_all() -> str:
         else:
             logger.info("Bronze tables already exist, skipping build")
 
+    # ── Stats: Bronze ──────────────────────────────────────────────────
+    if stats_run_id is not None:
+        con.close()
+        try:
+            logger.info("Capturing bronze stats...")
+            capture_layer_stats(stats_run_id, "bronze", str(OUTPUT_PATH))
+        except Exception as exc:
+            logger.warning("Bronze stats capture failed: %s", exc)
+        con = duckdb.connect(str(OUTPUT_PATH))
+
     # ── Paso 2: Silver ──────────────────────────────────────────────────
     logger.info("Running silver transformations...")
     silver.dim_producto(con)
@@ -370,6 +394,16 @@ def run_all() -> str:
     silver.fact_compras_detalle(con)
     silver.fact_inventario(con)
     logger.info("Silver: 7/7 transformations complete")
+
+    # ── Stats: Silver ──────────────────────────────────────────────────
+    if stats_run_id is not None:
+        con.close()
+        try:
+            logger.info("Capturing silver stats...")
+            capture_layer_stats(stats_run_id, "silver", str(OUTPUT_PATH))
+        except Exception as exc:
+            logger.warning("Silver stats capture failed: %s", exc)
+        con = duckdb.connect(str(OUTPUT_PATH))
 
     # ── Paso 3: Gold ────────────────────────────────────────────────────
     logger.info("Running gold transformations...")
@@ -397,7 +431,21 @@ def run_all() -> str:
     except Exception as exc:
         logger.warning("Embeddings skipped: %s", exc)
 
-    con.close()
+    # ── Stats: Gold ────────────────────────────────────────────────────
+    if stats_run_id is not None:
+        con.close()
+        try:
+            logger.info("Capturing gold stats...")
+            capture_layer_stats(stats_run_id, "gold", str(OUTPUT_PATH))
+            complete_stats_run(stats_run_id, "success")
+            logger.info("Stats capture run #%d complete", stats_run_id)
+        except Exception as exc:
+            logger.warning("Gold stats capture failed: %s", exc)
+            try:
+                complete_stats_run(stats_run_id, "failed")
+            except Exception:
+                pass
+
     return str(OUTPUT_PATH)
 
 
