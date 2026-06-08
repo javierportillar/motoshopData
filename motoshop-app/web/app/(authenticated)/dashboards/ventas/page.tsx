@@ -177,11 +177,22 @@ function ForecastDonut({ current, next }: { current: { month: string; projected_
       </Card>
     </div>
   );
-}
-
-// ── Main ──────────────────────────────────────────────────────────────
+}// ── Main ──────────────────────────────────────────────────────────────
 
 export default function VentasPage(): JSX.Element {
+  try {
+    return <VentasPageInner />;
+  } catch (_e) {
+    return (
+      <div className="space-y-4">
+        <Link href="/" className="text-sm text-accent hover:underline">← Volver a inicio</Link>
+        <Card><p className="py-8 text-center text-sm text-text-muted">Error al cargar la página de ventas. Por favor intentá de nuevo.</p></Card>
+      </div>
+    );
+  }
+}
+
+function VentasPageInner(): JSX.Element {
   const [tab, setTab] = useState<TabView>("mensual");
   const sales = useSalesSummaryV2();
   const currentMonth = new Date().toISOString().slice(0, 7);
