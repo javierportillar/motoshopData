@@ -697,3 +697,40 @@ export function usePipelineRun(id: number | null) {
 export function usePipelineSummary() {
   return useMetrics<PipelineSummary>("/api/admin/pipeline/summary");
 }
+
+// ── V1.8.1: Data Catalog ──────────────────────────────────────────────
+
+export interface CatalogTable {
+  name: string;
+  layer: string;
+  row_count: number;
+  column_count: number;
+  date_column: string | null;
+  max_date: string | null;
+  status: string;
+  warnings: string[];
+}
+
+export interface CatalogDetail extends CatalogTable {
+  columns: { name: string; type: string; null_count: number; null_pct: number }[];
+  sample_rows: Record<string, unknown>[];
+  quality?: { total_rows: number; null_cells: number; duplicate_rows: number; completeness_pct: number };
+}
+
+export interface LineageEdge {
+  from: string;
+  to: string;
+  transform: string;
+}
+
+export function useCatalog() {
+  return useMetrics<CatalogTable[]>("/api/admin/data/catalog");
+}
+
+export function useCatalogTable(name: string | null) {
+  return useMetrics<CatalogDetail>(name ? `/api/admin/data/catalog/${encodeURIComponent(name)}` : null);
+}
+
+export function useLineage() {
+  return useMetrics<LineageEdge[]>("/api/admin/data/lineage");
+}
