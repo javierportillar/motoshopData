@@ -747,3 +747,60 @@ export function useCatalogTable(name: string | null) {
 export function useLineage() {
   return useMetrics<LineageEdge[]>("/api/admin/data/lineage");
 }
+
+// ── V1.9: Inventory Detail + Discrepancies ────────────────────────────
+
+interface InventoryItem {
+  cod_producto: string;
+  nom_producto: string;
+  cod_bodega: string;
+  nom_bodega: string;
+  stock_actual: number;
+  costo_unitario: number;
+  valor_inventario: number;
+  ultima_venta: string | null;
+  dias_sin_venta: number;
+  es_dormido: boolean;
+  abc: string;
+}
+
+interface InventoryDetailResponse {
+  items: InventoryItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+interface InventoryDiscrepancyItem {
+  cod_producto: string;
+  nom_producto: string;
+  stock_dormidos: number;
+  stock_inventario: number;
+  diff: number;
+  dias_sin_venta: number;
+}
+
+interface InventoryDiscrepanciesResponse {
+  discrepancies: InventoryDiscrepancyItem[];
+  total_discrepancies: number;
+  summary: {
+    dormidos_total_stock: number;
+    inventario_total_stock: number;
+    invariant_ok: boolean;
+    invariant_msg: string;
+  };
+}
+
+export function useInventoryDetail(page=1, page_size=30, q?: string, bodega?: string, sort?: string) {
+  const params = new URLSearchParams();
+  params.set("page", String(page));
+  params.set("page_size", String(page_size));
+  if (q) params.set("q", q);
+  if (bodega) params.set("bodega", bodega);
+  if (sort) params.set("sort", sort);
+  return useMetrics<InventoryDetailResponse>(`/api/metrics/inventory-detail?${params.toString()}`);
+}
+
+export function useInventoryDiscrepancies() {
+  return useMetrics<InventoryDiscrepanciesResponse>("/api/metrics/inventory-discrepancies");
+}
