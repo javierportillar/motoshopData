@@ -701,7 +701,7 @@ export function usePipelineSummary() {
 // ── V1.8.1: Data Catalog ──────────────────────────────────────────────
 
 export interface CatalogTable {
-  name: string;
+  table_name: string;
   layer: string;
   row_count: number;
   column_count: number;

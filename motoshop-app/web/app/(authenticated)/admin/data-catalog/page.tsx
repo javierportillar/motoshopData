@@ -149,7 +149,7 @@ export default function DataCatalogPage(): JSX.Element {
 
   const filtered = (tables ?? []).filter(t => {
     if (layerFilter && t.layer !== layerFilter) return false;
-    if (search && !t.name.toLowerCase().includes(search.toLowerCase())) return false;
+    if (search && !t.table_name.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
 
@@ -228,14 +228,14 @@ export default function DataCatalogPage(): JSX.Element {
           <Table
             columns={[
               { header: "Capa", cell: (t: CatalogTable) => { const c=getLayer(t.layer); return <Badge variant={c.variant} size="sm">{c.label}</Badge>; } },
-              { header: "Tabla", cell: (t: CatalogTable) => <span className="font-mono text-xs">{t.name}</span> },
+              { header: "Tabla", cell: (t: CatalogTable) => <span className="font-mono text-xs">{t.table_name}</span> },
               { header: "Filas", cell: (t: CatalogTable) => <span className="text-xs">{fmt(t.row_count)}</span>, align: "right" },
               { header: "Cols", cell: (t: CatalogTable) => <span className="text-xs">{t.column_count}</span>, align: "right" },
               { header: "Fecha", cell: (t: CatalogTable) => <span className="text-xs">{t.max_date??"—"}</span> },
               { header: "Estado", cell: (t: CatalogTable) => <Badge variant={statusVariant(t.status)} size="sm">{t.status}</Badge> },
-              { header: "", cell: (t: CatalogTable) => <button onClick={()=>setSelectedTable(t.name)} className="text-xs font-medium text-accent hover:underline">Detalle</button> },
+              { header: "", cell: (t: CatalogTable) => <button onClick={()=>setSelectedTable(t.table_name)} className="text-xs font-medium text-accent hover:underline">Detalle</button> },
             ]}
-            data={filtered} keyFn={(t: CatalogTable)=>t.name} striped
+            data={filtered} keyFn={(t: CatalogTable)=>t.table_name} striped
           />
         </Card>
       )}
