@@ -153,29 +153,24 @@ $env:PYTHONPATH = $rootDir
 $globalStart = Get-Date
 
 # ── Helpers de post-publish (no loguean al DB para evitar estado stale) ───────
-function Publish-PipelineRunToR2 {
-    Write-Log "Subiendo pipeline_runs.duckdb a R2..." "INFO"
-    $result = & $python $uploadScript 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Log "Upload a R2 falló: $($result[-1])" "WARN"
-    } else {
-        Write-Log "Upload a R2 completado" "OK"
-    }
-}
-
-function Refresh-PipelineApi {
-    Write-Log "Refrescando API con pipeline_runs.duckdb desde R2..." "INFO"
-    $refreshUrl = "$ApiBaseUrl/api/admin/pipeline/refresh"
+function Invoke-ApiEndpoint {
+    param([string]$Method, [string]$Url, [bool]$ExpectJson = $true)
     $headers = @{
         "Authorization" = "Bearer $ApiToken"
         "Content-Type"  = "application/json"
     }
     try {
-        $response = Invoke-RestMethod -Uri $refreshUrl -Method Post -Headers $headers
-        Write-Host "Pipeline refresh response: $($response | ConvertTo-Json -Compress)"
-        Write-Log "Pipeline refresh completado" "OK"
+        if ($Method -eq "GET") {
+            $response = Invoke-RestMethod -Uri $Url -Method Get -Headers $headers
+        } else {
+            $response = Invoke-RestMethod -Uri $Url -Method Post -Headers $headers
+        }
+        Write-Host "$Method $Url -> 200"
+        if ($ExpectJson) { Write-Host "  $($response | ConvertTo-Json -Compress)" }
+        return $response
     } catch {
-        Write-Log "Pipeline refresh falló: $($_.Exception.Message)" "WARN"
+        Write-Log "$Method $Url falló: $($_.Exception.Message)" "WARN"
+        return $null
     }
 }
 
@@ -191,37 +186,22 @@ try {
         & $python (Join-Path $rootDir "pipeline\run_all.py")
     }
 
-    # ── Step 2: Trigger API data refresh (solo data DuckDB) ───────────────
-    $stepOrder++
-    Invoke-Step -StepOrder $stepOrder -StepName "api_refresh" -ScriptBlock {
-        $refreshUrl = "$ApiBaseUrl/api/admin/data/refresh"
-        $headers = @{
-            "Authorization" = "Bearer $ApiToken"
-            "Content-Type"  = "application/json"
-        }
-        Write-Host "POST $refreshUrl"
-        $response = Invoke-RestMethod -Uri $refreshUrl -Method Post -Headers $headers
-        Write-Host "Refresh response: $($response | ConvertTo-Json -Compress)"
-        Start-Sleep -Seconds 2
-        $healthUrl = "$ApiBaseUrl/api/health/data-freshness"
-        Write-Host "GET $healthUrl"
-        $health = Invoke-RestMethod -Uri $healthUrl -Method Get
-        Write-Host "Data freshness: status=$($health.status) lag=$($health.lag_hours)h backend=$($health.backend)"
-        if ($health.status -eq "OK" -or $health.status -eq "WARN") {
-            Write-Log "Refresh successful" "OK"
-        } else {
-            Write-Log "Refresh completed but freshness is $($health.status)" "WARN"
-        }
-    }
-
-    # ── Finalizar run como exitoso ────────────────────────────────────────
+    # ── Cerrar run (local) ANTES de publicar a R2 ─────────────────────────
     $totalDur = [math]::Round(((Get-Date) - $globalStart).TotalSeconds, 1)
     Complete-PipelineRun -DurationSeconds $totalDur -Status "success"
     Write-Log "Pipeline completado (${totalDur}s)" "OK"
 
-    # ── Post-publish: upload final + refresh API (NO logueado al DB) ──────
-    Publish-PipelineRunToR2
-    Refresh-PipelineApi
+    # ── Publicar AMBOS DuckDB a R2 (datos frescos + pipeline finalizado) ──
+    Write-Log "Subiendo motoshop_gold.duckdb + pipeline_runs.duckdb a R2..." "INFO"
+    $result = & $python $uploadScript 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Upload a R2 falló: $($result[-1])"
+    }
+    Write-Log "Upload a R2 completado" "OK"
+
+    # ── Refrescar API desde R2 (encuentra datos frescos + run completo) ───
+    Invoke-ApiEndpoint -Method POST -Url "$ApiBaseUrl/api/admin/data/refresh"
+    Invoke-ApiEndpoint -Method POST -Url "$ApiBaseUrl/api/admin/pipeline/refresh"
 
     Write-Log "Pipeline refresh_v15 completado exitosamente" "OK"
 
@@ -231,9 +211,10 @@ try {
     $totalDur = [math]::Round(((Get-Date) - $globalStart).TotalSeconds, 1)
     Complete-PipelineRun -DurationSeconds $totalDur -Status "failed" -ErrorMessage $err
 
-    # Upload final incluso en falla para que el estado sea visible en API
-    Publish-PipelineRunToR2
-    Refresh-PipelineApi
+    # Publicar incluso en falla para que el estado sea visible en API
+    & $python $uploadScript 2>$null
+    Invoke-ApiEndpoint -Method POST -Url "$ApiBaseUrl/api/admin/data/refresh"
+    Invoke-ApiEndpoint -Method POST -Url "$ApiBaseUrl/api/admin/pipeline/refresh"
 
     exit 1
 }
