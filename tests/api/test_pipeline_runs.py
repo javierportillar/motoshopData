@@ -1,7 +1,7 @@
 """Tests para pipeline runs endpoints (V1.7).
 
-Los tests de auth no requieren MySQL. Los tests con datos requieren
-una conexión MySQL con las tablas creadas.
+Rutas con prefijo /api/admin/pipeline/*.
+Usando DuckDB readonly + R2 bootstrap (no MySQL).
 """
 
 from __future__ import annotations
@@ -37,18 +37,18 @@ def _token(role: str = "admin") -> str:
 
 class TestAuth:
     def test_no_token_returns_401_or_403(self, client):
-        resp = client.get("/admin/pipeline/runs")
+        resp = client.get("/api/admin/pipeline/runs")
         assert resp.status_code in (401, 403), f"Got {resp.status_code}"
 
     def test_vendedor_returns_401_or_403(self, client):
-        resp = client.get("/admin/pipeline/runs", headers={"Authorization": f"Bearer {_token('vendedor')}"})
+        resp = client.get("/api/admin/pipeline/runs", headers={"Authorization": f"Bearer {_token('vendedor')}"})
         assert resp.status_code in (401, 403), f"Got {resp.status_code}: {resp.text[:100]}"
 
-    def test_admin_returns_503_when_no_mysql(self, client):
-        """Admin autenticado pero sin MySQL → 503."""
-        resp = client.get("/admin/pipeline/runs", headers={"Authorization": f"Bearer {_token('admin')}"})
-        assert resp.status_code in (503, 200), f"Got {resp.status_code}: {resp.text[:100]}"
+    def test_admin_returns_200_with_empty_db(self, client):
+        """Admin autenticado, DuckDB vacío → 200 con runs vacíos."""
+        resp = client.get("/api/admin/pipeline/runs", headers={"Authorization": f"Bearer {_token('admin')}"})
+        assert resp.status_code == 200, f"Got {resp.status_code}: {resp.text[:200]}"
 
-    def test_summary_returns_503_when_no_mysql(self, client):
-        resp = client.get("/admin/pipeline/summary", headers={"Authorization": f"Bearer {_token('admin')}"})
-        assert resp.status_code in (503, 200), f"Got {resp.status_code}: {resp.text[:100]}"
+    def test_summary_returns_200_with_empty_db(self, client):
+        resp = client.get("/api/admin/pipeline/summary", headers={"Authorization": f"Bearer {_token('admin')}"})
+        assert resp.status_code == 200, f"Got {resp.status_code}: {resp.text[:200]}"

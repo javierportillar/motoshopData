@@ -152,6 +152,33 @@ if (-not $ApiToken) {
 $env:PYTHONPATH = $rootDir
 $globalStart = Get-Date
 
+# ── Helpers de post-publish (no loguean al DB para evitar estado stale) ───────
+function Publish-PipelineRunToR2 {
+    Write-Log "Subiendo pipeline_runs.duckdb a R2..." "INFO"
+    $result = & $python $uploadScript 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "Upload a R2 falló: $($result[-1])" "WARN"
+    } else {
+        Write-Log "Upload a R2 completado" "OK"
+    }
+}
+
+function Refresh-PipelineApi {
+    Write-Log "Refrescando API con pipeline_runs.duckdb desde R2..." "INFO"
+    $refreshUrl = "$ApiBaseUrl/api/admin/pipeline/refresh"
+    $headers = @{
+        "Authorization" = "Bearer $ApiToken"
+        "Content-Type"  = "application/json"
+    }
+    try {
+        $response = Invoke-RestMethod -Uri $refreshUrl -Method Post -Headers $headers
+        Write-Host "Pipeline refresh response: $($response | ConvertTo-Json -Compress)"
+        Write-Log "Pipeline refresh completado" "OK"
+    } catch {
+        Write-Log "Pipeline refresh falló: $($_.Exception.Message)" "WARN"
+    }
+}
+
 # Inicializar run en DuckDB
 Start-PipelineRun -PipelineName "refresh_v15" -TriggeredBy "scheduled"
 
@@ -164,13 +191,7 @@ try {
         & $python (Join-Path $rootDir "pipeline\run_all.py")
     }
 
-    # ── Step 2: Upload DuckDB + pipeline_runs.duckdb a R2 ─────────────────
-    $stepOrder++
-    Invoke-Step -StepOrder $stepOrder -StepName "r2_upload" -ScriptBlock {
-        & $python $uploadScript
-    }
-
-    # ── Step 3: Trigger API data refresh ──────────────────────────────────
+    # ── Step 2: Trigger API data refresh (solo data DuckDB) ───────────────
     $stepOrder++
     Invoke-Step -StepOrder $stepOrder -StepName "api_refresh" -ScriptBlock {
         $refreshUrl = "$ApiBaseUrl/api/admin/data/refresh"
@@ -193,28 +214,26 @@ try {
         }
     }
 
-    # ── Step 4: Trigger API pipeline_runs refresh ─────────────────────────
-    $stepOrder++
-    Invoke-Step -StepOrder $stepOrder -StepName "pipeline_refresh" -ScriptBlock {
-        $refreshUrl = "$ApiBaseUrl/api/admin/pipeline/refresh"
-        $headers = @{
-            "Authorization" = "Bearer $ApiToken"
-            "Content-Type"  = "application/json"
-        }
-        Write-Host "POST $refreshUrl"
-        $response = Invoke-RestMethod -Uri $refreshUrl -Method Post -Headers $headers
-        Write-Host "Pipeline refresh response: $($response | ConvertTo-Json -Compress)"
-    }
-
     # ── Finalizar run como exitoso ────────────────────────────────────────
     $totalDur = [math]::Round(((Get-Date) - $globalStart).TotalSeconds, 1)
     Complete-PipelineRun -DurationSeconds $totalDur -Status "success"
-    Write-Log "Pipeline refresh_v15 completado exitosamente (${totalDur}s)" "OK"
+    Write-Log "Pipeline completado (${totalDur}s)" "OK"
+
+    # ── Post-publish: upload final + refresh API (NO logueado al DB) ──────
+    Publish-PipelineRunToR2
+    Refresh-PipelineApi
+
+    Write-Log "Pipeline refresh_v15 completado exitosamente" "OK"
 
 } catch {
     $err = $_.Exception.Message
     Write-Log "Refresh failed: $err" "ERROR"
     $totalDur = [math]::Round(((Get-Date) - $globalStart).TotalSeconds, 1)
     Complete-PipelineRun -DurationSeconds $totalDur -Status "failed" -ErrorMessage $err
+
+    # Upload final incluso en falla para que el estado sea visible en API
+    Publish-PipelineRunToR2
+    Refresh-PipelineApi
+
     exit 1
 }
