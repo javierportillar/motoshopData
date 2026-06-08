@@ -53,10 +53,8 @@ def data_catalog(
     """Catálogo de tablas del DuckDB productivo por capa Medallion."""
     con = _get_con()
     try:
-        # Todas las tablas
-        tables = con.execute(
-            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' ORDER BY table_name"
-        ).fetchall()
+        # Todas las tablas (DuckDB: SHOW TABLES es más confiable que information_schema)
+        tables = con.execute("SHOW TABLES").fetchall()
 
         table_list = []
         layer_summary: dict[str, dict] = {}
