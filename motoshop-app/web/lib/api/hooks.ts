@@ -791,13 +791,25 @@ interface InventoryDiscrepanciesResponse {
   };
 }
 
-export function useInventoryDetail(page=1, page_size=30, q?: string, bodega?: string, sort?: string) {
+export function useInventoryDetail(
+  page = 1,
+  page_size = 30,
+  q?: string,
+  bodega?: string,
+  sort?: string,
+  stock?: "todos" | "con_stock" | "sin_stock",
+  dormido?: "todos" | "true" | "false",
+  abc?: string,
+) {
   const params = new URLSearchParams();
   params.set("page", String(page));
   params.set("page_size", String(page_size));
   if (q) params.set("q", q);
   if (bodega) params.set("bodega", bodega);
   if (sort) params.set("sort", sort);
+  if (stock) params.set("stock", stock);
+  if (dormido) params.set("dormido", dormido);
+  if (abc) params.set("abc", abc);
   return useMetrics<InventoryDetailResponse>(`/api/metrics/inventory-detail?${params.toString()}`);
 }
 

@@ -1120,9 +1120,11 @@ class DuckDBMetricsRepo:
         sort_map = {
             "cod_producto": "inv.cod_producto", "nom_producto": "inv.nom_producto",
             "stock_actual": "inv.cantidad_actual",
+            "costo_unitario": "COALESCE(lc.costo_producto,0)",
             "valor_inventario": "COALESCE(lc.costo_producto,0)*inv.cantidad_actual",
             "dias_sin_venta": "COALESCE(DATE_DIFF('day', v.ultima_venta, CURRENT_DATE), 99999)",
             "ultima_venta": "v.ultima_venta",
+            "abc": "CASE COALESCE(abc.categoria_abc, 'C') WHEN 'A' THEN 3 WHEN 'B' THEN 2 ELSE 1 END",
         }
         sort_col = sort_map.get(sort, "inv.cod_producto")
 

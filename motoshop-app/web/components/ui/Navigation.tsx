@@ -200,39 +200,31 @@ function BottomNav({
   items: NavItem[];
   isActive: (href: string) => boolean;
 }): JSX.Element {
-  // Mostrar máximo 5 items en bottom nav (los más importantes)
-  const visibleItems = items.slice(0, 5);
-
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-surface-dark-alt bg-surface-dark lg:hidden">
-      {/* Safe area para iOS */}
+      {/* Safe area para iOS. Mobile muestra TODOS los módulos con scroll horizontal. */}
       <div className="pb-[env(safe-area-inset-bottom,0px)]">
-        <div className="flex items-center justify-around px-1 pt-1.5 pb-1">
-          {visibleItems.map((item) => {
+        <div className="flex snap-x items-stretch gap-1 overflow-x-auto px-2 pb-1 pt-1.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {items.map((item) => {
             const active = isActive(item.href);
             return (
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex min-w-0 flex-1 flex-col items-center gap-0.5 rounded-lg py-1.5 transition-colors ${
+                className={`relative flex min-w-[76px] snap-start flex-col items-center gap-0.5 rounded-xl px-2 py-1.5 transition-all ${
                   active
-                    ? "text-primary"
-                    : "text-text-muted hover:text-text-inverse"
+                    ? "bg-primary/15 text-primary"
+                    : "text-text-muted hover:bg-surface-dark-alt hover:text-text-inverse"
                 }`}
               >
-                {/* Icono */}
                 <span className="transition-transform duration-150 active:scale-90">
                   {item.icon}
                 </span>
-
-                {/* Label — compacto */}
-                <span className="text-[0.625rem] font-medium leading-tight truncate max-w-[64px]">
+                <span className="max-w-[72px] truncate text-[0.625rem] font-medium leading-tight">
                   {item.label}
                 </span>
-
-                {/* Indicador activo — línea superior */}
                 {active && (
-                  <span className="absolute top-0 left-1/2 h-0.5 w-6 -translate-x-1/2 rounded-full bg-primary" />
+                  <span className="absolute top-0 left-1/2 h-0.5 w-7 -translate-x-1/2 rounded-full bg-primary" />
                 )}
               </Link>
             );

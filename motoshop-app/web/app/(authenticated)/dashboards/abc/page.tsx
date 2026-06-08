@@ -1,229 +1,206 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import { useAbcSegmentation, useAbcDetalle } from "@/lib/api/hooks";
-import { formatMoney } from "@/lib/format/currency";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { AbcChart } from "@/components/AbcChart";
 import { Skeleton } from "@/components/ui/Skeleton";
 
-const BUCKET_VARIANTS: Record<string, "error" | "warning" | "success"> = {
-  A: "success",
-  B: "warning",
-  C: "error",
+type BucketKey = "A" | "B" | "C";
+
+type BucketConfig = {
+  key: BucketKey;
+  title: string;
+  intent: string;
+  action: string;
+  variant: "success" | "warning" | "error";
+  accent: string;
+  borderClass: string;
 };
 
-function BucketDetail({ bucket }: { bucket: string }): JSX.Element {
-  const [open, setOpen] = useState(false);
-  const { data, isLoading } = useAbcDetalle(open ? bucket : null, 20);
+type AbcDetalleItem = {
+  cod_producto: string;
+  nom_producto: string;
+  valor_total: number;
+  porcentaje_bucket: number;
+};
 
+const BUCKETS: BucketConfig[] = [
+  {
+    key: "A",
+    title: "Alta prioridad",
+    intent: "Productos que más sostienen los ingresos.",
+    action: "Cuidar stock y evitar quiebres.",
+    variant: "success",
+    accent: "#16A34A",
+    borderClass: "border-l-success",
+  },
+  {
+    key: "B",
+    title: "Prioridad media",
+    intent: "Productos importantes, pero no críticos.",
+    action: "Revisar reposición con rotación real.",
+    variant: "warning",
+    accent: "#D97706",
+    borderClass: "border-l-warning",
+  },
+  {
+    key: "C",
+    title: "Baja contribución",
+    intent: "Muchos SKUs con bajo impacto relativo.",
+    action: "Evaluar descuentos, liquidación o menor compra.",
+    variant: "error",
+    accent: "#7B1818",
+    borderClass: "border-l-primary",
+  },
+];
+
+function formatCurrencyFull(value: number): string {
+  return `$${Math.round(value || 0).toLocaleString("es-CO")}`;
+}
+
+function shortName(name: string, max = 58): string {
+  return name.length > max ? `${name.slice(0, max).trim()}…` : name;
+}
+
+function BucketProducts({ config, items, isLoading }: { config: BucketConfig; items: AbcDetalleItem[]; isLoading: boolean }): JSX.Element {
   return (
-    <div>
-      <button
-        onClick={() => setOpen(!open)}
-        className="mt-2 flex w-full items-center justify-between rounded-lg bg-surface-alt px-3 py-2 text-xs font-medium text-text-secondary hover:bg-surface-alt/80"
-      >
-        <span>{open ? "Ocultar detalle" : "Ver detalle de productos"}</span>
-        <span className={`transition-transform ${open ? "rotate-180" : ""}`}>▼</span>
-      </button>
-      {open && (
-        <div className="mt-2 space-y-1">
-          {isLoading && (
-            <div className="space-y-1">
-              {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-8 rounded-lg" />)}
-            </div>
-          )}
-          {data?.items.map((item) => (
-            <div
-              key={item.cod_producto}
-              className="flex items-center justify-between rounded-lg bg-surface px-3 py-1.5"
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="font-mono text-xs text-text-muted truncate">{item.cod_producto}</span>
-                <span className="text-xs text-text-primary truncate">{item.nom_producto}</span>
-              </div>
-              <div className="flex items-center gap-3 shrink-0">
-                <span className="text-xs text-text-muted">{item.porcentaje_bucket.toFixed(1)}%</span>
-                <span className="text-xs font-medium text-text-primary">{formatMoney(item.valor_total)}</span>
-              </div>
-            </div>
-          ))}
-          {data && data.items.length === 0 && (
-            <p className="py-4 text-center text-xs text-text-muted">Sin productos en este bucket</p>
-          )}
+    <Card className="overflow-hidden">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <Badge variant={config.variant} size="md">ABC {config.key}</Badge>
+          <h2 className="mt-2 text-base font-black text-text-primary">{config.title}</h2>
+          <p className="mt-1 text-xs text-text-muted">{config.intent}</p>
         </div>
-      )}
-    </div>
+        <div className="h-10 w-10 rounded-2xl" style={{ background: `${config.accent}22` }} />
+      </div>
+
+      <div className="rounded-2xl border border-border bg-surface-alt p-3 text-xs text-text-secondary">
+        <span className="font-bold text-text-primary">Acción:</span> {config.action}
+      </div>
+
+      <div className="mt-3 space-y-2">
+        {isLoading && Array.from({ length: 6 }).map((_, index) => <Skeleton key={index} className="h-14 rounded-xl" />)}
+        {!isLoading && items.slice(0, 12).map((item, index) => (
+          <article key={`${config.key}-${item.cod_producto}-${index}`} className="rounded-2xl border border-border bg-surface p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+            <div className="flex items-start gap-3">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-xs font-black text-white" style={{ backgroundColor: config.accent }}>
+                {index + 1}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-mono text-[0.68rem] font-semibold text-primary">{item.cod_producto}</p>
+                <p className="mt-0.5 text-sm font-semibold leading-snug text-text-primary" title={item.nom_producto}>{shortName(item.nom_producto)}</p>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border">
+                  <div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(5, item.porcentaje_bucket))}%`, backgroundColor: config.accent }} />
+                </div>
+              </div>
+              <div className="shrink-0 text-right">
+                <p className="text-sm font-black text-text-primary">{formatCurrencyFull(item.valor_total)}</p>
+                <p className="text-[0.68rem] text-text-muted">{item.porcentaje_bucket.toFixed(1)}%</p>
+              </div>
+            </div>
+          </article>
+        ))}
+        {!isLoading && items.length === 0 && (
+          <p className="py-8 text-center text-xs text-text-muted">Sin productos en ABC {config.key}</p>
+        )}
+      </div>
+    </Card>
   );
 }
 
-
 export default function AbcPage(): JSX.Element {
   const { data, error, isLoading } = useAbcSegmentation();
+  const detailA = useAbcDetalle("A", 50);
+  const detailB = useAbcDetalle("B", 50);
+  const detailC = useAbcDetalle("C", 50);
 
-  // ── Loading ──────────────────────────────────────────────────
+  const detailByBucket: Record<BucketKey, { items: AbcDetalleItem[]; isLoading: boolean }> = {
+    A: { items: detailA.data?.items ?? [], isLoading: detailA.isLoading },
+    B: { items: detailB.data?.items ?? [], isLoading: detailB.isLoading },
+    C: { items: detailC.data?.items ?? [], isLoading: detailC.isLoading },
+  };
 
   if (isLoading) {
     return (
       <div className="space-y-4">
-        <Link href="/" className="text-sm text-accent hover:underline">
-          ← Volver a inicio
-        </Link>
-        <Skeleton className="h-5 w-24" />
-        <div className="grid grid-cols-3 gap-3">
-          {[...Array(3)].map((_, i) => (
-            <Skeleton key={i} className="h-24 rounded-xl" />
-          ))}
+        <Link href="/" className="text-sm text-accent hover:underline">← Volver a inicio</Link>
+        <Skeleton className="h-28 rounded-3xl" />
+        <div className="grid gap-3 md:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-72 rounded-xl" />)}
         </div>
-        <Skeleton className="h-60 rounded-xl" />
       </div>
     );
   }
-
-  // ── Error ────────────────────────────────────────────────────
 
   if (error || !data) {
     return (
       <div className="space-y-4">
-        <Link href="/" className="text-sm text-accent hover:underline">
-          ← Volver a inicio
-        </Link>
-        <Card>
-          <p className="py-8 text-center text-text-muted">
-            Error al cargar datos ABC
-          </p>
-        </Card>
+        <Link href="/" className="text-sm text-accent hover:underline">← Volver a inicio</Link>
+        <Card><p className="py-8 text-center text-text-muted">Error al cargar datos ABC</p></Card>
       </div>
     );
   }
 
-  // ── Render ───────────────────────────────────────────────────
+  const summary = { A: data.bucket_a, B: data.bucket_b, C: data.bucket_c };
 
   return (
-    <div className="space-y-4">
-      <Link href="/" className="text-sm text-accent hover:underline">
-        ← Volver a inicio
-      </Link>
+    <div className="space-y-4 pb-6">
+      <Link href="/" className="text-sm text-accent hover:underline">← Volver a inicio</Link>
 
-      <div>
-        <h1 className="text-xl font-bold text-text-primary">
-          Segmentación ABC
-        </h1>
-        <p className="text-sm text-text-muted">
-          {data.business_month} — {data.total_skus} SKUs
-        </p>
-      </div>
-
-      {/* ¿Qué es ABC? */}
-      <Card>
-        <h2 className="mb-2 font-semibold text-text-primary">¿Qué es la segmentación ABC?</h2>
-        <p className="text-sm text-text-muted leading-relaxed">
-          Clasifica tus productos según su impacto en los ingresos. Ayuda a decidir
-          dónde enfocar stock, atención y capital.
-        </p>
-        <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-          <div className="rounded-lg bg-success/10 p-2 text-center">
-            <p className="font-bold text-success">A</p>
-            <p className="text-text-secondary">20% productos → 80% ingresos</p>
-            <p className="text-text-muted">Alta rotación</p>
-          </div>
-          <div className="rounded-lg bg-warning/10 p-2 text-center">
-            <p className="font-bold text-warning">B</p>
-            <p className="text-text-secondary">30% productos → 15% ingresos</p>
-            <p className="text-text-muted">Rotación media</p>
-          </div>
-          <div className="rounded-lg bg-error/10 p-2 text-center">
-            <p className="font-bold text-error">C</p>
-            <p className="text-text-secondary">50% productos → 5% ingresos</p>
-            <p className="text-text-muted">Baja rotación</p>
-          </div>
+      <section className="relative overflow-hidden rounded-[2rem] border border-border bg-surface-dark p-5 text-text-inverse shadow-xl md:p-7">
+        <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-primary/30 blur-3xl" />
+        <div className="relative">
+          <p className="text-[0.68rem] font-semibold uppercase tracking-[0.3em] text-white/45">Segmentación ABC</p>
+          <h1 className="mt-2 text-3xl font-black tracking-tight md:text-5xl">Qué productos sostienen la caja.</h1>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-white/65">
+            A, B y C no son etiquetas decorativas: indican dónde cuidar stock, dónde monitorear y dónde liberar capital.
+          </p>
+          <p className="mt-2 text-xs text-white/45">{data.business_month} · {data.total_skus.toLocaleString("es-CO")} SKUs · {formatCurrencyFull(data.total_ingresos)} ingresos</p>
         </div>
-      </Card>
+      </section>
 
-      {/* Insight accionable */}
-      <Card>
-        <div className="flex items-start gap-3">
-          <span className="mt-0.5 text-lg">💡</span>
-          <div>
-            <p className="text-sm font-semibold text-text-primary">Insight accionable</p>
-            <p className="text-sm text-text-muted">
-              Priorizá stock de productos <strong className="text-success">A</strong> para
-              evitar quiebres de los artículos que más venden. Revisá periódicamente los{" "}
-              <strong className="text-error">C</strong> para evaluar liquidación o
-              descuento.
-            </p>
-          </div>
-        </div>
-      </Card>
+      <section className="grid gap-3 md:grid-cols-3">
+        {BUCKETS.map((config) => {
+          const bucket = summary[config.key];
+          return (
+            <Card key={config.key} className={`border-l-4 ${config.borderClass}`}>
+              <div className="flex items-center justify-between gap-3">
+                <Badge variant={config.variant} size="md">ABC {config.key}</Badge>
+                <p className="text-xs font-semibold text-text-muted">{bucket.porcentaje_ingreso}% ingresos</p>
+              </div>
+              <p className="mt-3 text-3xl font-black text-text-primary">{bucket.num_skus.toLocaleString("es-CO")}</p>
+              <p className="text-xs text-text-muted">productos</p>
+              <p className="mt-2 text-sm font-bold text-text-primary">{formatCurrencyFull(bucket.valor_total)}</p>
+            </Card>
+          );
+        })}
+      </section>
 
-      {/* Buckets */}
-      <div className="grid grid-cols-3 gap-3">
-        {[data.bucket_a, data.bucket_b, data.bucket_c].map((b) => (
-          <Card key={b.categoria}>
-            <div className="flex flex-col items-center gap-1 text-center">
-              <Badge
-                variant={BUCKET_VARIANTS[b.categoria] ?? "default"}
-                size="md"
-              >
-                {b.categoria}
-              </Badge>
-              <p className="text-2xl font-bold text-text-primary">{b.num_skus}</p>
-              <p className="text-xs text-text-muted">
-                {b.porcentaje_ingreso}% ingresos
-              </p>
-            </div>
-            <BucketDetail bucket={b.categoria} />
-          </Card>
-        ))}
-      </div>
-
-      {/* Chart */}
       <Card header={<h2 className="font-semibold text-text-primary">Distribución ABC</h2>}>
         <AbcChart
           bucketA={data.bucket_a}
           bucketB={data.bucket_b}
           bucketC={data.bucket_c}
           explanations={{
-            A: "20% productos que generan 80% ingresos — alta rotación",
-            B: "30% productos que generan 15% ingresos — rotación media",
-            C: "50% productos que generan 5% ingresos — baja rotación",
+            A: "Productos que más generan ingresos — cuidar stock",
+            B: "Productos de contribución media — monitorear reposición",
+            C: "Productos de baja contribución — revisar capital quieto",
           }}
         />
       </Card>
 
-      {/* Resumen por categoría */}
-      <Card header={<h2 className="font-semibold text-text-primary">Resumen por categoría</h2>}>
-        <div className="space-y-2">
-          {[data.bucket_a, data.bucket_b, data.bucket_c].map((b) => (
-            <div
-              key={b.categoria}
-              className="flex items-center justify-between rounded-lg bg-surface-alt p-3"
-            >
-              <div className="flex items-center gap-3">
-                <Badge
-                  variant={BUCKET_VARIANTS[b.categoria] ?? "default"}
-                  size="md"
-                >
-                  {b.categoria}
-                </Badge>
-                <div>
-                  <p className="text-sm font-medium text-text-primary">
-                    {b.num_skus} SKUs
-                  </p>
-                  <p className="text-xs text-text-muted">
-                    {b.porcentaje_ingreso}% de ingresos
-                  </p>
-                </div>
-              </div>
-              <span className="text-sm font-semibold text-text-primary">
-                {formatMoney(b.valor_total)}
-              </span>
-            </div>
-          ))}
-        </div>
-      </Card>
+      <section className="grid gap-3 xl:grid-cols-3">
+        {BUCKETS.map((config) => (
+          <BucketProducts
+            key={config.key}
+            config={config}
+            items={detailByBucket[config.key].items}
+            isLoading={detailByBucket[config.key].isLoading}
+          />
+        ))}
+      </section>
     </div>
   );
 }
