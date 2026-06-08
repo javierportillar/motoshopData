@@ -77,11 +77,13 @@ function MiniLineage({ edges }: { edges?: LineageEdge[] }) {
 
 function TableDetailModal({ name, onClose }: { name: string; onClose: () => void }) {
   const { data: detail, isLoading } = useCatalogTable(name);
+  const cols = detail?.columns ?? [];
+  const rows = detail?.sample_rows ?? [];
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div className="mx-4 max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-surface p-4 shadow-xl" onClick={e => e.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-semibold text-text-primary">{name}</h2>
+          <h2 className="font-semibold text-text-primary">{detail?.table_name ?? name}</h2>
           <button onClick={onClose} className="text-sm text-text-muted hover:text-text-primary">✕</button>
         </div>
         {isLoading && <div className="space-y-2">{[1,2,3].map(i=><Skeleton key={i} className="h-8 rounded-lg"/>)}</div>}
@@ -89,40 +91,36 @@ function TableDetailModal({ name, onClose }: { name: string; onClose: () => void
           <>
             <div className="flex items-center gap-2 mb-2">
               <Badge variant={getLayer(detail.layer).variant} size="sm">{detail.layer}</Badge>
-              <span className="text-xs text-text-muted">{fmt(detail.row_count)} filas · {detail.column_count} cols</span>
+              <span className="text-xs text-text-muted">{fmt(detail.row_count)} filas · {cols.length} cols</span>
             </div>
-            <div className="mb-2 text-xs"><span className="text-text-muted">Última fecha: </span>{detail.max_date ?? "—"}</div>
-            {detail.warnings?.length > 0 && (
-              <div className="mb-3 rounded-lg bg-warning/10 p-2 text-xs text-warning">
-                {detail.warnings.map((w,i)=><p key={i}>⚠️ {w}</p>)}
-              </div>
-            )}
             {detail.quality && (
               <div className="mb-3 grid grid-cols-4 gap-1 text-xs">
-                <div className="rounded bg-surface-alt p-1 text-center"><span className="text-text-muted">Completitud</span><p className="font-bold">{(detail.quality.completeness_pct).toFixed(1)}%</p></div>
+                <div className="rounded bg-surface-alt p-1 text-center"><span className="text-text-muted">Completitud</span><p className="font-bold">{detail.quality.completeness_pct.toFixed(1)}%</p></div>
                 <div className="rounded bg-surface-alt p-1 text-center"><span className="text-text-muted">Nulos</span><p className="font-bold">{fmt(detail.quality.null_cells)}</p></div>
                 <div className="rounded bg-surface-alt p-1 text-center"><span className="text-text-muted">Duplicados</span><p className="font-bold">{detail.quality.duplicate_rows}</p></div>
                 <div className="rounded bg-surface-alt p-1 text-center"><span className="text-text-muted">Filas</span><p className="font-bold">{fmt(detail.quality.total_rows)}</p></div>
               </div>
             )}
-            <h3 className="mt-3 mb-1 text-xs font-semibold uppercase tracking-wider text-text-muted">Columnas ({detail.columns?.length ?? 0})</h3>
-            {detail.columns?.length > 0 && (
-              <Table
-                columns={[
-                  { header: "Col", cell: (c: any) => <span className="font-mono text-xs">{c.name}</span> },
-                  { header: "Tipo", cell: (c: any) => <span className="text-xs">{c.type}</span> },
-                  { header: "Nulos", cell: (c: any) => <span className="text-xs">{c.null_count} ({c.null_pct}%)</span> },
-                ]}
-                data={detail.columns} keyFn={(c: any) => c.name} striped
-              />
-            )}
-            {detail.sample_rows?.length > 0 && (
+            {cols.length > 0 && (
               <>
-                <h3 className="mt-3 mb-1 text-xs font-semibold uppercase tracking-wider text-text-muted">Muestra ({detail.sample_rows.length} filas)</h3>
+                <h3 className="mt-3 mb-1 text-xs font-semibold uppercase tracking-wider text-text-muted">Columnas ({cols.length})</h3>
+                <Table
+                  columns={[
+                    { header: "Col", cell: (c: any) => <span className="font-mono text-xs">{c.name}</span> },
+                    { header: "Tipo", cell: (c: any) => <span className="text-xs">{c.type}</span> },
+                    { header: "Nulos", cell: (c: any) => <span className="text-xs">{c.null_count} ({c.null_pct}%)</span> },
+                  ]}
+                  data={cols} keyFn={(c: any) => c.name} striped
+                />
+              </>
+            )}
+            {rows.length > 0 && (
+              <>
+                <h3 className="mt-3 mb-1 text-xs font-semibold uppercase tracking-wider text-text-muted">Muestra ({rows.length} filas)</h3>
                 <div className="overflow-x-auto rounded-lg border border-border">
                   <table className="w-full text-xs">
-                    <thead><tr className="border-b border-border bg-surface-alt">{Object.keys(detail.sample_rows[0]??{}).slice(0,6).map(k=><th key={k} className="px-2 py-1 text-left font-medium text-text-secondary">{k}</th>)}</tr></thead>
-                    <tbody className="divide-y divide-border">{detail.sample_rows.slice(0,3).map((row,i)=><tr key={i}>{Object.values(row).slice(0,6).map((v,j)=><td key={j} className="px-2 py-1 font-mono text-text-primary">{String(v)}</td>)}</tr>)}</tbody>
+                    <thead><tr className="border-b border-border bg-surface-alt">{Object.keys(rows[0]??{}).slice(0,6).map(k=><th key={k} className="px-2 py-1 text-left font-medium text-text-secondary">{k}</th>)}</tr></thead>
+                    <tbody className="divide-y divide-border">{rows.slice(0,3).map((row,i)=><tr key={i}>{Object.values(row).slice(0,6).map((v,j)=><td key={j} className="px-2 py-1 font-mono text-text-primary">{String(v)}</td>)}</tr>)}</tbody>
                   </table>
                 </div>
               </>

@@ -711,10 +711,17 @@ export interface CatalogTable {
   warnings: string[];
 }
 
-export interface CatalogDetail extends CatalogTable {
+export interface CatalogDetail {
+  table_name: string;
+  layer: string;
+  row_count: number;
   columns: { name: string; type: string; null_count: number; null_pct: number }[];
   sample_rows: Record<string, unknown>[];
   quality?: { total_rows: number; null_cells: number; duplicate_rows: number; completeness_pct: number };
+  max_date?: string | null;
+  date_column?: string | null;
+  status?: string;
+  warnings?: string[];
 }
 
 export interface LineageEdge {
