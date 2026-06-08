@@ -204,7 +204,7 @@ async def data_status(
     import duckdb
     from datetime import date, datetime, timezone
 
-    db_path = _get_db_path()
+    db_path = _get_duckdb_path()
     con = duckdb.connect(str(db_path), read_only=True)
     try:
         # Max sales date
