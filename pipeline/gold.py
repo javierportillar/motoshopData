@@ -163,13 +163,15 @@ def mart_productos_dormidos(con: duckdb.DuckDBPyConnection) -> None:
         SELECT
             dp.cod_producto,
             COALESCE(dp.nombre_producto, 'SIN NOMBRE') AS nom_producto,
-            COALESCE(dp.existencia, 0) AS stock_actual,
+            COALESCE(inv.cantidad_actual, 0) AS stock_actual,
             COALESCE(MAX(fvd.business_date), DATE '1970-01-01') AS ultima_fecha_venta,
             CURRENT_DATE - COALESCE(MAX(fvd.business_date), DATE '1970-01-01') AS dias_sin_venta
         FROM motoshop_silver_dim_producto dp
+        LEFT JOIN motoshop_gold_mart_inventario_actual inv
+            ON dp.cod_producto = inv.cod_producto
         LEFT JOIN motoshop_silver_fact_ventas_detalle fvd
             ON dp.cod_producto = fvd.cod_producto
-        GROUP BY dp.cod_producto, dp.nombre_producto, dp.existencia
+        GROUP BY dp.cod_producto, dp.nombre_producto, inv.cantidad_actual
         HAVING dias_sin_venta > 90 OR dias_sin_venta IS NULL
     """)
 

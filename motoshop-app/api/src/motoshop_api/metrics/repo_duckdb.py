@@ -1108,6 +1108,118 @@ class DuckDBMetricsRepo:
         }
 
 
+    # ── Inventory Detail (V1.8) ───────────────────────────────────────
+
+    def get_inventory_detail(
+        self, page: int = 1, page_size: int = 50, sort: str = "cod_producto",
+        q: str | None = None, bodega: str | None = None,
+    ) -> dict:
+        """Inventario detallado con costo, última venta, dormido status."""
+        offset = (page - 1) * page_size
+        sort_col = {"cod_producto": "cod_producto", "valor_inventario": "COALESCE(lc.costo_producto,0)*inv.cantidad_actual",
+                    "stock_actual": "inv.cantidad_actual", "dias_sin_venta": "COALESCE(DATE_DIFF('day', v.ultima_venta, CURRENT_DATE), 99999)"}.get(sort, "cod_producto")
+
+        where = "1=1"
+        params = []
+        if q:
+            where += " AND (inv.cod_producto LIKE ? OR inv.nom_producto LIKE ?)"
+            params.extend([f"%{q}%", f"%{q}%"])
+        if bodega:
+            where += " AND inv.cod_bodega = ?"
+            params.append(bodega)
+
+        params.extend([page_size, offset])
+
+        rows = self._con.execute(f"""
+            WITH latest_cost AS (
+                SELECT cod_producto, costo_producto,
+                       ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_date DESC) AS rn
+                FROM motoshop_silver_fact_compras_detalle WHERE costo_producto > 0
+            ),
+            last_sale AS (
+                SELECT cod_producto, MAX(business_date) AS ultima_venta
+                FROM motoshop_silver_fact_ventas_detalle GROUP BY cod_producto
+            ),
+            abc_latest AS (
+                SELECT cod_producto, categoria_abc
+                FROM (SELECT cod_producto, categoria_abc, ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_month DESC) AS rn
+                      FROM motoshop_gold_mart_rotacion_abc) WHERE rn = 1
+            )
+            SELECT inv.cod_producto, inv.nom_producto, inv.cod_bodega, inv.nom_bodega,
+                   inv.cantidad_actual AS stock_actual,
+                   ROUND(COALESCE(lc.costo_producto, 0), 2) AS costo_unitario,
+                   ROUND(inv.cantidad_actual * COALESCE(lc.costo_producto, 0), 2) AS valor_inventario,
+                   v.ultima_venta,
+                   COALESCE(DATE_DIFF('day', v.ultima_venta, CURRENT_DATE), 99999) AS dias_sin_venta,
+                   CASE WHEN d.cod_producto IS NOT NULL THEN TRUE ELSE FALSE END AS es_dormido,
+                   COALESCE(abc.categoria_abc, 'C') AS abc
+            FROM motoshop_gold_mart_inventario_actual inv
+            LEFT JOIN latest_cost lc ON inv.cod_producto = lc.cod_producto AND lc.rn = 1
+            LEFT JOIN last_sale v ON inv.cod_producto = v.cod_producto
+            LEFT JOIN motoshop_gold_mart_productos_dormidos d ON inv.cod_producto = d.cod_producto
+            LEFT JOIN abc_latest abc ON inv.cod_producto = abc.cod_producto
+            WHERE {where}
+            ORDER BY {sort_col} DESC
+            LIMIT ? OFFSET ?
+        """, params).fetchall()
+
+        cols = ["cod_producto", "nom_producto", "cod_bodega", "nom_bodega", "stock_actual",
+                "costo_unitario", "valor_inventario", "ultima_venta", "dias_sin_venta", "es_dormido", "abc"]
+        items = []
+        for r in rows:
+            item = dict(zip(cols, r))
+            item["stock_actual"] = float(item["stock_actual"] or 0)
+            item["costo_unitario"] = float(item["costo_unitario"] or 0)
+            item["valor_inventario"] = float(item["valor_inventario"] or 0)
+            item["dias_sin_venta"] = int(item["dias_sin_venta"] or 0)
+            item["es_dormido"] = bool(item["es_dormido"])
+            items.append(item)
+
+        total = self._con.execute(f"""
+            SELECT COUNT(*) FROM motoshop_gold_mart_inventario_actual inv WHERE {where}
+        """, params[:len(params)-2]).fetchone()[0] if not (q or bodega) else len(items)
+
+        return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+    def get_inventory_discrepancies(self) -> dict:
+        """SKUs con diferencias de stock entre inventario y dormidos."""
+        diffs = self._con.execute("""
+            SELECT d.cod_producto, d.nom_producto,
+                   d.stock_actual AS stock_dormidos,
+                   COALESCE(inv.cantidad_actual, 0) AS stock_inventario,
+                   COALESCE(inv.cantidad_actual, 0) - d.stock_actual AS diff,
+                   d.dias_sin_venta
+            FROM motoshop_gold_mart_productos_dormidos d
+            LEFT JOIN motoshop_gold_mart_inventario_actual inv ON d.cod_producto = inv.cod_producto
+            WHERE d.stock_actual != COALESCE(inv.cantidad_actual, 0)
+               OR inv.cod_producto IS NULL
+            ORDER BY ABS(COALESCE(inv.cantidad_actual, 0) - d.stock_actual) DESC
+        """).fetchall()
+
+        cols = ["cod_producto", "nom_producto", "stock_dormidos", "stock_inventario", "diff", "dias_sin_venta"]
+        items = [dict(zip(cols, r)) for r in diffs]
+
+        # SQL invariants
+        total_dormidos_stock = self._con.execute(
+            "SELECT COALESCE(SUM(stock_actual),0) FROM motoshop_gold_mart_productos_dormidos"
+        ).fetchone()[0]
+        total_inventory_stock = self._con.execute(
+            "SELECT COALESCE(SUM(cantidad_actual),0) FROM motoshop_gold_mart_inventario_actual"
+        ).fetchone()[0]
+        invariant_ok = total_dormidos_stock <= total_inventory_stock
+
+        return {
+            "discrepancies": items,
+            "total_discrepancies": len(items),
+            "summary": {
+                "dormidos_total_stock": float(total_dormidos_stock),
+                "inventario_total_stock": float(total_inventory_stock),
+                "invariant_ok": invariant_ok,
+                "invariant_msg": f"SUM(dormidos.stock)={total_dormidos_stock} <= SUM(inventory.stock)={total_inventory_stock} → {'OK' if invariant_ok else 'FAIL'}",
+            },
+        }
+
+
 def _prev_month_str(month: str) -> str:
     """Retorna el mes anterior en formato YYYY-MM."""
     d = datetime.strptime(month, "%Y-%m")

@@ -159,7 +159,37 @@ def sales_daily_month(
     return _cached_or_fetch(f"sales-daily-month:{month}", lambda: repo.get_sales_daily_month(month))
 
 
-# ── Sales Forecast Monthly (V1.8) ────────────────────────────────────────
+# ── Inventory Detail + Discrepancies (V1.8) ──────────────────────────────
+
+@router.get("/metrics/inventory-detail")
+@limiter.limit("30/minute")
+def inventory_detail(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    sort: str = Query(default="cod_producto"),
+    q: str | None = Query(default=None),
+    bodega: str | None = Query(default=None),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+):
+    """Inventario detallado con costo, última venta, dormido status, ABC."""
+    return _cached_or_fetch(
+        f"inv-detail:{page}:{page_size}:{sort}:{q or ''}:{bodega or ''}",
+        lambda: repo.get_inventory_detail(page, page_size, sort, q, bodega),
+        ttl=60,
+    )
+
+
+@router.get("/metrics/inventory-discrepancies")
+@limiter.limit("10/minute")
+def inventory_discrepancies(
+    request: Request,
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+):
+    """SKUs con diferencias de stock entre inventario y dormidos + invariante SQL."""
+    return _cached_or_fetch("inv-discrepancies", repo.get_inventory_discrepancies, ttl=300)
 
 @router.get("/metrics/sales-forecast-monthly")
 @limiter.limit("10/minute")
