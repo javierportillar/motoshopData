@@ -26,11 +26,13 @@ logger = logging.getLogger(__name__)
 try:
     from sentence_transformers import SentenceTransformer
 except ImportError:
-    sys.exit("""
-ERROR: sentence-transformers no instalado.
-  pip install sentence-transformers
-  (Solo necesario en Mac para generar embeddings. NO va en pyproject.toml.)
-""")
+    _msg = "ERROR: sentence-transformers no instalado.\n  pip install sentence-transformers\n  (Solo necesario en Mac para generar embeddings. NO va en pyproject.toml.)"
+    if __name__ == "__main__":
+        sys.exit(_msg)
+    else:
+        # Cuando se importa desde run_all.py, sys.exit() levanta SystemExit
+        # que NO es caught por except Exception. Usar raise en su lugar.
+        raise ImportError(_msg)
 
 EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 EMBEDDING_DIM = 384
@@ -124,10 +126,72 @@ def generate_embeddings(db_path: str | Path, mode: str = "delta") -> int:
     return len(products)
 
 
+# ── Pipeline observability (MySQL logging, no-op si MySQL no accesible) ──
+_PIPELINE_RUN_ID: int | None = None
+_PIPELINE_START: float | None = None
+
+
+def _try_start_run(pipeline_name: str, triggered_by: str = "manual") -> int | None:
+    """Crea app_pipeline_runs si MySQL está disponible. Returns run_id o None."""
+    try:
+        import pymysql
+        conn = pymysql.connect(host="localhost", port=3306, user="root",
+                                database="motoshop2024", charset="utf8")
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO app_pipeline_runs (pipeline_name, started_at, status, triggered_by) "
+            "VALUES (%s, NOW(), 'running', %s)",
+            (pipeline_name, triggered_by),
+        )
+        run_id = cur.lastrowid
+        conn.commit()
+        conn.close()
+        logger.info("Pipeline run #%d logged to MySQL", run_id)
+        return run_id
+    except Exception as exc:
+        logger.info("MySQL logging skipped: %s", exc)
+        return None
+
+
+def _try_finish_run(run_id: int | None, status: str, dur_s: float, err: str | None = None) -> None:
+    if run_id is None:
+        return
+    try:
+        import pymysql
+        conn = pymysql.connect(host="localhost", port=3306, user="root",
+                                database="motoshop2024", charset="utf8")
+        cur = conn.cursor()
+        if err:
+            cur.execute(
+                "UPDATE app_pipeline_runs SET finished_at=NOW(), status=%s, duration_seconds=%s, error_message=%s "
+                "WHERE id=%s",
+                (status, dur_s, err, run_id),
+            )
+        else:
+            cur.execute(
+                "UPDATE app_pipeline_runs SET finished_at=NOW(), status=%s, duration_seconds=%s "
+                "WHERE id=%s",
+                (status, dur_s, run_id),
+            )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     mode = "full" if "--full" in sys.argv else "delta"
     db_path = os.environ.get("DUCKDB_PATH", "out/motoshop_gold.duckdb")
-    count = generate_embeddings(db_path, mode=mode)
-    print(f"\n✅ {count} embeddings generados en {db_path} (mode={mode})")
-    print(f"   → python scripts/upload_duckdb_to_r2.py  para subir a R2")
+    _PIPELINE_RUN_ID = _try_start_run("embeddings_skus", "manual")
+    _PIPELINE_START = __import__("time").time()
+    try:
+        count = generate_embeddings(db_path, mode=mode)
+        dur = __import__("time").time() - _PIPELINE_START
+        _try_finish_run(_PIPELINE_RUN_ID, "success", dur)
+        print(f"\n✅ {count} embeddings generados en {db_path} (mode={mode})")
+        print(f"   → python scripts/upload_duckdb_to_r2.py  para subir a R2")
+    except Exception as exc:
+        dur = __import__("time").time() - _PIPELINE_START if _PIPELINE_START else 0
+        _try_finish_run(_PIPELINE_RUN_ID, "failed", dur, str(exc))
+        raise

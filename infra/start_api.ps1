@@ -75,6 +75,13 @@ $env:DATABRICKS_HOST = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^D
 $env:DATABRICKS_TOKEN = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^DATABRICKS_TOKEN=(.+)$'} | ForEach-Object {$matches[1]})
 $env:DATABRICKS_HTTP_PATH = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^DATABRICKS_HTTP_PATH=(.+)$'} | ForEach-Object {$matches[1]})
 
+# R2 + DUCKDB_PATH (V1.5+ DuckDB backend)
+$env:R2_ENDPOINT = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^R2_ENDPOINT=(.+)$'} | ForEach-Object {$matches[1]})
+$env:R2_ACCESS_KEY_ID = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^R2_ACCESS_KEY_ID=(.+)$'} | ForEach-Object {$matches[1]})
+$env:R2_SECRET_ACCESS_KEY = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^R2_SECRET_ACCESS_KEY=(.+)$'} | ForEach-Object {$matches[1]})
+$env:R2_BUCKET = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^R2_BUCKET=(.+)$'} | ForEach-Object {$matches[1]})
+$env:DUCKDB_PATH = "$ProjectRoot\out\motoshop_gold.duckdb"
+
 $proc = Start-Process -FilePath "$ApiDir\.venv\Scripts\python.exe" `
     -ArgumentList "-m","uvicorn","motoshop_api.main:app","--port","$Port" `
     -WindowStyle Hidden -PassThru -WorkingDirectory $ApiDir
