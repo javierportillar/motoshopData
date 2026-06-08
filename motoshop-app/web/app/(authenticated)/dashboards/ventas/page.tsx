@@ -146,26 +146,33 @@ export default function VentasPage(): JSX.Element {
           <Card header={<h2 className="font-semibold text-text-primary">Tendencia histórica</h2>}>
             {dh.meses.length > 0 ? (
               <ResponsiveContainer width="100%" height={320}>
-                <ComposedChart data={[
-                  ...dh.meses.map(m => ({
+                <ComposedChart data={(() => {
+                  const data: { month: string; ventas: number; tendencia: number | null; proy: number | null }[] = dh.meses.map(m => ({
                     month: `${MONTHS[m.month-1]??""} ${String(m.year).slice(2)}`,
                     ventas: m.total_ventas,
                     tendencia: m.total_ventas,
-                    proy: null as number | null,
-                  })),
-                  // Add projection for current and next month
-                  ...(df ? [
-                    { month: `${MONTHS[new Date().getMonth()]??""} ${String(cy).slice(2)} (proy)`, ventas: 0, tendencia: null, proy: df.current_month.projected_amount },
-                    { month: `${MONTHS[new Date().getMonth()+1]??""} ${String(cy).slice(2)} (proy)`, ventas: 0, tendencia: null, proy: df.next_month.projected_amount },
-                  ] : []),
-                ]}>
+                    proy: null,
+                  }));
+                  if (df) {
+                    const cmIdx = data.findIndex(d => d.month === `${MONTHS[new Date().getMonth()]??""} ${String(cy).slice(2)}`);
+                    if (cmIdx >= 0) {
+                      const actual = data[cmIdx]!.ventas;
+                      data[cmIdx]!.proy = df.current_month.projected_amount - actual;
+                    }
+                    data.push({
+                      month: `${MONTHS[new Date().getMonth()+1]??""} ${String(cy).slice(2)}`,
+                      ventas: 0, tendencia: null, proy: df.next_month.projected_amount,
+                    });
+                  }
+                  return data;
+                })()}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                   <XAxis dataKey="month" tick={{ fontSize: 7, angle: -60, textAnchor: "end" }} stroke="#a3a3a3" height={70} interval="preserveStartEnd" />
                   <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" tickFormatter={(v: number) => `$${(v/1e6).toFixed(1)}M`} />
                   <Tooltip contentStyle={{ borderRadius: "8px", fontSize: "12px" }} />
-                  <Bar dataKey="ventas" fill="#7B1818" radius={[2,2,0,0]} name="Ventas" />
+                  <Bar dataKey="ventas" fill="#7B1818" stackId="a" radius={[2,2,0,0]} name="Real" />
+                  <Bar dataKey="proy" fill="#FCD34D" stackId="a" radius={[2,2,0,0]} name="Proyección" />
                   <Line type="monotone" dataKey="tendencia" stroke="#7B1818" strokeWidth={1.5} dot={false} name="Tendencia" connectNulls />
-                  <Bar dataKey="proy" fill="#FCD34D" radius={[2,2,0,0]} name="Proyección" />
                 </ComposedChart>
               </ResponsiveContainer>
             ) : <p className="py-6 text-sm text-text-muted text-center">Sin datos históricos.</p>}
