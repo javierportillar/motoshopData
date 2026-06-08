@@ -1,374 +1,259 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import Link from "next/link";
 import {
-  useSalesSummary,
-  useSalesTrend,
-  useSalesTrendByYear,
-  useSalesDaily,
+  useSalesSummaryV2,
+  useSalesDailyMonth,
+  useSalesForecastMonthly,
   useSalesHistorical,
 } from "@/lib/api/hooks";
 import { formatMoney } from "@/lib/format/currency";
 import { Card } from "@/components/ui/Card";
 import { Stat } from "@/components/ui/Stat";
+import { Badge } from "@/components/ui/Badge";
 import { Table } from "@/components/ui/Table";
-import { SalesTrendChart } from "@/components/SalesTrendChart";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { ErrorState } from "@/components/ui/ErrorState";
+import {
+  BarChart,
+  Bar,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  ComposedChart,
+} from "recharts";
 
-const MONTH_NAMES = [
-  "Ene", "Feb", "Mar", "Abr", "May", "Jun",
-  "Jul", "Ago", "Sep", "Oct", "Nov", "Dic",
-];
+const MONTH_NAMES = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 
-type TabView = "diaria" | "mensual" | "historica";
+type TabView = "resumen" | "diaria" | "historica" | "forecast";
 
 const TAB_LABEL: Record<TabView, string> = {
+  resumen: "Resumen",
   diaria: "Diaria",
-  mensual: "Mensual",
   historica: "Histórica",
+  forecast: "Forecast",
 };
 
-export default function VentasPage(): JSX.Element {
-  const [tab, setTab] = useState<TabView>("mensual");
-  const sales = useSalesSummary();
-  // F7-FIX1 bug 5.4: traer también el año anterior para comparativa.
-  const trendCurrent = useSalesTrend(12);
-  const trendPrev = useSalesTrendByYear(new Date().getFullYear() - 1);
-  const salesDaily = useSalesDaily();
-  const salesHistorical = useSalesHistorical();
+// ── Daily chart: bars + accumulated line ──────────────────────────────
 
-  // ── Loading (solo para el tab activo) ────────────────────────
+function DailyChart({ days }: { days: { date: string; ventas: number; facturas: number; is_future: boolean }[] }) {
+  const data = days.filter(d => !d.is_future).map((d, i) => {
+    const acc = days.slice(0, i + 1).reduce((s, day) => s + day.ventas, 0);
+    return { label: d.date.slice(8), ventas: d.ventas, acumulado: acc };
+  });
+  if (data.length === 0) return null;
+  return (
+    <Card header={<h2 className="font-semibold text-text-primary">Ventas diarias del mes</h2>}>
+      <ResponsiveContainer width="100%" height={240}>
+        <ComposedChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="#a3a3a3" />
+          <YAxis yAxisId="left" tick={{ fontSize: 10 }} stroke="#a3a3a3" tickFormatter={(v: number) => `$${(v/1e6).toFixed(1)}M`} />
+          <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} stroke="#2563EB" tickFormatter={(v: number) => `$${(v/1e6).toFixed(1)}M`} />
+          <Tooltip contentStyle={{ borderRadius: "8px", fontSize: "12px" }} />
+          <Bar yAxisId="left" dataKey="ventas" fill="#7B1818" radius={[2,2,0,0]} name="Ventas del día" />
+          <Line yAxisId="right" type="monotone" dataKey="acumulado" stroke="#2563EB" strokeWidth={2} dot={false} name="Acumulado" />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </Card>
+  );
+}
+
+// ── Forecast chart ─────────────────────────────────────────────────────
+
+function ForecastChart({ monthly }: { monthly: { month: string; forecast_ventas: number; is_history: boolean; confidence_lower: number | null; confidence_upper: number | null }[] }) {
+  if (monthly.length === 0) return (
+    <Card><p className="py-6 text-center text-sm text-text-muted">Forecast no disponible aún.</p></Card>
+  );
+  const data = monthly.map(m => ({
+    label: m.month.slice(5),
+    history: m.is_history ? m.forecast_ventas : 0,
+    predicted: m.is_history ? 0 : m.forecast_ventas,
+  }));
+  return (
+    <Card header={<h2 className="font-semibold text-text-primary">Proyección de ventas</h2>}>
+      <div className="flex items-center gap-4 mb-2 text-xs text-text-muted">
+        <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{background:"#7B1818"}} /> Real</span>
+        <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{background:"#FCD34D"}} /> Proyectado</span>
+      </div>
+      <ResponsiveContainer width="100%" height={200}>
+        <BarChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="#a3a3a3" />
+          <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" tickFormatter={(v: number) => `$${(v/1e6).toFixed(1)}M`} />
+          <Tooltip contentStyle={{ borderRadius: "8px", fontSize: "12px" }} />
+          <Bar dataKey="history" fill="#7B1818" stackId="a" radius={[4,4,0,0]} name="Real" />
+          <Bar dataKey="predicted" fill="#FCD34D" stackId="a" radius={[4,4,0,0]} name="Proyectado" />
+        </BarChart>
+      </ResponsiveContainer>
+    </Card>
+  );
+}
+
+// ── Main ──────────────────────────────────────────────────────────────
+
+export default function VentasPage(): JSX.Element {
+  const [tab, setTab] = useState<TabView>("resumen");
+  const sales = useSalesSummaryV2();
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const salesDaily = useSalesDailyMonth(currentMonth);
+  const salesHistorical = useSalesHistorical();
+  const forecast = useSalesForecastMonthly();
 
   const activeIsLoading =
-    tab === "mensual"
-      ? sales.isLoading
-      : tab === "diaria"
-        ? salesDaily.isLoading
-        : salesHistorical.isLoading;
+    tab === "resumen" ? sales.isLoading
+    : tab === "diaria" ? salesDaily.isLoading
+    : tab === "forecast" ? forecast.isLoading
+    : salesHistorical.isLoading;
+
+  const activeError =
+    tab === "resumen" ? sales.error
+    : tab === "diaria" ? salesDaily.error
+    : tab === "forecast" ? forecast.error
+    : salesHistorical.error;
+
+  const activeHasData =
+    tab === "resumen" ? !!sales.data
+    : tab === "diaria" ? !!salesDaily.data
+    : tab === "forecast" ? !!forecast.data
+    : !!salesHistorical.data;
 
   if (activeIsLoading) {
     return (
       <div className="space-y-4">
-        <Link href="/" className="text-sm text-accent hover:underline">
-          ← Volver a inicio
-        </Link>
+        <Link href="/" className="text-sm text-accent hover:underline">← Volver a inicio</Link>
         <Skeleton className="h-5 w-24" />
         <div className="grid grid-cols-2 gap-3">
-          {[...Array(2)].map((_, i) => (
-            <Skeleton key={i} className="h-24 rounded-xl" />
-          ))}
+          {[1,2,3,4].map(i => <Skeleton key={i} className="h-24 rounded-xl" />)}
         </div>
-        <Skeleton className="h-60 rounded-xl" />
         <Skeleton className="h-60 rounded-xl" />
       </div>
     );
   }
-
-  // ── Error (solo para el tab activo) ──────────────────────────
-
-  const activeError =
-    tab === "mensual"
-      ? sales.error
-      : tab === "diaria"
-        ? salesDaily.error
-        : salesHistorical.error;
-
-  const activeHasData =
-    tab === "mensual"
-      ? !!sales.data
-      : tab === "diaria"
-        ? !!salesDaily.data
-        : !!salesHistorical.data;
 
   if (activeError || !activeHasData) {
     return (
       <div className="space-y-4">
-        <Link href="/" className="text-sm text-accent hover:underline">
-          ← Volver a inicio
-        </Link>
-        <ErrorState
-          title="Error al cargar"
-          message="No se pudieron obtener los datos de ventas."
-          severity="warning"
-        />
+        <Link href="/" className="text-sm text-accent hover:underline">← Volver a inicio</Link>
+        <ErrorState title="Error al cargar" message="No se pudieron obtener los datos de ventas." severity="warning" />
       </div>
     );
   }
 
-  // F7-FIX1 bug 5.2: guards explícitos en lugar de non-null assertions —
-  // el endpoint del tab activo pasó el guard, pero los otros pueden estar
-  // pendientes o en error. Acceso seguro previene client-side exception.
-  const d = sales.data;
-  const dd = salesDaily.data;
+  const d = sales.data!;
+  const dm = salesDaily.data;
   const dh = salesHistorical.data;
-
-  // ── Datos de tendencia real (comparativa año actual vs anterior) ──
-
-  const currentYear = new Date().getFullYear();
-  const trendCurrentByMonth = new Map(
-    (trendCurrent.data?.items ?? [])
-      .filter((it) => it.year === currentYear)
-      .map((it) => [it.month, it.total_ventas])
-  );
-  const trendPrevByMonth = new Map(
-    (trendPrev.data?.items ?? []).map((it) => [it.month, it.total_ventas])
-  );
-
-  const trendData = Array.from({ length: 12 }, (_, i) => ({
-    label: MONTH_NAMES[i] ?? "",
-    valor: trendCurrentByMonth.get(i + 1) ?? 0,
-  }));
-  const prevYearData = Array.from({ length: 12 }, (_, i) => ({
-    label: MONTH_NAMES[i] ?? "",
-    valor: trendPrevByMonth.get(i + 1) ?? 0,
-  }));
-  const hasPrevYearData = prevYearData.some((p) => p.valor > 0);
-
-  // ── Render ───────────────────────────────────────────────────
-
-  function renderTabButtons(): JSX.Element {
-    const views: TabView[] = ["diaria", "mensual", "historica"];
-    return (
-      <div className="flex gap-2">
-        {views.map((v) => (
-          <button
-            key={v}
-            onClick={() => setTab(v)}
-            className={`rounded-lg px-3 py-1.5 text-xs font-medium ${
-              tab === v
-                ? "bg-surface-dark text-text-inverse"
-                : "bg-surface-alt text-text-secondary hover:bg-surface-dark/10"
-            }`}
-          >
-            {TAB_LABEL[v]}
-          </button>
-        ))}
-      </div>
-    );
-  }
-
-  // ── Vista diaria ────────────────────────────────────────────
-
-  function renderDiaria(): JSX.Element {
-    if (!dd) return <ErrorState title="Sin datos" message="No hay ventas para la fecha actual." severity="warning" />;
-    const totalUnidades = dd.productos_vendidos.reduce((s, p) => s + p.cantidad, 0);
-    const ticketProm = dd.total_facturas > 0 ? dd.total_ventas / dd.total_facturas : 0;
-    return (
-      <>
-        {/* KPIs diarios */}
-        <div className="grid grid-cols-3 gap-3">
-          <Card>
-            <Stat label="Ventas hoy" value={formatMoney(dd.total_ventas)} subtitle="del día" />
-          </Card>
-          <Card>
-            <Stat label="Productos" value={String(totalUnidades)} subtitle="unidades vendidas" />
-          </Card>
-          <Card>
-            <Stat label="Ticket prom." value={formatMoney(ticketProm)} subtitle="por factura" />
-          </Card>
-        </div>
-
-        {/* Detalle de productos vendidos hoy */}
-        <Card header={<h2 className="font-semibold text-text-primary">Productos vendidos — hoy</h2>}>
-          <Table
-            columns={[
-              { header: "SKU", cell: (r: (typeof dd.productos_vendidos)[number]) => r.sku },
-              {
-                header: "Producto",
-                cell: (r: (typeof dd.productos_vendidos)[number]) => r.nombre,
-              },
-              { header: "Cant.", cell: (r: (typeof dd.productos_vendidos)[number]) => r.cantidad, align: "right" },
-              { header: "Valor", cell: (r: (typeof dd.productos_vendidos)[number]) => formatMoney(r.valor), align: "right" },
-            ]}
-            data={dd.productos_vendidos}
-            keyFn={(r: (typeof dd.productos_vendidos)[number]) => r.sku}
-            striped
-          />
-        </Card>
-      </>
-    );
-  }
-
-  // ── Vista mensual (existente) ───────────────────────────────
-
-  function renderMensual(): JSX.Element {
-    if (!d) return <ErrorState title="Sin datos" message="No hay ventas del mes disponibles." severity="warning" />;
-    return (
-      <>
-        {/* KPIs */}
-        <div className="grid grid-cols-2 gap-3">
-          <Card>
-            <Stat
-              label="Ventas del mes"
-              value={formatMoney(d.ventas_mes_actual)}
-              delta={d.delta_porcentual}
-              deltaLabel="vs mes anterior"
-            />
-          </Card>
-          <Card>
-            <Stat
-              label="Ticket promedio"
-              value={formatMoney(d.ticket_promedio)}
-              subtitle={`${d.num_facturas} facturas`}
-            />
-          </Card>
-        </div>
-
-        {/* Tendencia mensual: año actual vs año anterior (F7-FIX1 bug 5.4) */}
-        {trendCurrent.isLoading ? (
-          <Skeleton className="h-60 rounded-xl" />
-        ) : (
-          <Card header={
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold text-text-primary">Tendencia mensual</h2>
-              <div className="flex items-center gap-3 text-xs">
-                <span className="flex items-center gap-1">
-                  <span className="h-2 w-2 rounded-full bg-primary"></span>
-                  <span className="text-text-muted">{currentYear}</span>
-                </span>
-                {hasPrevYearData && (
-                  <span className="flex items-center gap-1">
-                    <span className="h-2 w-2 rounded-full bg-secondary"></span>
-                    <span className="text-text-muted">{currentYear - 1}</span>
-                  </span>
-                )}
-              </div>
-            </div>
-          }>
-            <SalesTrendChart
-              data={trendData}
-              previousYearData={hasPrevYearData ? prevYearData : undefined}
-              currentYearLabel={`${currentYear}`}
-              previousYearLabel={`${currentYear - 1}`}
-            />
-            <p className="mt-2 text-center text-xs text-text-muted">
-              {hasPrevYearData
-                ? `Comparativa ${currentYear - 1} vs ${currentYear} (enero a diciembre)`
-                : `Datos de ${currentYear}`}
-            </p>
-          </Card>
-        )}
-
-        {/* Top 10 SKUs */}
-        {d.top_skus.length > 0 && (
-          <Card header={<h2 className="font-semibold text-text-primary">Top 10 SKUs del mes</h2>}>
-            <Table
-              columns={[
-                { header: "#", cell: (_, i) => i + 1, align: "center", className: "w-10" },
-                {
-                  header: "Producto",
-                  cell: (sku) => (
-                    <div>
-                      <p className="text-sm font-medium">{sku.nom_producto}</p>
-                      <p className="font-mono text-xs text-text-muted">{sku.cod_producto}</p>
-                    </div>
-                  ),
-                },
-                {
-                  header: "Cantidad",
-                  cell: (sku) => sku.cantidad_total.toLocaleString("es-CO"),
-                  align: "right",
-                },
-                {
-                  header: "Valor",
-                  cell: (sku) => formatMoney(sku.valor_total),
-                  align: "right",
-                },
-              ]}
-              data={d.top_skus}
-              keyFn={(sku) => sku.cod_producto}
-              striped
-            />
-          </Card>
-        )}
-      </>
-    );
-  }
-
-  // ── Vista histórica ─────────────────────────────────────────
-
-  function renderHistorica(): JSX.Element {
-    // F7-FIX1 bug 5.2b: incógnito reportó "Cannot read 'meses' of undefined" —
-    // doble guard: dh puede existir pero meses puede ser undefined si el deploy
-    // sirvió un bundle intermedio. Defensa explícita en todos los accesos.
-    if (!dh || !Array.isArray(dh.meses)) {
-      return <ErrorState title="Sin datos" message="No hay histórico de ventas disponible." severity="warning" />;
-    }
-    const meses = dh.meses;
-    const histItems = meses.map((m) => ({
-      label: `${MONTH_NAMES[m.month - 1] ?? ""} ${m.year}`,
-      ventas: m.total_ventas,
-      facturas: m.num_facturas,
-    }));
-    const numMeses = meses.length;
-    const promMensual = numMeses > 0 ? dh.total_ventas / numMeses : 0;
-    const primer = numMeses > 0 ? meses[0] : null;
-    const primerMes = primer
-      ? `${MONTH_NAMES[primer.month - 1] ?? ""} ${primer.year}`
-      : dh.fecha_primera_venta ?? "—";
-    return (
-      <>
-        <div className="grid grid-cols-3 gap-3">
-          <Card>
-            <Stat label="Total acumulado" value={formatMoney(dh.total_ventas)} subtitle={`${dh.meses.length} meses`} />
-          </Card>
-          <Card>
-            <Stat label="Promedio mensual" value={formatMoney(promMensual)} subtitle="histórico" />
-          </Card>
-          <Card>
-            <Stat label="Desde" value={primerMes} subtitle="primer registro" />
-          </Card>
-        </div>
-
-        <Card header={<h2 className="font-semibold text-text-primary">Tendencia histórica</h2>}>
-          <SalesTrendChart
-            data={histItems.map((h) => ({ label: h.label, valor: h.ventas }))}
-          />
-        </Card>
-
-        <Card header={<h2 className="font-semibold text-text-primary">Detalle por período</h2>}>
-          <Table
-            columns={[
-              { header: "Mes", cell: (h: (typeof histItems)[number]) => h.label },
-              { header: "Ventas", cell: (h: (typeof histItems)[number]) => formatMoney(h.ventas), align: "right" },
-              { header: "Facturas", cell: (h: (typeof histItems)[number]) => h.facturas, align: "right" },
-            ]}
-            data={histItems}
-            keyFn={(h) => h.label}
-            striped
-          />
-        </Card>
-      </>
-    );
-  }
-
-  // ── Render principal ────────────────────────────────────────
-
-  const totalMesesHist = Array.isArray(dh?.meses) ? dh.meses.length : 0;
+  const df = forecast.data;
 
   return (
     <div className="space-y-4">
-      <Link href="/" className="text-sm text-accent hover:underline">
-        ← Volver a inicio
-      </Link>
+      <Link href="/" className="text-sm text-accent hover:underline">← Volver a inicio</Link>
 
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-text-primary">Ventas</h1>
-          <p className="text-sm text-text-muted">
-            {tab === "diaria" && (dd ? `Ventas del día — ${dd.date}` : "Cargando…")}
-            {tab === "mensual" && (d ? `Período: ${d.business_month}` : "Cargando…")}
-            {tab === "historica" && `Histórico — ${totalMesesHist} meses`}
-          </p>
-        </div>
+      <div>
+        <h1 className="text-xl font-bold text-text-primary">Ventas</h1>
+        <p className="text-sm text-text-muted">
+          {d.max_sales_date ? `Datos hasta ${d.max_sales_date}` : ""}
+        </p>
       </div>
 
-      {renderTabButtons()}
-      {tab === "diaria" && renderDiaria()}
-      {tab === "mensual" && renderMensual()}
-      {tab === "historica" && renderHistorica()}
+      {/* Tabs */}
+      <div className="flex gap-2 flex-wrap">
+        {(["resumen", "diaria", "historica", "forecast"] as TabView[]).map(v => (
+          <button key={v} onClick={() => setTab(v)}
+            className={`rounded-lg px-3 py-1.5 text-xs font-medium ${
+              tab === v ? "bg-surface-dark text-text-inverse" : "bg-surface-alt text-text-secondary hover:bg-surface-dark/10"
+            }`}
+          >{TAB_LABEL[v]}</button>
+        ))}
+      </div>
+
+      {/* ── Resumen (V2) ─────────────────────────────────── */}
+      {tab === "resumen" && (
+        <>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Card><Stat label="Ventas acumuladas" value={formatMoney(d.current_month_accumulated)} subtitle={`${d.current_month_days_with_sales} días`} /></Card>
+            <Card><Stat label="Facturas" value={d.num_facturas.toLocaleString("es-CO")} subtitle="este mes" /></Card>
+            <Card><Stat label="Ticket promedio" value={formatMoney(d.ticket_promedio)} subtitle="por factura" /></Card>
+            <Card>
+              <Stat
+                label="vs mes anterior"
+                value={d.previous_month_same_window.delta_pct > 0 ? `+${d.previous_month_same_window.delta_pct}%` : `${d.previous_month_same_window.delta_pct}%`}
+                subtitle={`${d.previous_month_same_window.from}–${d.previous_month_same_window.to}`}
+              />
+            </Card>
+          </div>
+
+          <Card header={<h2 className="font-semibold text-text-primary">Comparativa con años anteriores</h2>}>
+            <Table
+              columns={[
+                { header: "Año", cell: (r: typeof d.same_month_previous_years[number]) => String(r.year) },
+                { header: "Misma ventana", cell: (r: typeof d.same_month_previous_years[number]) => formatMoney(r.same_day_window_amount), align: "right" },
+                { header: "Mes completo", cell: (r: typeof d.same_month_previous_years[number]) => formatMoney(r.full_month_amount), align: "right" },
+                { header: "Delta ventana", cell: (r: typeof d.same_month_previous_years[number]) => r.delta_same_window_pct != null ? `${r.delta_same_window_pct > 0 ? "+" : ""}${r.delta_same_window_pct}%` : "—", align: "right" },
+              ]}
+              data={d.same_month_previous_years}
+              keyFn={(r: typeof d.same_month_previous_years[number]) => String(r.year)}
+              striped
+            />
+          </Card>
+        </>
+      )}
+
+      {/* ── Diaria ───────────────────────────────────────── */}
+      {tab === "diaria" && dm && (
+        <>
+          <div className="grid grid-cols-3 gap-3">
+            <Card><Stat label="Total mes" value={formatMoney(dm.total_month)} subtitle={dm.days.length + " días"} /></Card>
+            <Card><Stat label="Promedio diario" value={formatMoney(dm.total_month / Math.max(1, dm.days.filter(x => !x.is_future).length))} subtitle="por día con ventas" /></Card>
+            <Card><Stat label="Mejor día" value={formatMoney(Math.max(...dm.days.filter(x => !x.is_future).map(x => x.ventas), 0))} /></Card>
+          </div>
+          <DailyChart days={dm.days} />
+          <Card header={<h2 className="font-semibold text-text-primary">Detalle diario</h2>}>
+            <Table
+              columns={[
+                { header: "Día", cell: (r: typeof dm.days[number]) => <span className={r.is_future ? "text-text-muted" : ""}>{r.date.slice(8)}</span> },
+                { header: "Ventas", cell: (r: typeof dm.days[number]) => <span className={r.is_future ? "text-text-muted" : ""}>{r.is_future ? "—" : formatMoney(r.ventas)}</span>, align: "right" },
+                { header: "Facturas", cell: (r: typeof dm.days[number]) => <span className={r.is_future ? "text-text-muted" : ""}>{r.is_future ? "—" : r.facturas}</span>, align: "right" },
+              ]}
+              data={dm.days}
+              keyFn={(r: typeof dm.days[number]) => r.date}
+              striped
+            />
+          </Card>
+        </>
+      )}
+
+      {/* ── Histórica ───────────────────────────────────── */}
+      {tab === "historica" && dh && (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <Card><Stat label="Total histórico" value={formatMoney(dh.total_ventas)} /></Card>
+            <Card><Stat label="Facturas totales" value={dh.total_facturas.toLocaleString("es-CO")} /></Card>
+          </div>
+          <Card header={<h2 className="font-semibold text-text-primary">Ventas mensuales</h2>}>
+            <Table
+              columns={[
+                { header: "Mes", cell: (r: typeof dh.meses[number]) => `${MONTH_NAMES[r.month-1] ?? ""} ${r.year}` },
+                { header: "Ventas", cell: (r: typeof dh.meses[number]) => formatMoney(r.total_ventas), align: "right" },
+                { header: "Facturas", cell: (r: typeof dh.meses[number]) => String(r.num_facturas), align: "right" },
+                { header: "Ticket prom.", cell: (r: typeof dh.meses[number]) => formatMoney(r.ticket_promedio), align: "right" },
+              ]}
+              data={dh.meses}
+              keyFn={(r: typeof dh.meses[number], i: number) => `${r.year}-${r.month}-${i}`}
+              striped
+            />
+          </Card>
+        </>
+      )}
+
+      {/* ── Forecast ────────────────────────────────────── */}
+      {tab === "forecast" && (
+        <ForecastChart monthly={df?.monthly ?? []} />
+      )}
     </div>
   );
 }

@@ -171,6 +171,92 @@ export function useSalesSummary() {
   return useMetrics<SalesSummary>("/api/metrics/sales-summary");
 }
 
+// ── V1.8: Sales Summary V2 ────────────────────────────────────────────
+
+interface SalesSummaryV2PrevWindow {
+  from: string;
+  to: string;
+  amount: number;
+  delta_pct: number;
+}
+
+interface SalesSummaryV2PrevYear {
+  year: number;
+  same_day_window_amount: number;
+  full_month_amount: number;
+  delta_same_window_pct: number | null;
+}
+
+interface SalesSummaryV2 {
+  business_month: string;
+  max_sales_date: string;
+  current_month_accumulated: number;
+  current_month_days_with_sales: number;
+  previous_month_same_window: SalesSummaryV2PrevWindow;
+  same_month_previous_years: SalesSummaryV2PrevYear[];
+  ticket_promedio: number;
+  num_facturas: number;
+}
+
+export function useSalesSummaryV2() {
+  return useMetrics<SalesSummaryV2>("/api/metrics/sales-summary-v2");
+}
+
+// ── V1.8: Daily Month ─────────────────────────────────────────────────
+
+interface SalesDailyDay {
+  date: string;
+  ventas: number;
+  facturas: number;
+  is_future: boolean;
+}
+
+interface SalesDailyMonth {
+  month: string;
+  days: SalesDailyDay[];
+  total_month: number;
+}
+
+export function useSalesDailyMonth(month: string) {
+  return useMetrics<SalesDailyMonth>(`/api/metrics/sales-daily-month?month=${month}`);
+}
+
+// ── V1.8: Forecast Monthly ────────────────────────────────────────────
+
+interface SalesForecastMonth {
+  month: string;
+  forecast_ventas: number;
+  forecast_facturas: number;
+  confidence_lower: number | null;
+  confidence_upper: number | null;
+  is_history: boolean;
+}
+
+interface SalesForecastMonthly {
+  monthly: SalesForecastMonth[];
+  model_version: string | null;
+}
+
+export function useSalesForecastMonthly() {
+  return useMetrics<SalesForecastMonthly>("/api/metrics/sales-forecast-monthly");
+}
+
+// ── V1.8: Data Status ─────────────────────────────────────────────────
+
+interface DataStatus {
+  sales_max_date: string;
+  sales_days_lag: number;
+  inventory_snapshot_date: string;
+  invalid_future_sales_rows: number;
+  latest_pipeline_run_status: string | null;
+  duckdb_freshness_utc: string;
+  duckdb_backend: string;
+}
+
+export function useDataStatus() {
+  return useMetrics<DataStatus>("/api/admin/data/status");
+}
+
 export function useInventorySummary() {
   return useMetrics<InventorySummary>("/api/metrics/inventory-summary");
 }

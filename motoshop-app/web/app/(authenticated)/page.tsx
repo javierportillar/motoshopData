@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuthStore } from "@/lib/auth/store";
-import { useSalesSummary, useInventorySummary, useAlerts, useDormidos, useSalesTrend, useSalesTrendByYear } from "@/lib/api/hooks";
+import { useSalesSummaryV2, useInventorySummary, useAlerts, useDormidos, useSalesTrendByYear } from "@/lib/api/hooks";
 import { formatMoney } from "@/lib/format/currency";
 import { Card } from "@/components/ui/Card";
 import { Stat } from "@/components/ui/Stat";
@@ -19,11 +19,10 @@ import { ErrorState } from "@/components/ui/ErrorState";
 // ── Gerente: home completo ────────────────────────────────────────────────
 
 function GerenteHome(): JSX.Element {
-  const sales = useSalesSummary();
+  const sales = useSalesSummaryV2();
   const inventory = useInventorySummary();
   const alerts = useAlerts();
   const dormidos = useDormidos();
-  // F7-FIX1 bug 5.4: comparativa año actual vs anterior en la tendencia.
   const currentYear = new Date().getFullYear();
   const trend = useSalesTrendByYear(currentYear, 24);
   const trendPrev = useSalesTrendByYear(currentYear - 1, 24);
@@ -79,8 +78,8 @@ function GerenteHome(): JSX.Element {
         <div>
           <h1 className="text-xl font-bold text-text-primary">MotoShop</h1>
           <p className="text-sm text-text-muted">
-            {sales.data?.business_month
-              ? `Panel de gerencia — ${sales.data.business_month}`
+            {sales.data?.max_sales_date
+              ? `Panel de gerencia — Acumulado hasta ${sales.data.max_sales_date}`
               : "Panel de gerencia"}
           </p>
         </div>
@@ -94,9 +93,8 @@ function GerenteHome(): JSX.Element {
           <Card hover className="cursor-pointer">
             <Stat
               label="Ventas del mes"
-              value={sales.data ? formatMoney(sales.data.ventas_mes_actual) : "—"}
-              delta={sales.data?.delta_porcentual ?? null}
-              deltaLabel="vs mes anterior"
+              value={sales.data ? formatMoney(sales.data.current_month_accumulated) : "—"}
+              subtitle={sales.data ? `Acumulado ${sales.data.current_month_days_with_sales} días` : ""}
               icon={
                 <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <polyline points="22,12 18,12 15,21 9,3 6,12 2,12" />
@@ -159,8 +157,13 @@ function GerenteHome(): JSX.Element {
         const MONTH_LABELS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
         const currMap = new Map(trend.data.items.filter(i => i.year === currentYear).map(i => [i.month, i.total_ventas]));
         const prevMap = new Map((trendPrev.data?.items ?? []).map(i => [i.month, i.total_ventas]));
-        const currData = Array.from({ length: 12 }, (_, i) => ({ label: MONTH_LABELS[i] ?? "", valor: currMap.get(i + 1) ?? 0 }));
-        const prevData = Array.from({ length: 12 }, (_, i) => ({ label: MONTH_LABELS[i] ?? "", valor: prevMap.get(i + 1) ?? 0 }));
+        // Solo meses con datos reales (no pintar meses futuros en cero)
+        const currentMonth = new Date().getMonth() + 1;
+        const monthsWithData = Math.max(
+          ...[...currMap.keys(), ...prevMap.keys(), currentMonth]
+        );
+        const currData = Array.from({ length: monthsWithData }, (_, i) => ({ label: MONTH_LABELS[i] ?? "", valor: currMap.get(i + 1) ?? 0 }));
+        const prevData = Array.from({ length: monthsWithData }, (_, i) => ({ label: MONTH_LABELS[i] ?? "", valor: prevMap.get(i + 1) ?? 0 }));
         const hasPrev = prevData.some(p => p.valor > 0);
         return (
           <Card header={
@@ -200,7 +203,7 @@ function GerenteHome(): JSX.Element {
             <Card hover className="cursor-pointer">
               <Stat
                 label="Ventas"
-                value={sales.data ? formatMoney(sales.data.ventas_mes_actual) : "—"}
+                value={sales.data ? formatMoney(sales.data.current_month_accumulated) : "—"}
                 subtitle="Ver detalle →"
               />
             </Card>
