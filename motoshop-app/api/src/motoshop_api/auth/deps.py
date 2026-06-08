@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -59,3 +61,58 @@ def require_role(*roles: str):
         return user
 
     return _check
+
+
+async def require_refresh_token_or_admin(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> bool:
+    """Acepta JWT con rol admin O un REFRESH_TOKEN compartido como Bearer.
+
+    Para refresh automático desde scripts (capture_new_sales.py):
+        Authorization: Bearer <REFRESH_TOKEN>
+
+    Para acceso desde la UI/dashboard:
+        Authorization: Bearer <jwt-admin-token>
+    """
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token requerido",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # 1. Intentar como REFRESH_TOKEN compartido (rápido, sin JWT)
+    refresh_token = os.environ.get("REFRESH_TOKEN", "")
+    if refresh_token and credentials.credentials == refresh_token:
+        return True
+
+    # 2. Fallback: JWT con rol admin
+    payload = decode_token(credentials.credentials)
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token inválido o vencido",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if payload.get("type") != "access":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Se requiere access token",
+        )
+
+    username = payload.get("sub")
+    user = get_user_by_username(username)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Usuario no encontrado",
+        )
+
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Rol '{user.role}' no tiene acceso a este recurso",
+        )
+
+    return True

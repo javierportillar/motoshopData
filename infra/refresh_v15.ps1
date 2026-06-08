@@ -9,6 +9,9 @@ param(
     [string]$ApiToken = $env:MOTO_API_TOKEN
 )
 
+# Fallback a REFRESH_TOKEN si no hay MOTO_API_TOKEN
+if (-not $ApiToken) { $ApiToken = $env:REFRESH_TOKEN }
+
 $ErrorActionPreference = "Stop"
 $logFile = Join-Path $PSScriptRoot "logs\refresh_v15.log"
 $rootDir = Resolve-Path (Join-Path $PSScriptRoot "..")
@@ -145,7 +148,7 @@ if (Test-Path $envFile) {
 if (-not $ApiToken) { $ApiToken = $env:MOTO_API_TOKEN }
 
 if (-not $ApiToken) {
-    Write-Log "MOTO_API_TOKEN not set. Export it or pass -ApiToken <token>" "ERROR"
+    Write-Log "Token no configurado. Seteá MOTO_API_TOKEN (JWT) o REFRESH_TOKEN en .env, o pasá -ApiToken <token>" "ERROR"
     exit 1
 }
 

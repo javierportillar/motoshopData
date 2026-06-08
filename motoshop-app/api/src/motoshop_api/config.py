@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     data_backend: str = Field(default="databricks", description="databricks | duckdb")
     duckdb_path: str = Field(default="/tmp/motoshop_gold.duckdb", description="Path al archivo DuckDB local")
 
+    # ─── Shared Refresh Token (V1.9) ───────────────────────────────────
+    refresh_token: str = Field(default="", description="Token compartido para refresh automático vía capture script")
+
     @field_validator("jwt_secret")
     @classmethod
     def validate_jwt_secret(cls, v: str, info) -> str:

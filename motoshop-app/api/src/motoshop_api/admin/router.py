@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from motoshop_api.auth.deps import get_current_user, require_role
+from motoshop_api.auth.deps import get_current_user, require_refresh_token_or_admin, require_role
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
 from motoshop_api.metrics.router import _clear_metrics_cache
@@ -47,7 +47,7 @@ def _get_duckdb_path() -> Path:
 @limiter.limit("3/minute")
 async def data_refresh(
     request: Request,
-    user: User = Depends(require_role("admin")),
+    _: bool = Depends(require_refresh_token_or_admin),
 ) -> RefreshResponse:
     """Recarga el archivo DuckDB desde R2 y limpia el cache de métricas.
 
@@ -119,7 +119,7 @@ async def data_refresh(
 @limiter.limit("3/minute")
 async def pipeline_refresh(
     request: Request,
-    user: User = Depends(require_role("admin")),
+    _: bool = Depends(require_refresh_token_or_admin),
 ) -> RefreshResponse:
     """Recarga pipeline_runs.duckdb desde R2 sin reiniciar uvicorn.
 

@@ -36,7 +36,7 @@ if not defined FRESH (
 )
 
 echo [3/3] Refreshing API...
-powershell -ExecutionPolicy Bypass -File "infra\refresh_v15.ps1" -ApiBaseUrl "http://localhost:8000"
+powershell -ExecutionPolicy Bypass -File "infra\refresh_v15.ps1" -ApiBaseUrl "https://api.fragloesja.uk"
 if %ERRORLEVEL% neq 0 (
     echo [WARN] API refresh failed (puede que la API no esté corriendo)
 )
