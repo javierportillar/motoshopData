@@ -143,13 +143,26 @@ export default function VentasPage(): JSX.Element {
 
       {tab === "historica" && dh && (
         <>
+          <Card header={<h2 className="font-semibold text-text-primary">Tendencia histórica</h2>}>
+            {dh.meses.length > 0 ? (
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={dh.meses.map(m => ({ month: `${MONTHS[m.month-1]??""} ${String(m.year).slice(2)}`, ventas: m.total_ventas }))}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="month" tick={{ fontSize: 8, angle: -60, textAnchor: "end" }} stroke="#a3a3a3" height={60} interval="preserveStartEnd" />
+                  <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" tickFormatter={(v: number) => `$${(v/1e6).toFixed(1)}M`} />
+                  <Tooltip contentStyle={{ borderRadius: "8px", fontSize: "12px" }} />
+                  <Bar dataKey="ventas" fill="#7B1818" radius={[3,3,0,0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : <p className="py-6 text-sm text-text-muted text-center">Sin datos históricos.</p>}
+          </Card>
           <Card header={<h2 className="font-semibold text-text-primary">Histórico mensual</h2>}>
             <Table columns={[
               {header:"Mes",cell:(r:typeof dh.meses[number])=>`${MONTHS[r.month-1]??""} ${r.year}`},
               {header:"Ventas",cell:(r:typeof dh.meses[number])=>formatMoney(r.total_ventas),align:"right"},
               {header:"Facturas",cell:(r:typeof dh.meses[number])=>String(r.num_facturas),align:"right"},
               {header:"Ticket",cell:(r:typeof dh.meses[number])=>formatMoney(r.ticket_promedio),align:"right"},
-            ]} data={dh.meses.slice(-24)} keyFn={(r:typeof dh.meses[number])=>`${r.year}-${r.month}`} striped />
+            ]} data={dh.meses} keyFn={(r:typeof dh.meses[number])=>`${r.year}-${r.month}`} striped />
           </Card>
         </>
       )}
