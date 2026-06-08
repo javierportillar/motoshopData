@@ -1113,22 +1113,46 @@ class DuckDBMetricsRepo:
     def get_inventory_detail(
         self, page: int = 1, page_size: int = 50, sort: str = "cod_producto",
         q: str | None = None, bodega: str | None = None,
+        stock: str = "todos", dormido: str = "todos", abc: str | None = None,
     ) -> dict:
-        """Inventario detallado con costo, última venta, dormido status."""
+        """Inventario detallado con costo, última venta, dormido status, filtros."""
         offset = (page - 1) * page_size
-        sort_col = {"cod_producto": "cod_producto", "valor_inventario": "COALESCE(lc.costo_producto,0)*inv.cantidad_actual",
-                    "stock_actual": "inv.cantidad_actual", "dias_sin_venta": "COALESCE(DATE_DIFF('day', v.ultima_venta, CURRENT_DATE), 99999)"}.get(sort, "cod_producto")
+        sort_map = {
+            "cod_producto": "inv.cod_producto", "nom_producto": "inv.nom_producto",
+            "stock_actual": "inv.cantidad_actual",
+            "valor_inventario": "COALESCE(lc.costo_producto,0)*inv.cantidad_actual",
+            "dias_sin_venta": "COALESCE(DATE_DIFF('day', v.ultima_venta, CURRENT_DATE), 99999)",
+            "ultima_venta": "v.ultima_venta",
+        }
+        sort_col = sort_map.get(sort, "inv.cod_producto")
 
         where = "1=1"
-        params = []
+        where_params = []
+        count_params = []
+
         if q:
-            where += " AND (inv.cod_producto LIKE ? OR inv.nom_producto LIKE ?)"
-            params.extend([f"%{q}%", f"%{q}%"])
+            q_like = f"%{q}%"
+            where += " AND (LOWER(inv.cod_producto) LIKE LOWER(?) OR LOWER(inv.nom_producto) LIKE LOWER(?) OR LOWER(inv.cod_bodega) LIKE LOWER(?) OR LOWER(inv.nom_bodega) LIKE LOWER(?))"
+            where_params.extend([q_like, q_like, q_like, q_like])
+            count_params.extend([q_like, q_like, q_like, q_like])
         if bodega:
             where += " AND inv.cod_bodega = ?"
-            params.append(bodega)
+            where_params.append(bodega)
+            count_params.append(bodega)
+        if stock == "con_stock":
+            where += " AND inv.cantidad_actual > 0"
+        elif stock == "sin_stock":
+            where += " AND inv.cantidad_actual = 0"
+        if dormido == "true":
+            where += " AND d.cod_producto IS NOT NULL"
+        elif dormido == "false":
+            where += " AND d.cod_producto IS NULL"
+        if abc:
+            where += " AND abc.categoria_abc = ?"
+            where_params.append(abc.upper())
+            count_params.append(abc.upper())
 
-        params.extend([page_size, offset])
+        query_params = where_params + [page_size, offset]
 
         rows = self._con.execute(f"""
             WITH latest_cost AS (
@@ -1161,7 +1185,7 @@ class DuckDBMetricsRepo:
             WHERE {where}
             ORDER BY {sort_col} DESC
             LIMIT ? OFFSET ?
-        """, params).fetchall()
+        """, query_params).fetchall()
 
         cols = ["cod_producto", "nom_producto", "cod_bodega", "nom_bodega", "stock_actual",
                 "costo_unitario", "valor_inventario", "ultima_venta", "dias_sin_venta", "es_dormido", "abc"]
@@ -1175,9 +1199,18 @@ class DuckDBMetricsRepo:
             item["es_dormido"] = bool(item["es_dormido"])
             items.append(item)
 
+        # Count real con todos los filtros (sin LIMIT/OFFSET)
         total = self._con.execute(f"""
-            SELECT COUNT(*) FROM motoshop_gold_mart_inventario_actual inv WHERE {where}
-        """, params[:len(params)-2]).fetchone()[0] if not (q or bodega) else len(items)
+            WITH abc_latest AS (
+                SELECT cod_producto, categoria_abc
+                FROM (SELECT cod_producto, categoria_abc, ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_month DESC) AS rn
+                      FROM motoshop_gold_mart_rotacion_abc) WHERE rn = 1
+            )
+            SELECT COUNT(*) FROM motoshop_gold_mart_inventario_actual inv
+            LEFT JOIN motoshop_gold_mart_productos_dormidos d ON inv.cod_producto = d.cod_producto
+            LEFT JOIN abc_latest abc ON inv.cod_producto = abc.cod_producto
+            WHERE {where}
+        """, count_params).fetchone()[0]
 
         return {"items": items, "total": total, "page": page, "page_size": page_size}
 

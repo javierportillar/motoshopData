@@ -170,13 +170,16 @@ def inventory_detail(
     sort: str = Query(default="cod_producto"),
     q: str | None = Query(default=None),
     bodega: str | None = Query(default=None),
+    stock: str = Query(default="todos", pattern="^(todos|con_stock|sin_stock)$"),
+    dormido: str = Query(default="todos", pattern="^(todos|true|false)$"),
+    abc: str | None = Query(default=None, pattern="^(A|B|C)$"),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
 ):
     """Inventario detallado con costo, última venta, dormido status, ABC."""
     return _cached_or_fetch(
-        f"inv-detail:{page}:{page_size}:{sort}:{q or ''}:{bodega or ''}",
-        lambda: repo.get_inventory_detail(page, page_size, sort, q, bodega),
+        f"inv-detail:{page}:{page_size}:{sort}:{q or ''}:{bodega or ''}:{stock}:{dormido}:{abc or ''}",
+        lambda: repo.get_inventory_detail(page, page_size, sort, q, bodega, stock, dormido, abc),
         ttl=60,
     )
 
