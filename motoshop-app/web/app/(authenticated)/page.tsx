@@ -157,13 +157,10 @@ function GerenteHome(): JSX.Element {
         const MONTH_LABELS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
         const currMap = new Map(trend.data.items.filter(i => i.year === currentYear).map(i => [i.month, i.total_ventas]));
         const prevMap = new Map((trendPrev.data?.items ?? []).map(i => [i.month, i.total_ventas]));
-        // Solo meses con datos reales (no pintar meses futuros en cero)
+        // Solo pintar hasta el mes actual, sin meses futuros
         const currentMonth = new Date().getMonth() + 1;
-        const monthsWithData = Math.max(
-          ...[...currMap.keys(), ...prevMap.keys(), currentMonth]
-        );
-        const currData = Array.from({ length: monthsWithData }, (_, i) => ({ label: MONTH_LABELS[i] ?? "", valor: currMap.get(i + 1) ?? 0 }));
-        const prevData = Array.from({ length: monthsWithData }, (_, i) => ({ label: MONTH_LABELS[i] ?? "", valor: prevMap.get(i + 1) ?? 0 }));
+        const prevData = Array.from({ length: currentMonth }, (_, i) => ({ label: MONTH_LABELS[i] ?? "", valor: prevMap.get(i + 1) ?? 0 }));
+        const currData = Array.from({ length: currentMonth }, (_, i) => ({ label: MONTH_LABELS[i] ?? "", valor: currMap.get(i + 1) ?? 0 }));
         const hasPrev = prevData.some(p => p.valor > 0);
         return (
           <Card header={

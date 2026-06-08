@@ -40,19 +40,25 @@ const TAB_LABEL: Record<TabView, string> = {
 
 // ── Daily chart: bars + accumulated line ──────────────────────────────
 
-function DailyChart({ days }: { days: { date: string; ventas: number; facturas: number; is_future: boolean }[] }) {
-  const data = days.filter(d => !d.is_future).map((d, i) => {
-    const acc = days.slice(0, i + 1).reduce((s, day) => s + day.ventas, 0);
-    return { label: d.date.slice(8), ventas: d.ventas, acumulado: acc };
-  });
+function DailyChart({ days }: { days: { date: string; sales: number; invoices: number; accumulated: number }[] }) {
+  const data = days.map((d) => ({
+    label: d.date.slice(8),
+    ventas: d.sales,
+    acumulado: d.accumulated,
+  }));
   if (data.length === 0) return null;
+  const lastDay = days[days.length - 1]!;
+  const total = lastDay.accumulated;
   return (
     <Card header={<h2 className="font-semibold text-text-primary">Ventas diarias del mes</h2>}>
+      <p className="text-xs text-text-muted mb-2">
+        Acumulado total: {formatMoney(total)}
+      </p>
       <ResponsiveContainer width="100%" height={240}>
         <ComposedChart data={data}>
           <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
           <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="#a3a3a3" />
-          <YAxis yAxisId="left" tick={{ fontSize: 10 }} stroke="#a3a3a3" tickFormatter={(v: number) => `$${(v/1e6).toFixed(1)}M`} />
+          <YAxis yAxisId="left" tick={{ fontSize: 10 }} stroke="#a3a3a3" tickFormatter={(v: number) => `$${(v/1e3).toFixed(0)}K`} />
           <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} stroke="#2563EB" tickFormatter={(v: number) => `$${(v/1e6).toFixed(1)}M`} />
           <Tooltip contentStyle={{ borderRadius: "8px", fontSize: "12px" }} />
           <Bar yAxisId="left" dataKey="ventas" fill="#7B1818" radius={[2,2,0,0]} name="Ventas del día" />
@@ -65,31 +71,55 @@ function DailyChart({ days }: { days: { date: string; ventas: number; facturas: 
 
 // ── Forecast chart ─────────────────────────────────────────────────────
 
-function ForecastChart({ monthly }: { monthly: { month: string; forecast_ventas: number; is_history: boolean; confidence_lower: number | null; confidence_upper: number | null }[] }) {
-  if (monthly.length === 0) return (
-    <Card><p className="py-6 text-center text-sm text-text-muted">Forecast no disponible aún.</p></Card>
-  );
-  const data = monthly.map(m => ({
-    label: m.month.slice(5),
-    history: m.is_history ? m.forecast_ventas : 0,
-    predicted: m.is_history ? 0 : m.forecast_ventas,
-  }));
+function ForecastChart({ data: d }: { data: NonNullable<ReturnType<typeof useSalesForecastMonthly>['data']> }) {
+  const cm = d.current_month;
+  const nm = d.next_month;
+  const driverInfo = d.drivers?.join(", ") ?? "";
   return (
     <Card header={<h2 className="font-semibold text-text-primary">Proyección de ventas</h2>}>
-      <div className="flex items-center gap-4 mb-2 text-xs text-text-muted">
-        <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{background:"#7B1818"}} /> Real</span>
-        <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{background:"#FCD34D"}} /> Proyectado</span>
+      <div className="grid grid-cols-2 gap-3 mb-3">
+        <Card>
+          <Stat
+            label={`${cm.month.slice(0,7)}${cm.confidence ? ` (${cm.confidence})` : ""}`}
+            value={formatMoney(cm.projected_amount)}
+            subtitle={`${cm.days_observed}/${cm.days_total} días · ${formatMoney(cm.daily_rate ?? 0)}/día`}
+          />
+        </Card>
+        <Card>
+          <Stat
+            label={`${nm.month.slice(0,7)}${nm.confidence ? ` (${nm.confidence})` : ""}`}
+            value={formatMoney(nm.projected_amount)}
+            subtitle={nm.last_year_same_month ? `vs ${formatMoney(nm.last_year_same_month)} año anterior` : `${nm.days_total} días`}
+          />
+        </Card>
       </div>
-      <ResponsiveContainer width="100%" height={200}>
-        <BarChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-          <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="#a3a3a3" />
-          <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" tickFormatter={(v: number) => `$${(v/1e6).toFixed(1)}M`} />
-          <Tooltip contentStyle={{ borderRadius: "8px", fontSize: "12px" }} />
-          <Bar dataKey="history" fill="#7B1818" stackId="a" radius={[4,4,0,0]} name="Real" />
-          <Bar dataKey="predicted" fill="#FCD34D" stackId="a" radius={[4,4,0,0]} name="Proyectado" />
-        </BarChart>
-      </ResponsiveContainer>
+      {driverInfo && <p className="text-xs text-text-muted">Modelo: run_rate_v1 · Drivers: {driverInfo}</p>}
+
+      {/* Bar chart: observed vs projected */}
+      {(() => {
+        const chartData = [
+          { label: cm.month.slice(5), observed: cm.observed_amount ?? 0, projected: cm.projected_amount - (cm.observed_amount ?? 0) },
+          { label: nm.month.slice(5), observed: 0, projected: nm.projected_amount },
+        ];
+        return (
+          <div className="mt-3">
+            <div className="flex items-center gap-4 mb-1 text-xs text-text-muted">
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{background:"#7B1818"}} /> Real</span>
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{background:"#FCD34D"}} /> Proyectado</span>
+            </div>
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="#a3a3a3" />
+                <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" tickFormatter={(v: number) => `$${(v/1e6).toFixed(1)}M`} />
+                <Tooltip contentStyle={{ borderRadius: "8px", fontSize: "12px" }} />
+                <Bar dataKey="observed" fill="#7B1818" stackId="a" radius={[4,4,0,0]} name="Real" />
+                <Bar dataKey="projected" fill="#FCD34D" stackId="a" radius={[4,4,0,0]} name="Proyectado" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        );
+      })()}
     </Card>
   );
 }
@@ -207,17 +237,19 @@ export default function VentasPage(): JSX.Element {
       {tab === "diaria" && dm && (
         <>
           <div className="grid grid-cols-3 gap-3">
-            <Card><Stat label="Total mes" value={formatMoney(dm.total_month)} subtitle={dm.days.length + " días"} /></Card>
-            <Card><Stat label="Promedio diario" value={formatMoney(dm.total_month / Math.max(1, dm.days.filter(x => !x.is_future).length))} subtitle="por día con ventas" /></Card>
-            <Card><Stat label="Mejor día" value={formatMoney(Math.max(...dm.days.filter(x => !x.is_future).map(x => x.ventas), 0))} /></Card>
+            <Card><Stat label="Total mes" value={formatMoney((dm.days[dm.days.length-1]?.accumulated) ?? 0)} subtitle={dm.total_days_with_sales + " días"} /></Card>
+            <Card><Stat label="Promedio diario" value={formatMoney(dm.days.length > 0 ? ((dm.days[dm.days.length-1]?.accumulated ?? 0) / dm.total_days_with_sales) : 0)} subtitle="por día con ventas" /></Card>
+            <Card><Stat label="Mejor día" value={formatMoney(Math.max(...dm.days.map(x => x.sales), 0))} /></Card>
           </div>
           <DailyChart days={dm.days} />
           <Card header={<h2 className="font-semibold text-text-primary">Detalle diario</h2>}>
             <Table
               columns={[
-                { header: "Día", cell: (r: typeof dm.days[number]) => <span className={r.is_future ? "text-text-muted" : ""}>{r.date.slice(8)}</span> },
-                { header: "Ventas", cell: (r: typeof dm.days[number]) => <span className={r.is_future ? "text-text-muted" : ""}>{r.is_future ? "—" : formatMoney(r.ventas)}</span>, align: "right" },
-                { header: "Facturas", cell: (r: typeof dm.days[number]) => <span className={r.is_future ? "text-text-muted" : ""}>{r.is_future ? "—" : r.facturas}</span>, align: "right" },
+                { header: "Día", cell: (r: typeof dm.days[number]) => r.date.slice(8) },
+                { header: "Ventas", cell: (r: typeof dm.days[number]) => formatMoney(r.sales), align: "right" },
+                { header: "Facturas", cell: (r: typeof dm.days[number]) => String(r.invoices), align: "right" },
+                { header: "Acumulado", cell: (r: typeof dm.days[number]) => formatMoney(r.accumulated), align: "right" },
+                { header: "Ticket prom.", cell: (r: typeof dm.days[number]) => formatMoney(r.avg_ticket), align: "right" },
               ]}
               data={dm.days}
               keyFn={(r: typeof dm.days[number]) => r.date}
@@ -234,7 +266,20 @@ export default function VentasPage(): JSX.Element {
             <Card><Stat label="Total histórico" value={formatMoney(dh.total_ventas)} /></Card>
             <Card><Stat label="Facturas totales" value={dh.total_facturas.toLocaleString("es-CO")} /></Card>
           </div>
-          <Card header={<h2 className="font-semibold text-text-primary">Ventas mensuales</h2>}>
+          <Card header={<h2 className="font-semibold text-text-primary">Tendencia mensual</h2>}>
+            {dh.meses.length > 0 ? (
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={dh.meses.map(m => ({ month: `${MONTH_NAMES[m.month-1] ?? ""} ${m.year}`, ventas: m.total_ventas }))}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="month" tick={{ fontSize: 8, angle: -45, textAnchor: "end" }} stroke="#a3a3a3" height={50} />
+                  <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" tickFormatter={(v: number) => `$${(v/1e6).toFixed(1)}M`} />
+                  <Tooltip contentStyle={{ borderRadius: "8px", fontSize: "12px" }} />
+                  <Bar dataKey="ventas" fill="#7B1818" radius={[3,3,0,0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : <p className="py-6 text-center text-sm text-text-muted">Sin datos históricos.</p>}
+          </Card>
+          <Card header={<h2 className="font-semibold text-text-primary">Detalle mensual</h2>}>
             <Table
               columns={[
                 { header: "Mes", cell: (r: typeof dh.meses[number]) => `${MONTH_NAMES[r.month-1] ?? ""} ${r.year}` },
@@ -251,8 +296,8 @@ export default function VentasPage(): JSX.Element {
       )}
 
       {/* ── Forecast ────────────────────────────────────── */}
-      {tab === "forecast" && (
-        <ForecastChart monthly={df?.monthly ?? []} />
+      {tab === "forecast" && df && (
+        <ForecastChart data={df} />
       )}
     </div>
   );

@@ -206,15 +206,17 @@ export function useSalesSummaryV2() {
 
 interface SalesDailyDay {
   date: string;
-  ventas: number;
-  facturas: number;
-  is_future: boolean;
+  day: number;
+  sales: number;
+  invoices: number;
+  avg_ticket: number;
+  accumulated: number;
 }
 
 interface SalesDailyMonth {
   month: string;
   days: SalesDailyDay[];
-  total_month: number;
+  total_days_with_sales: number;
 }
 
 export function useSalesDailyMonth(month: string) {
@@ -225,16 +227,20 @@ export function useSalesDailyMonth(month: string) {
 
 interface SalesForecastMonth {
   month: string;
-  forecast_ventas: number;
-  forecast_facturas: number;
-  confidence_lower: number | null;
-  confidence_upper: number | null;
-  is_history: boolean;
+  observed_amount?: number;
+  projected_amount: number;
+  daily_rate?: number;
+  days_observed?: number;
+  days_total: number;
+  last_year_same_month?: number;
+  confidence: string;
 }
 
 interface SalesForecastMonthly {
-  monthly: SalesForecastMonth[];
-  model_version: string | null;
+  current_month: SalesForecastMonth;
+  next_month: SalesForecastMonth;
+  model_version: string;
+  drivers: string[];
 }
 
 export function useSalesForecastMonthly() {
