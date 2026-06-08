@@ -27,11 +27,6 @@ if ($listening) {
 # 2. Verificar MySQL
 Write-Log "Verificando MySQL..."
 try {
-    $env:MYSQL_PWD = (Get-Content "$ProjectRoot\.env" | Where-Object {$_ -match '^MYSQL_ROOT_PASSWORD=(.+)$'} | ForEach-Object {$matches[1]})
-    if (-not $env:MYSQL_PWD) {
-        Write-Log "ERROR: MYSQL_ROOT_PASSWORD no encontrada en .env - MySQL (root) no verificable"
-        exit 1
-    }
     $result = & "C:\Program Files (x86)\MySQL\MySQL Server 5.0\bin\mysqladmin.exe" ping -u root 2>&1
     if ($LASTEXITCODE -eq 0) {
         Write-Log "MySQL: OK"
@@ -57,8 +52,8 @@ Write-Log ".env: OK"
 # 4. Arrancar uvicorn
 Write-Log "Arrancando uvicorn en puerto $Port..."
 # Leer secretos desde .env (¡NUNCA hardcodear!)
-$env:JWT_SECRET = (Get-Content "$ProjectRoot\.env" | Where-Object {$_ -match '^JWT_SECRET=(.+)$'} | ForEach-Object {$matches[1]})
-if (-not $env:JWT_SECRET) { Write-Log "ERROR: JWT_SECRET no encontrada en .env"; exit 1 }
+$env:JWT_SECRET = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^JWT_SECRET=(.+)$'} | ForEach-Object {$matches[1]})
+if (-not $env:JWT_SECRET) { Write-Log "ERROR: JWT_SECRET no encontrada en $ApiDir\.env"; exit 1 }
 
 $env:ENV = "dev"
 $env:MYSQL_HOST = "localhost"
@@ -66,13 +61,13 @@ $env:MYSQL_PORT = "3306"
 $env:MYSQL_DATABASE = "motoshop2024"
 $env:MYSQL_USER = "api_read"
 
-$env:MYSQL_PASSWORD = (Get-Content "$ProjectRoot\.env" | Where-Object {$_ -match '^MYSQL_PASSWORD=(.+)$'} | ForEach-Object {$matches[1]})
-if (-not $env:MYSQL_PASSWORD) { Write-Log "ERROR: MYSQL_PASSWORD no encontrada en .env"; exit 1 }
+$env:MYSQL_PASSWORD = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^MYSQL_PASSWORD=(.+)$'} | ForEach-Object {$matches[1]})
+if (-not $env:MYSQL_PASSWORD) { Write-Log "ERROR: MYSQL_PASSWORD no encontrada en $ApiDir\.env"; exit 1 }
 
 $env:MYSQL_APP_WRITER_USER = "app_writer"
 
-$env:MYSQL_APP_WRITER_PASSWORD = (Get-Content "$ProjectRoot\.env" | Where-Object {$_ -match '^MYSQL_APP_WRITER_PASSWORD=(.+)$'} | ForEach-Object {$matches[1]})
-if (-not $env:MYSQL_APP_WRITER_PASSWORD) { Write-Log "ERROR: MYSQL_APP_WRITER_PASSWORD no encontrada en .env"; exit 1 }
+$env:MYSQL_APP_WRITER_PASSWORD = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^MYSQL_APP_WRITER_PASSWORD=(.+)$'} | ForEach-Object {$matches[1]})
+if (-not $env:MYSQL_APP_WRITER_PASSWORD) { Write-Log "ERROR: MYSQL_APP_WRITER_PASSWORD no encontrada en $ApiDir\.env"; exit 1 }
 $env:CORS_ORIGINS = "http://localhost:3000,https://api.fragloesja.uk,https://motoshop-web-tau.vercel.app,https://app.fragloesja.uk,http://localhost:8000"
 
 # Databricks (Track A) — leer del .env de la API

@@ -35,7 +35,7 @@ def main():
         sys.exit(1)
 
     size_mb = DB_PATH.stat().st_size / (1024 * 1024)
-    print(f"Subiendo {DB_PATH} ({size_mb:.0f} MB) → s3://{R2_BUCKET}/motoshop_gold.duckdb")
+    print(f"Subiendo {DB_PATH} ({size_mb:.0f} MB) -> s3://{R2_BUCKET}/motoshop_gold.duckdb")
 
     import boto3
     s3 = boto3.client(
@@ -47,7 +47,7 @@ def main():
     )
 
     s3.upload_file(str(DB_PATH), R2_BUCKET, "motoshop_gold.duckdb")
-    print("✅ Upload exitoso. Render descargará el archivo en el próximo deploy.")
+    print("[OK] Upload exitoso. Render descargara el archivo en el proximo deploy.")
 
 
 if __name__ == "__main__":
