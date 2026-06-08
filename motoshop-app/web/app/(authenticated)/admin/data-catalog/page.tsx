@@ -94,11 +94,17 @@ function TableDetailModal({ name, onClose }: { name: string; onClose: () => void
               <span className="text-xs text-text-muted">{fmt(detail.row_count)} filas · {cols.length} cols</span>
             </div>
             {detail.quality && (
-              <div className="mb-3 grid grid-cols-4 gap-1 text-xs">
-                <div className="rounded bg-surface-alt p-1 text-center"><span className="text-text-muted">Completitud</span><p className="font-bold">{detail.quality.completeness_pct.toFixed(1)}%</p></div>
-                <div className="rounded bg-surface-alt p-1 text-center"><span className="text-text-muted">Nulos</span><p className="font-bold">{fmt(detail.quality.null_cells)}</p></div>
-                <div className="rounded bg-surface-alt p-1 text-center"><span className="text-text-muted">Duplicados</span><p className="font-bold">{detail.quality.duplicate_rows}</p></div>
-                <div className="rounded bg-surface-alt p-1 text-center"><span className="text-text-muted">Filas</span><p className="font-bold">{fmt(detail.quality.total_rows)}</p></div>
+              <div className="mb-3 rounded-lg bg-surface-alt p-2 text-xs">
+                {detail.quality.warnings?.length ? detail.quality.warnings.map((w,i)=><p key={i} className="text-warning">⚠️ {w}</p>) : null}
+                {detail.quality.max_date && <p className="text-text-muted">Última fecha: {detail.quality.max_date}</p>}
+                {detail.quality.null_counts && Object.keys(detail.quality.null_counts).length > 0 && (
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-text-muted">Columnas con nulos ({Object.keys(detail.quality.null_counts).length})</summary>
+                    <div className="mt-1 space-y-0.5">
+                      {Object.entries(detail.quality.null_counts).slice(0,10).map(([col,count])=><p key={col} className="text-text-secondary">{col}: {count}</p>)}
+                    </div>
+                  </details>
+                )}
               </div>
             )}
             {cols.length > 0 && (

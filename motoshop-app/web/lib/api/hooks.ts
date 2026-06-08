@@ -717,7 +717,7 @@ export interface CatalogDetail {
   row_count: number;
   columns: { name: string; type: string; null_count: number; null_pct: number }[];
   sample_rows: Record<string, unknown>[];
-  quality?: { total_rows: number; null_cells: number; duplicate_rows: number; completeness_pct: number };
+  quality?: { null_counts?: Record<string,number>; max_date?: string|null; warnings?: string[] };
   max_date?: string | null;
   date_column?: string | null;
   status?: string;
