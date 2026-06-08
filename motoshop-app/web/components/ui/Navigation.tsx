@@ -306,6 +306,7 @@ export function gerenteNavItems(): NavItem[] {
     { label: "Drift", href: "/drift", icon: Icons.alerts },
     { label: "Plan Compras", href: "/plan-compras", icon: Icons.planCompras },
     { label: "Pipeline", href: "/admin/pipeline", icon: Icons.home },
+    { label: "Catálogo", href: "/admin/data-catalog", icon: Icons.home },
   ];
 }
 

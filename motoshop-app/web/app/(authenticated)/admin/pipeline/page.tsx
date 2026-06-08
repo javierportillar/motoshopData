@@ -262,6 +262,9 @@ export default function PipelinePage(): JSX.Element {
       <div>
         <h1 className="text-xl font-bold text-text-primary">Actualización de datos</h1>
         <p className="text-sm text-text-muted">Estado de las corridas del pipeline de datos</p>
+        <Link href="/admin/data-catalog" className="text-xs text-accent hover:underline mt-1 inline-block">
+          Ver tablas generadas →
+        </Link>
       </div>
 
       <SummaryCards />
