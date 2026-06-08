@@ -63,9 +63,15 @@ function YearTrendChart({ currentYear, trendCurrData, trendPrevData, forecast }:
   }));
   const hasPrev = prevData.some(d => d.prev != null && d.prev > 0);
 
-  // Projection: current month (in progress) and next month
+  // Projection: start from last real month, show current and next
   const projectedMap = new Map<number, number>();
   if (forecast) {
+    // Anclar la proyección en el último mes con dato real
+    const lastRealMonth = currentMonth - 1;
+    const lastRealValue = trendCurrData.get(lastRealMonth);
+    if (lastRealValue != null) {
+      projectedMap.set(lastRealMonth, lastRealValue);
+    }
     projectedMap.set(currentMonth, forecast.current_month.projected_amount);
     projectedMap.set(currentMonth + 1, forecast.next_month.projected_amount);
   }
