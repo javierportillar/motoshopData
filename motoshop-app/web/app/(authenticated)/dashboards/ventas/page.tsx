@@ -145,16 +145,34 @@ export default function VentasPage(): JSX.Element {
         <>
           <Card header={<h2 className="font-semibold text-text-primary">Tendencia histórica</h2>}>
             {dh.meses.length > 0 ? (
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={dh.meses.map(m => ({ month: `${MONTHS[m.month-1]??""} ${String(m.year).slice(2)}`, ventas: m.total_ventas }))}>
+              <ResponsiveContainer width="100%" height={320}>
+                <ComposedChart data={[
+                  ...dh.meses.map(m => ({
+                    month: `${MONTHS[m.month-1]??""} ${String(m.year).slice(2)}`,
+                    ventas: m.total_ventas,
+                    tendencia: m.total_ventas,
+                    proy: null as number | null,
+                  })),
+                  // Add projection for current and next month
+                  ...(df ? [
+                    { month: `${MONTHS[new Date().getMonth()]??""} ${String(cy).slice(2)} (proy)`, ventas: 0, tendencia: null, proy: df.current_month.projected_amount },
+                    { month: `${MONTHS[new Date().getMonth()+1]??""} ${String(cy).slice(2)} (proy)`, ventas: 0, tendencia: null, proy: df.next_month.projected_amount },
+                  ] : []),
+                ]}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="month" tick={{ fontSize: 8, angle: -60, textAnchor: "end" }} stroke="#a3a3a3" height={60} interval="preserveStartEnd" />
+                  <XAxis dataKey="month" tick={{ fontSize: 7, angle: -60, textAnchor: "end" }} stroke="#a3a3a3" height={70} interval="preserveStartEnd" />
                   <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" tickFormatter={(v: number) => `$${(v/1e6).toFixed(1)}M`} />
                   <Tooltip contentStyle={{ borderRadius: "8px", fontSize: "12px" }} />
-                  <Bar dataKey="ventas" fill="#7B1818" radius={[3,3,0,0]} />
-                </BarChart>
+                  <Bar dataKey="ventas" fill="#7B1818" radius={[2,2,0,0]} name="Ventas" />
+                  <Line type="monotone" dataKey="tendencia" stroke="#7B1818" strokeWidth={1.5} dot={false} name="Tendencia" connectNulls />
+                  <Bar dataKey="proy" fill="#FCD34D" radius={[2,2,0,0]} name="Proyección" />
+                </ComposedChart>
               </ResponsiveContainer>
             ) : <p className="py-6 text-sm text-text-muted text-center">Sin datos históricos.</p>}
+            <div className="flex items-center gap-4 mt-2 text-xs text-text-muted">
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{background:"#7B1818"}} /> Real</span>
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{background:"#FCD34D"}} /> Proyección</span>
+            </div>
           </Card>
           <Card header={<h2 className="font-semibold text-text-primary">Histórico mensual</h2>}>
             <Table columns={[
