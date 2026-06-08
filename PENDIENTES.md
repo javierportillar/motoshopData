@@ -8,6 +8,39 @@
 
 ---
 
+## Sesión 2026-06-08 (68) · V1.8 Dashboard correctness y lectura gerencial
+
+**Estado:** planificación creada, pendiente de ejecución por devs.
+
+**Plan canónico V1.8:** [`docs/plan-v1.8-dashboard-correctness.md`](docs/plan-v1.8-dashboard-correctness.md)
+
+### Evidencia de auditoría del revisor
+
+- ✅ R2 DuckDB productivo tiene ventas válidas hasta `2026-06-06` en gold/silver.
+- ⚠️ Pipeline corrió el `2026-06-08`, pero procesó lo que tenía como dato válido; si MySQL Windows tiene ventas del 7/8 de junio, el bug está en ingesta.
+- ⚠️ Log `hasta 9876-01-01` viene de una fecha futura inválida en bronze, no de ventas reales.
+- ⚠️ `Ventas del mes -77.7%` es una comparación gerencialmente incorrecta: junio parcial vs mayo completo. Comparación justa auditada: junio 1-6 `5,733,700` vs mayo 1-6 `5,340,800` → `+7.4%`.
+- 🔴 Inventario y dormidos usan fuentes de stock distintas: inventario usa latest inventory `4,024` unidades, dormidos usa `dim_producto.existencia`, por eso los números no cuadran.
+
+### Pendientes del humano Javier
+
+| # | Tarea | Bloqueante | Acción concreta |
+|---|-------|------------|-----------------|
+| 1 | Kickoff Dev W | Validar si hay ventas reales 2026-06-07/08 en MySQL Windows | Pegar handoff Dev W del plan V1.8 y pedir SQL directo con evidencia |
+| 2 | Kickoff Dev D | Backend/data para comparaciones justas, forecast e inventario correcto | Pegar handoff Dev D del plan V1.8 después de Dev W o en paralelo si no depende de Windows |
+| 3 | Kickoff Dev F | Front Inicio/Ventas/Inventario | Pegar handoff Dev F solo cuando Dev D entregue contratos API o mocks tipados |
+
+### Pendientes del revisor IA
+
+| # | Tarea | Cuándo |
+|---|-------|--------|
+| 1 | Auditar SQL Windows de Dev W | Cuando entregue MAX(fecfven) válido y evidencia |
+| 2 | Auditar endpoints Dev D | Cuando entregue curls/SQL/tests |
+| 3 | Auditar Front Dev F | Cuando entregue screenshots + build/typecheck |
+| 4 | Firmar GO/NO-GO V1.8 | Cuando backend, frontend y operación cuadren con evidencia |
+
+---
+
 ## Sesión 2026-06-07 (67) · V1.5 Pipeline Windows · 2 issues bloqueantes
 
 **Estado:** Dev W instaló el pipeline + Scheduled Task pero el resultado tiene 2 problemas serios.
