@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 import type { ReactNode } from "react";
 import { LogoMark } from "@/components/Logo";
 
@@ -200,38 +201,117 @@ function BottomNav({
   items: NavItem[];
   isActive: (href: string) => boolean;
 }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const primaryItems = items.slice(0, 4);
+  const menuItems = items.slice(4);
+  const hasMenuItems = menuItems.length > 0;
+  const menuActive = menuItems.some((item) => isActive(item.href));
+
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-surface-dark-alt bg-surface-dark lg:hidden">
-      {/* Safe area para iOS. Mobile muestra TODOS los módulos con scroll horizontal. */}
-      <div className="pb-[env(safe-area-inset-bottom,0px)]">
-        <div className="flex snap-x items-stretch gap-1 overflow-x-auto px-2 pb-1 pt-1.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {items.map((item) => {
-            const active = isActive(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`relative flex min-w-[76px] snap-start flex-col items-center gap-0.5 rounded-xl px-2 py-1.5 transition-all ${
-                  active
+    <>
+      {open && hasMenuItems && (
+        <div className="fixed inset-0 z-50 bg-black/45 lg:hidden" onClick={() => setOpen(false)}>
+          <div
+            className="absolute inset-x-3 bottom-[4.6rem] max-h-[72vh] overflow-hidden rounded-[1.75rem] border border-white/10 bg-surface-dark text-text-inverse shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-white/10 px-4 py-4">
+              <div>
+                <p className="text-[0.65rem] font-semibold uppercase tracking-[0.24em] text-white/40">
+                  Menú MotoShop
+                </p>
+                <h2 className="mt-1 text-lg font-black">Todas las secciones</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-white/70"
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="max-h-[calc(72vh-4.5rem)] overflow-y-auto p-3 pb-5">
+              <div className="grid grid-cols-2 gap-2">
+                {menuItems.map((item) => {
+                  const active = isActive(item.href);
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      onClick={() => setOpen(false)}
+                      className={`flex min-h-[4.75rem] flex-col justify-between rounded-2xl border px-3 py-3 transition-all ${
+                        active
+                          ? "border-primary bg-primary/15 text-primary"
+                          : "border-white/10 bg-white/[0.04] text-white/75 active:bg-white/10"
+                      }`}
+                    >
+                      <span>{item.icon}</span>
+                      <span className="text-sm font-bold leading-tight">{item.label}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-surface-dark-alt bg-surface-dark lg:hidden">
+        {/* Safe area para iOS. Mobile muestra 4 accesos rápidos + menú desplegable con todo. */}
+        <div className="pb-[env(safe-area-inset-bottom,0px)]">
+          <div className="flex items-stretch gap-1 px-2 pb-1 pt-1.5">
+            {primaryItems.map((item) => {
+              const active = isActive(item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`relative flex flex-1 flex-col items-center gap-0.5 rounded-xl px-1 py-1.5 transition-all ${
+                    active
+                      ? "bg-primary/15 text-primary"
+                      : "text-text-muted hover:bg-surface-dark-alt hover:text-text-inverse"
+                  }`}
+                >
+                  <span className="transition-transform duration-150 active:scale-90">
+                    {item.icon}
+                  </span>
+                  <span className="max-w-[72px] truncate text-[0.625rem] font-medium leading-tight">
+                    {item.label}
+                  </span>
+                  {active && (
+                    <span className="absolute top-0 left-1/2 h-0.5 w-7 -translate-x-1/2 rounded-full bg-primary" />
+                  )}
+                </Link>
+              );
+            })}
+            {hasMenuItems && (
+              <button
+                type="button"
+                onClick={() => setOpen((value) => !value)}
+                className={`relative flex flex-1 flex-col items-center gap-0.5 rounded-xl px-1 py-1.5 transition-all ${
+                  open || menuActive
                     ? "bg-primary/15 text-primary"
                     : "text-text-muted hover:bg-surface-dark-alt hover:text-text-inverse"
                 }`}
+                aria-expanded={open}
+                aria-label="Abrir menú de secciones"
               >
-                <span className="transition-transform duration-150 active:scale-90">
-                  {item.icon}
-                </span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="h-5 w-5">
+                  <path d="M4 7h16M4 12h16M4 17h16" />
+                </svg>
                 <span className="max-w-[72px] truncate text-[0.625rem] font-medium leading-tight">
-                  {item.label}
+                  Más
                 </span>
-                {active && (
+                {(open || menuActive) && (
                   <span className="absolute top-0 left-1/2 h-0.5 w-7 -translate-x-1/2 rounded-full bg-primary" />
                 )}
-              </Link>
-            );
-          })}
+              </button>
+            )}
+          </div>
         </div>
-      </div>
-    </nav>
+      </nav>
+    </>
   );
 }
 
@@ -240,7 +320,7 @@ function BottomNav({
 /**
  * Navigation — sistema de navegación adaptable MotoShop.
  *
- * Mobile (< lg): bottom nav con máximo 5 items + indicador active.
+ * Mobile (< lg): bottom nav con 4 accesos rápidos + menú "Más" con todas las secciones.
  * Desktop (≥ lg): sidebar fijo izquierdo con items completos + logo + logout.
  *
  * Diseño industrial: fondo surface-dark #171717, acero texturizado,
