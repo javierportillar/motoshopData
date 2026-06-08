@@ -124,9 +124,9 @@ class ToolExecutor:
             FROM motoshop_gold_mart_inventario_actual
         """).fetchone()
         return {
-            "stock_total": float(r[0] or 0),
+            "stock_total_unidades": float(r[0] or 0),
             "valor_total_cop": float(r[1] or 0),
-            "num_productos": int(r[2] or 0),
+            "num_productos_distintos": int(r[2] or 0),
         }
 
     def compare_periods(self, period_1: str, period_2: str) -> dict:
@@ -189,7 +189,7 @@ TOOL_DEFINITIONS = [
     {"type": "function", "function": {"name": "get_dormidos", "description": "Productos sin venta hace al menos N días.", "parameters": {"type": "object", "properties": {"days_min": {"type": "integer", "default": 90}, "limit": {"type": "integer", "default": 20}}, "required": []}}},
     {"type": "function", "function": {"name": "get_alerts_by_urgency", "description": "Alertas de quiebre de stock. Filtrar por urgencia: alta, media, baja.", "parameters": {"type": "object", "properties": {"urgency": {"type": "string", "enum": ["alta", "media", "baja"]}}, "required": []}}},
     {"type": "function", "function": {"name": "get_vendedor_performance", "description": "Performance de vendedores del mes actual. Si se pasa vendedor_id, solo ese.", "parameters": {"type": "object", "properties": {"vendedor_id": {"type": "string"}, "period": {"type": "string", "default": "month"}}, "required": []}}},
-    {"type": "function", "function": {"name": "get_inventory_value", "description": "Valor total del inventario en COP, cantidad de productos distintos, y stock total en unidades.", "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {"name": "get_inventory_value", "description": "Valor total del inventario en COP (valor_total_cop), stock en unidades (stock_total_unidades), y cantidad de productos distintos (num_productos_distintos).", "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {"name": "compare_periods", "description": "Compara ventas entre dos meses (YYYY-MM). Devuelve delta porcentual.", "parameters": {"type": "object", "properties": {"period_1": {"type": "string"}, "period_2": {"type": "string"}}, "required": ["period_1", "period_2"]}}},
     {"type": "function", "function": {"name": "get_abc_distribution", "description": "Distribución ABC del último mes: cuántos SKUs en A, B, C y su valor.", "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {"name": "get_forecast_summary", "description": "Resumen del forecast de demanda por categoría (real vs predicho).", "parameters": {"type": "object", "properties": {}, "required": []}}},
