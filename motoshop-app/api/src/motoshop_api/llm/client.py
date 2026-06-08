@@ -75,7 +75,11 @@ class LLMClient:
         messages.append({"role": "user", "content": prompt})
         return self._call(messages, max_tokens)
 
-    def _call(self, messages: list[dict], max_tokens: int | None = None) -> dict:
+    def complete_with_tools(self, messages: list[dict], tools: list[dict], *, max_tokens: int | None = None) -> dict:
+        """Chat completion con function calling. Retorna {text, tool_calls, tokens_used, model, ...}."""
+        return self._call(messages, max_tokens, tools=tools)
+
+    def _call(self, messages: list[dict], max_tokens: int | None = None, tools: list[dict] | None = None) -> dict:
         last_error = None
 
         for backend in self._backends:
@@ -87,6 +91,9 @@ class LLMClient:
                     "max_tokens": mt,
                     "temperature": 0.3,
                 }
+                if tools:
+                    body["tools"] = tools
+                    body["tool_choice"] = "auto"
 
                 resp = self._http.post(
                     f"{backend['base']}/chat/completions",
@@ -118,6 +125,7 @@ class LLMClient:
                 choice = data["choices"][0]
                 msg = choice["message"]
                 text = msg.get("content") or msg.get("reasoning_content") or ""
+                tool_calls = msg.get("tool_calls", [])
                 usage = data.get("usage", {})
 
                 logger.info(
@@ -128,6 +136,7 @@ class LLMClient:
 
                 return {
                     "text": text,
+                    "tool_calls": tool_calls,
                     "tokens_used": usage.get("total_tokens", 0),
                     "tokens_input": usage.get("prompt_tokens", 0),
                     "tokens_output": usage.get("completion_tokens", 0),

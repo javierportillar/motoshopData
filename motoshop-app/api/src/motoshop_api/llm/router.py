@@ -12,9 +12,11 @@ import os
 from datetime import datetime
 from time import time
 
+from uuid import uuid4
+
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -193,6 +195,39 @@ async def forecast_explain(
         text=text,
         generated_at=datetime.now(),
     )
+
+
+# ── Q&A Chat ────────────────────────────────────────────────────────────────
+
+class QAChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=500)
+    conversation_id: str = Field(default_factory=lambda: str(uuid4()))
+
+
+class QAChatResponse(BaseModel):
+    text: str
+    conversation_id: str
+    turn_count: int
+    tools_used: list[str]
+
+
+@router.post("/qa/chat", response_model=QAChatResponse)
+@limiter.limit("60/minute")
+async def qa_chat(
+    request: Request,
+    body: QAChatRequest,
+    user: User = Depends(get_current_user),
+) -> QAChatResponse:
+    """Chat conversacional con tool use sobre DuckDB.
+
+    El LLM decide automáticamente qué tools usar para responder.
+    Máximo 20 turnos por sesión (conversation_id).
+    """
+    from motoshop_api.llm.qa_chat import get_qa_chat
+
+    qa = get_qa_chat()
+    result = qa.chat(body.message, body.conversation_id)
+    return QAChatResponse(**result)
 
 
 # ── Admin cost dashboard ────────────────────────────────────────────────────

@@ -519,3 +519,27 @@ export function useForecastNarrative() {
     },
   );
 }
+
+// ── Q&A Chat (V1.6 Sprint C) ────────────────────────────────────────────
+
+interface QAChatResponse {
+  text: string;
+  conversation_id: string;
+  turn_count: number;
+  tools_used: string[];
+}
+
+export function useSendMessage(conversationId: string) {
+  return async (message: string): Promise<QAChatResponse> => {
+    const resp = await apiFetch("/api/llm/qa/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, conversation_id: conversationId }),
+    });
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(err);
+    }
+    return resp.json();
+  };
+}
