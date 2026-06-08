@@ -914,6 +914,200 @@ class DuckDBMetricsRepo:
         )
 
 
+    # ── Sales Summary V2 (V1.8) ──────────────────────────────────────────
+
+    def get_sales_summary_v2(self) -> dict:
+        """Ventas con comparación justa: parcial vs parcial, años anteriores."""
+        from datetime import date
+
+        # Max date
+        max_d = self._con.execute(
+            "SELECT MAX(business_date) FROM motoshop_gold_mart_ventas_diarias_sku"
+        ).fetchone()[0]
+        max_date = max_d if max_d else date.today()
+        max_date_str = str(max_date)
+        current_month = max_date.strftime("%Y-%m")
+        day_num = max_date.day
+
+        # Current month accumulated
+        curr = self._con.execute("""
+            SELECT ROUND(COALESCE(SUM(valor_total),0),2), COALESCE(SUM(num_facturas),0),
+                   ROUND(COALESCE(SUM(valor_total),0)/NULLIF(COALESCE(SUM(num_facturas),0),0),2),
+                   COUNT(DISTINCT business_date)
+            FROM motoshop_gold_mart_ventas_diarias_sku
+            WHERE STRFTIME(business_date,'%Y-%m') = ?
+        """, [current_month]).fetchone()
+
+        # Previous month, same day window
+        prev_month_date = max_date.replace(day=1) - timedelta(days=1)
+        prev_month = prev_month_date.strftime("%Y-%m")
+        prev_day = min(day_num, (max_date.replace(day=1) - timedelta(days=1)).day)
+        prev_start = f"{prev_month}-01"
+        prev_end = f"{prev_month}-{prev_day:02d}"
+
+        prev = self._con.execute("""
+            SELECT ROUND(COALESCE(SUM(valor_total),0),2)
+            FROM motoshop_gold_mart_ventas_diarias_sku
+            WHERE business_date >= ? AND business_date <= ?
+        """, [prev_start, prev_end]).fetchone()
+
+        va_curr = float(curr[0] or 0)
+        va_prev = float(prev[0] or 0)
+        delta = round((va_curr - va_prev) / va_prev * 100, 1) if va_prev else None
+
+        # Same month, previous years
+        years_prev = []
+        for yr in range(max_date.year - 1, max_date.year - 3, -1):
+            try:
+                y_start = f"{yr}-{max_date.month:02d}-01"
+                y_end = f"{yr}-{max_date.month:02d}-{day_num:02d}"
+                y_same = self._con.execute("""
+                    SELECT ROUND(COALESCE(SUM(valor_total),0),2) FROM motoshop_gold_mart_ventas_diarias_sku
+                    WHERE business_date >= ? AND business_date <= ?
+                """, [y_start, y_end]).fetchone()
+                y_full = self._con.execute("""
+                    SELECT ROUND(COALESCE(SUM(valor_total),0),2) FROM motoshop_gold_mart_ventas_diarias_sku
+                    WHERE STRFTIME(business_date,'%Y-%m') = ?
+                """, [f"{yr}-{max_date.month:02d}"]).fetchone()
+                y_amount = float(y_same[0] or 0)
+                y_delta = round((va_curr - y_amount) / y_amount * 100, 1) if y_amount else None
+                years_prev.append({
+                    "year": yr,
+                    "same_day_window_amount": y_amount,
+                    "full_month_amount": float(y_full[0] or 0),
+                    "delta_same_window_pct": y_delta,
+                })
+            except Exception:
+                pass
+
+        return {
+            "business_month": current_month,
+            "max_sales_date": max_date_str,
+            "current_month_accumulated": va_curr,
+            "current_month_days_with_sales": int(curr[3] or 0),
+            "previous_month_same_window": {
+                "from": prev_start,
+                "to": prev_end,
+                "amount": va_prev,
+                "delta_pct": delta,
+            },
+            "same_month_previous_years": years_prev,
+            "ticket_promedio": float(curr[2] or 0),
+            "num_facturas": int(curr[1] or 0),
+        }
+
+
+    # ── Sales Daily Month (V1.8) ──────────────────────────────────────
+
+    def get_sales_daily_month(self, month: str) -> dict:
+        """Evolución diaria del mes: ventas, facturas, acumulado por día."""
+        rows = self._con.execute("""
+            SELECT business_date, ROUND(COALESCE(SUM(valor_total),0),2) AS ventas,
+                   COALESCE(SUM(num_facturas),0) AS facturas,
+                   ROUND(COALESCE(SUM(valor_total),0)/NULLIF(COALESCE(SUM(num_facturas),0),0),2) AS ticket
+            FROM motoshop_gold_mart_ventas_diarias_sku
+            WHERE STRFTIME(business_date,'%Y-%m') = ?
+            GROUP BY business_date ORDER BY business_date
+        """, [month]).fetchall()
+
+        days = []
+        accum = 0.0
+        for r in rows:
+            d_str = str(r[0])
+            accum += float(r[1] or 0)
+            days.append({
+                "date": d_str,
+                "day": int(d_str.split("-")[2]),
+                "sales": float(r[1] or 0),
+                "invoices": int(r[2] or 0),
+                "avg_ticket": float(r[3] or 0),
+                "accumulated": round(accum, 2),
+            })
+        return {"month": month, "days": days, "total_days_with_sales": len(days)}
+
+
+    # ── Sales Forecast Monthly (V1.8) ─────────────────────────────────
+
+    def get_sales_forecast_monthly(self, horizon: int = 2) -> dict:
+        """Proyección run-rate: mes actual + siguiente. Modelo simple, sin LLM."""
+        from datetime import date
+
+        max_d = self._con.execute(
+            "SELECT MAX(business_date) FROM motoshop_gold_mart_ventas_diarias_sku"
+        ).fetchone()[0]
+        max_date = max_d if max_d else date.today()
+        current_month = max_date.strftime("%Y-%m")
+        day_num = max_date.day
+
+        # Current month: acumulado / días con venta → run-rate diario
+        curr = self._con.execute("""
+            SELECT ROUND(COALESCE(SUM(valor_total),0),2), COUNT(DISTINCT business_date)
+            FROM motoshop_gold_mart_ventas_diarias_sku
+            WHERE STRFTIME(business_date,'%Y-%m') = ?
+        """, [current_month]).fetchone()
+        accum = float(curr[0] or 0)
+        days_with_sales = int(curr[1] or 1) or 1
+
+        total_days = (max_date.replace(day=1) + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+        remaining_days = total_days.day - day_num
+        daily_rate = accum / days_with_sales
+        projected_current = round(accum + daily_rate * remaining_days, 2)
+
+        # Next month: run-rate + seasonal factor from same month last year
+        next_month_num = max_date.month + 1
+        next_year = max_date.year if next_month_num <= 12 else max_date.year + 1
+        next_month_num = next_month_num if next_month_num <= 12 else 1
+        next_month_str = f"{next_year}-{next_month_num:02d}"
+        next_total_days = (date(next_year, next_month_num, 1) + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+
+        # Seasonal: same month last year
+        ly_month = f"{max_date.year - 1}-{max_date.month:02d}"
+        ly_sales = self._con.execute("""
+            SELECT ROUND(COALESCE(SUM(valor_total),0),2)
+            FROM motoshop_gold_mart_ventas_diarias_sku WHERE STRFTIME(business_date,'%Y-%m') = ?
+        """, [ly_month]).fetchone()
+        ly_val = float(ly_sales[0] or 0)
+
+        # Last 3 complete months
+        months = []
+        for i in range(1, 4):
+            m = max_date.month - i
+            y = max_date.year
+            if m <= 0:
+                m += 12
+                y -= 1
+            m_str = f"{y}-{m:02d}"
+            mv = self._con.execute("""
+                SELECT ROUND(COALESCE(SUM(valor_total),0),2)
+                FROM motoshop_gold_mart_ventas_diarias_sku WHERE STRFTIME(business_date,'%Y-%m') = ?
+            """, [m_str]).fetchone()
+            months.append(float(mv[0] or 0))
+
+        avg_last_3 = sum(months) / len([m for m in months if m > 0]) if any(months) else accum
+        next_projected = round(daily_rate * next_total_days.day, 2)
+
+        return {
+            "current_month": {
+                "month": current_month,
+                "observed_amount": accum,
+                "projected_amount": projected_current,
+                "daily_rate": round(daily_rate, 2),
+                "days_observed": day_num,
+                "days_total": total_days.day,
+                "confidence": "high" if day_num > 7 else "medium",
+            },
+            "next_month": {
+                "month": next_month_str,
+                "projected_amount": next_projected,
+                "days_total": next_total_days.day,
+                "last_year_same_month": ly_val,
+                "confidence": "low",
+            },
+            "model_version": "run_rate_v1",
+            "drivers": ["daily_run_rate", "same_month_last_year"],
+        }
+
+
 def _prev_month_str(month: str) -> str:
     """Retorna el mes anterior en formato YYYY-MM."""
     d = datetime.strptime(month, "%Y-%m")

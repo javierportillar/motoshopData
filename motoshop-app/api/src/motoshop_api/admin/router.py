@@ -10,7 +10,7 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -180,6 +180,65 @@ async def pipeline_refresh(
             status_code=500,
             detail=f"Pipeline refresh failed: {exc}",
         )
+
+
+# ── Data status (V1.8) ──────────────────────────────────────────────────
+
+
+class DataStatusResponse(BaseModel):
+    sales_max_date: str | None = None
+    sales_days_lag: int | None = None
+    inventory_snapshot_date: str | None = None
+    invalid_future_sales_rows: int = 0
+    latest_pipeline_run_status: str | None = None
+    duckdb_freshness_utc: str | None = None
+    duckdb_backend: str = "duckdb"
+
+
+@router.get("/data/status", response_model=DataStatusResponse)
+async def data_status(
+    request: Request,
+    user: User = Depends(require_role("admin", "gerente")),
+) -> DataStatusResponse:
+    """Estado real de los datos: fecha máxima, lag, filas inválidas, frescura."""
+    import duckdb
+    from datetime import date, datetime, timezone
+
+    db_path = _get_db_path()
+    con = duckdb.connect(str(db_path), read_only=True)
+    try:
+        # Max sales date
+        max_date = con.execute(
+            "SELECT MAX(business_date) FROM motoshop_gold_mart_ventas_diarias_sku"
+        ).fetchone()[0]
+
+        max_date_str = str(max_date) if max_date else None
+        days_lag = (date.today() - max_date).days if max_date else None
+
+        # Inventory snapshot
+        inv_snapshot = con.execute(
+            "SELECT MAX(snapshot_date) FROM motoshop_gold_mart_inventario_actual"
+        ).fetchone()[0]
+        inv_snapshot_str = str(inv_snapshot) if inv_snapshot else None
+
+        # Invalid future sales (> tomorrow)
+        invalid = con.execute(
+            "SELECT COUNT(*) FROM motoshop_silver_fact_ventas WHERE business_date > CURRENT_DATE + 1"
+        ).fetchone()[0]
+
+        # DuckDB freshness
+        mtime = db_path.stat().st_mtime
+        freshness_utc = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+
+        return DataStatusResponse(
+            sales_max_date=max_date_str,
+            sales_days_lag=days_lag,
+            inventory_snapshot_date=inv_snapshot_str,
+            invalid_future_sales_rows=int(invalid or 0),
+            duckdb_freshness_utc=freshness_utc,
+        )
+    finally:
+        con.close()
 
 
 # ── LLM cost dashboard ─────────────────────────────────────────────────

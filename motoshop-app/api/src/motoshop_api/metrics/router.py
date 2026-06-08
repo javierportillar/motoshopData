@@ -132,6 +132,47 @@ def sales_summary(
     return _cached_or_fetch("sales-summary", repo.get_sales_summary)
 
 
+# ── Sales Summary V2 (V1.8) ──────────────────────────────────────────────
+
+@router.get("/metrics/sales-summary-v2")
+@limiter.limit("30/minute")
+def sales_summary_v2(
+    request: Request,
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+):
+    """Ventas con comparación justa: parcial vs parcial, años anteriores."""
+    return _cached_or_fetch("sales-summary-v2", repo.get_sales_summary_v2)
+
+
+# ── Sales Daily Month (V1.8) ─────────────────────────────────────────────
+
+@router.get("/metrics/sales-daily-month")
+@limiter.limit("30/minute")
+def sales_daily_month(
+    request: Request,
+    month: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+):
+    """Evolución diaria de ventas para un mes específico."""
+    return _cached_or_fetch(f"sales-daily-month:{month}", lambda: repo.get_sales_daily_month(month))
+
+
+# ── Sales Forecast Monthly (V1.8) ────────────────────────────────────────
+
+@router.get("/metrics/sales-forecast-monthly")
+@limiter.limit("10/minute")
+def sales_forecast_monthly(
+    request: Request,
+    horizon: int = Query(default=2, ge=1, le=3),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+):
+    """Proyección de ventas (run-rate) para mes actual y siguiente. Sin LLM."""
+    return _cached_or_fetch(f"sales-forecast:{horizon}", lambda: repo.get_sales_forecast_monthly(horizon))
+
+
 @router.get("/metrics/sales-daily", response_model=SalesDailyResponse)
 @limiter.limit("30/minute")
 def sales_daily(
