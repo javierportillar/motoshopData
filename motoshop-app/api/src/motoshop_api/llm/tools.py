@@ -20,9 +20,11 @@ logger = logging.getLogger(__name__)
 class ToolExecutor:
     """Ejecuta tools contra DuckDB."""
 
-    def __init__(self, duckdb_path: str = "out/motoshop_gold.duckdb"):
+    def __init__(self, duckdb_path: str | None = None):
         import duckdb
-        self._con = duckdb.connect(duckdb_path, read_only=True)
+        import os
+        path = duckdb_path or os.environ.get("DUCKDB_PATH", "out/motoshop_gold.duckdb")
+        self._con = duckdb.connect(path, read_only=True)
 
     def _get_max_date(self) -> date:
         r = self._con.execute(

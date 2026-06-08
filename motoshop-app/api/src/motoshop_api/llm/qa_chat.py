@@ -84,7 +84,9 @@ _conversation_mgr = ConversationManager()
 def get_qa_chat():
     from motoshop_api.llm.client import get_llm_client
     from motoshop_api.llm.tools import ToolExecutor, TOOL_DEFINITIONS
-    return QAChat(get_llm_client(), _conversation_mgr, ToolExecutor(), TOOL_DEFINITIONS)
+    import os
+    db_path = os.environ.get("DUCKDB_PATH", "out/motoshop_gold.duckdb")
+    return QAChat(get_llm_client(), _conversation_mgr, ToolExecutor(db_path), TOOL_DEFINITIONS)
 
 
 class QAChat:
