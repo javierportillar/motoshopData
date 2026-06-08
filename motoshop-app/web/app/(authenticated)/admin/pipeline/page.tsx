@@ -16,6 +16,27 @@ import { Badge } from "@/components/ui/Badge";
 import { Table } from "@/components/ui/Table";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { ErrorState } from "@/components/ui/ErrorState";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
+
+// ── Pipeline options (V1.7: solo refresh_v15, preparado para futuros) ─
+const PIPELINES = [
+  { value: "refresh_v15", label: "Actualización de datos (V1.5)" },
+];
+
+const ALL_STATUS = [
+  { value: "", label: "Todas" },
+  { value: "success", label: "Exitosas" },
+  { value: "running", label: "En ejecución" },
+  { value: "failed", label: "Fallidas" },
+];
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -43,8 +64,7 @@ function formatDuration(sec: number | null): string {
 
 function isStaleRunning(run: PipelineRun): boolean {
   if (run.status !== "running" || !run.started_at) return false;
-  const elapsed = (Date.now() - new Date(run.started_at).getTime()) / 1000 / 60;
-  return elapsed > 60;
+  return (Date.now() - new Date(run.started_at).getTime()) / 1000 / 60 > 60;
 }
 
 function formatDate(iso: string | null): string {
@@ -52,6 +72,48 @@ function formatDate(iso: string | null): string {
   return new Date(iso).toLocaleString("es-CO", {
     day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
   });
+}
+
+// ── Trend Chart ─────────────────────────────────────────────────────
+
+function TrendChart({ runs }: { runs: PipelineRun[] }) {
+  // Group runs by day (YYYY-MM-DD) and status
+  const byDay = new Map<string, { day: string; success: number; failed: number; running: number }>();
+
+  runs.forEach((r) => {
+    if (!r.started_at) return;
+    const day = r.started_at.slice(0, 10);
+    if (!byDay.has(day)) byDay.set(day, { day: day.slice(5), success: 0, failed: 0, running: 0 });
+    const d = byDay.get(day)!;
+    if (r.status === "success") d.success++;
+    else if (r.status === "failed") d.failed++;
+    else if (r.status === "running") d.running++;
+  });
+
+  const data = Array.from(byDay.values())
+    .sort((a, b) => a.day.localeCompare(b.day))
+    .slice(-14); // Last 14 days
+
+  if (data.length === 0) return null;
+
+  return (
+    <Card header={<h2 className="font-semibold text-text-primary">Tendencia de corridas</h2>}>
+      <div className="text-xs text-text-muted mb-2">
+        Corridas por día — últimos {data.length} días
+      </div>
+      <ResponsiveContainer width="100%" height={180}>
+        <BarChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis dataKey="day" tick={{ fontSize: 10 }} stroke="#a3a3a3" />
+          <YAxis allowDecimals={false} tick={{ fontSize: 10 }} stroke="#a3a3a3" />
+          <Tooltip contentStyle={{ borderRadius: "8px", fontSize: "12px" }} />
+          <Bar dataKey="success" fill="#16A34A" stackId="a" radius={[4, 4, 0, 0]} />
+          <Bar dataKey="failed" fill="#DC2626" stackId="a" />
+          <Bar dataKey="running" fill="#2563EB" stackId="a" />
+        </BarChart>
+      </ResponsiveContainer>
+    </Card>
+  );
 }
 
 // ── Step Detail Modal ────────────────────────────────────────────────
@@ -178,9 +240,10 @@ function SummaryCards() {
 export default function PipelinePage(): JSX.Element {
   const router = useRouter();
   const role = useAuthStore((s) => s.role);
+  const [selectedPipeline, setSelectedPipeline] = useState<string>("refresh_v15");
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [selectedRun, setSelectedRun] = useState<number | null>(null);
-  const { data, error, isLoading } = usePipelineRuns(30, "refresh_v15", statusFilter || undefined);
+  const { data, error, isLoading } = usePipelineRuns(30, selectedPipeline, statusFilter || undefined);
 
   // Redirect vendedor
   if (role === "vendedor") {
@@ -203,30 +266,45 @@ export default function PipelinePage(): JSX.Element {
 
       <SummaryCards />
 
-      {/* Filter chips */}
-      <div className="flex flex-wrap gap-2">
-        {["", "success", "running", "failed"].map((s) => (
-          <button
-            key={s}
-            onClick={() => setStatusFilter(s)}
-            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-              statusFilter === s
-                ? "bg-primary text-primary-fg"
-                : "bg-surface-alt text-text-secondary hover:bg-surface-alt/80"
-            }`}
-          >
-            {s === "" ? "Todas" : statusLabel(s)}
-          </button>
-        ))}
+      {/* Filter bar: pipeline selector + status chips */}
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={selectedPipeline}
+          onChange={(e) => setSelectedPipeline(e.target.value)}
+          className="rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-text-primary"
+        >
+          {PIPELINES.map((p) => (
+            <option key={p.value} value={p.value}>{p.label}</option>
+          ))}
+        </select>
+        <div className="flex flex-wrap gap-1">
+          {ALL_STATUS.map((s) => (
+            <button
+              key={s.value}
+              onClick={() => setStatusFilter(s.value)}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                statusFilter === s.value
+                  ? "bg-primary text-primary-fg"
+                  : "bg-surface-alt text-text-secondary hover:bg-surface-alt/80"
+              }`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Runs table */}
+      {/* Trend chart */}
+      {!isLoading && runs.length > 0 && <TrendChart runs={runs} />}
+
+      {/* Loading */}
       {isLoading && (
         <div className="space-y-2">
           {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-12 rounded-lg" />)}
         </div>
       )}
 
+      {/* Empty */}
       {!isLoading && runs.length === 0 && (
         <Card>
           <p className="py-8 text-center text-sm text-text-muted">
@@ -235,6 +313,7 @@ export default function PipelinePage(): JSX.Element {
         </Card>
       )}
 
+      {/* Runs table */}
       {!isLoading && runs.length > 0 && (
         <Card header={<h2 className="font-semibold text-text-primary">Últimas corridas</h2>}>
           <div className="overflow-x-auto">
