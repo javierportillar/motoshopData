@@ -49,39 +49,43 @@ function DailyEvoChart({ days }: { days: { date: string; sales: number; accumula
 
 // ── Year comparison chart (no future zeros, current year with projection) ─
 
-function YearTrendChart({ currentYear, trendCurrData, trendPrevData }: {
+function YearTrendChart({ currentYear, trendCurrData, trendPrevData, forecast }: {
   currentYear: number;
   trendCurrData: Map<number, number>;
   trendPrevData: Map<number, number>;
+  forecast?: { current_month: { month: string; projected_amount: number }; next_month: { month: string; projected_amount: number } };
 }) {
   const currentMonth = new Date().getMonth() + 1;
-  const labels = MONTH_NAMES.slice(0, 12);
-  // Prev: full 12 months or up to current month
-  const prevData = labels.slice(0, 12).map((lbl, i) => ({
+  const labels = MONTH_NAMES;
+  const prevData = labels.map((lbl, i) => ({
     label: lbl,
     prev: trendPrevData.get(i + 1) ?? null,
   }));
-  // Current: real until currentMonth, projected after
-  const currData = labels.map((lbl, i) => ({
-    label: lbl,
-    curr: i < currentMonth ? (trendCurrData.get(i + 1) ?? null) : null,
-    projected: i >= currentMonth ? (trendCurrData.get(i + 1) ?? null) : null,
-  }));
   const hasPrev = prevData.some(d => d.prev != null && d.prev > 0);
+
+  // Projection: current month (in progress) and next month
+  const projectedMap = new Map<number, number>();
+  if (forecast) {
+    projectedMap.set(currentMonth, forecast.current_month.projected_amount);
+    projectedMap.set(currentMonth + 1, forecast.next_month.projected_amount);
+  }
+
+  const data = labels.map((lbl, i) => ({
+    label: lbl,
+    prev: prevData[i]?.prev ?? null,
+    curr: i < currentMonth ? (trendCurrData.get(i + 1) ?? null) : null,
+    projected: projectedMap.get(i + 1) ?? null,
+  }));
+
   return (
     <ResponsiveContainer width="100%" height={240}>
-      <LineChart data={labels.map((lbl, i) => ({
-        label: lbl,
-        prev: prevData[i]?.prev ?? null,
-        curr: currData[i]?.curr ?? null,
-        projected: currData[i]?.projected ?? null,
-      }))}>
+      <LineChart data={data}>
         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
         <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="#a3a3a3" />
         <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" tickFormatter={(v: number) => `$${(v/1e6).toFixed(1)}M`} />
         <Tooltip contentStyle={{ borderRadius: "8px", fontSize: "12px" }} />
         {hasPrev && <Line type="monotone" dataKey="prev" stroke="#94A3B8" strokeDasharray="5 5" dot={false} name={`${currentYear-1}`} />}
-        <Line type="monotone" dataKey="curr" stroke="#7B1818" strokeWidth={2} dot={{ r: 3, fill: "#7B1818" }} name={`${currentYear} real`} connectNulls={false} />
+        <Line type="monotone" dataKey="curr" stroke="#7B1818" strokeWidth={2} dot={{ r: 2, fill: "#7B1818" }} name={`${currentYear}`} connectNulls={false} />
         <Line type="monotone" dataKey="projected" stroke="#FCD34D" strokeWidth={2} strokeDasharray="6 3" dot={{ r: 3, fill: "#FCD34D" }} name="Proyección" connectNulls />
       </LineChart>
     </ResponsiveContainer>
@@ -231,7 +235,8 @@ export default function VentasPage(): JSX.Element {
               <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{background:"#4B5563"}} /> {currentYear-1}</span>
               <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{background:"#FCD34D"}} /> Proyección</span>
             </div>
-            <YearTrendChart currentYear={currentYear} trendCurrData={trendCurrMap} trendPrevData={trendPrevMap} />
+            <YearTrendChart currentYear={currentYear} trendCurrData={trendCurrMap} trendPrevData={trendPrevMap}
+              forecast={df ? { current_month: df.current_month, next_month: df.next_month } : undefined} />
           </Card>
 
           {/* Tabla detalle mensual histórico */}
