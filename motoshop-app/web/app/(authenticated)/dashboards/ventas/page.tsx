@@ -180,16 +180,14 @@ function ForecastDonut({ current, next }: { current: { month: string; projected_
 }// ── Main ──────────────────────────────────────────────────────────────
 
 export default function VentasPage(): JSX.Element {
-  try {
-    return <VentasPageInner />;
-  } catch (_e) {
-    return (
-      <div className="space-y-4">
-        <Link href="/" className="text-sm text-accent hover:underline">← Volver a inicio</Link>
-        <Card><p className="py-8 text-center text-sm text-text-muted">Error al cargar la página de ventas. Por favor intentá de nuevo.</p></Card>
-      </div>
-    );
-  }
+  return (
+    <div className="space-y-4">
+      <Link href="/" className="text-sm text-accent hover:underline">← Volver a inicio</Link>
+      <h1 className="text-xl font-bold text-text-primary">Ventas</h1>
+      <p className="text-sm">Página simplificada — debug</p>
+      <VentasPageInner />
+    </div>
+  );
 }
 
 function VentasPageInner(): JSX.Element {
