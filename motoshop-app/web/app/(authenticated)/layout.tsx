@@ -26,7 +26,7 @@ export default function AuthenticatedLayout({
   return (
     <>
       <Navigation items={items} role={(role as "vendedor" | "admin" | "gerente") ?? "gerente"} onLogout={handleLogout} />
-      <main className="mx-auto max-w-lg px-4 pb-20 pt-4 lg:ml-60 lg:max-w-4xl lg:pb-8">
+      <main className="mx-auto w-full max-w-7xl px-4 pb-20 pt-4 lg:ml-60 lg:pb-8">
         {children}
       </main>
       <OfflineQueueBadge />
