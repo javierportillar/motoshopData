@@ -221,16 +221,39 @@ export default function VentasPage(): JSX.Element {
             </Card>
           )}
 
-          {/* Comparativa años anteriores */}
-          <Card header={<h2 className="font-semibold text-text-primary">Comparativa con años anteriores</h2>}>
+          {/* Comparativa años anteriores por día */}
+          <Card header={<h2 className="font-semibold text-text-primary">Comparativa diaria con años anteriores</h2>}>
+            <p className="text-xs text-text-muted mb-2">Promedio por día en la misma cantidad de días ({d.current_month_days_with_sales}d)</p>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={[
+                { label: `${currentYear}`, valor: d.current_month_accumulated / d.current_month_days_with_sales },
+                ...d.same_month_previous_years
+                  .filter(y => y.same_day_window_amount > 0)
+                  .map(y => ({ label: String(y.year), valor: y.same_day_window_amount / d.current_month_days_with_sales })),
+              ]}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="#a3a3a3" />
+                <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" tickFormatter={(v: number) => `$${(v/1e3).toFixed(0)}K`} />
+                <Tooltip contentStyle={{ borderRadius: "8px", fontSize: "12px" }} />
+                <Bar dataKey="valor" radius={[4,4,0,0]}>
+                  {[
+                    { label: `${currentYear}`, valor: d.current_month_accumulated / d.current_month_days_with_sales },
+                    ...d.same_month_previous_years.filter(y => y.same_day_window_amount > 0).map(y => ({ label: String(y.year), valor: y.same_day_window_amount / d.current_month_days_with_sales })),
+                  ].map((_, idx) => (
+                    <Cell key={idx} fill={idx === 0 ? "#7B1818" : "#4B5563"} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
             <Table
               columns={[
-                { header: "Año", cell: (r: typeof d.same_month_previous_years[number]) => String(r.year) },
-                { header: "Misma ventana", cell: (r: typeof d.same_month_previous_years[number]) => formatMoney(r.same_day_window_amount), align: "right" },
-                { header: "Mes completo", cell: (r: typeof d.same_month_previous_years[number]) => formatMoney(r.full_month_amount), align: "right" },
-                { header: "Delta", cell: (r: typeof d.same_month_previous_years[number]) => r.delta_same_window_pct != null ? `${r.delta_same_window_pct > 0 ? "+" : ""}${r.delta_same_window_pct}%` : "—", align: "right" },
+                { header: "Año", cell: (r) => String(r.year) },
+                { header: "Total ventana", cell: (r) => formatMoney(r.same_day_window_amount), align: "right" },
+                { header: "Promedio/día", cell: (r) => formatMoney(r.same_day_window_amount / d.current_month_days_with_sales), align: "right" },
+                { header: "Mes completo", cell: (r) => formatMoney(r.full_month_amount), align: "right" },
+                { header: "Delta", cell: (r) => r.delta_same_window_pct != null ? `${r.delta_same_window_pct > 0 ? "+" : ""}${r.delta_same_window_pct}%` : "—", align: "right" },
               ]}
-              data={d.same_month_previous_years} keyFn={(r: typeof d.same_month_previous_years[number]) => String(r.year)} striped
+              data={d.same_month_previous_years} keyFn={(r) => String(r.year)} striped
             />
           </Card>
 
@@ -245,20 +268,8 @@ export default function VentasPage(): JSX.Element {
               forecast={df ? { current_month: df.current_month, next_month: df.next_month } : undefined} />
           </Card>
 
-          {/* Tabla detalle mensual histórico */}
-          {dh && (
-            <Card header={<h2 className="font-semibold text-text-primary">Histórico mensual</h2>}>
-              <Table
-                columns={[
-                  { header: "Mes", cell: (r: typeof dh.meses[number]) => `${MONTH_NAMES[r.month-1] ?? ""} ${r.year}` },
-                  { header: "Ventas", cell: (r: typeof dh.meses[number]) => formatMoney(r.total_ventas), align: "right" },
-                  { header: "Facturas", cell: (r: typeof dh.meses[number]) => String(r.num_facturas), align: "right" },
-                  { header: "Ticket", cell: (r: typeof dh.meses[number]) => formatMoney(r.ticket_promedio), align: "right" },
-                ]}
-                data={dh.meses.slice(-24)} keyFn={(r: typeof dh.meses[number]) => `${r.year}-${r.month}`} striped
-              />
-            </Card>
-          )}
+          {/* Tabla detalle mensual */}
+
         </>
       )}
 
@@ -308,6 +319,19 @@ export default function VentasPage(): JSX.Element {
               </ResponsiveContainer>
             ) : <p className="py-6 text-sm text-text-muted text-center">Sin datos históricos.</p>}
           </Card>
+          {dh && (
+            <Card header={<h2 className="font-semibold text-text-primary">Histórico mensual</h2>}>
+              <Table
+                columns={[
+                  { header: "Mes", cell: (r: typeof dh.meses[number]) => `${MONTH_NAMES[r.month-1] ?? ""} ${r.year}` },
+                  { header: "Ventas", cell: (r: typeof dh.meses[number]) => formatMoney(r.total_ventas), align: "right" },
+                  { header: "Facturas", cell: (r: typeof dh.meses[number]) => String(r.num_facturas), align: "right" },
+                  { header: "Ticket", cell: (r: typeof dh.meses[number]) => formatMoney(r.ticket_promedio), align: "right" },
+                ]}
+                data={dh.meses.slice(-24)} keyFn={(r: typeof dh.meses[number]) => `${r.year}-${r.month}`} striped
+              />
+            </Card>
+          )}
         </>
       )}
 
