@@ -143,8 +143,9 @@ export default function DataCatalogPage(): JSX.Element {
   const [layerFilter, setLayerFilter] = useState<string>("");
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
 
-  const { data: tables, isLoading } = useCatalog();
+  const { data: catalogData, isLoading } = useCatalog();
   const { data: lineageEdges } = useLineage();
+  const tables = catalogData?.tables ?? [];
 
   if (role === "vendedor") { router.push("/"); return <></>; }
 

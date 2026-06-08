@@ -723,8 +723,14 @@ export interface LineageEdge {
   transform: string;
 }
 
+export interface CatalogResponse {
+  duckdb_freshness_utc?: string;
+  layers?: { name: string; table_count: number; total_rows: number; max_date?: string; warnings?: number }[];
+  tables: CatalogTable[];
+}
+
 export function useCatalog() {
-  return useMetrics<CatalogTable[]>("/api/admin/data/catalog");
+  return useMetrics<CatalogResponse>("/api/admin/data/catalog");
 }
 
 export function useCatalogTable(name: string | null) {
