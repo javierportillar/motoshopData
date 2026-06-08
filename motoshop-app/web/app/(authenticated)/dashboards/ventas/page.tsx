@@ -18,8 +18,8 @@ import { Table } from "@/components/ui/Table";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { ErrorState } from "@/components/ui/ErrorState";
 import {
-  BarChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ComposedChart, PieChart, Pie, Cell, Legend,
+  BarChart, Bar, Line, LineChart, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, ComposedChart, PieChart, Pie, Cell,
 } from "recharts";
 
 const MONTH_NAMES = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
@@ -56,27 +56,34 @@ function YearTrendChart({ currentYear, trendCurrData, trendPrevData }: {
 }) {
   const currentMonth = new Date().getMonth() + 1;
   const labels = MONTH_NAMES.slice(0, 12);
-  const data = labels.map((lbl, i) => ({
+  // Prev: full 12 months or up to current month
+  const prevData = labels.slice(0, 12).map((lbl, i) => ({
     label: lbl,
-    prev: trendPrevData.get(i + 1) ?? 0,
-    curr: i < currentMonth ? (trendCurrData.get(i + 1) ?? 0) : 0,
-    isProjection: i >= currentMonth,
+    prev: trendPrevData.get(i + 1) ?? null,
   }));
-  const hasPrev = data.some(d => d.prev > 0);
+  // Current: real until currentMonth, projected after
+  const currData = labels.map((lbl, i) => ({
+    label: lbl,
+    curr: i < currentMonth ? (trendCurrData.get(i + 1) ?? null) : null,
+    projected: i >= currentMonth ? (trendCurrData.get(i + 1) ?? null) : null,
+  }));
+  const hasPrev = prevData.some(d => d.prev != null && d.prev > 0);
   return (
     <ResponsiveContainer width="100%" height={240}>
-      <ComposedChart data={data}>
+      <LineChart data={labels.map((lbl, i) => ({
+        label: lbl,
+        prev: prevData[i]?.prev ?? null,
+        curr: currData[i]?.curr ?? null,
+        projected: currData[i]?.projected ?? null,
+      }))}>
         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
         <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="#a3a3a3" />
         <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" tickFormatter={(v: number) => `$${(v/1e6).toFixed(1)}M`} />
         <Tooltip contentStyle={{ borderRadius: "8px", fontSize: "12px" }} />
-        {hasPrev && <Bar dataKey="prev" fill="#4B5563" radius={[4,4,0,0]} opacity={0.5} name={`${currentYear-1}`} />}
-        <Bar dataKey="curr" radius={[4,4,0,0]} name={`${currentYear}`}>
-          {data.map((entry, idx) => (
-            <Cell key={idx} fill={entry.isProjection ? "#FCD34D" : "#7B1818"} />
-          ))}
-        </Bar>
-      </ComposedChart>
+        {hasPrev && <Line type="monotone" dataKey="prev" stroke="#94A3B8" strokeDasharray="5 5" dot={false} name={`${currentYear-1}`} />}
+        <Line type="monotone" dataKey="curr" stroke="#7B1818" strokeWidth={2} dot={{ r: 3, fill: "#7B1818" }} name={`${currentYear} real`} connectNulls={false} />
+        <Line type="monotone" dataKey="projected" stroke="#FCD34D" strokeWidth={2} strokeDasharray="6 3" dot={{ r: 3, fill: "#FCD34D" }} name="Proyección" connectNulls />
+      </LineChart>
     </ResponsiveContainer>
   );
 }
