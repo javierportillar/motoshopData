@@ -34,7 +34,11 @@ def _classify_layer(table_name: str) -> str:
 
 
 def _get_con():
+    from motoshop_api.metrics.repo_duckdb import _bootstrap_duckdb_from_r2
     db_path = _get_duckdb_path()
+    _bootstrap_duckdb_from_r2(db_path)  # descarga de R2 si no existe local
+    if not db_path.exists():
+        raise HTTPException(status_code=503, detail=f"DuckDB no encontrado en {db_path}")
     return duckdb.connect(str(db_path), read_only=True)
 
 
