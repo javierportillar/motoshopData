@@ -1,0 +1,39 @@
+name: Vercel Production Deploy
+
+# Auto-deploy PWA a Vercel cuando hay push a main.
+# Reemplaza el auto-deploy nativo (que dejó de funcionar al
+# desinstalarse la Vercel GitHub App).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "motoshop-app/web/**"
+      - ".github/workflows/vercel-deploy.yml"
+  workflow_dispatch:
+
+env:
+  VERCEL_ORG_ID: team_LpNJaZ9CqSlJyhTl3XJwO37L
+  VERCEL_PROJECT_ID: prj_7PybBnhxi8g0zDFessoh4dbuQLPv
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Pull Vercel environment
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build with Vercel
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy prebuilt
+        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }} --yes
