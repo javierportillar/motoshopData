@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { useAuthStore } from "@/lib/auth/store";
 import { Button } from "@/lib/ui/Button";
@@ -12,25 +11,30 @@ export default function LoginPage(): JSX.Element {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<{ username?: string; password?: string }>({});
-  const router = useRouter();
   const setUser = useAuthStore((s) => s.setUser);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const { addToast } = useToast();
 
-  // If already authenticated, skip login
+  // If already authenticated, skip login (hard nav para evitar cache de App Router)
   useEffect(() => {
     if (isAuthenticated) {
-      router.push("/");
+      window.location.assign("/");
     }
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setErrors({});
 
+    // Fallback de autofill (Face ID en iOS Safari rellena el DOM pero no
+    // siempre dispara onChange en React). Leemos del FormData del form real.
+    const formData = new FormData(e.currentTarget);
+    const usernameVal = (String(formData.get("username") ?? "") || username).trim();
+    const passwordVal = String(formData.get("password") ?? "") || password;
+
     const newErrors: typeof errors = {};
-    if (!username.trim()) newErrors.username = "Requerido";
-    if (!password) newErrors.password = "Requerida";
+    if (!usernameVal) newErrors.username = "Requerido";
+    if (!passwordVal) newErrors.password = "Requerida";
     if (Object.keys(newErrors).length) {
       setErrors(newErrors);
       return;
@@ -42,7 +46,7 @@ export default function LoginPage(): JSX.Element {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ username: username.trim(), password }),
+        body: JSON.stringify({ username: usernameVal, password: passwordVal }),
       });
 
       const data = await resp.json();
@@ -52,9 +56,13 @@ export default function LoginPage(): JSX.Element {
         return;
       }
 
-      setUser(data.sub ?? username, data.role ?? "vendedor");
+      setUser(data.sub ?? usernameVal, data.role ?? "vendedor");
       addToast("Bienvenido", "success");
-      router.push("/");
+      // Hard navigation: el cliente del App Router cachea /login y a veces
+      // no invalida cuando la cookie httponly acaba de setearse en el mismo
+      // ciclo. window.location fuerza un fresh request donde el middleware
+      // ve la cookie y enruta a la home autenticada sin necesidad de refresh.
+      window.location.assign("/");
     } catch {
       addToast("Error de conexión", "error");
     } finally {
@@ -78,6 +86,7 @@ export default function LoginPage(): JSX.Element {
         <form onSubmit={handleSubmit} className="space-y-4">
           <Input
             label="Usuario"
+            name="username"
             placeholder="Tu usuario"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
@@ -94,6 +103,7 @@ export default function LoginPage(): JSX.Element {
 
           <Input
             label="Contraseña"
+            name="password"
             type="password"
             placeholder="Tu contraseña"
             value={password}
