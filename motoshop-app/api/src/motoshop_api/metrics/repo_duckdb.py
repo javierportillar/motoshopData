@@ -447,18 +447,30 @@ class DuckDBMetricsRepo:
         )
 
     def get_abc_detalle(self, bucket: str, limit: int = 20) -> AbcDetalleResponse:
+        # NOTA: motoshop_gold_mart_rotacion_abc NO tiene nom_producto (solo
+        # business_month, cod_producto, valor_total, categoria_abc). El nombre
+        # se resuelve por UNION de inventario_actual + ventas_diarias_sku para
+        # cubrir productos sin stock que sí tuvieron ventas en el mes ABC.
         rows = self._query("""
-            WITH max_month AS (
-                SELECT MAX(business_month) AS mm FROM motoshop_gold_mart_rotacion_abc
+            WITH dim AS (
+                SELECT cod_producto, MAX(nom_producto) AS nom_producto
+                FROM (
+                    SELECT cod_producto, nom_producto FROM motoshop_gold_mart_inventario_actual
+                    UNION ALL
+                    SELECT cod_producto, nom_producto FROM motoshop_gold_mart_ventas_diarias_sku
+                )
+                GROUP BY cod_producto
             )
             SELECT
-                cod_producto,
-                nom_producto,
-                ROUND(valor_total, 2) AS valor_total,
-                ROUND(valor_total / NULLIF(SUM(valor_total) OVER(PARTITION BY categoria_abc), 0) * 100, 1) AS porcentaje_bucket
-            FROM motoshop_gold_mart_rotacion_abc, max_month
-            WHERE business_month = max_month.mm AND categoria_abc = ?
-            ORDER BY valor_total DESC
+                a.cod_producto,
+                COALESCE(d.nom_producto, a.cod_producto) AS nom_producto,
+                ROUND(a.valor_total, 2) AS valor_total,
+                ROUND(a.valor_total / NULLIF(SUM(a.valor_total) OVER(PARTITION BY a.categoria_abc), 0) * 100, 1) AS porcentaje_bucket
+            FROM motoshop_gold_mart_rotacion_abc a
+            LEFT JOIN dim d USING (cod_producto)
+            WHERE a.business_month = (SELECT MAX(business_month) FROM motoshop_gold_mart_rotacion_abc)
+              AND a.categoria_abc = ?
+            ORDER BY a.valor_total DESC
             LIMIT ?
         """, [bucket, limit])
         if not rows:
