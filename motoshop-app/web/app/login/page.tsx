@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useAuthStore } from "@/lib/auth/store";
 import { Button } from "@/lib/ui/Button";
 import { Input } from "@/lib/ui/Input";
@@ -12,15 +12,13 @@ export default function LoginPage(): JSX.Element {
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<{ username?: string; password?: string }>({});
   const setUser = useAuthStore((s) => s.setUser);
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const { addToast } = useToast();
 
-  // If already authenticated, skip login (hard nav para evitar cache de App Router)
-  useEffect(() => {
-    if (isAuthenticated) {
-      window.location.assign("/");
-    }
-  }, [isAuthenticated]);
+  // NOTA: NO hacer auto-redirect a "/" si isAuthenticated viene en true desde
+  // localStorage. Cuando la cookie httponly expira pero el store sigue
+  // persistido, el middleware rebota a /login y el useEffect dispararía un
+  // loop de hard nav que evita siquiera tipear en el formulario. El redirect
+  // post-login vive en handleSubmit, que es el único caso donde lo necesitamos.
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
