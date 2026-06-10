@@ -245,13 +245,15 @@ def _refresh_api() -> None:
 
     for endpoint in ["/api/admin/data/refresh", "/api/admin/pipeline/refresh"]:
         url = f"{api_base}{endpoint}"
-        try:
-            req = urllib.request.Request(url, data=b"{}", headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                body = json.loads(resp.read().decode())
-                logger.info("Refresh %s: %s", endpoint, body.get("status"))
-        except Exception as e:
-            logger.warning("Refresh %s falló: %s", endpoint, e)
+        # Render tiene múltiples instancias -> refrescar 3 veces para cubrirlas
+        for attempt in range(1, 4):
+            try:
+                req = urllib.request.Request(url, data=b"{}", headers=headers, method="POST")
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    body = json.loads(resp.read().decode())
+                    logger.info("Refresh %s (attempt %d/3): %s", endpoint, attempt, body.get("status"))
+            except Exception as e:
+                logger.warning("Refresh %s (attempt %d/3) falló: %s", endpoint, attempt, e)
 
 
 # ── Main ────────────────────────────────────────────────────────────────────
@@ -326,8 +328,13 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    count = main()
-    if count > 0:
-        print(f"[OK] Capturadas {count} facturas nuevas")
-    else:
-        print("[OK] Sin datos nuevos")
+    try:
+        count = main()
+        if count > 0:
+            print(f"[OK] Capturadas {count} facturas nuevas")
+        else:
+            print("[OK] Sin datos nuevos")
+    except Exception:
+        logger.exception("Error fatal en captura incremental")
+        print("[ERROR] Ver logs para detalles")
+        sys.exit(0)  # No matar la tarea programada, que siga el próximo ciclo
