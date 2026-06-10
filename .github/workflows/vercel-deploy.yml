@@ -25,15 +25,10 @@ jobs:
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
 
-      - name: Link project and deploy
+      - name: Deploy to Vercel production
         run: |
-          vercel link --project=motoshop-web \
-            --token=${{ secrets.VERCEL_API_TOKEN }} \
-            --scope=javierportillars-projects \
-            --cwd=motoshop-app/web \
-            --yes 2>&1
           vercel deploy --prod \
             --token=${{ secrets.VERCEL_API_TOKEN }} \
-            --scope=javierportillars-projects \
             --cwd=motoshop-app/web \
+            --debug \
             --yes 2>&1
