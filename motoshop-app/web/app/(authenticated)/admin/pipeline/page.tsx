@@ -26,9 +26,11 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-// ── Pipeline options (V1.7: solo refresh_v15, preparado para futuros) ─
+// ── Pipeline options ─
 const PIPELINES = [
+  { value: "", label: "Todos" },
   { value: "refresh_v15", label: "Actualización de datos (V1.5)" },
+  { value: "capture_new_sales", label: "Captura incremental (V1.9)" },
 ];
 
 const ALL_STATUS = [
@@ -240,7 +242,7 @@ function SummaryCards() {
 export default function PipelinePage(): JSX.Element {
   const router = useRouter();
   const role = useAuthStore((s) => s.role);
-  const [selectedPipeline, setSelectedPipeline] = useState<string>("refresh_v15");
+  const [selectedPipeline, setSelectedPipeline] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [selectedRun, setSelectedRun] = useState<number | null>(null);
   const { data, error, isLoading } = usePipelineRuns(30, selectedPipeline, statusFilter || undefined);

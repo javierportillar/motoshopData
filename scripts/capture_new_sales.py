@@ -221,6 +221,29 @@ def _rebuild_gold(con: duckdb.DuckDBPyConnection) -> None:
 
 # ── Paso 4: Upload + Refresh ────────────────────────────────────────────────
 
+PIPELINE_DB_PATH = Path("out/pipeline_runs.duckdb")
+
+
+def _upload_pipeline_runs() -> None:
+    """Sube solo pipeline_runs.duckdb a R2 (para reflejar estado temprano)."""
+    if not PIPELINE_DB_PATH.exists():
+        return
+    import boto3
+    r2_endpoint = os.environ.get("R2_ENDPOINT")
+    r2_key = os.environ.get("R2_ACCESS_KEY_ID")
+    r2_secret = os.environ.get("R2_SECRET_ACCESS_KEY")
+    r2_bucket = os.environ.get("R2_BUCKET", "motoshop-gold")
+    if not all([r2_endpoint, r2_key, r2_secret]):
+        logger.warning("R2 credentials no configuradas, saltando upload de pipeline_runs")
+        return
+    s3 = boto3.client("s3", endpoint_url=r2_endpoint,
+                      aws_access_key_id=r2_key,
+                      aws_secret_access_key=r2_secret,
+                      region_name="auto")
+    s3.upload_file(str(PIPELINE_DB_PATH), r2_bucket, "pipeline_runs.duckdb")
+    logger.info("pipeline_runs.duckdb subido a R2")
+
+
 def _upload_to_r2() -> None:
     """Sube DuckDB a R2."""
     from scripts.upload_duckdb_to_r2 import main as upload_main
@@ -259,71 +282,123 @@ def _refresh_api() -> None:
 # ── Main ────────────────────────────────────────────────────────────────────
 
 def main() -> int:
-    """Ejecuta captura incremental. Retorna cantidad de facturas nuevas."""
-    # ── 0. Conectar DuckDB ─────────────────────────────────────────────────
-    if not DB_PATH.exists():
-        logger.warning("DuckDB no encontrado en %s", DB_PATH)
-        return 0
+    """Ejecuta captura incremental con tracking en pipeline_runs.duckdb.
+    Retorna cantidad de facturas nuevas.
+    """
+    from scripts.pipeline_runs_db import (
+        capture_layer_stats,
+        complete_stats_run,
+        start_stats_run,
+    )
 
-    con = duckdb.connect(str(DB_PATH))
+    # ── 0. Iniciar pipeline run ───────────────────────────────────────────
+    stats_run_id = None
     try:
-        max_ts = _get_max_silver_ts(con)
-        logger.info("Silver max fecha_documento_ts: %s", max_ts)
+        stats_run_id = start_stats_run("capture_new_sales")
+        logger.info("Pipeline run #%s started", stats_run_id)
+        # Upload temprano: R2 ve status "running" → el front lo muestra
+        _upload_pipeline_runs()
+    except Exception as exc:
+        logger.warning("Pipeline run init falló: %s — continuando sin tracking", exc)
 
-        # ── 1. Conectar MySQL ─────────────────────────────────────────────
-        from pipeline.mysql_source import get_mysql_connection
-        mysql_conn = get_mysql_connection()
-        if mysql_conn is None:
-            logger.warning("MySQL no disponible, saltando captura")
-            return 0
+    count = 0
 
-        try:
-            cur = mysql_conn.cursor()
+    try:
+        # ── 1. Conectar DuckDB ───────────────────────────────────────────
+        if not DB_PATH.exists():
+            logger.warning("DuckDB no encontrado en %s", DB_PATH)
+        else:
+            con = duckdb.connect(str(DB_PATH))
+            try:
+                max_ts = _get_max_silver_ts(con)
+                logger.info("Silver max fecha_documento_ts: %s", max_ts)
 
-            # ── 2. Leer facturas nuevas ────────────────────────────────────
-            headers = _fetch_new_headers(cur, str(max_ts) if max_ts else "2020-01-01 00:00:00")
-            if not headers:
-                logger.info("No hay ventas nuevas desde %s", max_ts)
-                return 0
+                # ── 2. Conectar MySQL ─────────────────────────────────────
+                from pipeline.mysql_source import get_mysql_connection
+                mysql_conn = get_mysql_connection()
 
-            logger.info("Nuevas facturas encontradas: %d", len(headers))
+                if mysql_conn is None:
+                    logger.warning("MySQL no disponible, saltando captura")
+                else:
+                    headers: list[dict] = []
+                    details: list[dict] = []
 
-            # ── 3. Leer detalle ────────────────────────────────────────────
-            details = _fetch_new_details(cur, headers)
-            logger.info("Nuevos detalles encontrados: %d", len(details))
+                    try:
+                        cur = mysql_conn.cursor()
 
-        finally:
-            mysql_conn.close()
+                        # ── 3. Leer facturas nuevas ───────────────────────
+                        headers = _fetch_new_headers(
+                            cur, str(max_ts) if max_ts else "2020-01-01 00:00:00"
+                        )
+                        if not headers:
+                            logger.info("No hay ventas nuevas desde %s", max_ts)
+                        else:
+                            logger.info("Nuevas facturas encontradas: %d", len(headers))
 
-        # ── 4. Insertar en silver ──────────────────────────────────────────
-        h_count = _insert_headers(con, headers)
-        logger.info("Insertadas %d facturas en silver_fact_ventas", h_count)
+                            # ── 4. Leer detalle ───────────────────────────
+                            details = _fetch_new_details(cur, headers)
+                            logger.info("Nuevos detalles encontrados: %d", len(details))
 
-        # Build header date map for detail insertion
-        header_date_map = {}
-        for h in headers:
-            key = (h["numfven"].strip(), h["codclas"].strip())
-            ts = h["fecfven"]
-            if hasattr(ts, "strftime"):
-                biz = ts.strftime("%Y-%m-%d")
-            else:
-                biz = str(ts)[:10]
-            header_date_map[key] = biz
+                    finally:
+                        mysql_conn.close()
 
-        d_count = _insert_details(con, details, header_date_map)
-        logger.info("Insertados %d detalles en silver_fact_ventas_detalle", d_count)
+                    # ── 5. Insertar en silver ─────────────────────────────
+                    if headers:
+                        h_count = _insert_headers(con, headers)
+                        logger.info("Insertadas %d facturas en silver_fact_ventas", h_count)
 
-        # ── 5. Rebuild gold ───────────────────────────────────────────────
-        _rebuild_gold(con)
+                        # Build header date map for detail insertion
+                        header_date_map = {}
+                        for h in headers:
+                            key = (h["numfven"].strip(), h["codclas"].strip())
+                            ts = h["fecfven"]
+                            if hasattr(ts, "strftime"):
+                                biz = ts.strftime("%Y-%m-%d")
+                            else:
+                                biz = str(ts)[:10]
+                            header_date_map[key] = biz
 
-    finally:
-        con.close()
+                        d_count = _insert_details(con, details, header_date_map)
+                        logger.info("Insertados %d detalles en silver_fact_ventas_detalle", d_count)
 
-    # ── 6. Upload + Refresh (con DuckDB cerrado para liberar el archivo) ──
-    _upload_to_r2()
-    _refresh_api()
+                        # ── 6. Rebuild gold ───────────────────────────────
+                        _rebuild_gold(con)
+                        count = len(headers)
 
-    return len(headers)
+            finally:
+                con.close()
+
+        # ── 7. Completar run (status final local) ─────────────────────────
+        if stats_run_id is not None:
+            complete_stats_run(stats_run_id, "success")
+
+            # Stats capture (solo si hubo datos, DuckDB ya está cerrado)
+            if count > 0:
+                for layer in ("silver", "gold"):
+                    try:
+                        capture_layer_stats(stats_run_id, layer, str(DB_PATH))
+                    except Exception as exc:
+                        logger.warning("Stats capture %s falló: %s", layer, exc)
+
+            # Upload pipeline_runs con status final (siempre, aunque count=0)
+            _upload_pipeline_runs()
+
+        # ── 8. Upload gold + Refresh (solo si hay datos nuevos) ────────────
+        if count > 0:
+            _upload_to_r2()    # sube gold + pipeline_runs (el último está ok)
+            _refresh_api()
+
+        return count
+
+    except Exception:
+        # Marcar como failed si el run existe y todavía está running
+        if stats_run_id is not None:
+            try:
+                complete_stats_run(stats_run_id, "failed")
+                _upload_pipeline_runs()
+            except Exception:
+                pass
+        raise
 
 
 if __name__ == "__main__":

@@ -43,6 +43,14 @@ def _get_duckdb_path() -> Path:
     return Path(db_path)
 
 
+def _get_pipeline_runs_db_path() -> Path:
+    return Path(os.environ.get(
+        "PIPELINE_RUNS_DB_PATH",
+        "/tmp/pipeline_runs.duckdb" if os.environ.get("ENV") == "prod"
+        else "out/pipeline_runs.duckdb",
+    ))
+
+
 @router.post("/data/refresh", response_model=RefreshResponse)
 @limiter.limit("3/minute")
 async def data_refresh(
@@ -230,11 +238,28 @@ async def data_status(
         mtime = db_path.stat().st_mtime
         freshness_utc = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
 
+        # Latest pipeline run status
+        last_status: str | None = None
+        pipeline_db_path = _get_pipeline_runs_db_path()
+        if pipeline_db_path.exists():
+            try:
+                p_con = duckdb.connect(str(pipeline_db_path), read_only=True)
+                try:
+                    row = p_con.execute(
+                        "SELECT status FROM app_pipeline_runs ORDER BY started_at DESC LIMIT 1"
+                    ).fetchone()
+                    last_status = row[0] if row else None
+                finally:
+                    p_con.close()
+            except Exception:
+                logger.debug("Could not query pipeline_runs DB", exc_info=True)
+
         return DataStatusResponse(
             sales_max_date=max_date_str,
             sales_days_lag=days_lag,
             inventory_snapshot_date=inv_snapshot_str,
             invalid_future_sales_rows=int(invalid or 0),
+            latest_pipeline_run_status=last_status,
             duckdb_freshness_utc=freshness_utc,
         )
     finally:
