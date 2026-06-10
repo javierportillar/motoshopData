@@ -28,12 +28,12 @@ jobs:
       - name: Link project and deploy
         run: |
           vercel link --project=motoshop-web \
-            --token=${{ secrets.VERCEL_TOKEN }} \
+            --token=${{ secrets.VERCEL_API_TOKEN }} \
             --scope=javierportillars-projects \
             --cwd=motoshop-app/web \
             --yes 2>&1
           vercel deploy --prod \
-            --token=${{ secrets.VERCEL_TOKEN }} \
+            --token=${{ secrets.VERCEL_API_TOKEN }} \
             --scope=javierportillars-projects \
             --cwd=motoshop-app/web \
             --yes 2>&1
