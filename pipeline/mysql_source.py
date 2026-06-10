@@ -82,7 +82,7 @@ def get_mysql_connection():
             user=os.environ.get("MYSQL_USER", ""),
             password=os.environ.get("MYSQL_PASSWORD", ""),
             database=os.environ.get("MYSQL_DATABASE", "motoshop2024"),
-            charset="utf8",
+            charset="latin1",
             connect_timeout=5,
         )
         return conn

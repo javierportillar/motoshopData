@@ -38,7 +38,7 @@ def _upload_file(s3, local_path: Path, r2_key: str) -> None:
 def main():
     if not R2_KEY or not R2_SECRET:
         print("ERROR: R2_ACCESS_KEY_ID y R2_SECRET_ACCESS_KEY requeridas en entorno.")
-        print("Setéalas desde Render Dashboard → Environment Variables.")
+        print("Set eas from Render Dashboard > Environment Variables.")
         sys.exit(1)
 
     if not DB_PATH.exists():

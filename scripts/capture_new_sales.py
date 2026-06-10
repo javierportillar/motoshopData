@@ -55,9 +55,9 @@ def _fetch_new_headers(mysql_cur, since_ts: str) -> list[dict]:
             numfven, codclas, prefven,
             fecfven, nitter, clifven,
             nitvend, venfven, codpag,
-            diasfven, subfven, dctofven,
-            ivafven, totimp, retefte,
-            reteiva, reteica, totfven,
+            diasfven, subfven, totdct,
+            totiva, totipo, retfte,
+            retiva, retica, totfven,
             obsfven, estfven, codsuc,
             codemp, codres
         FROM facventas
@@ -120,12 +120,12 @@ def _insert_headers(con: duckdb.DuckDBPyConnection, rows: list[dict]) -> int:
                     h.get("codpag", "").strip(),
                     int(h.get("diasfven", 0) or 0),
                     float(h.get("subfven", 0) or 0),
-                    float(h.get("dctofven", 0) or 0),
-                    float(h.get("ivafven", 0) or 0),
-                    float(h.get("totimp", 0) or 0),
-                    float(h.get("retefte", 0) or 0),
-                    float(h.get("reteiva", 0) or 0),
-                    float(h.get("reteica", 0) or 0),
+                    float(h.get("totdct", 0) or 0),
+                    float(h.get("totiva", 0) or 0),
+                    float(h.get("totiva", 0) or 0) + float(h.get("totipo", 0) or 0),
+                    float(h.get("retfte", 0) or 0),
+                    float(h.get("retiva", 0) or 0),
+                    float(h.get("retica", 0) or 0),
                     float(h.get("totfven", 0) or 0),
                     h.get("obsfven", "").strip(),
                     h.get("estfven", "").strip(),
@@ -314,14 +314,14 @@ def main() -> int:
         # ── 5. Rebuild gold ───────────────────────────────────────────────
         _rebuild_gold(con)
 
-        # ── 6. Upload + Refresh ───────────────────────────────────────────
-        _upload_to_r2()
-        _refresh_api()
-
-        return len(headers)
-
     finally:
         con.close()
+
+    # ── 6. Upload + Refresh (con DuckDB cerrado para liberar el archivo) ──
+    _upload_to_r2()
+    _refresh_api()
+
+    return len(headers)
 
 
 if __name__ == "__main__":
