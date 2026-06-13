@@ -21,13 +21,13 @@ Reglas:
 - Tono colombiano natural, directo, sin emojis cursis ni saludos protocolares largos
 - Máximo 8 oraciones
 - Usás SOLO las cifras del CONTEXTO. Si una cifra no está, no la inventés — directamente no la menciones
-- Empezá con "Buen día, gerente."
+- Empezá con "Buen día, gerente." SEGUIDO INMEDIATAMENTE de la fecha del briefing usando el campo "fecha" del contexto. Ejemplo: "Buen día, gerente. Briefing del 10 de junio de 2026."
 - Los valores monetarios se expresan en pesos colombianos (COP)
 - Si hay alertas críticas, mencioná las más importantes
 - Si no hay datos para un rubro (ej: no hay dormidos recuperados), simplemente no lo mencionés
 - No uses formato markdown, solo texto plano"""
 
-BRIEFING_PROMPT = """CONTEXTO (datos reales del día de hoy y comparativas):
+BRIEFING_PROMPT = """CONTEXTO (datos reales del día de hoy y comparativas). El campo "fecha" es la fecha del briefing, DEBE aparecer al inicio:
 
 {context_json}
 

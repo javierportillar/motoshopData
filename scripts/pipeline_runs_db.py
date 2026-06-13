@@ -26,7 +26,18 @@ def get_conn() -> duckdb.DuckDBPyConnection:
 
 def _get_conn() -> duckdb.DuckDBPyConnection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = duckdb.connect(str(DB_PATH))
+    # Reintentar si el archivo está bloqueado por otro proceso (dump, etc.)
+    import time
+    for attempt in range(3):
+        try:
+            con = duckdb.connect(str(DB_PATH))
+            return con
+        except Exception as exc:
+            if "locked" in str(exc).lower() or "used by another process" in str(exc).lower():
+                if attempt < 2:
+                    time.sleep(2 ** attempt)  # 1s, 2s
+                    continue
+            raise
     con.execute("""
         CREATE TABLE IF NOT EXISTS app_pipeline_runs (
             id INTEGER PRIMARY KEY,
