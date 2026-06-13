@@ -35,6 +35,7 @@ V2   ⬜ Producción seria — docs/roadmap-v2-produccion.md
 **Próximos planes aprobados:**
 - [`docs/plan-v1.6-llm.md`](plan-v1.6-llm.md) — capa de IA (briefing gerente, forecast narrativa, Q&A chat)
 - [`docs/plan-v1.7-observability.md`](plan-v1.7-observability.md) — pipeline jobs UI nativa en PWA
+- [`docs/plan-multi-tenant.md`](plan-multi-tenant.md) — **MT** plataforma multi-tenant (MotoShop + MasVital + futuros) en sprints M1-M4
 
 **Handoffs de devs:** [`docs/handoffs-v1.5.md`](handoffs-v1.5.md) — briefs listos para pegar en chat de Dev D y Dev F. Handoff V1.6 (Dev L) se genera al activarse.
 
