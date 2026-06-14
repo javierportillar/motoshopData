@@ -25,3 +25,12 @@ class UserOut(BaseModel):
 
 class RefreshRequest(BaseModel):
     token: str
+
+
+class UserMeResponse(BaseModel):
+    username: str
+    email: str
+    role: str
+    tenants_allowed: list[str] = []
+    current_tenant: str = "motoshop"
+    enabled_features: list[str] = []

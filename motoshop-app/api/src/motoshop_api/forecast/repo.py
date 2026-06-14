@@ -201,7 +201,7 @@ class DuckDBForecastRepo:
 
 # ── Factory ────────────────────────────────────────────────────────────────
 
-def get_forecast_repo(workspace_client=None, warehouse_id=None) -> ForecastRepoProtocol:
+def get_forecast_repo(workspace_client=None, warehouse_id=None, tenant: str = "motoshop") -> ForecastRepoProtocol:
     """Devuelve el repo adecuado según configuración.
 
     - DuckDB si DATA_BACKEND=duckdb (forecast per-SKU descontinuado)
@@ -209,11 +209,10 @@ def get_forecast_repo(workspace_client=None, warehouse_id=None) -> ForecastRepoP
     - Fake solo en test sin Databricks
     """
     from motoshop_api.config import settings
+    from motoshop_api.metrics.repo_duckdb import _make_db_path
 
     if settings.data_backend == "duckdb":
-        db_path = settings.duckdb_path or (
-            "/tmp/motoshop_gold.duckdb" if settings.env == "prod" else "out/motoshop_gold.duckdb"
-        )
+        db_path = settings.duckdb_path or str(_make_db_path(tenant))
         return DuckDBForecastRepo(db_path)
 
     if workspace_client is not None and warehouse_id:

@@ -20,21 +20,21 @@ HOST = os.environ.get("DATABRICKS_HOST", "")
 TOKEN = os.environ.get("DATABRICKS_TOKEN", "")
 
 TABLES = [
-    ("motoshop.gold.mart_ventas_diarias_sku", "motoshop_gold_mart_ventas_diarias_sku"),
-    ("motoshop.gold.mart_inventario_actual", "motoshop_gold_mart_inventario_actual"),
-    ("motoshop.gold.mart_rotacion_abc", "motoshop_gold_mart_rotacion_abc"),
-    ("motoshop.gold.mart_cohortes_clientes", "motoshop_gold_mart_cohortes_clientes"),
-    ("motoshop.gold.mart_productos_dormidos", "motoshop_gold_mart_productos_dormidos"),
-    ("motoshop.gold.alertas_quiebre", "motoshop_gold_alertas_quiebre"),
-    ("motoshop.gold.alertas_drift", "motoshop_gold_alertas_drift"),
-    ("motoshop.gold.forecast_categoria", "motoshop_gold_forecast_categoria"),
-    ("motoshop.gold.mart_abc_xyz", "motoshop_gold_mart_abc_xyz"),
-    ("motoshop.silver.fact_ventas", "motoshop_silver_fact_ventas"),
-    ("motoshop.silver.fact_ventas_detalle", "motoshop_silver_fact_ventas_detalle"),
-    ("motoshop.silver.fact_compras", "motoshop_silver_fact_compras"),
-    ("motoshop.silver.fact_compras_detalle", "motoshop_silver_fact_compras_detalle"),
-    ("motoshop.silver.dim_bodega", "motoshop_silver_dim_bodega"),
-    ("motoshop.silver.dim_producto", "motoshop_silver_dim_producto"),
+    ("motoshop.gold.mart_ventas_diarias_sku", "gold_mart_ventas_diarias_sku"),
+    ("motoshop.gold.mart_inventario_actual", "gold_mart_inventario_actual"),
+    ("motoshop.gold.mart_rotacion_abc", "gold_mart_rotacion_abc"),
+    ("motoshop.gold.mart_cohortes_clientes", "gold_mart_cohortes_clientes"),
+    ("motoshop.gold.mart_productos_dormidos", "gold_mart_productos_dormidos"),
+    ("motoshop.gold.alertas_quiebre", "gold_alertas_quiebre"),
+    ("motoshop.gold.alertas_drift", "gold_alertas_drift"),
+    ("motoshop.gold.forecast_categoria", "gold_forecast_categoria"),
+    ("motoshop.gold.mart_abc_xyz", "gold_mart_abc_xyz"),
+    ("motoshop.silver.fact_ventas", "silver_fact_ventas"),
+    ("motoshop.silver.fact_ventas_detalle", "silver_fact_ventas_detalle"),
+    ("motoshop.silver.fact_compras", "silver_fact_compras"),
+    ("motoshop.silver.fact_compras_detalle", "silver_fact_compras_detalle"),
+    ("motoshop.silver.dim_bodega", "silver_dim_bodega"),
+    ("motoshop.silver.dim_producto", "silver_dim_producto"),
 ]
 
 _TYPE_MAP = {
@@ -99,9 +99,8 @@ def build_from_databricks(duckdb_path: str | Path) -> str:
     total_rows = 0
 
     for full_table, alias in TABLES:
-        json_path = INPUT_DIR / f"{alias.replace('motoshop_gold_', '').replace('motoshop_silver_', '')}.json"
-        # El nombre del archivo json usa el nombre corto
-        short_name = alias.replace("motoshop_gold_", "").replace("motoshop_silver_", "")
+        # El nombre del archivo json usa el nombre corto (sin prefijo gold_/silver_)
+        short_name = alias.replace("gold_", "").replace("silver_", "")
         json_path = INPUT_DIR / f"{short_name}.json"
 
         if not json_path.exists():

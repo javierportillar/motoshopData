@@ -36,10 +36,9 @@ class RefreshResponse(BaseModel):
 
 
 def _get_duckdb_path() -> Path:
-    db_path = settings.duckdb_path or (
-        "/tmp/motoshop_gold.duckdb" if os.environ.get("ENV") == "prod"
-        else "out/motoshop_gold.duckdb"
-    )
+    from motoshop_api.metrics.repo_duckdb import _make_db_path
+
+    db_path = settings.duckdb_path or str(_make_db_path("motoshop"))
     return Path(db_path)
 
 
@@ -217,7 +216,7 @@ async def data_status(
     try:
         # Max sales date
         max_date = con.execute(
-            "SELECT MAX(business_date) FROM motoshop_gold_mart_ventas_diarias_sku"
+            "SELECT MAX(business_date) FROM gold_mart_ventas_diarias_sku"
         ).fetchone()[0]
 
         max_date_str = str(max_date) if max_date else None
@@ -225,13 +224,13 @@ async def data_status(
 
         # Inventory snapshot
         inv_snapshot = con.execute(
-            "SELECT MAX(snapshot_date) FROM motoshop_gold_mart_inventario_actual"
+            "SELECT MAX(snapshot_date) FROM gold_mart_inventario_actual"
         ).fetchone()[0]
         inv_snapshot_str = str(inv_snapshot) if inv_snapshot else None
 
         # Invalid future sales (> tomorrow)
         invalid = con.execute(
-            "SELECT COUNT(*) FROM motoshop_silver_fact_ventas WHERE business_date > CURRENT_DATE + 1"
+            "SELECT COUNT(*) FROM silver_fact_ventas WHERE business_date > CURRENT_DATE + 1"
         ).fetchone()[0]
 
         # DuckDB freshness

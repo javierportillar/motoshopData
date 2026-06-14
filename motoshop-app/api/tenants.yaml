@@ -1,0 +1,55 @@
+tenants:
+  - id: motoshop
+    nombre: "MotoShop"
+    descripcion: "Repuestos de moto · Cali, Colombia"
+    color_brand: "#7B1818"
+    logo: "/tenants/motoshop/logo.png"
+    r2_object_key: "motoshop_gold.duckdb"
+    local_db_path: "/tmp/motoshop_gold.duckdb"
+    mysql_source: "sgHermes"
+    telegram_chat_id_gerente: "816016329"
+    enabled_features:
+      - products
+      - stock
+      - sales
+      - ventas-summary
+      - ventas-daily
+      - ventas-monthly
+      - inventario
+      - abc
+      - dormidos
+      - cohortes
+      - drift
+      - forecast
+      - plan-compras
+      - vendedores
+      - alerts
+      - acciones
+      - chat-ia
+      - briefing-diario
+      - pipeline-observability
+      - data-catalog
+    briefing:
+      activo: true
+      hora_cron_utc: "0 11 * * *"
+
+  - id: masvital
+    nombre: "MasVital"
+    descripcion: "Nuevo negocio"
+    color_brand: "#16A34A"
+    logo: "/tenants/masvital/logo.png"
+    r2_object_key: "masvital_gold.duckdb"
+    local_db_path: "/tmp/masvital_gold.duckdb"
+    mysql_source: "masvital_pos"
+    telegram_chat_id_gerente: null
+    enabled_features:
+      - products
+      - stock
+      - sales
+      - ventas-summary
+      - ventas-daily
+      - inventario
+      - chat-ia
+      - pipeline-observability
+    briefing:
+      activo: false

@@ -53,15 +53,24 @@ from motoshop_api.metrics.schemas import (
 
 logger = logging.getLogger(__name__)
 
-# Ruta por defecto — /tmp en Render, out/ local
-_DEFAULT_DB_PATH = Path(os.environ.get(
-    "DUCKDB_PATH",
-    "/tmp/motoshop_gold.duckdb" if os.environ.get("ENV") == "prod" else "out/motoshop_gold.duckdb"
-))
+
+def _make_db_path(tenant: str) -> Path:
+    """Construye la ruta al archivo DuckDB según tenant y entorno.
+
+    En prod usa /tmp/{tenant}_gold.duckdb.
+    En dev (local) usa out/{tenant}_gold.duckdb.
+    Respeta DUCKDB_PATH como override explícito.
+    """
+    default = (
+        f"/tmp/{tenant}_gold.duckdb"
+        if os.environ.get("ENV") == "prod"
+        else f"out/{tenant}_gold.duckdb"
+    )
+    return Path(os.environ.get("DUCKDB_PATH", default))
 
 
-def _bootstrap_duckdb_from_r2(db_path: Path) -> None:
-    """Descarga motoshop_gold.duckdb desde R2 si no existe localmente."""
+def _bootstrap_duckdb_from_r2(db_path: Path, tenant: str = "motoshop") -> None:
+    """Descarga {tenant}_gold.duckdb desde R2 si no existe localmente."""
     if db_path.exists():
         return
 
@@ -69,6 +78,7 @@ def _bootstrap_duckdb_from_r2(db_path: Path) -> None:
     r2_key = os.environ.get("R2_ACCESS_KEY_ID")
     r2_secret = os.environ.get("R2_SECRET_ACCESS_KEY")
     r2_bucket = os.environ.get("R2_BUCKET", "motoshop-gold")
+    r2_object_key = os.environ.get("R2_OBJECT_KEY", f"{tenant}_gold.duckdb")
 
     if not all([r2_endpoint, r2_key, r2_secret]):
         logger.warning("R2 credentials not set; skipping bootstrap download")
@@ -83,9 +93,9 @@ def _bootstrap_duckdb_from_r2(db_path: Path) -> None:
             aws_secret_access_key=r2_secret,
             region_name="auto",
         )
-        logger.info("Downloading DuckDB from R2: %s/%s", r2_bucket, "motoshop_gold.duckdb")
+        logger.info("Downloading DuckDB from R2: %s/%s", r2_bucket, r2_object_key)
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        s3.download_file(r2_bucket, "motoshop_gold.duckdb", str(db_path))
+        s3.download_file(r2_bucket, r2_object_key, str(db_path))
         logger.info("DuckDB downloaded to %s", db_path)
     except Exception as exc:
         logger.warning("Failed to download DuckDB from R2: %s", exc)
@@ -97,9 +107,12 @@ class DuckDBMetricsRepo:
     Misma interfaz que RealMetricsRepo pero sin dependencia de Databricks.
     """
 
-    def __init__(self, db_path: str | Path | None = None) -> None:
-        self._path = Path(db_path or _DEFAULT_DB_PATH)
-        _bootstrap_duckdb_from_r2(self._path)
+    def __init__(self, db_path: str | Path | None = None, tenant: str = "motoshop") -> None:
+        self._tenant = tenant
+        if db_path is None:
+            db_path = _make_db_path(tenant)
+        self._path = Path(db_path)
+        _bootstrap_duckdb_from_r2(self._path, tenant)
         if not self._path.exists():
             raise FileNotFoundError(
                 f"DuckDB file not found at {self._path}. "
@@ -183,7 +196,7 @@ class DuckDBMetricsRepo:
         """Resumen de ventas mes actual vs mes anterior + top 10 SKUs."""
         rows = self._query("""
             WITH max_dates AS (
-                SELECT MAX(business_date) AS max_date FROM motoshop_gold_mart_ventas_diarias_sku
+                SELECT MAX(business_date) AS max_date FROM gold_mart_ventas_diarias_sku
             )
             SELECT
                 STRFTIME(business_date, '%Y-%m') AS business_month,
@@ -191,7 +204,7 @@ class DuckDBMetricsRepo:
                 ROUND(SUM(cantidad_total), 2) AS cantidad_total,
                 SUM(num_facturas) AS num_facturas,
                 ROUND(SUM(valor_total) / NULLIF(SUM(num_facturas), 0), 2) AS ticket_promedio
-            FROM motoshop_gold_mart_ventas_diarias_sku, max_dates
+            FROM gold_mart_ventas_diarias_sku, max_dates
             WHERE business_date >= max_dates.max_date - INTERVAL '60' DAY
             GROUP BY STRFTIME(business_date, '%Y-%m')
             ORDER BY business_month DESC
@@ -200,14 +213,14 @@ class DuckDBMetricsRepo:
 
         top = self._query("""
             WITH max_dates AS (
-                SELECT MAX(business_date) AS max_date FROM motoshop_gold_mart_ventas_diarias_sku
+                SELECT MAX(business_date) AS max_date FROM gold_mart_ventas_diarias_sku
             )
             SELECT
                 cod_producto, nom_producto,
                 ROUND(SUM(cantidad_total), 2) AS cantidad_total,
                 ROUND(SUM(valor_total), 2) AS valor_total,
                 ROUND(SUM(valor_total) / NULLIF(SUM(SUM(valor_total)) OVER(), 0) * 100, 1) AS porcentaje_ingreso
-            FROM motoshop_gold_mart_ventas_diarias_sku, max_dates
+            FROM gold_mart_ventas_diarias_sku, max_dates
             WHERE business_date >= max_dates.max_date - INTERVAL '30' DAY
             GROUP BY cod_producto, nom_producto
             ORDER BY valor_total DESC
@@ -244,7 +257,7 @@ class DuckDBMetricsRepo:
     def get_sales_daily(self, date: str) -> SalesDailyResponse:
         max_date_rows = self._query("""
             SELECT MAX(business_date) AS max_date
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
             WHERE business_date <= ?
         """, [date])
         effective_date = date
@@ -257,7 +270,7 @@ class DuckDBMetricsRepo:
                 nom_producto AS nombre,
                 ROUND(SUM(cantidad_total), 2) AS cantidad,
                 ROUND(SUM(valor_total), 2) AS valor
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
             WHERE business_date = ?
             GROUP BY cod_producto, nom_producto
             ORDER BY valor DESC
@@ -266,7 +279,7 @@ class DuckDBMetricsRepo:
             SELECT
                 ROUND(COALESCE(SUM(valor_total), 0), 2) AS total_ventas,
                 COALESCE(SUM(num_facturas), 0) AS total_facturas
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
             WHERE business_date = ?
         """, [effective_date])
         if not totals:
@@ -286,12 +299,12 @@ class DuckDBMetricsRepo:
             SELECT
                 ROUND(COALESCE(SUM(valor_total), 0.0), 2) AS total_ventas,
                 COALESCE(SUM(num_facturas), 0) AS total_facturas
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
             WHERE STRFTIME(business_date, '%Y-%m') = ?
         """, [month])
         prev = self._query("""
             SELECT ROUND(COALESCE(SUM(valor_total), 0.0), 2) AS total_ventas
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
             WHERE STRFTIME(business_date, '%Y-%m') = ?
         """, [_prev_month_str(month)])
         top = self._query("""
@@ -301,7 +314,7 @@ class DuckDBMetricsRepo:
                 ROUND(SUM(cantidad_total), 2) AS cantidad_total,
                 ROUND(SUM(valor_total), 2) AS valor_total,
                 ROUND(SUM(valor_total) / NULLIF(SUM(SUM(valor_total)) OVER(), 0) * 100, 1) AS porcentaje_ingreso
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
             WHERE STRFTIME(business_date, '%Y-%m') = ?
             GROUP BY cod_producto, nom_producto
             ORDER BY valor_total DESC
@@ -328,7 +341,7 @@ class DuckDBMetricsRepo:
             SELECT
                 ROUND(SUM(valor_total), 2) AS total_ventas,
                 COALESCE(SUM(num_facturas), 0) AS total_facturas
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
         """)
         meses = self._query("""
             SELECT YEAR(business_date) AS year,
@@ -336,13 +349,13 @@ class DuckDBMetricsRepo:
                    ROUND(SUM(valor_total), 2) AS total_ventas,
                    COALESCE(SUM(num_facturas), 0) AS num_facturas,
                    ROUND(SUM(valor_total) / NULLIF(SUM(num_facturas), 0), 2) AS ticket_promedio
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
             GROUP BY YEAR(business_date), MONTH(business_date)
             ORDER BY year, month
         """)
         first = self._query("""
             SELECT MIN(business_date) AS first_date
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
         """)
         if not totals or not meses:
             raise RuntimeError("No historical sales data found")
@@ -362,23 +375,23 @@ class DuckDBMetricsRepo:
             SELECT
                 SUM(cantidad_actual) AS stock_total,
                 COUNT(DISTINCT cod_producto) AS num_productos
-            FROM motoshop_gold_mart_inventario_actual
+            FROM gold_mart_inventario_actual
         """)
         valor = self._query("""
             WITH latest_cost AS (
                 SELECT cod_producto, costo_producto,
                        ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_date DESC) AS rn
-                FROM motoshop_silver_fact_compras_detalle
+                FROM silver_fact_compras_detalle
                 WHERE costo_producto > 0
             )
             SELECT COALESCE(ROUND(SUM(i.cantidad_actual * COALESCE(lc.costo_producto, 0)), 2), 0) AS valor_total
-            FROM motoshop_gold_mart_inventario_actual i
+            FROM gold_mart_inventario_actual i
             LEFT JOIN latest_cost lc ON i.cod_producto = lc.cod_producto AND lc.rn = 1
         """)
         bodegas = self._query("""
             WITH default_bodega AS (
                 SELECT cod_bodega AS def_cod, nombre_bodega AS def_nom
-                FROM motoshop_silver_dim_bodega
+                FROM silver_dim_bodega
                 ORDER BY snapshot_date DESC
                 LIMIT 1
             )
@@ -397,7 +410,7 @@ class DuckDBMetricsRepo:
                 END AS nom_bodega,
                 ROUND(SUM(inv.cantidad_actual), 2) AS cantidad,
                 ROUND(SUM(inv.cantidad_actual) / NULLIF(SUM(SUM(inv.cantidad_actual)) OVER(), 0) * 100, 1) AS porcentaje
-            FROM motoshop_gold_mart_inventario_actual inv
+            FROM gold_mart_inventario_actual inv
             CROSS JOIN default_bodega db
             GROUP BY 1, 2
             ORDER BY cantidad DESC
@@ -418,13 +431,13 @@ class DuckDBMetricsRepo:
     def get_abc_segmentation(self) -> AbcSegmentation:
         buckets = self._query("""
             WITH max_month AS (
-                SELECT MAX(business_month) AS mm FROM motoshop_gold_mart_rotacion_abc
+                SELECT MAX(business_month) AS mm FROM gold_mart_rotacion_abc
             )
             SELECT max_month.mm AS business_month,
                    categoria_abc AS categoria, COUNT(*) AS num_skus,
                    ROUND(SUM(valor_total), 2) AS valor_total,
                    ROUND(SUM(valor_total) / NULLIF(SUM(SUM(valor_total)) OVER(), 0) * 100, 1) AS porcentaje_ingreso
-            FROM motoshop_gold_mart_rotacion_abc, max_month
+            FROM gold_mart_rotacion_abc, max_month
             WHERE business_month = max_month.mm
             GROUP BY categoria_abc, max_month.mm
             ORDER BY CASE categoria_abc WHEN 'A' THEN 1 WHEN 'B' THEN 2 ELSE 3 END
@@ -447,7 +460,7 @@ class DuckDBMetricsRepo:
         )
 
     def get_abc_detalle(self, bucket: str, limit: int = 20) -> AbcDetalleResponse:
-        # NOTA: motoshop_gold_mart_rotacion_abc NO tiene nom_producto (solo
+        # NOTA: gold_mart_rotacion_abc NO tiene nom_producto (solo
         # business_month, cod_producto, valor_total, categoria_abc). El nombre
         # se resuelve por UNION de inventario_actual + ventas_diarias_sku para
         # cubrir productos sin stock que sí tuvieron ventas en el mes ABC.
@@ -455,9 +468,9 @@ class DuckDBMetricsRepo:
             WITH dim AS (
                 SELECT cod_producto, MAX(nom_producto) AS nom_producto
                 FROM (
-                    SELECT cod_producto, nom_producto FROM motoshop_gold_mart_inventario_actual
+                    SELECT cod_producto, nom_producto FROM gold_mart_inventario_actual
                     UNION ALL
-                    SELECT cod_producto, nom_producto FROM motoshop_gold_mart_ventas_diarias_sku
+                    SELECT cod_producto, nom_producto FROM gold_mart_ventas_diarias_sku
                 )
                 GROUP BY cod_producto
             )
@@ -466,9 +479,9 @@ class DuckDBMetricsRepo:
                 COALESCE(d.nom_producto, a.cod_producto) AS nom_producto,
                 ROUND(a.valor_total, 2) AS valor_total,
                 ROUND(a.valor_total / NULLIF(SUM(a.valor_total) OVER(PARTITION BY a.categoria_abc), 0) * 100, 1) AS porcentaje_bucket
-            FROM motoshop_gold_mart_rotacion_abc a
+            FROM gold_mart_rotacion_abc a
             LEFT JOIN dim d USING (cod_producto)
-            WHERE a.business_month = (SELECT MAX(business_month) FROM motoshop_gold_mart_rotacion_abc)
+            WHERE a.business_month = (SELECT MAX(business_month) FROM gold_mart_rotacion_abc)
               AND a.categoria_abc = ?
             ORDER BY a.valor_total DESC
             LIMIT ?
@@ -493,7 +506,7 @@ class DuckDBMetricsRepo:
     ) -> DormidosResponse:
         count_rows = self._query("""
             SELECT COUNT(*) AS total
-            FROM motoshop_gold_mart_productos_dormidos d
+            FROM gold_mart_productos_dormidos d
         """)
         total = int(count_rows[0]["total"]) if count_rows else 0
         offset = (page - 1) * page_size
@@ -508,15 +521,15 @@ class DuckDBMetricsRepo:
                     CAST(c.ultima_compra AS VARCHAR) AS ultima_compra,
                     COALESCE(CAST(v.ultima_venta AS VARCHAR), CAST(d.ultima_fecha_venta AS VARCHAR)) AS ultima_venta,
                     DATE_DIFF('day', COALESCE(v.ultima_venta, d.ultima_fecha_venta), CURRENT_DATE) AS dias_sin_venta
-            FROM motoshop_gold_mart_productos_dormidos d
+            FROM gold_mart_productos_dormidos d
             LEFT JOIN (
                 SELECT cod_producto, MAX(business_date) AS ultima_venta
-                FROM motoshop_silver_fact_ventas_detalle
+                FROM silver_fact_ventas_detalle
                 GROUP BY cod_producto
             ) v ON d.cod_producto = v.cod_producto
             LEFT JOIN (
                 SELECT cod_producto, MAX(business_date) AS ultima_compra
-                FROM motoshop_silver_fact_compras_detalle
+                FROM silver_fact_compras_detalle
                 GROUP BY cod_producto
             ) c ON d.cod_producto = c.cod_producto
             ORDER BY {sort_column} {direction}
@@ -545,7 +558,7 @@ class DuckDBMetricsRepo:
                 COUNT(DISTINCT nit_cliente) AS num_clientes,
                 ROUND(AVG(ticket_promedio), 2) AS ticket_promedio,
                 ROUND(SUM(CASE WHEN compro_este_mes THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 2) AS tasa_recurrencia
-            FROM motoshop_gold_mart_cohortes_clientes
+            FROM gold_mart_cohortes_clientes
             GROUP BY mes_cohorte, business_month
             ORDER BY mes_cohorte, business_month
         """)
@@ -577,7 +590,7 @@ class DuckDBMetricsRepo:
                     ROUND(SUM(valor_total), 2) AS total_ventas,
                     COALESCE(SUM(num_facturas), 0) AS num_facturas,
                     ROUND(SUM(valor_total) / NULLIF(SUM(num_facturas), 0), 2) AS ticket_promedio
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
             WHERE business_date >= CURRENT_DATE - (CAST(? AS VARCHAR) || ' months')::INTERVAL
             {where_year}
             GROUP BY YEAR(business_date), MONTH(business_date)
@@ -597,7 +610,7 @@ class DuckDBMetricsRepo:
     # ── Vendedores Summary ───────────────────────────────────────────────
 
     def get_vendedores_summary(self, period: str = "month") -> VendedoresSummaryResponse:
-        max_month_sql = "(SELECT STRFTIME(MAX(business_date), '%Y-%m') FROM motoshop_silver_fact_ventas)"
+        max_month_sql = "(SELECT STRFTIME(MAX(business_date), '%Y-%m') FROM silver_fact_ventas)"
         where = {
             "month": f"STRFTIME(business_date, '%Y-%m') = {max_month_sql}",
             "historical": "1 = 1",
@@ -610,7 +623,7 @@ class DuckDBMetricsRepo:
                 COUNT(*) AS facturas,
                 ROUND(SUM(total_factura), 2) AS total_ventas,
                 ROUND(AVG(total_factura), 2) AS ticket_promedio
-            FROM motoshop_silver_fact_ventas
+            FROM silver_fact_ventas
             WHERE {where}
             GROUP BY
                 COALESCE(NULLIF(nit_vendedor, ''), 'SIN_ASIGNAR'),
@@ -630,7 +643,7 @@ class DuckDBMetricsRepo:
     # ── Vendedor Detail ────────────────────────────────────────────────
 
     def get_vendedor_detail(self, vendedor_id: str, period: str = "month") -> VendedorDetailResponse:
-        max_month_sql = "(SELECT STRFTIME(MAX(business_date), '%Y-%m') FROM motoshop_silver_fact_ventas)"
+        max_month_sql = "(SELECT STRFTIME(MAX(business_date), '%Y-%m') FROM silver_fact_ventas)"
         where = {
             "month": f"STRFTIME(business_date, '%Y-%m') = {max_month_sql}",
             "historical": "1 = 1",
@@ -643,7 +656,7 @@ class DuckDBMetricsRepo:
                 COUNT(*) AS facturas,
                 ROUND(SUM(total_factura), 2) AS ventas_total,
                 ROUND(AVG(total_factura), 2) AS ticket_promedio
-            FROM motoshop_silver_fact_ventas
+            FROM silver_fact_ventas
             WHERE nit_vendedor = ? AND {where}
             GROUP BY nit_vendedor, nombre_vendedor
         """, [vendedor_id])
@@ -656,7 +669,7 @@ class DuckDBMetricsRepo:
 
         categorias = self._query(f"""
             SELECT 'GENÉRICO' AS categoria, CAST(SUM(total_factura) AS DOUBLE) AS total
-            FROM motoshop_silver_fact_ventas
+            FROM silver_fact_ventas
             WHERE nit_vendedor = ? AND {where}
         """, [vendedor_id])
         cats = [{"categoria": r["categoria"], "total": float(r["total"])} for r in categorias] if categorias else []
@@ -668,8 +681,8 @@ class DuckDBMetricsRepo:
         }.get(period, f"STRFTIME(v.business_date, '%Y-%m') = {max_month_sql}")
         productos = self._query(f"""
             SELECT COUNT(DISTINCT cod_producto) AS productos_vendidos
-            FROM motoshop_silver_fact_ventas_detalle d
-            INNER JOIN motoshop_silver_fact_ventas v ON d.num_documento = v.num_documento
+            FROM silver_fact_ventas_detalle d
+            INNER JOIN silver_fact_ventas v ON d.num_documento = v.num_documento
             WHERE v.nit_vendedor = ? AND {where_v}
         """, [vendedor_id])
         prod_count = int(productos[0]["productos_vendidos"]) if productos and productos[0].get("productos_vendidos") else 0
@@ -678,7 +691,7 @@ class DuckDBMetricsRepo:
         if period == "month":
             anterior_rows = self._query("""
                 SELECT COALESCE(ROUND(SUM(total_factura), 2), 0) AS anterior
-                FROM motoshop_silver_fact_ventas
+                FROM silver_fact_ventas
                 WHERE nit_vendedor = ?
                   AND business_date >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1' MONTH)
                   AND business_date < DATE_TRUNC('month', CURRENT_DATE)
@@ -704,7 +717,7 @@ class DuckDBMetricsRepo:
             SELECT STRFTIME(TRY_CAST(mes_cohorte AS DATE), '%Y-%m-01') AS cohorte_mes,
                    COUNT(DISTINCT nit_cliente) AS total_clientes,
                    ROUND(AVG(ticket_promedio), 2) AS ltv_promedio
-            FROM motoshop_gold_mart_cohortes_clientes
+            FROM gold_mart_cohortes_clientes
             GROUP BY mes_cohorte
             ORDER BY mes_cohorte
         """)
@@ -713,19 +726,19 @@ class DuckDBMetricsRepo:
                    STRFTIME(TRY_CAST(business_month AS DATE), '%Y-%m-01') AS mes_observacion,
                    COUNT(DISTINCT nit_cliente) AS num_clientes,
                    ROUND(SUM(CASE WHEN compro_este_mes THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 2) AS tasa_recurrencia
-            FROM motoshop_gold_mart_cohortes_clientes
+            FROM gold_mart_cohortes_clientes
             GROUP BY mes_cohorte, business_month
             ORDER BY mes_cohorte, business_month
         """)
         nuevos_rows = self._query("""
             WITH ultimo_mes AS (
-                SELECT MAX(business_month) AS mm FROM motoshop_gold_mart_cohortes_clientes
+                SELECT MAX(business_month) AS mm FROM gold_mart_cohortes_clientes
             )
             SELECT
                 COALESCE(SUM(CASE WHEN mes_cohorte = business_month THEN 1 ELSE 0 END), 0) AS nuevos,
                 COALESCE(SUM(CASE WHEN mes_cohorte < business_month AND compro_este_mes THEN 1 ELSE 0 END), 0) AS recurrentes,
                 COALESCE(SUM(CASE WHEN compro_este_mes THEN 1 ELSE 0 END), 0) AS top_recurrentes
-            FROM motoshop_gold_mart_cohortes_clientes, ultimo_mes
+            FROM gold_mart_cohortes_clientes, ultimo_mes
             WHERE business_month = ultimo_mes.mm
         """)
         if not cohortes_rows:
@@ -779,13 +792,13 @@ class DuckDBMetricsRepo:
                          WHEN desviacion_pct >= threshold_pct * 0.5 THEN 'Monitorear. Si supera threshold, re-entrenar.'
                          ELSE 'Sin acción requerida'
                        END AS recommended_action
-                FROM motoshop_gold_alertas_drift
+                FROM gold_alertas_drift
                 ORDER BY week_end DESC
                 LIMIT 50
             """)
             threshold_row = self._query("""
                 SELECT COALESCE(MAX(threshold_pct), 30.0) AS current_threshold
-                FROM motoshop_gold_alertas_drift
+                FROM gold_alertas_drift
             """)
         except Exception as exc:
             logger.warning("Alertas_drift table not available: %s", exc)
@@ -813,7 +826,7 @@ class DuckDBMetricsRepo:
         rows = self._query("""
             WITH demanda_7d AS (
                 SELECT cod_producto, SUM(cantidad) AS qty_7d
-                FROM motoshop_silver_fact_ventas_detalle
+                FROM silver_fact_ventas_detalle
                 WHERE business_date >= CURRENT_DATE - INTERVAL '7' DAY
                 GROUP BY cod_producto
             ),
@@ -822,7 +835,7 @@ class DuckDBMetricsRepo:
                 FROM (
                     SELECT cod_producto, categoria_abc,
                            ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_month DESC) AS rn
-                    FROM motoshop_gold_mart_rotacion_abc
+                    FROM gold_mart_rotacion_abc
                 ) WHERE rn = 1
             ),
             alertas_latest AS (
@@ -830,13 +843,13 @@ class DuckDBMetricsRepo:
                 FROM (
                     SELECT sku, urgencia,
                            ROW_NUMBER() OVER (PARTITION BY sku ORDER BY urgencia) AS rn
-                    FROM motoshop_gold_alertas_quiebre
+                    FROM gold_alertas_quiebre
                 ) WHERE rn = 1
             ),
             suppliers AS (
                 SELECT d.cod_producto, MAX(c.nombre_proveedor) AS supplier
-                FROM motoshop_silver_fact_compras_detalle d
-                INNER JOIN motoshop_silver_fact_compras c
+                FROM silver_fact_compras_detalle d
+                INNER JOIN silver_fact_compras c
                     ON d.num_documento = c.num_documento AND d.cod_clase = c.cod_clase
                 WHERE c.nombre_proveedor IS NOT NULL
                 GROUP BY d.cod_producto
@@ -853,11 +866,11 @@ class DuckDBMetricsRepo:
                 al.urgencia,
                 CASE WHEN dorm.cod_producto IS NOT NULL THEN TRUE ELSE FALSE END AS dormido,
                 COALESCE(s.supplier, 'Sin proveedor') AS supplier
-            FROM motoshop_gold_mart_inventario_actual inv
+            FROM gold_mart_inventario_actual inv
             LEFT JOIN demanda_7d d ON inv.cod_producto = d.cod_producto
             LEFT JOIN abc_latest abc ON inv.cod_producto = abc.cod_producto
             LEFT JOIN alertas_latest al ON inv.cod_producto = al.sku
-            LEFT JOIN motoshop_gold_mart_productos_dormidos dorm
+            LEFT JOIN gold_mart_productos_dormidos dorm
                 ON inv.cod_producto = dorm.cod_producto
             LEFT JOIN suppliers s ON inv.cod_producto = s.cod_producto
             WHERE COALESCE(d.qty_7d, 0) > inv.cantidad_actual
@@ -897,7 +910,7 @@ class DuckDBMetricsRepo:
                    ROUND(ABS(SUM(demanda_real) - SUM(demanda_predicha_baseline))
                          / NULLIF(SUM(demanda_real), 0) * 100, 2) AS desviacion_pct,
                    MAX(metodo_baseline) AS metodo
-            FROM motoshop_gold_forecast_categoria
+            FROM gold_forecast_categoria
             WHERE business_date >= CURRENT_DATE - INTERVAL '30' DAY
             GROUP BY cod_grupo
             ORDER BY demanda_real DESC
@@ -905,8 +918,8 @@ class DuckDBMetricsRepo:
         coverage_row = self._query("""
             SELECT ROUND(COUNT(DISTINCT cod_grupo) * 100.0
                    / NULLIF((SELECT COUNT(DISTINCT cod_grupo)
-                             FROM motoshop_gold_forecast_categoria), 0), 2) AS cobertura_pct
-            FROM motoshop_gold_forecast_categoria
+                             FROM gold_forecast_categoria), 0), 2) AS cobertura_pct
+            FROM gold_forecast_categoria
             WHERE business_date >= CURRENT_DATE - INTERVAL '30' DAY
         """)
         if not rows:
@@ -934,7 +947,7 @@ class DuckDBMetricsRepo:
 
         # Max date
         max_d = self._con.execute(
-            "SELECT MAX(business_date) FROM motoshop_gold_mart_ventas_diarias_sku"
+            "SELECT MAX(business_date) FROM gold_mart_ventas_diarias_sku"
         ).fetchone()[0]
         max_date = max_d if max_d else date.today()
         max_date_str = str(max_date)
@@ -946,7 +959,7 @@ class DuckDBMetricsRepo:
             SELECT ROUND(COALESCE(SUM(valor_total),0),2), COALESCE(SUM(num_facturas),0),
                    ROUND(COALESCE(SUM(valor_total),0)/NULLIF(COALESCE(SUM(num_facturas),0),0),2),
                    COUNT(DISTINCT business_date)
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
             WHERE STRFTIME(business_date,'%Y-%m') = ?
         """, [current_month]).fetchone()
 
@@ -959,7 +972,7 @@ class DuckDBMetricsRepo:
 
         prev = self._con.execute("""
             SELECT ROUND(COALESCE(SUM(valor_total),0),2)
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
             WHERE business_date >= ? AND business_date <= ?
         """, [prev_start, prev_end]).fetchone()
 
@@ -974,11 +987,11 @@ class DuckDBMetricsRepo:
                 y_start = f"{yr}-{max_date.month:02d}-01"
                 y_end = f"{yr}-{max_date.month:02d}-{day_num:02d}"
                 y_same = self._con.execute("""
-                    SELECT ROUND(COALESCE(SUM(valor_total),0),2) FROM motoshop_gold_mart_ventas_diarias_sku
+                    SELECT ROUND(COALESCE(SUM(valor_total),0),2) FROM gold_mart_ventas_diarias_sku
                     WHERE business_date >= ? AND business_date <= ?
                 """, [y_start, y_end]).fetchone()
                 y_full = self._con.execute("""
-                    SELECT ROUND(COALESCE(SUM(valor_total),0),2) FROM motoshop_gold_mart_ventas_diarias_sku
+                    SELECT ROUND(COALESCE(SUM(valor_total),0),2) FROM gold_mart_ventas_diarias_sku
                     WHERE STRFTIME(business_date,'%Y-%m') = ?
                 """, [f"{yr}-{max_date.month:02d}"]).fetchone()
                 y_amount = float(y_same[0] or 0)
@@ -1017,7 +1030,7 @@ class DuckDBMetricsRepo:
             SELECT business_date, ROUND(COALESCE(SUM(valor_total),0),2) AS ventas,
                    COALESCE(SUM(num_facturas),0) AS facturas,
                    ROUND(COALESCE(SUM(valor_total),0)/NULLIF(COALESCE(SUM(num_facturas),0),0),2) AS ticket
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
             WHERE STRFTIME(business_date,'%Y-%m') = ?
             GROUP BY business_date ORDER BY business_date
         """, [month]).fetchall()
@@ -1045,7 +1058,7 @@ class DuckDBMetricsRepo:
         from datetime import date
 
         max_d = self._con.execute(
-            "SELECT MAX(business_date) FROM motoshop_gold_mart_ventas_diarias_sku"
+            "SELECT MAX(business_date) FROM gold_mart_ventas_diarias_sku"
         ).fetchone()[0]
         max_date = max_d if max_d else date.today()
         current_month = max_date.strftime("%Y-%m")
@@ -1054,7 +1067,7 @@ class DuckDBMetricsRepo:
         # Current month: acumulado / días con venta → run-rate diario
         curr = self._con.execute("""
             SELECT ROUND(COALESCE(SUM(valor_total),0),2), COUNT(DISTINCT business_date)
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
             WHERE STRFTIME(business_date,'%Y-%m') = ?
         """, [current_month]).fetchone()
         accum = float(curr[0] or 0)
@@ -1076,7 +1089,7 @@ class DuckDBMetricsRepo:
         ly_month = f"{max_date.year - 1}-{max_date.month:02d}"
         ly_sales = self._con.execute("""
             SELECT ROUND(COALESCE(SUM(valor_total),0),2)
-            FROM motoshop_gold_mart_ventas_diarias_sku WHERE STRFTIME(business_date,'%Y-%m') = ?
+            FROM gold_mart_ventas_diarias_sku WHERE STRFTIME(business_date,'%Y-%m') = ?
         """, [ly_month]).fetchone()
         ly_val = float(ly_sales[0] or 0)
 
@@ -1091,7 +1104,7 @@ class DuckDBMetricsRepo:
             m_str = f"{y}-{m:02d}"
             mv = self._con.execute("""
                 SELECT ROUND(COALESCE(SUM(valor_total),0),2)
-                FROM motoshop_gold_mart_ventas_diarias_sku WHERE STRFTIME(business_date,'%Y-%m') = ?
+                FROM gold_mart_ventas_diarias_sku WHERE STRFTIME(business_date,'%Y-%m') = ?
             """, [m_str]).fetchone()
             months.append(float(mv[0] or 0))
 
@@ -1172,16 +1185,16 @@ class DuckDBMetricsRepo:
             WITH latest_cost AS (
                 SELECT cod_producto, costo_producto,
                        ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_date DESC) AS rn
-                FROM motoshop_silver_fact_compras_detalle WHERE costo_producto > 0
+                FROM silver_fact_compras_detalle WHERE costo_producto > 0
             ),
             last_sale AS (
                 SELECT cod_producto, MAX(business_date) AS ultima_venta
-                FROM motoshop_silver_fact_ventas_detalle GROUP BY cod_producto
+                FROM silver_fact_ventas_detalle GROUP BY cod_producto
             ),
             abc_latest AS (
                 SELECT cod_producto, categoria_abc
                 FROM (SELECT cod_producto, categoria_abc, ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_month DESC) AS rn
-                      FROM motoshop_gold_mart_rotacion_abc) WHERE rn = 1
+                      FROM gold_mart_rotacion_abc) WHERE rn = 1
             )
             SELECT inv.cod_producto, inv.nom_producto, inv.cod_bodega, inv.nom_bodega,
                    inv.cantidad_actual AS stock_actual,
@@ -1191,10 +1204,10 @@ class DuckDBMetricsRepo:
                    COALESCE(DATE_DIFF('day', v.ultima_venta, CURRENT_DATE), 99999) AS dias_sin_venta,
                    CASE WHEN d.cod_producto IS NOT NULL THEN TRUE ELSE FALSE END AS es_dormido,
                    COALESCE(abc.categoria_abc, 'C') AS abc
-            FROM motoshop_gold_mart_inventario_actual inv
+            FROM gold_mart_inventario_actual inv
             LEFT JOIN latest_cost lc ON inv.cod_producto = lc.cod_producto AND lc.rn = 1
             LEFT JOIN last_sale v ON inv.cod_producto = v.cod_producto
-            LEFT JOIN motoshop_gold_mart_productos_dormidos d ON inv.cod_producto = d.cod_producto
+            LEFT JOIN gold_mart_productos_dormidos d ON inv.cod_producto = d.cod_producto
             LEFT JOIN abc_latest abc ON inv.cod_producto = abc.cod_producto
             WHERE {where}
             ORDER BY {sort_col} DESC
@@ -1218,10 +1231,10 @@ class DuckDBMetricsRepo:
             WITH abc_latest AS (
                 SELECT cod_producto, categoria_abc
                 FROM (SELECT cod_producto, categoria_abc, ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_month DESC) AS rn
-                      FROM motoshop_gold_mart_rotacion_abc) WHERE rn = 1
+                      FROM gold_mart_rotacion_abc) WHERE rn = 1
             )
-            SELECT COUNT(*) FROM motoshop_gold_mart_inventario_actual inv
-            LEFT JOIN motoshop_gold_mart_productos_dormidos d ON inv.cod_producto = d.cod_producto
+            SELECT COUNT(*) FROM gold_mart_inventario_actual inv
+            LEFT JOIN gold_mart_productos_dormidos d ON inv.cod_producto = d.cod_producto
             LEFT JOIN abc_latest abc ON inv.cod_producto = abc.cod_producto
             WHERE {where}
         """, count_params).fetchone()[0]
@@ -1236,8 +1249,8 @@ class DuckDBMetricsRepo:
                    COALESCE(inv.cantidad_actual, 0) AS stock_inventario,
                    COALESCE(inv.cantidad_actual, 0) - d.stock_actual AS diff,
                    d.dias_sin_venta
-            FROM motoshop_gold_mart_productos_dormidos d
-            LEFT JOIN motoshop_gold_mart_inventario_actual inv ON d.cod_producto = inv.cod_producto
+            FROM gold_mart_productos_dormidos d
+            LEFT JOIN gold_mart_inventario_actual inv ON d.cod_producto = inv.cod_producto
             WHERE d.stock_actual != COALESCE(inv.cantidad_actual, 0)
                OR inv.cod_producto IS NULL
             ORDER BY ABS(COALESCE(inv.cantidad_actual, 0) - d.stock_actual) DESC
@@ -1248,10 +1261,10 @@ class DuckDBMetricsRepo:
 
         # SQL invariants
         total_dormidos_stock = self._con.execute(
-            "SELECT COALESCE(SUM(stock_actual),0) FROM motoshop_gold_mart_productos_dormidos"
+            "SELECT COALESCE(SUM(stock_actual),0) FROM gold_mart_productos_dormidos"
         ).fetchone()[0]
         total_inventory_stock = self._con.execute(
-            "SELECT COALESCE(SUM(cantidad_actual),0) FROM motoshop_gold_mart_inventario_actual"
+            "SELECT COALESCE(SUM(cantidad_actual),0) FROM gold_mart_inventario_actual"
         ).fetchone()[0]
         invariant_ok = total_dormidos_stock <= total_inventory_stock
 
@@ -1277,6 +1290,6 @@ def _prev_month_str(month: str) -> str:
     return d.strftime("%Y-%m")
 
 
-def get_duckdb_repo() -> DuckDBMetricsRepo:
+def get_duckdb_repo(tenant: str = "motoshop") -> DuckDBMetricsRepo:
     """Factory para crear DuckDBMetricsRepo con ruta configurable."""
-    return DuckDBMetricsRepo()
+    return DuckDBMetricsRepo(tenant=tenant)

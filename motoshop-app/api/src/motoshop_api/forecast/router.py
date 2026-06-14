@@ -11,8 +11,10 @@ from time import time
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from motoshop_api.auth.deps import get_current_user
+from motoshop_api.auth.tenant_dep import get_tenant
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
+from motoshop_api.metrics.repo_duckdb import _make_db_path
 from motoshop_api.forecast.repo import (
     DuckDBForecastRepo,
     FakeForecastRepo,
@@ -61,12 +63,10 @@ def _clear_forecast_cache():
     _cache.clear()
 
 
-def get_repo() -> ForecastRepoProtocol:
+def get_repo(tenant: str = Depends(get_tenant)) -> ForecastRepoProtocol:
     """Inyección de dependencias: DuckDB si DATA_BACKEND=duckdb, Databricks si no."""
     if settings.data_backend == "duckdb":
-        db_path = settings.duckdb_path or (
-            "/tmp/motoshop_gold.duckdb" if settings.env == "prod" else "out/motoshop_gold.duckdb"
-        )
+        db_path = settings.duckdb_path or str(_make_db_path(tenant))
         return DuckDBForecastRepo(db_path)
     if settings.env != "test":
         w = _get_workspace()

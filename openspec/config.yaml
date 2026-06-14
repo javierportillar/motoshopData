@@ -1,0 +1,62 @@
+schema: spec-driven
+
+context: |
+  MotoShop: multi-tenant FastAPI backend for motorcycle spare parts retail analytics.
+  Tech stack: Python 3.13, FastAPI, DuckDB (embedded OLAP), Pydantic v2, structlog,
+  slowapi, PyJWT+bcrypt, SQLAlchemy+aiosqlite, cachetools, PyYAML, httpx, boto3 (R2),
+  uvicorn. Multi-repo: single repo with `motoshop-app/api/` as main backend.
+  ETL pipeline (Windows, Python) builds DuckDB gold marts, uploaded to Cloudflare R2.
+  API downloads DuckDB at cold-start, serves 24+ metrics endpoints, hybrid search
+  (embeddings+synonyms+keyword), LLM briefing+chat (OpenCode Zen), Telegram bot,
+  Web Push notifications. 15 module routers under /api. SQLite for app writes.
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Distinguish between tenant-specific and platform-wide changes
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+    - Include tenant isolation constraints
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+    - Consider cold-start impact (DuckDB download from R2)
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    - Follow existing router/repo/schemas module pattern
+    tdd: true
+    test_command: "pytest"
+  verify:
+    test_command: "pytest"
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
+
+testing:
+  strict_tdd: true
+  detected: "2026-06-13"
+  runner:
+    command: "pytest"
+    config: "pyproject.toml [tool.pytest.ini_options]"
+    framework: "pytest"
+  layers:
+    unit:
+      available: true
+      tool: "pytest + FastAPI TestClient"
+    integration:
+      available: true
+      tool: "pytest + FastAPI TestClient (httpx)"
+    e2e:
+      available: false
+      tool: "—"
+  coverage:
+    available: true
+    command: "pytest --cov=motoshop_api"
+  quality:
+    linter: { available: true, command: "ruff check" }
+    type_checker: { available: false, command: "—" }
+    formatter: { available: true, command: "ruff format" }

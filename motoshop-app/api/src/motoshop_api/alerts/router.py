@@ -19,8 +19,10 @@ from motoshop_api.alerts.repo import (
 )
 from motoshop_api.alerts.schemas import AlertsResponse
 from motoshop_api.auth.deps import get_current_user
+from motoshop_api.auth.tenant_dep import get_tenant
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
+from motoshop_api.metrics.repo_duckdb import _make_db_path
 
 router = APIRouter(tags=["alerts"])
 
@@ -61,12 +63,10 @@ def _clear_alerts_cache():
     _cache.clear()
 
 
-def get_repo() -> AlertsRepoProtocol:
+def get_repo(tenant: str = Depends(get_tenant)) -> AlertsRepoProtocol:
     """Inyección de dependencias: DuckDB si DATA_BACKEND=duckdb, Databricks si no."""
     if settings.data_backend == "duckdb":
-        db_path = settings.duckdb_path or (
-            "/tmp/motoshop_gold.duckdb" if settings.env == "prod" else "out/motoshop_gold.duckdb"
-        )
+        db_path = settings.duckdb_path or str(_make_db_path(tenant))
         return DuckDBAlertsRepo(db_path)
     if settings.env != "test":
         w = _get_workspace()

@@ -202,7 +202,7 @@ def _build_bronze_from_silver(con: duckdb.DuckDBPyConnection) -> None:
             nit_proveedor          AS nitter,
             cod_bodega_default     AS codbod,
             fecha_actualizacion    AS fecapa
-        FROM motoshop_silver_dim_producto
+        FROM silver_dim_producto
     """)
 
     # ── dim_bodega → bronze_bodegas ─────────────────────────────────────
@@ -214,7 +214,7 @@ def _build_bronze_from_silver(con: duckdb.DuckDBPyConnection) -> None:
             telefono      AS telbod,
             ubicacion     AS ubibod,
             responsable   AS resbod
-        FROM motoshop_silver_dim_bodega
+        FROM silver_dim_bodega
     """)
 
     # ── fact_ventas → bronze_facventas ──────────────────────────────────
@@ -245,7 +245,7 @@ def _build_bronze_from_silver(con: duckdb.DuckDBPyConnection) -> None:
             cod_empresa         AS codemp,
             cod_empresa_alt     AS codempal,
             cod_resolucion      AS codres
-        FROM motoshop_silver_fact_ventas
+        FROM silver_fact_ventas
     """)
 
     # ── fact_ventas_detalle → bronze_detfventas ─────────────────────────
@@ -269,7 +269,7 @@ def _build_bronze_from_silver(con: duckdb.DuckDBPyConnection) -> None:
             num_item             AS numite,
             cod_bodega           AS codbod,
             cod_centro_costo     AS codcos
-        FROM motoshop_silver_fact_ventas_detalle
+        FROM silver_fact_ventas_detalle
     """)
 
     # ── fact_compras → bronze_faccompras ────────────────────────────────
@@ -285,7 +285,7 @@ def _build_bronze_from_silver(con: duckdb.DuckDBPyConnection) -> None:
             cod_formapago    AS codpag,
             total_compra     AS totfcom,
             estado_documento AS estfcom
-        FROM motoshop_silver_fact_compras
+        FROM silver_fact_compras
     """)
 
     # ── fact_compras_detalle → bronze_detfcompras ───────────────────────
@@ -300,7 +300,7 @@ def _build_bronze_from_silver(con: duckdb.DuckDBPyConnection) -> None:
             valor_unitario AS valuni,
             total_detalle  AS totdet,
             costo_producto AS cosprod
-        FROM motoshop_silver_fact_compras_detalle
+        FROM silver_fact_compras_detalle
     """)
 
     logger.info(
@@ -358,7 +358,7 @@ def run_all(enable_stats: bool = True) -> str:
         if not bronze_exists:
             silver_exists = False
             try:
-                con.execute("SELECT COUNT(*) FROM motoshop_silver_dim_producto").fetchone()
+                con.execute("SELECT COUNT(*) FROM silver_dim_producto").fetchone()
                 silver_exists = True
             except Exception:
                 pass
@@ -368,7 +368,7 @@ def run_all(enable_stats: bool = True) -> str:
                 _build_bronze_from_silver(con)
             else:
                 raise RuntimeError(
-                    "Ni MySQL, ni bronze_productos, ni motoshop_silver_dim_producto existen — "
+                    "Ni MySQL, ni bronze_productos, ni silver_dim_producto existen — "
                     "corre build_duckdb_from_export primero o conecta MySQL"
                 )
         else:

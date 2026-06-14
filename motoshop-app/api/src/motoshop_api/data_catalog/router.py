@@ -19,8 +19,8 @@ catalog_router = APIRouter(prefix="/admin/data", tags=["data_catalog"])
 
 LAYER_RULES = [
     ("bronze", "bronze_"),
-    ("silver", "motoshop_silver_"),
-    ("gold", "motoshop_gold_"),
+    ("silver", "silver_"),
+    ("gold", "gold_"),
     ("silver", "mart_"),           # some gold marts without prefix
     ("app", "app_"),
 ]
@@ -186,17 +186,17 @@ def data_lineage(
 ):
     """Lineage simple: Bronze → Silver → Gold basado en prefijos de tabla."""
     edges = [
-        {"from": "bronze_productos", "to": "motoshop_silver_dim_producto", "transform": "silver"},
-        {"from": "bronze_bodegas", "to": "motoshop_silver_dim_bodega", "transform": "silver"},
-        {"from": "bronze_facventas", "to": "motoshop_silver_fact_ventas", "transform": "silver"},
-        {"from": "bronze_detfventas", "to": "motoshop_silver_fact_ventas_detalle", "transform": "silver"},
-        {"from": "bronze_faccompras", "to": "motoshop_silver_fact_compras", "transform": "silver"},
-        {"from": "bronze_detfcompras", "to": "motoshop_silver_fact_compras_detalle", "transform": "silver"},
-        {"from": "motoshop_silver_fact_ventas", "to": "motoshop_gold_mart_ventas_diarias_sku", "transform": "gold"},
-        {"from": "motoshop_silver_dim_producto", "to": "motoshop_gold_mart_inventario_actual", "transform": "gold"},
-        {"from": "motoshop_silver_fact_ventas", "to": "motoshop_gold_mart_cohortes_clientes", "transform": "gold"},
-        {"from": "motoshop_gold_mart_ventas_diarias_sku", "to": "motoshop_gold_mart_rotacion_abc", "transform": "gold"},
-        {"from": "motoshop_silver_fact_ventas_detalle", "to": "motoshop_gold_alertas_quiebre", "transform": "gold"},
-        {"from": "motoshop_gold_mart_ventas_diarias_sku", "to": "motoshop_gold_forecast_categoria", "transform": "gold"},
+        {"from": "bronze_productos", "to": "silver_dim_producto", "transform": "silver"},
+        {"from": "bronze_bodegas", "to": "silver_dim_bodega", "transform": "silver"},
+        {"from": "bronze_facventas", "to": "silver_fact_ventas", "transform": "silver"},
+        {"from": "bronze_detfventas", "to": "silver_fact_ventas_detalle", "transform": "silver"},
+        {"from": "bronze_faccompras", "to": "silver_fact_compras", "transform": "silver"},
+        {"from": "bronze_detfcompras", "to": "silver_fact_compras_detalle", "transform": "silver"},
+        {"from": "silver_fact_ventas", "to": "gold_mart_ventas_diarias_sku", "transform": "gold"},
+        {"from": "silver_dim_producto", "to": "gold_mart_inventario_actual", "transform": "gold"},
+        {"from": "silver_fact_ventas", "to": "gold_mart_cohortes_clientes", "transform": "gold"},
+        {"from": "gold_mart_ventas_diarias_sku", "to": "gold_mart_rotacion_abc", "transform": "gold"},
+        {"from": "silver_fact_ventas_detalle", "to": "gold_alertas_quiebre", "transform": "gold"},
+        {"from": "gold_mart_ventas_diarias_sku", "to": "gold_forecast_categoria", "transform": "gold"},
     ]
     return {"edges": edges}

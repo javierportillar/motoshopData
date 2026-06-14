@@ -19,6 +19,7 @@ from slowapi.util import get_remote_address
 from starlette.requests import Request as StarletteRequest
 
 from motoshop_api.auth.deps import get_current_user, require_role
+from motoshop_api.auth.tenant_dep import get_tenant
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
 from motoshop_api.metrics.repo import (
@@ -105,12 +106,10 @@ def _clear_metrics_cache():
     _cache.clear()
 
 
-def get_repo() -> MetricsRepoProtocol:
+def get_repo(tenant: str = Depends(get_tenant)) -> MetricsRepoProtocol:
     # V1.5: DATA_BACKEND env var determina el backend
     if settings.data_backend == "duckdb":
-        return DuckDBMetricsRepo(
-            db_path=settings.duckdb_path or "/tmp/motoshop_gold.duckdb"
-        )
+        return DuckDBMetricsRepo(tenant=tenant)
     # Legacy: Databricks
     if settings.env == "prod":
         return _get_real_metrics_repo()
@@ -127,9 +126,10 @@ def sales_summary(
     request: Request,
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ) -> SalesSummary:
     """Resumen de ventas del mes actual vs anterior + top 10 SKUs."""
-    return _cached_or_fetch("sales-summary", repo.get_sales_summary)
+    return _cached_or_fetch(f"{tenant}:sales-summary", repo.get_sales_summary)
 
 
 # ── Sales Summary V2 (V1.8) ──────────────────────────────────────────────
@@ -140,9 +140,10 @@ def sales_summary_v2(
     request: Request,
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ):
     """Ventas con comparación justa: parcial vs parcial, años anteriores."""
-    return _cached_or_fetch("sales-summary-v2", repo.get_sales_summary_v2)
+    return _cached_or_fetch(f"{tenant}:sales-summary-v2", repo.get_sales_summary_v2)
 
 
 # ── Sales Daily Month (V1.8) ─────────────────────────────────────────────
@@ -154,9 +155,10 @@ def sales_daily_month(
     month: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ):
     """Evolución diaria de ventas para un mes específico."""
-    return _cached_or_fetch(f"sales-daily-month:{month}", lambda: repo.get_sales_daily_month(month))
+    return _cached_or_fetch(f"{tenant}:sales-daily-month:{month}", lambda: repo.get_sales_daily_month(month))
 
 
 # ── Inventory Detail + Discrepancies (V1.8) ──────────────────────────────
@@ -175,10 +177,11 @@ def inventory_detail(
     abc: str | None = Query(default=None, pattern="^(A|B|C)$"),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ):
     """Inventario detallado con costo, última venta, dormido status, ABC."""
     return _cached_or_fetch(
-        f"inv-detail:{page}:{page_size}:{sort}:{q or ''}:{bodega or ''}:{stock}:{dormido}:{abc or ''}",
+        f"{tenant}:inv-detail:{page}:{page_size}:{sort}:{q or ''}:{bodega or ''}:{stock}:{dormido}:{abc or ''}",
         lambda: repo.get_inventory_detail(page, page_size, sort, q, bodega, stock, dormido, abc),
         ttl=60,
     )
@@ -190,9 +193,10 @@ def inventory_discrepancies(
     request: Request,
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ):
     """SKUs con diferencias de stock entre inventario y dormidos + invariante SQL."""
-    return _cached_or_fetch("inv-discrepancies", repo.get_inventory_discrepancies, ttl=300)
+    return _cached_or_fetch(f"{tenant}:inv-discrepancies", repo.get_inventory_discrepancies, ttl=300)
 
 @router.get("/metrics/sales-forecast-monthly")
 @limiter.limit("10/minute")
@@ -201,9 +205,10 @@ def sales_forecast_monthly(
     horizon: int = Query(default=2, ge=1, le=3),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ):
     """Proyección de ventas (run-rate) para mes actual y siguiente. Sin LLM."""
-    return _cached_or_fetch(f"sales-forecast:{horizon}", lambda: repo.get_sales_forecast_monthly(horizon))
+    return _cached_or_fetch(f"{tenant}:sales-forecast:{horizon}", lambda: repo.get_sales_forecast_monthly(horizon))
 
 
 @router.get("/metrics/sales-daily", response_model=SalesDailyResponse)
@@ -213,12 +218,13 @@ def sales_daily(
     date: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="YYYY-MM-DD"),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ) -> SalesDailyResponse:
     """Ventas del día específico: productos vendidos, totales."""
     if not date:
         from datetime import date as d
         date = d.today().isoformat()
-    return _cached_or_fetch(f"sales-daily:{date}", lambda: repo.get_sales_daily(date))
+    return _cached_or_fetch(f"{tenant}:sales-daily:{date}", lambda: repo.get_sales_daily(date))
 
 
 @router.get("/metrics/sales-monthly", response_model=SalesMonthlyResponse)
@@ -228,12 +234,13 @@ def sales_monthly(
     month: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$", description="YYYY-MM"),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ) -> SalesMonthlyResponse:
     """Ventas del mes: total vs mes anterior + top 10 SKUs."""
     if not month:
         from datetime import datetime
         month = datetime.now().strftime("%Y-%m")
-    return _cached_or_fetch(f"sales-monthly:{month}", lambda: repo.get_sales_monthly(month))
+    return _cached_or_fetch(f"{tenant}:sales-monthly:{month}", lambda: repo.get_sales_monthly(month))
 
 
 @router.get("/metrics/sales-historical", response_model=SalesHistoricalResponse)
@@ -242,9 +249,10 @@ def sales_historical(
     request: Request,
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ) -> SalesHistoricalResponse:
     """Ventas históricas: total acumulado + tendencia mensual."""
-    return _cached_or_fetch("sales-historical", repo.get_sales_historical)
+    return _cached_or_fetch(f"{tenant}:sales-historical", repo.get_sales_historical)
 
 
 @router.get("/metrics/inventory-summary", response_model=InventorySummary)
@@ -253,9 +261,10 @@ def inventory_summary(
     request: Request,
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ) -> InventorySummary:
     """Resumen de inventario: stock total, valor, distribución por bodega."""
-    return _cached_or_fetch("inventory-summary", repo.get_inventory_summary)
+    return _cached_or_fetch(f"{tenant}:inventory-summary", repo.get_inventory_summary)
 
 
 @router.get("/metrics/abc-segmentation", response_model=AbcSegmentation)
@@ -264,9 +273,10 @@ def abc_segmentation(
     request: Request,
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ) -> AbcSegmentation:
     """Segmentación ABC de ingresos (80/15/5) del mes actual."""
-    return _cached_or_fetch("abc-segmentation", repo.get_abc_segmentation)
+    return _cached_or_fetch(f"{tenant}:abc-segmentation", repo.get_abc_segmentation)
 
 
 @router.get("/metrics/abc-detalle", response_model=AbcDetalleResponse)
@@ -277,9 +287,10 @@ def abc_detalle(
     limit: int = Query(default=20, ge=1, le=100, description="Máx items"),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ) -> AbcDetalleResponse:
     """Detalle de productos en un bucket ABC específico."""
-    cache_key = f"abc-detalle:{bucket}:{limit}"
+    cache_key = f"{tenant}:abc-detalle:{bucket}:{limit}"
     return _cached_or_fetch(cache_key, lambda: repo.get_abc_detalle(bucket, limit))
 
 
@@ -293,9 +304,10 @@ def dormidos(
     sort_order: Literal["asc", "desc"] = Query(default="desc"),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ) -> DormidosResponse:
     """Productos sin venta > 90 días, paginados."""
-    cache_key = f"dormidos:{page}:{page_size}:{sort_by}:{sort_order}"
+    cache_key = f"{tenant}:dormidos:{page}:{page_size}:{sort_by}:{sort_order}"
     return _cached_or_fetch(
         cache_key,
         lambda: repo.get_dormidos(page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order),
@@ -308,9 +320,10 @@ def cohortes(
     request: Request,
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ) -> CohortesResponse:
     """Cohortes de clientes por mes de primera compra."""
-    return _cached_or_fetch("cohortes", repo.get_cohortes)
+    return _cached_or_fetch(f"{tenant}:cohortes", repo.get_cohortes)
 
 
 @router.get("/metrics/sales-trend", response_model=SalesTrendResponse)
@@ -321,11 +334,12 @@ def sales_trend(
     year: int | None = Query(default=None),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ) -> SalesTrendResponse:
     """Tendencia de ventas mensual: total, facturas y ticket promedio."""
     if periods < 1 or periods > 24:
         raise HTTPException(status_code=422, detail="periods must be between 1 and 24")
-    cache_key = f"sales-trend:{periods}:{year}"
+    cache_key = f"{tenant}:sales-trend:{periods}:{year}"
     return _cached_or_fetch(cache_key, lambda: repo.get_sales_trend(periods, year))
 
 
@@ -337,15 +351,16 @@ def vendedores_summary(
     vendedor_id: str | None = Query(default=None, pattern=r"^[A-Za-z0-9._-]{1,64}$"),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ):
     """Ranking top 10 vendedores o detalle de uno específico.
     period: month | historical | 6months.
     vendedor_id: NIT del vendedor para ver detalle.
     """
     if vendedor_id:
-        cache_key = f"vendedor-detail:{vendedor_id}:{period}"
+        cache_key = f"{tenant}:vendedor-detail:{vendedor_id}:{period}"
         return _cached_or_fetch(cache_key, lambda: repo.get_vendedor_detail(vendedor_id, period))
-    cache_key = f"vendedores-summary:{period}"
+    cache_key = f"{tenant}:vendedores-summary:{period}"
     return _cached_or_fetch(cache_key, lambda: repo.get_vendedores_summary(period))
 
 
@@ -355,9 +370,10 @@ def cohortes_detail(
     request: Request,
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ) -> CohortesDetailResponse:
     """Detalle de cohortes: LTV, retención por mes, nuevos vs recurrentes."""
-    return _cached_or_fetch("cohortes-detail", repo.get_cohortes_detail)
+    return _cached_or_fetch(f"{tenant}:cohortes-detail", repo.get_cohortes_detail)
 
 
 @router.get("/metrics/drift-summary", response_model=DriftSummaryResponse)
@@ -366,9 +382,10 @@ def drift_summary(
     request: Request,
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ) -> DriftSummaryResponse:
     """Alertas de drift: métricas desviadas, severidad y acciones recomendadas."""
-    return _cached_or_fetch("drift-summary", repo.get_drift_summary)
+    return _cached_or_fetch(f"{tenant}:drift-summary", repo.get_drift_summary)
 
 
 @router.get("/metrics/plan-compras", response_model=PlanComprasResponse)
@@ -377,9 +394,10 @@ def plan_compras(
     request: Request,
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ) -> PlanComprasResponse:
     """Plan de compras: SKUs con stock < demanda, urgencia, ABC, dormidos."""
-    return _cached_or_fetch("plan-compras", repo.get_plan_compras)
+    return _cached_or_fetch(f"{tenant}:plan-compras", repo.get_plan_compras)
 
 
 @router.get("/metrics/forecast-categoria", response_model=ForecastCategoriaResponse)
@@ -388,9 +406,10 @@ def forecast_categoria(
     request: Request,
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ) -> ForecastCategoriaResponse:
     """Forecast de demanda por categoría: real vs predicho, WAPE, cobertura."""
-    return _cached_or_fetch("forecast-categoria", repo.get_forecast_categoria)
+    return _cached_or_fetch(f"{tenant}:forecast-categoria", repo.get_forecast_categoria)
 
 
 @router.post("/metrics/cache/clear")
@@ -409,6 +428,7 @@ def action_recommendations(
     period: Literal["today", "week", "month"] = Query(default="month"),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ) -> ActionRecommendationsResponse:
     """Recomendaciones accionables para la vista de Acciones.
 

@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import bcrypt
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
+from motoshop_api.auth.deps import get_current_user
 from motoshop_api.auth.hash import verify_password
 from motoshop_api.auth.jwt import create_access_token, create_refresh_token, decode_token
-from motoshop_api.auth.schemas import LoginRequest, RefreshRequest, TokenPair
-from motoshop_api.auth.users import get_user_by_username
+from motoshop_api.auth.schemas import LoginRequest, RefreshRequest, TokenPair, UserMeResponse
+from motoshop_api.auth.tenant_dep import get_tenant
+from motoshop_api.auth.users import User, get_user_by_username
 from motoshop_api.config import settings
+from motoshop_api.tenants import get_tenant_config
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -42,7 +45,7 @@ async def login(request: Request, body: LoginRequest) -> TokenPair:
             detail="Credenciales incorrectas",
         )
 
-    access = create_access_token(subject=user.username, role=user.role)
+    access = create_access_token(subject=user.username, role=user.role, tenants_allowed=user.tenants_allowed)
     refresh = create_refresh_token(subject=user.username)
 
     return TokenPair(
@@ -71,11 +74,29 @@ async def refresh(request: Request, body: RefreshRequest) -> TokenPair:
             detail="Usuario no encontrado",
         )
 
-    access = create_access_token(subject=user.username, role=user.role)
+    access = create_access_token(subject=user.username, role=user.role, tenants_allowed=user.tenants_allowed)
     refresh_new = create_refresh_token(subject=user.username)
 
     return TokenPair(
         access_token=access,
         refresh_token=refresh_new,
         expires_in=settings.jwt_access_ttl_minutes * 60,
+    )
+
+
+@router.get("/me", response_model=UserMeResponse)
+async def get_me(
+    request: Request,
+    user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+) -> UserMeResponse:
+    """Retorna información del usuario autenticado, el tenant activo y sus features habilitadas."""
+    config = get_tenant_config(tenant)
+    return UserMeResponse(
+        username=user.username,
+        email=user.email,
+        role=user.role,
+        tenants_allowed=user.tenants_allowed,
+        current_tenant=tenant,
+        enabled_features=config.enabled_features if config else [],
     )

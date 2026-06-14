@@ -20,15 +20,17 @@ logger = logging.getLogger(__name__)
 class ToolExecutor:
     """Ejecuta tools contra DuckDB."""
 
-    def __init__(self, duckdb_path: str | None = None):
+    def __init__(self, duckdb_path: str | None = None, tenant: str = "motoshop"):
         import duckdb
         import os
-        path = duckdb_path or os.environ.get("DUCKDB_PATH", "out/motoshop_gold.duckdb")
+        from motoshop_api.metrics.repo_duckdb import _make_db_path
+
+        path = duckdb_path or os.environ.get("DUCKDB_PATH") or str(_make_db_path(tenant))
         self._con = duckdb.connect(path, read_only=True)
 
     def _get_max_date(self) -> date:
         r = self._con.execute(
-            "SELECT MAX(business_date) FROM motoshop_gold_mart_ventas_diarias_sku"
+            "SELECT MAX(business_date) FROM gold_mart_ventas_diarias_sku"
         ).fetchone()
         return r[0] if r and r[0] else date.today()
 
@@ -41,7 +43,7 @@ class ToolExecutor:
             SELECT ROUND(COALESCE(SUM(valor_total),0),2) AS ventas,
                    COALESCE(SUM(num_facturas),0) AS facturas,
                    ROUND(COALESCE(SUM(valor_total),0)/NULLIF(COALESCE(SUM(num_facturas),0),0),2) AS ticket
-            FROM motoshop_gold_mart_ventas_diarias_sku WHERE business_date = ?
+            FROM gold_mart_ventas_diarias_sku WHERE business_date = ?
         """, [d.isoformat()]).fetchone()
         return {"fecha": d.isoformat(), "ventas": float(r[0] or 0), "facturas": int(r[1] or 0), "ticket_promedio": float(r[2] or 0)}
 
@@ -53,7 +55,7 @@ class ToolExecutor:
             SELECT ROUND(COALESCE(SUM(valor_total),0),2) AS ventas,
                    COALESCE(SUM(num_facturas),0) AS facturas,
                    ROUND(COALESCE(SUM(valor_total),0)/NULLIF(COALESCE(SUM(num_facturas),0),0),2) AS ticket
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
             WHERE STRFTIME(business_date, '%Y-%m') = ?
         """, [month]).fetchone()
         return {"month": month, "ventas": float(r[0] or 0), "facturas": int(r[1] or 0), "ticket_promedio": float(r[2] or 0)}
@@ -69,7 +71,7 @@ class ToolExecutor:
 
         rows = self._con.execute("""
             SELECT cod_producto, nom_producto, ROUND(SUM(valor_total),2) AS valor, ROUND(SUM(cantidad_total),2) AS cantidad
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
             WHERE business_date >= ?
             GROUP BY cod_producto, nom_producto ORDER BY valor DESC LIMIT ?
         """, [since, limit]).fetchall()
@@ -79,7 +81,7 @@ class ToolExecutor:
         """Productos sin venta hace al menos days_min días. Excluye never-sold (sentinel >5000)."""
         rows = self._con.execute("""
             SELECT cod_producto, nom_producto, stock_actual, dias_sin_venta
-            FROM motoshop_gold_mart_productos_dormidos
+            FROM gold_mart_productos_dormidos
             WHERE dias_sin_venta >= ? AND dias_sin_venta < 5000
             ORDER BY dias_sin_venta DESC LIMIT ?
         """, [days_min, limit]).fetchall()
@@ -91,7 +93,7 @@ class ToolExecutor:
         params = [urgency] if urgency else []
         rows = self._con.execute(f"""
             SELECT sku, nom_producto, stock_actual, demanda_predicha, dias_hasta_quiebre, urgencia
-            FROM motoshop_gold_alertas_quiebre {where}
+            FROM gold_alertas_quiebre {where}
             ORDER BY dias_hasta_quiebre ASC LIMIT 20
         """, params).fetchall()
         return {"alerts": [{"sku": r[0], "nombre": r[1], "stock": float(r[2]), "demanda": float(r[3]), "dias": int(r[4]), "urgencia": r[5]} for r in rows], "total": len(rows)}
@@ -109,7 +111,7 @@ class ToolExecutor:
             SELECT COALESCE(NULLIF(nit_vendedor,''),'SIN_ASIGNAR') AS nit,
                    COALESCE(NULLIF(nombre_vendedor,''),'Sin asignar') AS nombre,
                    COUNT(*) AS facturas, ROUND(SUM(total_factura),2) AS total
-            FROM motoshop_silver_fact_ventas
+            FROM silver_fact_ventas
             WHERE STRFTIME(business_date,'%Y-%m') = ? {where_v}
             GROUP BY nit_vendedor, nombre_vendedor ORDER BY total DESC LIMIT 5
         """, params).fetchall()
@@ -121,14 +123,14 @@ class ToolExecutor:
             WITH latest_cost AS (
                 SELECT cod_producto, costo_producto,
                        ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_date DESC) AS rn
-                FROM motoshop_silver_fact_compras_detalle
+                FROM silver_fact_compras_detalle
                 WHERE costo_producto > 0
             )
             SELECT
                 ROUND(COALESCE(SUM(i.cantidad_actual),0),2) AS stock,
                 ROUND(COALESCE(SUM(i.cantidad_actual * COALESCE(lc.costo_producto, 0)), 0), 0) AS valor_total,
                 COUNT(DISTINCT i.cod_producto) AS productos
-            FROM motoshop_gold_mart_inventario_actual i
+            FROM gold_mart_inventario_actual i
             LEFT JOIN latest_cost lc ON i.cod_producto = lc.cod_producto AND lc.rn = 1
         """).fetchone()
         return {
@@ -141,11 +143,11 @@ class ToolExecutor:
         """Compara ventas entre dos meses (YYYY-MM)."""
         r1 = self._con.execute("""
             SELECT ROUND(COALESCE(SUM(valor_total),0),2), COALESCE(SUM(num_facturas),0)
-            FROM motoshop_gold_mart_ventas_diarias_sku WHERE STRFTIME(business_date,'%Y-%m') = ?
+            FROM gold_mart_ventas_diarias_sku WHERE STRFTIME(business_date,'%Y-%m') = ?
         """, [period_1]).fetchone()
         r2 = self._con.execute("""
             SELECT ROUND(COALESCE(SUM(valor_total),0),2), COALESCE(SUM(num_facturas),0)
-            FROM motoshop_gold_mart_ventas_diarias_sku WHERE STRFTIME(business_date,'%Y-%m') = ?
+            FROM gold_mart_ventas_diarias_sku WHERE STRFTIME(business_date,'%Y-%m') = ?
         """, [period_2]).fetchone()
         v1 = float(r1[0] or 0); v2 = float(r2[0] or 0)
         delta = round((v2 - v1) / v1 * 100, 1) if v1 else None
@@ -154,9 +156,9 @@ class ToolExecutor:
     def get_abc_distribution(self) -> dict:
         """Distribución ABC del último mes."""
         rows = self._con.execute("""
-            WITH mm AS (SELECT MAX(business_month) AS m FROM motoshop_gold_mart_rotacion_abc)
+            WITH mm AS (SELECT MAX(business_month) AS m FROM gold_mart_rotacion_abc)
             SELECT categoria_abc, COUNT(*) AS skus, ROUND(SUM(valor_total),2) AS valor
-            FROM motoshop_gold_mart_rotacion_abc, mm WHERE business_month = mm.m
+            FROM gold_mart_rotacion_abc, mm WHERE business_month = mm.m
             GROUP BY categoria_abc ORDER BY categoria_abc
         """).fetchall()
         return {"abc": [{"categoria": r[0], "skus": int(r[1]), "valor": float(r[2])} for r in rows]}
@@ -167,7 +169,7 @@ class ToolExecutor:
             SELECT cod_grupo, ROUND(SUM(demanda_real),2),
                    ROUND(SUM(demanda_predicha_baseline),2),
                    ROUND(ABS(SUM(demanda_real)-SUM(demanda_predicha_baseline))/NULLIF(SUM(demanda_real),0)*100,2)
-            FROM motoshop_gold_forecast_categoria
+            FROM gold_forecast_categoria
             WHERE business_date >= CURRENT_DATE - INTERVAL '30' DAY
             GROUP BY cod_grupo ORDER BY 2 DESC
         """).fetchall()

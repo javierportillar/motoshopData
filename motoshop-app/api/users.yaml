@@ -8,11 +8,14 @@ users:
     hashed_password: "$2b$12$tUp2h9S/OHIGhe45FsQ/m.ZYGlyxf72hyK6vE22S0Vb4BqQzl0Hm6"
     email: admin@motoshop.local
     role: admin
+    tenants_allowed: [motoshop, masvital]
   - username: vendedor1
     hashed_password: "$2b$12$zUe/v2vUb.XRvM217tGpU.ov0QNVx487h8tsQje7XMxf7OglIm3Gi"
     email: vendedor1@motoshop.local
     role: vendedor
+    tenants_allowed: [motoshop]
   - username: gerente1
     hashed_password: "$2b$12$KcxTPwkCgwf77vAYxIecPuFHC.ie21IKuHCw2DxgvI8oEDMmfhUje"
     email: gerente1@motoshop.local
     role: gerente
+    tenants_allowed: [motoshop]

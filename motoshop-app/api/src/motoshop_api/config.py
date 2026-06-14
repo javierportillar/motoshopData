@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     jwt_refresh_ttl_days: int = Field(default=7)
 
     users_file_path: str = Field(default="users.yaml")
+    tenants_file_path: str = Field(default="tenants.yaml")
 
     databricks_host: str = Field(default="")
     databricks_token: str = Field(default="")

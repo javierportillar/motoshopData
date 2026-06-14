@@ -1,7 +1,7 @@
 """Repositorio de alertas de quiebre — mock + real (Databricks) + DuckDB.
 
 DuckDBAlertsRepo reemplaza RealAlertsRepo cuando DATA_BACKEND=duckdb.
-Lee de motoshop_gold_alertas_quiebre (tabla creada por el pipeline V1.5).
+Lee de gold_alertas_quiebre (tabla creada por el pipeline V1.5).
 """
 
 from __future__ import annotations
@@ -144,7 +144,7 @@ SELECT
     demanda_predicha,
     dias_hasta_quiebre,
     urgencia
-FROM motoshop_gold_alertas_quiebre
+FROM gold_alertas_quiebre
 {where_clause}
 ORDER BY
     CASE urgencia
@@ -157,7 +157,7 @@ ORDER BY
 
 
 class DuckDBAlertsRepo:
-    """Lee de motoshop_gold_alertas_quiebre en el archivo DuckDB local."""
+    """Lee de gold_alertas_quiebre en el archivo DuckDB local."""
 
     def __init__(self, db_path: str | Path) -> None:
         import duckdb
@@ -200,11 +200,10 @@ def get_alerts_repo(workspace_client=None, warehouse_id=None) -> AlertsRepoProto
     - Fake solo en test sin Databricks
     """
     from motoshop_api.config import settings
+    from motoshop_api.metrics.repo_duckdb import _make_db_path
 
     if settings.data_backend == "duckdb":
-        db_path = settings.duckdb_path or (
-            "/tmp/motoshop_gold.duckdb" if settings.env == "prod" else "out/motoshop_gold.duckdb"
-        )
+        db_path = settings.duckdb_path or str(_make_db_path("motoshop"))
         return DuckDBAlertsRepo(db_path)
 
     if workspace_client is not None and warehouse_id:

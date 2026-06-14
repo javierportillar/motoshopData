@@ -19,10 +19,9 @@ router = APIRouter(tags=["meta"])
 
 def _get_db_path() -> Path:
     """Devuelve la ruta real del archivo DuckDB según config."""
-    db_path = settings.duckdb_path or (
-        "/tmp/motoshop_gold.duckdb" if os.environ.get("ENV") == "prod"
-        else "out/motoshop_gold.duckdb"
-    )
+    from motoshop_api.metrics.repo_duckdb import _make_db_path
+
+    db_path = settings.duckdb_path or str(_make_db_path("motoshop"))
     return Path(db_path)
 
 

@@ -77,9 +77,9 @@ class LLMCostResponse(BaseModel):
 
 
 def _get_db_path() -> str:
-    return settings.duckdb_path or (
-        "/tmp/motoshop_gold.duckdb" if os.environ.get("ENV") == "prod" else "out/motoshop_gold.duckdb"
-    )
+    from motoshop_api.metrics.repo_duckdb import _make_db_path
+
+    return settings.duckdb_path or str(_make_db_path("motoshop"))
 
 
 def _generate_briefing() -> dict:

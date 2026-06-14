@@ -23,6 +23,7 @@ from motoshop_api.auth.users import load_users
 from motoshop_api.config import settings
 from motoshop_api.logging import RequestIDMiddleware, setup_logging
 from motoshop_api.pipeline_runs.router import router as pipeline_runs_router
+from motoshop_api.tenants import load_tenants as load_tenants
 from motoshop_api.products.router import router as products_router
 from motoshop_api.sales.router import router as sales_router
 from motoshop_api.stock.router import router as stock_router
@@ -73,6 +74,17 @@ async def lifespan(app: FastAPI):
         log.info("users_loaded", count=len(users))
     else:
         log.warning("users_file_not_found", path=str(users_path))
+
+    # ── Cargar tenants ──────────────────────────────────────────────
+    tenants_path = Path(settings.tenants_file_path)
+    if not tenants_path.is_absolute():
+        tenants_path = Path(__file__).resolve().parent.parent.parent / tenants_path
+    if tenants_path.exists():
+        tenants = load_tenants(tenants_path)
+        log.info("tenants_loaded", count=len(tenants))
+    else:
+        log.warning("tenants_file_not_found", path=str(tenants_path))
+
     yield
     # ── Shutdown: limpiar conexiones pendientes ───────────────────────
     log.info("shutdown")

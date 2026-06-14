@@ -13,6 +13,7 @@ class User(BaseModel):
     hashed_password: str
     email: str
     role: str
+    tenants_allowed: list[str] = []
 
 
 _users_cache: dict[str, User] = {}

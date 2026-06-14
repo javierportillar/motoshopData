@@ -9,12 +9,13 @@ import jwt
 from motoshop_api.config import settings
 
 
-def create_access_token(subject: str, role: str) -> str:
+def create_access_token(subject: str, role: str, tenants_allowed: list[str] | None = None) -> str:
     """Crea un access token con expiración corta."""
     expire = datetime.now(UTC) + timedelta(minutes=settings.jwt_access_ttl_minutes)
     payload = {
         "sub": subject,
         "role": role,
+        "tenants_allowed": tenants_allowed or [],
         "type": "access",
         "exp": expire,
         "iat": datetime.now(UTC),

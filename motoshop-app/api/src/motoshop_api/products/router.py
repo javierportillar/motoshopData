@@ -115,13 +115,13 @@ def search_semantic(
                            array_cosine_similarity(
                                embedding, CAST([{emb_str}] AS FLOAT[{dim}])
                            )::DOUBLE AS semantic_score
-                    FROM motoshop_silver_dim_producto
+                    FROM silver_dim_producto
                     WHERE embedding IS NOT NULL
                 ),
                 keyword AS (
                     SELECT cod_producto,
                            {keyword_case} AS keyword_score
-                    FROM motoshop_silver_dim_producto
+                    FROM silver_dim_producto
                 )
                 SELECT s.cod_producto, s.nomprod,
                        ROUND(0.3 * s.semantic_score + 0.7 * k.keyword_score, 4) AS score,

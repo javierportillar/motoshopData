@@ -37,9 +37,12 @@ Generá el briefing en español colombiano."""
 class BriefingGenerator:
     """Genera briefing diario para el gerente vía LLM."""
 
-    def __init__(self, duckdb_path: str = "out/motoshop_gold.duckdb"):
+    def __init__(self, duckdb_path: str | None = None, tenant: str = "motoshop"):
         import duckdb
-        self._con = duckdb.connect(duckdb_path, read_only=True)
+        from motoshop_api.metrics.repo_duckdb import _make_db_path
+
+        path = duckdb_path or str(_make_db_path(tenant))
+        self._con = duckdb.connect(path, read_only=True)
 
     def build_context(self) -> dict:
         """Consulta DuckDB y arma un dict compacto con los KPIs del día anterior.
@@ -48,7 +51,7 @@ class BriefingGenerator:
         estático (no real-time). En producción con pipeline diario, la diferencia es 0.
         """
         max_date_row = self._con.execute("""
-            SELECT MAX(business_date) FROM motoshop_gold_mart_ventas_diarias_sku
+            SELECT MAX(business_date) FROM gold_mart_ventas_diarias_sku
         """).fetchone()
         max_date = max_date_row[0] if max_date_row and max_date_row[0] else date.today()
 
@@ -64,7 +67,7 @@ class BriefingGenerator:
                 ROUND(COALESCE(SUM(valor_total), 0.0), 2) AS ventas,
                 COALESCE(SUM(num_facturas), 0) AS facturas,
                 ROUND(COALESCE(SUM(valor_total), 0.0) / NULLIF(COALESCE(SUM(num_facturas), 0), 0), 2) AS ticket_promedio
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
             WHERE business_date = ?
         """, [ayer.isoformat()]).fetchone()
 
@@ -77,7 +80,7 @@ class BriefingGenerator:
         prev = self._con.execute("""
             SELECT ROUND(COALESCE(SUM(valor_total), 0.0), 2) AS ventas,
                    COALESCE(SUM(num_facturas), 0) AS facturas
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
             WHERE business_date = ?
         """, [anteayer.isoformat()]).fetchone()
 
@@ -91,7 +94,7 @@ class BriefingGenerator:
         # Comparación vs mismo día semana pasada
         prev_w = self._con.execute("""
             SELECT ROUND(COALESCE(SUM(valor_total), 0.0), 2) AS ventas
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
             WHERE business_date = ?
         """, [semana_pasada.isoformat()]).fetchone()
 
@@ -104,7 +107,7 @@ class BriefingGenerator:
         # ── Top SKUs vendidos ──────────────────────────────────────────────
         top = self._con.execute("""
             SELECT cod_producto, nom_producto, ROUND(SUM(valor_total), 2) AS valor
-            FROM motoshop_gold_mart_ventas_diarias_sku
+            FROM gold_mart_ventas_diarias_sku
             WHERE business_date = ?
             GROUP BY cod_producto, nom_producto
             ORDER BY valor DESC
@@ -115,7 +118,7 @@ class BriefingGenerator:
         # ── Alertas de quiebre críticas ────────────────────────────────────
         alerts = self._con.execute("""
             SELECT sku, nom_producto, stock_actual, demanda_predicha, dias_hasta_quiebre
-            FROM motoshop_gold_alertas_quiebre
+            FROM gold_alertas_quiebre
             WHERE urgencia = 'alta'
             ORDER BY dias_hasta_quiebre ASC
             LIMIT 5
@@ -128,8 +131,8 @@ class BriefingGenerator:
         # ── Dormidos recuperados ───────────────────────────────────────────
         dormidos = self._con.execute("""
             SELECT d.cod_producto, d.nom_producto, d.dias_sin_venta, ROUND(SUM(v.valor_total), 2) AS ventas
-            FROM motoshop_gold_mart_productos_dormidos d
-            INNER JOIN motoshop_gold_mart_ventas_diarias_sku v
+            FROM gold_mart_productos_dormidos d
+            INNER JOIN gold_mart_ventas_diarias_sku v
                 ON d.cod_producto = v.cod_producto AND v.business_date = ?
             GROUP BY d.cod_producto, d.nom_producto, d.dias_sin_venta
             ORDER BY ventas DESC
@@ -145,7 +148,7 @@ class BriefingGenerator:
             SELECT COALESCE(NULLIF(nit_vendedor,''),'Sin asignar') AS nit,
                    COALESCE(NULLIF(nombre_vendedor,''),'Sin asignar') AS nombre,
                    COUNT(*) AS facturas, ROUND(SUM(total_factura), 2) AS total
-            FROM motoshop_silver_fact_ventas
+            FROM silver_fact_ventas
             WHERE business_date = ?
             GROUP BY nit_vendedor, nombre_vendedor
             ORDER BY total DESC

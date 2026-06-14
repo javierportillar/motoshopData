@@ -1,4 +1,4 @@
-"""Pipeline de embeddings para motoshop_silver_dim_producto.
+"""Pipeline de embeddings para silver_dim_producto.
 
 Se corre en la Mac del PO, NO en Render, NO en Windows.
 
@@ -66,10 +66,10 @@ def _build_embedding_text(row: dict) -> str:
 
 def _add_column(con) -> None:
     try:
-        con.execute("SELECT embedding FROM motoshop_silver_dim_producto LIMIT 0")
+        con.execute("SELECT embedding FROM silver_dim_producto LIMIT 0")
     except Exception:
         logger.info("Adding embedding column FLOAT[%d]", EMBEDDING_DIM)
-        con.execute(f"ALTER TABLE motoshop_silver_dim_producto ADD COLUMN embedding FLOAT[{EMBEDDING_DIM}]")
+        con.execute(f"ALTER TABLE silver_dim_producto ADD COLUMN embedding FLOAT[{EMBEDDING_DIM}]")
 
 
 def generate_embeddings(db_path: str | Path, mode: str = "delta") -> int:
@@ -88,15 +88,15 @@ def generate_embeddings(db_path: str | Path, mode: str = "delta") -> int:
     _add_column(con)
 
     if mode == "full":
-        con.execute("UPDATE motoshop_silver_dim_producto SET embedding = NULL")
+        con.execute("UPDATE silver_dim_producto SET embedding = NULL")
         rows = con.execute(
             "SELECT cod_producto, nombre_producto, cod_grupo, descripcion "
-            "FROM motoshop_silver_dim_producto"
+            "FROM silver_dim_producto"
         ).fetchall()
     else:
         rows = con.execute(
             "SELECT cod_producto, nombre_producto, cod_grupo, descripcion "
-            "FROM motoshop_silver_dim_producto WHERE embedding IS NULL"
+            "FROM silver_dim_producto WHERE embedding IS NULL"
         ).fetchall()
 
     columns = ["cod_producto", "nombre_producto", "cod_grupo", "descripcion"]
@@ -115,7 +115,7 @@ def generate_embeddings(db_path: str | Path, mode: str = "delta") -> int:
     for p, emb in zip(products, embeddings):
         emb_str = str(emb.tolist()).replace("[", "").replace("]", "")
         con.execute(
-            f"UPDATE motoshop_silver_dim_producto "
+            f"UPDATE silver_dim_producto "
             f"SET embedding = CAST([{emb_str}] AS FLOAT[{EMBEDDING_DIM}]) "
             f"WHERE cod_producto = ?",
             [p["cod_producto"]],

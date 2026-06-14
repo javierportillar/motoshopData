@@ -16,10 +16,10 @@ def dim_producto(con: duckdb.DuckDBPyConnection) -> None:
     # Backup embeddings antes de rebuild (Issue 2 fix)
     has_embedding = False
     try:
-        con.execute("SELECT embedding FROM motoshop_silver_dim_producto LIMIT 0")
+        con.execute("SELECT embedding FROM silver_dim_producto LIMIT 0")
         con.execute("""
             CREATE TEMP TABLE _embed_backup AS
-            SELECT cod_producto, embedding FROM motoshop_silver_dim_producto
+            SELECT cod_producto, embedding FROM silver_dim_producto
             WHERE embedding IS NOT NULL
         """)
         count = con.execute("SELECT COUNT(*) FROM _embed_backup").fetchone()[0]
@@ -30,7 +30,7 @@ def dim_producto(con: duckdb.DuckDBPyConnection) -> None:
         pass
 
     con.execute("""
-        CREATE OR REPLACE TABLE motoshop_silver_dim_producto AS
+        CREATE OR REPLACE TABLE silver_dim_producto AS
         SELECT
             TRIM(codprod)        AS cod_producto,
             TRIM(nomprod)        AS nombre_producto,
@@ -59,15 +59,15 @@ def dim_producto(con: duckdb.DuckDBPyConnection) -> None:
 
     # Agregar columna embedding si no existe (la preserva entre corridas)
     try:
-        con.execute("SELECT embedding FROM motoshop_silver_dim_producto LIMIT 0")
+        con.execute("SELECT embedding FROM silver_dim_producto LIMIT 0")
     except Exception:
         logger.info("Adding embedding column (FLOAT[384]) to dim_producto")
-        con.execute("ALTER TABLE motoshop_silver_dim_producto ADD COLUMN embedding FLOAT[384]")
+        con.execute("ALTER TABLE silver_dim_producto ADD COLUMN embedding FLOAT[384]")
 
     # Restaurar embeddings respaldados
     if has_embedding:
         con.execute("""
-            UPDATE motoshop_silver_dim_producto sdp
+            UPDATE silver_dim_producto sdp
             SET embedding = b.embedding
             FROM _embed_backup b
             WHERE sdp.cod_producto = b.cod_producto
@@ -77,7 +77,7 @@ def dim_producto(con: duckdb.DuckDBPyConnection) -> None:
 
 def dim_bodega(con: duckdb.DuckDBPyConnection) -> None:
     con.execute("""
-        CREATE OR REPLACE TABLE motoshop_silver_dim_bodega AS
+        CREATE OR REPLACE TABLE silver_dim_bodega AS
         SELECT
             TRIM(codbod)   AS cod_bodega,
             TRIM(nombod)   AS nombre_bodega,
@@ -92,7 +92,7 @@ def dim_bodega(con: duckdb.DuckDBPyConnection) -> None:
 
 def fact_ventas(con: duckdb.DuckDBPyConnection) -> None:
     con.execute("""
-        CREATE OR REPLACE TABLE motoshop_silver_fact_ventas AS
+        CREATE OR REPLACE TABLE silver_fact_ventas AS
         SELECT
             TRIM(numfven)                      AS num_documento,
             TRIM(codclas)                      AS cod_clase,
@@ -130,7 +130,7 @@ def fact_ventas(con: duckdb.DuckDBPyConnection) -> None:
 
 def fact_ventas_detalle(con: duckdb.DuckDBPyConnection) -> None:
     con.execute("""
-        CREATE OR REPLACE TABLE motoshop_silver_fact_ventas_detalle AS
+        CREATE OR REPLACE TABLE silver_fact_ventas_detalle AS
         SELECT
             TRIM(d.numfven)      AS num_documento,
             TRIM(d.codclas)      AS cod_clase,
@@ -151,7 +151,7 @@ def fact_ventas_detalle(con: duckdb.DuckDBPyConnection) -> None:
             TRIM(d.codcos)      AS cod_centro_costo,
             h.business_date
         FROM bronze_detfventas d
-        INNER JOIN motoshop_silver_fact_ventas h
+        INNER JOIN silver_fact_ventas h
             ON TRIM(d.numfven) = h.num_documento
             AND TRIM(d.codclas) = h.cod_clase
     """)
@@ -159,7 +159,7 @@ def fact_ventas_detalle(con: duckdb.DuckDBPyConnection) -> None:
 
 def fact_compras(con: duckdb.DuckDBPyConnection) -> None:
     con.execute("""
-        CREATE OR REPLACE TABLE motoshop_silver_fact_compras AS
+        CREATE OR REPLACE TABLE silver_fact_compras AS
         SELECT
             TRIM(numfcom)        AS num_documento,
             TRIM(codclas)        AS cod_clase,
@@ -178,7 +178,7 @@ def fact_compras(con: duckdb.DuckDBPyConnection) -> None:
 
 def fact_compras_detalle(con: duckdb.DuckDBPyConnection) -> None:
     con.execute("""
-        CREATE OR REPLACE TABLE motoshop_silver_fact_compras_detalle AS
+        CREATE OR REPLACE TABLE silver_fact_compras_detalle AS
         SELECT
             TRIM(d.numfcom)      AS num_documento,
             TRIM(d.codclas)      AS cod_clase,
@@ -190,7 +190,7 @@ def fact_compras_detalle(con: duckdb.DuckDBPyConnection) -> None:
             CAST(d.cosprod AS DOUBLE)  AS costo_producto,
             h.business_date
         FROM bronze_detfcompras d
-        INNER JOIN motoshop_silver_fact_compras h
+        INNER JOIN silver_fact_compras h
             ON TRIM(d.numfcom) = h.num_documento
             AND TRIM(d.codclas) = h.cod_clase
     """)
@@ -203,7 +203,7 @@ def fact_inventario(con: duckdb.DuckDBPyConnection) -> None:
     esta tabla se crea vacía y gold.py usa dim_producto como fallback.
     """
     con.execute("""
-        CREATE TABLE IF NOT EXISTS motoshop_silver_fact_inventario (
+        CREATE TABLE IF NOT EXISTS silver_fact_inventario (
             id_inventario BIGINT,
             cod_lista VARCHAR,
             nombre_lista VARCHAR,
@@ -245,7 +245,7 @@ def fact_inventario(con: duckdb.DuckDBPyConnection) -> None:
 
     if has_bronze:
         con.execute("""
-            INSERT INTO motoshop_silver_fact_inventario
+            INSERT INTO silver_fact_inventario
             SELECT
                 ROW_NUMBER() OVER ()              AS id_inventario,
                 TRIM(codlis)                      AS cod_lista,
