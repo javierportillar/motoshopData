@@ -1,15 +1,17 @@
-name: Vercel Production Deploy
+name: Vercel Production Deploy (DEPRECATED)
 
-# Auto-deploy PWA a Vercel cuando hay push a main.
-# Reemplaza el auto-deploy nativo (que dejó de funcionar al
-# desinstalarse la Vercel GitHub App).
+# DEPRECADO 2026-06-14. El frontend se movió al repo `frontfambus`
+# (https://github.com/javierportillar/frontfambus) y Vercel auto-deploya
+# desde ahí por integración nativa con GitHub.
+#
+# Auto-trigger desactivado: solo workflow_dispatch manual (por si hay que
+# disparar un deploy puntual del legacy mientras el directorio
+# motoshop-app/web/ todavía existe como respaldo).
+#
+# Borrar este archivo + el directorio motoshop-app/web/ cuando se valide
+# que el primer deploy desde `frontfambus` funcionó.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "motoshop-app/web/**"
-      - ".github/workflows/vercel-deploy.yml"
   workflow_dispatch:
 
 jobs:

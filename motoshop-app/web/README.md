@@ -1,37 +1,27 @@
-# motoshop-web
+# motoshop-web — MOVIDO
 
-PWA Next.js 14 (App Router) de MotoShop (Track T).
+> **El frontend se mudó a su propio repo el 2026-06-14.**
+>
+> Ubicación nueva: **https://github.com/javierportillar/frontfambus**
 
-## Requisitos
+El historial completo (commits, autores, fechas) está preservado en el repo nuevo: el primer commit allí es el mismo que el último de este directorio en este repo (`a3b5e90`).
 
-- Node 18.18+
-- npm (o pnpm/yarn — usar uno solo de forma consistente)
+## ¿Por qué se movió?
 
-## Setup local
+Para que el ciclo de deploy del frontend no dependa del backend. Vercel ahora deploya directo desde [`frontfambus`](https://github.com/javierportillar/frontfambus) por su integración nativa con GitHub.
+
+## Para el dev front
 
 ```bash
-cd motoshop-app/web
+git clone https://github.com/javierportillar/frontfambus.git
+cd frontfambus
 npm install
 cp .env.local.example .env.local
 npm run dev
 ```
 
-Abrir http://localhost:3000.
+## ¿Por qué este directorio sigue existiendo?
 
-## Scripts
+Respaldo temporal hasta que se valide el primer deploy desde [`frontfambus`](https://github.com/javierportillar/frontfambus). Una vez confirmado, se borra todo el directorio `motoshop-app/web/` con un commit final.
 
-- `npm run dev` — servidor de desarrollo (puerto 3000)
-- `npm run build` — build de producción
-- `npm run start` — servir el build
-- `npm run lint` — ESLint
-- `npm run typecheck` — TypeScript estricto (sin `any`)
-- `npm run format` — Prettier
-
-## Estado por fase
-
-| Fase | Estado |
-|------|--------|
-| F0   | scaffold + página vacía |
-| F1   | login JWT |
-| F2   | búsqueda, ficha SKU, stock, instalable como PWA |
-| F3+  | ver `PLAN.md` |
+**No edites código acá** — cualquier cambio acá NO llega a producción. Trabajá en [`frontfambus`](https://github.com/javierportillar/frontfambus).

@@ -391,7 +391,10 @@ Esto permite swapear backend de datos sin tocar HTTP. Cuando Databricks dejó de
 
 ### 5.5 · Frontend · Next.js 14 PWA
 
-**Path:** `motoshop-app/web/`
+> **Movido a [`frontfambus`](https://github.com/javierportillar/frontfambus)** (2026-06-14). El frontend ya no vive en este repo. Esta sección queda como referencia arquitectónica; el código y la documentación operativa están en el nuevo repo. El directorio `motoshop-app/web/` se mantiene temporalmente como respaldo hasta que Vercel quede reconectado al nuevo repo y se valide el primer deploy desde ahí. Después se borra.
+
+**Path actual del código:** [`frontfambus`](https://github.com/javierportillar/frontfambus) (raíz del repo)
+**Path histórico (respaldo temporal):** `motoshop-app/web/`
 
 **Stack interno:**
 - App Router (RSC + Server Actions cuando aplica)
@@ -637,7 +640,7 @@ Dos workflows activos:
 | Workflow | Trigger | Hace |
 |---|---|---|
 | `briefing-daily.yml` | Cron `0 11 * * *` (06:00 COL) + workflow_dispatch | Login admin → POST `/briefing/send` → Telegram. |
-| `vercel-deploy.yml` | Push a `main` con cambios en `motoshop-app/web/**` + workflow_dispatch | `vercel deploy --prod` (workaround a la Vercel GitHub App desinstalada). |
+| `vercel-deploy.yml` | **Deprecado** (2026-06-14) | El frontend se movió a [`frontfambus`](https://github.com/javierportillar/frontfambus) y ahora Vercel auto-deploya por su integración nativa con ese repo. Este workflow se borra después de validar el primer deploy desde el nuevo repo. |
 
 Render se auto-deploya por su propio webhook nativo en GitHub. Eso no necesita workflow.
 
@@ -950,13 +953,16 @@ sequenceDiagram
 
 ### Vercel (PWA Next.js)
 
+> El proyecto Vercel `motoshop-web` ahora apunta al repo [`frontfambus`](https://github.com/javierportillar/frontfambus), no a este repo. La fila "Root directory" cambió a raíz del repo y el workflow `vercel-deploy.yml` queda deprecado (ver §5.8).
+
 | Item | Valor |
 |---|---|
 | Plan | Hobby (free) |
 | Project | `motoshop-web` |
-| Root directory | `motoshop-app/web` |
+| Repo fuente | [`frontfambus`](https://github.com/javierportillar/frontfambus) |
+| Root directory | `/` (raíz de frontfambus) |
 | Framework | Next.js |
-| Auto-deploy | GitHub Actions `vercel-deploy.yml` (la app GitHub fue desinstalada, workaround vía CLI) |
+| Auto-deploy | Integración nativa Vercel ↔ GitHub (push a `frontfambus/main`) |
 | Build | `next build` |
 
 ### Cloudflare R2
@@ -1066,8 +1072,11 @@ Abre `http://localhost:8000/docs` para Swagger.
 
 ### Frontend
 
+El frontend se separó al repo [`frontfambus`](https://github.com/javierportillar/frontfambus). Cloná y corré desde ahí:
+
 ```bash
-cd motoshop-app/web
+git clone https://github.com/javierportillar/frontfambus.git
+cd frontfambus
 npm install
 echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
 npm run dev
