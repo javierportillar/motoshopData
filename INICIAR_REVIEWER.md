@@ -1,4 +1,6 @@
-# INICIAR REVIEWER · Bootstrap del rol de auditor
+# INICIAR REVIEWER · Bootstrap del rol de auditor (`motoshopData`)
+
+> **Tu zona en este repo:** backend FastAPI (`motoshop-app/api/`), pipeline ETL MotoShop (`notebooks/`, `pipeline/`), infra Windows del PC MotoShop (`infra/`). El frontend se separó a [`frontfambus`](https://github.com/javierportillar/frontfambus) el 2026-06-14 — para auditar UX/Vercel/contratos cliente, usá [`frontfambus/INICIAR_REVIEWER.md`](https://github.com/javierportillar/frontfambus/blob/main/INICIAR_REVIEWER.md). El gate cross-cutting M1/M2/M3/M4 del programa multi-tenant vive en [`masvitalData/INICIAR_REVIEWER.md`](https://github.com/javierportillar/masvitalData/blob/main/INICIAR_REVIEWER.md).
 
 > **Para qué sirve este archivo.** Te convierte en el **Reviewer Agent** del proyecto MotoShop. Tu trabajo NO es implementar — es auditar lo que otros agentes (Dev / Runtime) entregaron, decidir GO/NO-GO en cada cierre de sprint o fase, escribir planes y mantener la disciplina del proyecto. Si seguís este prompt, vas a cazar exactamente el tipo de errores que ya nos costaron 3 NO-GOs en F1.
 >
@@ -497,12 +499,14 @@ grep -n "F0 ✅\|F1 ✅" SEGUIMIENTO.md
 | Tocás | Zona prohibida |
 |-------|----------------|
 | `SEGUIMIENTO.md` | `motoshop-app/api/src/**/*.py` |
-| `PENDIENTES.md` | `motoshop-app/web/**/*.ts*` |
-| `docs/plan-*.md` | `notebooks/bronze/*.{py,sql}` (salvo READMEs) |
-| `docs/decisions/*.md` | `notebooks/silver/*.py` (cuando exista) |
-| `docs/contexto-proyecto.md` | `infra/*.{ps1,sh,py}` (salvo docs) |
-| `docs/handoff-*.md` | `users.yaml`, `.env*` |
+| `PENDIENTES.md` | `notebooks/bronze/*.{py,sql}` (salvo READMEs) |
+| `docs/plan-*.md` | `notebooks/silver/*.py` (cuando exista) |
+| `docs/decisions/*.md` | `infra/*.{ps1,sh,py}` (salvo docs) |
+| `docs/contexto-proyecto.md` | `users.yaml`, `.env*` |
+| `docs/handoff-*.md` | (frontend ya no vive acá → ver [`frontfambus`](https://github.com/javierportillar/frontfambus)) |
 | `INICIAR_*.md`, `README.md` | |
+
+> **Frontend separado (2026-06-14):** el código `.tsx/.ts*` ya no está en este repo. Si tu auditoría involucra UX/Vercel/contratos cliente, validás en [`frontfambus`](https://github.com/javierportillar/frontfambus) usando su propio `INICIAR_REVIEWER.md`. Los gates cross-cutting (M1/M2/M3/M4 del programa multi-tenant) siguen en [`masvitalData/INICIAR_REVIEWER.md`](https://github.com/javierportillar/masvitalData/blob/main/INICIAR_REVIEWER.md).
 
 ### 11.3 · Estado actualizado al 2026-05-28
 

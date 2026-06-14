@@ -24,7 +24,7 @@ El proyecto tiene 4 roles posibles. Identificá cuál sos:
 ## 1 · Contexto en 60 segundos
 
 - **MotoShop** = tienda de repuestos de moto en Colombia. Opera con sgHermes (ERP) sobre MySQL 5.0 local en un PC Windows.
-- **Tu trabajo** = construir una plataforma analítica (Databricks Lakehouse) + canal remoto (FastAPI + PWA) **sin reemplazar sgHermes**.
+- **Tu trabajo** = construir una plataforma analítica (Databricks Lakehouse) + canal remoto (FastAPI + PWA) **sin reemplazar sgHermes**. Desde 2026-06-14 la plataforma está dividida en tres repos: este (backend + pipeline + infra), [`frontfambus`](https://github.com/javierportillar/frontfambus) (frontend único multi-tenant) y [`masvitalData`](https://github.com/javierportillar/masvitalData) (pipeline + infra del PC MasVital).
 - **Marco académico:** Maestría UAO 2025-2 · curso Big Data y Transformación Digital del Negocio (módulos M2/M3/M4).
 - **Estado al 2026-05-28:** F0 ✅, F1 ✅ (con 4 deudas vivas documentadas), F2 abierto.
 - **Pipeline activo:** Task Scheduler dispara `dump_to_cloud.py` c/30 min (07:00–19:30 COL) con catch-up automático → Parquet → UC Volume → notebook PySpark → `motoshop.bronze.*`. API expuesta en `https://api.fragloesja.uk/`.
@@ -172,8 +172,8 @@ Estas las pagamos caro. No las repitas.
 
 | Path | Qué es |
 |------|--------|
-| `motoshop-app/api/` | API FastAPI |
-| `motoshop-app/web/` | Frontend Next.js |
+| `motoshop-app/api/` | API FastAPI multi-tenant (vivo en este repo) |
+| ~~`motoshop-app/web/`~~ | **Movido a [`frontfambus`](https://github.com/javierportillar/frontfambus) el 2026-06-14.** El frontend ya no vive acá. |
 | `notebooks/bronze/` | Notebooks ingesta + validación |
 | `notebooks/{api,bronze,silver,gold}/_runs/` | Evidencia versionada de ejecuciones |
 | `infra/` | Scripts de infraestructura (dump, backup, setup) |
@@ -215,12 +215,15 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 pytest -m "not integration" -v
 
-# Frontend local
-cd motoshop-app/web
+# Frontend local — en el repo separado frontfambus
+git clone https://github.com/javierportillar/frontfambus.git ../frontfambus
+cd ../frontfambus
 npm install
 cp .env.local.example .env.local
-npm run dev   # localhost:3000
+npm run dev   # localhost:3000 (pegale al API local 8000)
 ```
+
+> Si sos Dev Agent y tu tarea es solo backend/pipeline, **no necesitás clonar frontfambus**. El frontend se deploya solo desde su repo cada vez que el Dev Front hace push.
 
 **Runtime Agent (en PC MotoShop Windows):**
 ```powershell
