@@ -459,6 +459,100 @@ app/
 
 **Offline.** Service worker (`public/sw.js`) cachea respuestas de SWR. Las acciones (`/api/app_writes/*`) que el usuario ejecuta sin red se encolan con `idb-keyval` y se reintenta vía `QueueScheduler`.
 
+#### 5.5.1 · UX multi-tenant (Sprint M2 planificado)
+
+> La plataforma evoluciona a multi-tenant: un solo login + frontend sirve múltiples negocios (MotoShop, MasVital, futuros). Plan canónico: [`docs/plan-multi-tenant.md`](docs/plan-multi-tenant.md).
+
+**Flujo de entrada.**
+
+```
+┌─────────────────┐      ┌──────────────────┐      ┌─────────────────────┐
+│   /login        │      │  /select-tenant  │      │   /  (home)         │
+│                 │      │                  │      │                     │
+│   admin / FG28  │ ───► │  Cards: N negs.  │ ───► │  KPIs del tenant    │
+│                 │      │  Clic uno        │      │  activo + sidebar   │
+└─────────────────┘      └──────────────────┘      └─────────────────────┘
+```
+
+**Página `/select-tenant`.**
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│  Plataforma                              [admin] [Salir]       │
+├────────────────────────────────────────────────────────────────┤
+│                                                                │
+│           ¿Con qué negocio querés trabajar?                    │
+│           Tenés acceso a 2 negocios.                           │
+│                                                                │
+│   ┌─────────────────────────┐  ┌─────────────────────────┐    │
+│   │     [Logo MotoShop]     │  │    [Logo MasVital]      │    │
+│   │      MotoShop           │  │      MasVital           │    │
+│   │      Repuestos moto     │  │      (línea negocio)    │    │
+│   │      Cali, Colombia     │  │      Cali, Colombia     │    │
+│   │                         │  │                         │    │
+│   │  ✓ 18 dashboards        │  │  ✓ 7 dashboards         │    │
+│   │  ✓ Briefing diario      │  │  ⏳ Briefing: 30 días    │    │
+│   │  ✓ Forecast + ABC       │  │  ⏳ Predictivos: 90 días │    │
+│   │                         │  │                         │    │
+│   │  [Entrar →]             │  │  [Entrar →]             │    │
+│   └─────────────────────────┘  └─────────────────────────┘    │
+└────────────────────────────────────────────────────────────────┘
+```
+
+**Sidebar con tenant activo.** El logo, el nombre y el color brand cambian según el tenant escogido. Botón "Cambiar negocio" abre el picker de nuevo sin re-login.
+
+```
+MotoShop activo                MasVital activo
+┌──────────────────┐           ┌──────────────────┐
+│ [Logo MotoShop]  │           │ [Logo MasVital]  │
+│ MotoShop         │           │ MasVital         │
+│ [Cambiar ▾]      │           │ [Cambiar ▾]      │
+├──────────────────┤           ├──────────────────┤
+│ 🏠 Inicio        │           │ 🏠 Inicio        │
+│ 📊 Dashboards   ▼│           │ 📊 Dashboards   ▼│
+│   ├ Ventas       │           │   ├ Ventas       │
+│   ├ Inventario   │           │   └ Inventario   │
+│   ├ ABC          │           │ 📦 Productos     │
+│   └ Dormidos     │           │ 💬 Chat IA       │
+│ 💬 Chat IA       │           │                  │ ← ABC/Dormidos/
+│ 🎯 Plan compras  │           │                  │   Cohortes/Drift/
+│ ⚠️  Alertas      │           │                  │   Forecast/Plan
+│ ⚙️  Admin        │           │                  │   ocultos
+└──────────────────┘           └──────────────────┘
+```
+
+**Empty state para features no habilitadas.** Si el usuario navega manual a una ruta no habilitada para el tenant (ej. `/dashboards/abc` con MasVital sin histórico):
+
+```
+┌────────────────────────────────────────────────┐
+│  📊 ABC                                        │
+├────────────────────────────────────────────────┤
+│                                                │
+│             🔒 No disponible aún               │
+│                                                │
+│   El análisis ABC requiere al menos 30 días    │
+│   de histórico de ventas. MasVital lleva       │
+│   solo 12 días.                                │
+│                                                │
+│   Se habilitará automáticamente cuando         │
+│   cumplas el umbral.                           │
+│                                                │
+│   [← Volver al inicio]                         │
+└────────────────────────────────────────────────┘
+```
+
+**Cómo el frontend identifica el tenant en cada request.** Tras el picker, Zustand guarda `currentTenant` en localStorage. El fetcher centralizado de SWR inyecta el header `X-Tenant: <tenant>` en todos los hooks. El backend valida contra el claim `tenants_allowed` del JWT.
+
+**Features habilitadas por tenant.** Declaradas en `tenants.yaml` (backend). El frontend las consume vía `GET /api/me` y filtra `navItems`:
+
+| Feature | MotoShop (operativo desde 2025) | MasVital (recién abierto) |
+|---|---|---|
+| products, stock, sales, inventario | ✅ | ✅ |
+| Chat IA con tools | ✅ | ✅ (tools sin datos devuelven mensaje claro) |
+| ABC, dormidos, cohortes | ✅ | ⏳ habilita a los 30-90 días |
+| Forecast, drift, plan-compras | ✅ | ⏳ habilita a los 6 meses |
+| Briefing diario Telegram | ✅ | ⏳ habilita a los 30 días |
+
 ### 5.6 · Capa IA · embeddings + LLM + briefing
 
 Tres features de IA, todas implementadas en `motoshop-app/api/src/motoshop_api/llm/`:
