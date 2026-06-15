@@ -23,13 +23,16 @@ services:
       - key: CORS_ORIGINS
         value: https://app.fragloesja.uk,https://motoshop-web-tau.vercel.app
       - key: ENV
-        value: dev
+        value: prod
       - key: USERS_FILE_PATH
         value: users.yaml
       - key: DATA_BACKEND
         value: duckdb
-      - key: DUCKDB_PATH
-        value: /tmp/motoshop_gold.duckdb
+      # DUCKDB_PATH removido (2026-06-15): el override fijo a motoshop_gold.duckdb
+      # rompia el multi-tenant — con la env var seteada, _make_db_path() ignoraba
+      # el tenant y siempre devolvia el path de MotoShop, asi masvital terminaba
+      # leyendo el DuckDB equivocado. Sin esta var y con ENV=prod, el codigo usa
+      # el default /tmp/{tenant}_gold.duckdb que es lo correcto post-M1.7.
       - key: R2_ACCESS_KEY_ID
         sync: false
       - key: R2_SECRET_ACCESS_KEY
