@@ -8,6 +8,66 @@
 
 ---
 
+## Sesión 2026-06-15/16 (69) · Plataforma multi-tenant en prod + Ventas enriquecida
+
+**Estado:** ✅ ciclo completo cerrado. Multi-tenant operando con datos reales de MotoShop y MasVital en `app.fragloesja.uk`. Frontend separado a su propio repo. Sección Ventas reescrita.
+
+### Lo que quedó vivo en prod
+
+**Backend (este repo) — Sprint M1**
+- ✅ `motoshop-app/api/` multi-tenant: header `X-Tenant`, dependency `get_tenant`, JWT con claim `tenants_allowed`, `tenants.yaml` con MotoShop+MasVital, `users.yaml` admin con ambos.
+- ✅ Tablas renombradas `motoshop_silver_*` → `silver_*` y `motoshop_gold_*` → `gold_*` en pipeline + API (M1.8). Los archivos viejos quedan en el DuckDB por backward compat hasta que el PC MotoShop reescriba el archivo.
+- ✅ `repo_duckdb._make_db_path(tenant)` ahora ignora `DUCKDB_PATH` env var (era el bug que hacía que ambos tenants leyeran motoshop). `config.duckdb_path` default a `""`.
+- ✅ `render.yaml` con `ENV=prod`, `DUCKDB_PATH` removido del repo (la env var legacy en Render ya no afecta porque el código la ignora).
+
+**Backend — Endpoints V1.9.x agregados**
+- ✅ `GET /api/metrics/sales-day-detail?date=` — KPIs del día, distribución horaria, top productos sin LIMIT, vendedores top, forma de pago, comparativas vs semana/mes/año pasado.
+- ✅ `GET /api/metrics/sales-month-detail?month=` — margen del mes, vendedores top, forma de pago, mejor/peor día, aceleradores/frenadores vs mes anterior.
+- ✅ `GET /api/metrics/cash-closure?date=` — Z-report del día con desglose por forma de pago, lista completa de facturas, top 5 facturas grandes.
+- ✅ `GET /api/metrics/payments-history?months=12` — stacked mensual de formas de pago + variación del mix vs hace 6 meses.
+- ✅ `GET /api/metrics/sales-day-invoices?date=` — facturas con detalle de items por línea (JOIN entre silver_fact_ventas y silver_fact_ventas_detalle).
+
+**Frontend — separado a [`frontfambus`](https://github.com/javierportillar/frontfambus)**
+- ✅ Repo nuevo con historial preservado (`git subtree split`). Último commit del monorepo: `a3b5e90`.
+- ✅ `motoshop-app/web/` borrado de este repo. Solo queda backend + pipeline + infra.
+- ✅ `vercel-deploy.yml` deprecated (Vercel deploya nativo desde `frontfambus`).
+
+**Pipeline MasVital (`masvitalData`) — Sprint M3.3 + Dev W**
+- ✅ Dev Back entregó `pipeline/` parametrizado, `scripts/upload_duckdb_to_r2.py`, `infra/*.ps1`, `.env.example`.
+- ✅ Dev W ejecutó sesión 2 de setup el 2026-06-15: PC operativo con MySQL 5.0.45, Python 3.12, venv, repo clonado en `C:\Users\ProDesk\Documents\javdevmasv\masvitalData`, `.env` con credenciales reales, usuario `api_read`, Task Scheduler con `MasVitalRefresh` cada 30min + `MasVitalAutoPull` cada 5min + `MasVitalBackupMySQL` diario 02:00.
+- ✅ Primera corrida del pipeline: bronze 1912 filas, silver 7/7, gold 10/10, DuckDB 14 MB en R2 como `masvital_gold.duckdb`.
+
+### Bugs cazados y resueltos en el camino
+
+1. **Backend HTTP 500 en TODOS los `/api/metrics/*`** — causa: `DUCKDB_PATH` env var hardcoded ganaba al per-tenant path. Fix: `_make_db_path` ya no lee esa env var (commits `e6ab761`, `3c01162`).
+2. **Frontend mostraba datos de MotoShop para ambos tenants** — causa: proxy de Next.js en `app/api/[...path]/route.ts` no reenviaba `X-Tenant`. Fix: proxy ahora reenvía el header (commit `d8cb558` en frontfambus).
+3. **2 min de datos congelados al cambiar de negocio** — causa: SWR cacheaba por URL sin saber del tenant. Fix: cache key como tupla `[tenant, url]` en todos los hooks (commit `9b95d143` en frontfambus).
+4. **Mobile sin opción de cambiar negocio** — causa: sidebar era `lg:` only. Fix: agregar bloque "Cuenta" al modal "Más" del bottom nav.
+5. **Bug M2 del Dev Front cazado en build de Vercel** — `useMemo` condicional después de un return en `(authenticated)/layout.tsx`. Fix: subir el `useMemo` antes del guard clause.
+
+### Pendientes del humano Javier para esta sesión
+
+| # | Tarea | Acción |
+|---|-------|--------|
+| 1 | Confirmar formato del cierre de caja | Probar la tab "Caja" en `app.fragloesja.uk` con varios días y confirmar si la limitación de "1 forma de pago por factura" duele en MasVital. Si sí, investigar con el operador de sgHermes si hay tabla `recibos_caja` o similar. |
+| 2 | Decidir si necesitás vista histórica multi-año | Es lo único de Ventas que dejé sin reescribir. Decime si la querés. |
+| 3 | Logo de MotoShop | Sigue con el genérico viejo. MasVital ya tiene su logo real. Cuando tengas un PNG limpio de MotoShop, reemplazá `frontfambus/public/tenants/motoshop/logo.png`. |
+| 4 | Sprint M4 (trazabilidad cross-tenant) | Pendiente del Dev Back. Cuando arranque, le pedís: `/admin/pipeline?tenant=`, `/admin/llm-cost` por tenant, briefing diario doble (uno por tenant), `/admin/audit` de switches del admin. |
+| 5 | Revisar SEGUIMIENTO.md | Si querés que el cierre de esta sesión quede registrado formalmente con todas las decisiones técnicas, decime y lo armo en el formato del archivo. |
+
+### Documentación actualizada en esta sesión
+
+- ✅ `motoshopData/README.md` — §5.5, §5.8, bloque Vercel apuntan a `frontfambus`.
+- ✅ `motoshopData/INICIAR_AGENTE.md` — paths actualizados (motoshop-app/web tachado).
+- ✅ `motoshopData/INICIAR_REVIEWER.md` — header y §11.2 con punteros a repos hermanos.
+- ✅ `masvitalData/README.md` — 3 repos declarados (back + front + masvital).
+- ✅ `masvitalData/INICIAR_DEV_BACK.md` — regla "no tocás el frontend".
+- ✅ `masvitalData/INICIAR_DEV_W.md` — "solo se clona masvitalData en el PC".
+- ✅ `frontfambus/README.md` — secciones nuevas: Estado funcional, Ventas v1.9.x, formato monetario.
+- ✅ `frontfambus/PENDIENTES.md` — backlog vivo del frontend con estado actual.
+
+---
+
 ## Sesión 2026-06-08 (68) · V1.8 Dashboard correctness y lectura gerencial
 
 **Estado:** planificación creada, pendiente de ejecución por devs.
