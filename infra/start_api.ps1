@@ -1,6 +1,6 @@
 # start_api.ps1 — Arranca uvicorn con verificación de errores
 $ErrorActionPreference = "Continue"
-$ProjectRoot = "C:\Users\MotoShop\Documents\javidevmoto"
+$ProjectRoot = "C:\Users\MotoShop\Documents\javidevmoto\motoshopData"
 $ApiDir = "$ProjectRoot\motoshop-app\api"
 $LogDir = "$ProjectRoot\logs"
 $Port = 8000

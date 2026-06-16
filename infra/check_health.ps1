@@ -1,6 +1,6 @@
 # check_health.ps1 — Health check periódico con auto-reinicio
 $ErrorActionPreference = "Continue"
-$ProjectRoot = "C:\Users\MotoShop\Documents\javidevmoto"
+$ProjectRoot = "C:\Users\MotoShop\Documents\javidevmoto\motoshopData"
 $LogDir = "$ProjectRoot\logs"
 
 if (!(Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
