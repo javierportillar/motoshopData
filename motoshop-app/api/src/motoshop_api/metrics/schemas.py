@@ -152,6 +152,81 @@ class SalesMonthDetailResponse(BaseModel):
     frenadores: list[TopSkuItem]    # top 3 que más cayeron
 
 
+# ── Cash Closure (V1.9.1 — cierre de caja del día) ────────────────────────
+
+class CashClosureFormaPago(BaseModel):
+    """Forma de pago dentro del cierre del día (con ticket promedio)."""
+    cod_formapago: str
+    nombre: str
+    total_ventas: float
+    num_facturas: int
+    ticket_promedio: float
+    porcentaje: float
+
+
+class CashClosureFactura(BaseModel):
+    """Factura individual del cierre."""
+    num_documento: str
+    prefijo: str | None = None
+    hora: str  # HH:MM
+    cliente: str
+    vendedor: str
+    cod_formapago: str
+    nombre_formapago: str
+    total: float
+
+
+class CashClosureResponse(BaseModel):
+    """Cierre de caja del día — tipo Z-report del POS."""
+    date: str
+    total_dia: float
+    total_facturas: int
+    formas_pago: list[CashClosureFormaPago]
+    facturas: list[CashClosureFactura]
+    top_facturas_grandes: list[CashClosureFactura]
+
+
+# ── Payments History (V1.9.1 — tendencia histórica formas de pago) ────────
+
+class PaymentsHistoryFormaPago(BaseModel):
+    cod_formapago: str
+    nombre: str
+
+
+class PaymentsHistoryMonthEntry(BaseModel):
+    month: str  # YYYY-MM
+    total: float
+    formas_pago: list[FormaPagoItem]  # reusamos el schema (con porcentaje)
+
+
+class PaymentsHistoryMonthSimple(BaseModel):
+    """Entrada de serie mensual sin porcentaje (solo total bruto por forma)."""
+    cod_formapago: str
+    nombre: str
+    total_ventas: float
+
+
+class PaymentsHistoryMonth(BaseModel):
+    month: str
+    total: float
+    formas_pago: list[PaymentsHistoryMonthSimple]
+
+
+class PaymentsVariacionItem(BaseModel):
+    cod_formapago: str
+    nombre: str
+    pct_actual: float
+    pct_seis_meses_atras: float
+    delta_puntos: float
+
+
+class PaymentsHistoryResponse(BaseModel):
+    months: int
+    formas_pago: list[PaymentsHistoryFormaPago]  # universo de codigos vistos
+    series: list[PaymentsHistoryMonth]  # serie mensual stacked
+    variacion_seis_meses: list[PaymentsVariacionItem]
+
+
 class SalesMonthlyResponse(BaseModel):
     month: str
     total_ventas: float

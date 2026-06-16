@@ -30,6 +30,7 @@ from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
 from motoshop_api.metrics.schemas import (
     AbcDetalleResponse,
     AbcSegmentation,
+    CashClosureResponse,
     CohortesDetailResponse,
     CohortesResponse,
     DormidosResponse,
@@ -38,6 +39,7 @@ from motoshop_api.metrics.schemas import (
     ActionRecommendationsResponse,
     ForecastCategoriaResponse,
     InventorySummary,
+    PaymentsHistoryResponse,
     PlanComprasResponse,
     SalesDailyResponse,
     SalesDayDetailResponse,
@@ -279,6 +281,41 @@ def sales_month_detail(
     return _cached_or_fetch(
         f"{tenant}:sales-month-detail:{month}",
         lambda: SalesMonthDetailResponse(**repo.get_sales_month_detail(month)),
+    )
+
+
+@router.get("/metrics/cash-closure", response_model=CashClosureResponse)
+@limiter.limit("30/minute")
+def cash_closure(
+    request: Request,
+    date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$", description="YYYY-MM-DD"),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+) -> CashClosureResponse:
+    """Cierre de caja del dia tipo Z-report del POS: desglose por forma de
+    pago, lista de facturas con su forma+hora+cliente+vendedor, top 5
+    facturas grandes del dia."""
+    return _cached_or_fetch(
+        f"{tenant}:cash-closure:{date}",
+        lambda: CashClosureResponse(**repo.get_cash_closure(date)),
+    )
+
+
+@router.get("/metrics/payments-history", response_model=PaymentsHistoryResponse)
+@limiter.limit("30/minute")
+def payments_history(
+    request: Request,
+    months: int = Query(default=12, ge=1, le=36, description="Cantidad de meses hacia atras"),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+) -> PaymentsHistoryResponse:
+    """Tendencia historica del mix de formas de pago. Serie mensual stacked
+    + variacion del mix actual vs hace 6 meses (cambios de tendencia)."""
+    return _cached_or_fetch(
+        f"{tenant}:payments-history:{months}",
+        lambda: PaymentsHistoryResponse(**repo.get_payments_history(months)),
     )
 
 

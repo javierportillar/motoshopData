@@ -1659,6 +1659,194 @@ class DuckDBMetricsRepo:
             "frenadores": frenadores,
         }
 
+    # ── Cash Closure (V1.9.1 — cierre de caja del dia) ───────────────────
+
+    def get_cash_closure(self, date: str) -> dict:
+        """Cierre de caja del dia: desglose por forma de pago + lista de
+        facturas + top facturas grandes. Tipo Z-report del POS.
+
+        IMPORTANTE: cada factura registra UN solo codpag. Si el negocio
+        usa pagos partidos (efectivo + tarjeta en una misma venta),
+        sgHermes los registra como un solo codigo y el desglose va a
+        tener un delta vs caja fisica.
+        """
+        # 1. Resumen por forma de pago
+        formas_rows = self._query(
+            """
+            SELECT
+                COALESCE(NULLIF(TRIM(cod_formapago), ''), 'SIN_COD') AS cod_formapago,
+                ROUND(SUM(total_factura), 2) AS total_ventas,
+                COUNT(*) AS num_facturas,
+                ROUND(AVG(total_factura), 2) AS ticket_promedio
+            FROM silver_fact_ventas
+            WHERE business_date = ?
+              AND estado_documento != 'A'
+            GROUP BY cod_formapago
+            ORDER BY total_ventas DESC
+            """,
+            [date],
+        )
+        total_dia = sum(float(r["total_ventas"] or 0) for r in formas_rows)
+        total_facturas_dia = sum(int(r["num_facturas"] or 0) for r in formas_rows)
+
+        formas_pago = []
+        for r in formas_rows:
+            tv = float(r["total_ventas"] or 0)
+            pct = round((tv / total_dia) * 100, 2) if total_dia > 0 else 0.0
+            formas_pago.append({
+                "cod_formapago": r["cod_formapago"],
+                "nombre": _formapago_label(r["cod_formapago"]),
+                "total_ventas": tv,
+                "num_facturas": int(r["num_facturas"] or 0),
+                "ticket_promedio": float(r["ticket_promedio"] or 0),
+                "porcentaje": pct,
+            })
+
+        # 2. Lista completa de facturas del dia
+        facturas_rows = self._query(
+            """
+            SELECT
+                num_documento,
+                prefijo,
+                fecha_documento_ts,
+                COALESCE(NULLIF(TRIM(nombre_cliente), ''), 'Consumidor final') AS cliente,
+                COALESCE(NULLIF(TRIM(nombre_vendedor), ''), '(sin asignar)') AS vendedor,
+                COALESCE(NULLIF(TRIM(cod_formapago), ''), 'SIN_COD') AS cod_formapago,
+                ROUND(total_factura, 2) AS total
+            FROM silver_fact_ventas
+            WHERE business_date = ?
+              AND estado_documento != 'A'
+            ORDER BY fecha_documento_ts
+            """,
+            [date],
+        )
+        facturas = []
+        for f in facturas_rows:
+            ts = f["fecha_documento_ts"]
+            hora_str = ts.strftime("%H:%M") if hasattr(ts, "strftime") else (str(ts)[11:16] if ts else "")
+            facturas.append({
+                "num_documento": f["num_documento"],
+                "prefijo": f["prefijo"],
+                "hora": hora_str,
+                "cliente": f["cliente"],
+                "vendedor": f["vendedor"],
+                "cod_formapago": f["cod_formapago"],
+                "nombre_formapago": _formapago_label(f["cod_formapago"]),
+                "total": float(f["total"] or 0),
+            })
+
+        # 3. Top 5 facturas grandes del dia
+        top_grandes = sorted(facturas, key=lambda x: x["total"], reverse=True)[:5]
+
+        return {
+            "date": date,
+            "total_dia": round(total_dia, 2),
+            "total_facturas": total_facturas_dia,
+            "formas_pago": formas_pago,
+            "facturas": facturas,
+            "top_facturas_grandes": top_grandes,
+        }
+
+    # ── Payments History (V1.9.1 — tendencia historica formas de pago) ───
+
+    def get_payments_history(self, months: int = 12) -> dict:
+        """Tendencia mensual de cada forma de pago en los ultimos N meses.
+
+        Devuelve:
+          - series: [{ month, formas_pago: { cod: total } }]
+          - mix_actual: % de cada forma este mes
+          - mix_seis_meses_atras: % de cada forma hace 6 meses (para
+            comparativa de variacion)
+        """
+        from datetime import datetime, timedelta
+        # months es int seguro, lo embebemos inline (DuckDB no acepta param en INTERVAL)
+        months_int = max(1, min(int(months), 36))
+
+        # Serie temporal
+        serie_rows = self._query(
+            f"""
+            SELECT
+                STRFTIME(business_date, '%Y-%m') AS mes,
+                COALESCE(NULLIF(TRIM(cod_formapago), ''), 'SIN_COD') AS cod_formapago,
+                ROUND(SUM(total_factura), 2) AS total_ventas,
+                COUNT(*) AS num_facturas
+            FROM silver_fact_ventas
+            WHERE business_date >= (CURRENT_DATE - INTERVAL '{months_int}' MONTH)
+              AND estado_documento != 'A'
+            GROUP BY mes, cod_formapago
+            ORDER BY mes, total_ventas DESC
+            """,
+            [],
+        )
+
+        # Pivot a {month: {cod_formapago: total}}
+        meses_dict = {}
+        formas_set = set()
+        for r in serie_rows:
+            mes = r["mes"]
+            cod = r["cod_formapago"]
+            formas_set.add(cod)
+            if mes not in meses_dict:
+                meses_dict[mes] = {"month": mes, "total": 0.0, "by_forma": {}}
+            tv = float(r["total_ventas"] or 0)
+            meses_dict[mes]["by_forma"][cod] = tv
+            meses_dict[mes]["total"] += tv
+
+        # Estructurar para frontend (stacked bar)
+        series = []
+        for mes_key in sorted(meses_dict.keys()):
+            m = meses_dict[mes_key]
+            entry = {
+                "month": m["month"],
+                "total": round(m["total"], 2),
+                "formas_pago": [
+                    {
+                        "cod_formapago": cod,
+                        "nombre": _formapago_label(cod),
+                        "total_ventas": round(m["by_forma"].get(cod, 0.0), 2),
+                    }
+                    for cod in sorted(formas_set)
+                ],
+            }
+            series.append(entry)
+
+        # Mix actual vs hace 6 meses (para comparativa de variacion)
+        def _mix_pct(month_entry):
+            total = month_entry["total"] if month_entry["total"] else 1
+            return {
+                fp["cod_formapago"]: round((fp["total_ventas"] / total) * 100, 2)
+                for fp in month_entry["formas_pago"]
+            }
+
+        mix_actual = {}
+        mix_seis_meses_atras = {}
+        if series:
+            mix_actual = _mix_pct(series[-1])
+            if len(series) >= 7:
+                mix_seis_meses_atras = _mix_pct(series[-7])
+
+        variacion = []
+        for cod in sorted(formas_set):
+            curr = mix_actual.get(cod, 0.0)
+            past = mix_seis_meses_atras.get(cod, 0.0)
+            variacion.append({
+                "cod_formapago": cod,
+                "nombre": _formapago_label(cod),
+                "pct_actual": curr,
+                "pct_seis_meses_atras": past,
+                "delta_puntos": round(curr - past, 2),
+            })
+
+        return {
+            "months": months_int,
+            "formas_pago": sorted(
+                [{"cod_formapago": c, "nombre": _formapago_label(c)} for c in formas_set],
+                key=lambda x: x["nombre"],
+            ),
+            "series": series,
+            "variacion_seis_meses": variacion,
+        }
+
 
 _FORMAPAGO_LABELS = {
     "F01": "Contado/Efectivo",
