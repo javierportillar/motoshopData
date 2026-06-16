@@ -209,11 +209,9 @@ async def get_product_movements(
 
     Requiere autenticación y que el tenant tenga datos en DuckDB.
     """
-    from motoshop_api.config import settings as _settings
     from motoshop_api.metrics.repo_duckdb import _make_db_path, _bootstrap_duckdb_from_r2
 
-    db_path = _settings.duckdb_path or str(_make_db_path(tenant))
-    _p = Path(db_path)
+    _p = _make_db_path(tenant)
     _bootstrap_duckdb_from_r2(_p, tenant)
     if not _p.exists():
         raise HTTPException(status_code=503, detail="DuckDB no disponible para este tenant")
@@ -225,7 +223,7 @@ async def get_product_movements(
         raise HTTPException(status_code=503, detail="No se pudo conectar a DuckDB")
 
     try:
-        # ── Ventas ──
+        # ── Ventas (últimos 50 docs) ──
         ventas_raw = con.execute("""
             SELECT
                 CAST(business_date AS VARCHAR) AS fecha,
@@ -240,7 +238,7 @@ async def get_product_movements(
             LIMIT 50
         """, [sku]).fetchall()
 
-        # ── Compras ──
+        # ── Compras (últimos 50 docs) ──
         compras_raw = con.execute("""
             SELECT
                 CAST(business_date AS VARCHAR) AS fecha,
@@ -255,11 +253,30 @@ async def get_product_movements(
             LIMIT 50
         """, [sku]).fetchall()
 
-        # ── Stock actual ──
-        stock_raw = con.execute("""
-            SELECT COALESCE(SUM(cantidad_actual), 0) AS total
-            FROM gold_mart_inventario_actual
+        # ── Totales ALL-TIME (compras + ventas, sin límite) ──
+        totales_raw = con.execute("""
+            SELECT
+                COALESCE((SELECT SUM(cantidad) FROM silver_fact_compras_detalle WHERE cod_producto = ?), 0) AS total_compras_all,
+                COALESCE((SELECT SUM(cantidad) FROM silver_fact_ventas_detalle WHERE cod_producto = ?), 0) AS total_ventas_all
+        """, [sku, sku]).fetchone()
+        total_compras_all = float(totales_raw[0] or 0) if totales_raw else 0.0
+        total_ventas_all = float(totales_raw[1] or 0) if totales_raw else 0.0
+        stock_calculado = total_compras_all - total_ventas_all
+
+        # ── Último costo unitario (compra) ──
+        ultimo_costo = con.execute("""
+            SELECT costo_producto FROM silver_fact_compras_detalle
+            WHERE cod_producto = ? AND costo_producto > 0
+            ORDER BY business_date DESC
+            LIMIT 1
+        """, [sku]).fetchone()
+
+        # ── Último precio de venta ──
+        ultimo_precio = con.execute("""
+            SELECT valor_unitario FROM silver_fact_ventas_detalle
             WHERE cod_producto = ?
+            ORDER BY business_date DESC
+            LIMIT 1
         """, [sku]).fetchone()
 
         # ── Nombre producto ──
@@ -302,14 +319,19 @@ async def get_product_movements(
 
     ventas = _to_movements(ventas_raw, "venta")
     compras = _to_movements(compras_raw, "compra")
-    stock_actual = float(stock_raw[0] or 0) if stock_raw else 0
+
+    # total_* es ALL-TIME (sin límite), la lista detallada muestra solo los últimos 50
+    ultimo_costo_val = float(ultimo_costo[0]) if ultimo_costo else None
+    ultimo_precio_val = float(ultimo_precio[0]) if ultimo_precio else None
 
     return ProductMovementsResponse(
         sku=sku,
         nom_producto=nombre,
         ventas=ventas,
         compras=compras,
-        stock_actual=stock_actual,
-        total_ventas=len(ventas),
-        total_compras=len(compras),
+        stock_actual=round(stock_calculado, 2),
+        total_ventas=round(total_ventas_all, 2),
+        total_compras=round(total_compras_all, 2),
+        ultimo_costo_unitario=ultimo_costo_val,
+        ultimo_precio_venta=ultimo_precio_val,
     )

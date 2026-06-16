@@ -468,3 +468,24 @@ class ActionRecommendationsResponse(BaseModel):
     period: str
     total: int
     items: list[ActionRecommendationItem]
+
+
+# ── Purchases Day Detail (V2.0 — detalle de compras por día) ────────────────
+
+class PurchaseDayDocument(BaseModel):
+    """Documento de compra con sus items."""
+    num_documento: str
+    cod_producto: str
+    nom_producto: str
+    cantidad: float
+    valor_unitario: float
+    costo_producto: float | None = None
+    total: float
+
+
+class PurchasesDayDetailResponse(BaseModel):
+    """Resumen de compras de un día específico."""
+    date: str
+    total_compras: float
+    total_documentos: int
+    items: list[PurchaseDayDocument]

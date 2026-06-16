@@ -34,63 +34,45 @@ def mart_ventas_diarias_sku(con: duckdb.DuckDBPyConnection) -> None:
 
 
 def mart_inventario_actual(con: duckdb.DuckDBPyConnection) -> None:
-    # Intenta usar fact_inventario (Databricks original). Si no tiene datos
-    # (seed sin MySQL), cae a dim_producto como fallback.
-    has_fact_inventario = False
-    try:
-        count = con.execute("SELECT COUNT(*) FROM silver_fact_inventario").fetchone()[0]
-        has_fact_inventario = count > 0
-    except Exception:
-        pass
+    """Calcula stock actual como (total comprado - total vendido) en UNIDADES.
 
-    if has_fact_inventario:
-        con.execute("""
-            CREATE OR REPLACE TABLE gold_mart_inventario_actual AS
-            WITH ultimo_inventario AS (
-                SELECT
-                    cod_producto,
-                    cod_bodega,
-                    cantidad,
-                    valor_costo,
-                    business_date,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY cod_producto, cod_bodega
-                        ORDER BY business_date DESC, id_inventario DESC
-                    ) AS rn
-                FROM silver_fact_inventario
-                WHERE business_date >= DATE '2020-01-01'
-                  AND business_date <= CURRENT_DATE
-            )
-            SELECT
-                ui.cod_producto,
-                COALESCE(dp.nombre_producto, 'SIN NOMBRE') AS nom_producto,
-                ui.cod_bodega,
-                COALESCE(db.nombre_bodega, 'SIN NOMBRE') AS nom_bodega,
-                ROUND(ui.cantidad, 2) AS cantidad_actual,
-                CURRENT_DATE AS snapshot_date
-            FROM ultimo_inventario ui
-            LEFT JOIN silver_dim_producto dp
-                ON ui.cod_producto = dp.cod_producto
-            LEFT JOIN silver_dim_bodega db
-                ON ui.cod_bodega = db.cod_bodega
-            WHERE ui.rn = 1
-        """)
-    else:
-        # Fallback seed: usa dim_producto (todos los productos, no solo los que
-        # tienen registro en fact_inventario). Produce ~6185 filas vs 4829 del export.
-        con.execute("""
-            CREATE OR REPLACE TABLE gold_mart_inventario_actual AS
-            SELECT
-                dp.cod_producto,
-                COALESCE(dp.nombre_producto, 'SIN NOMBRE') AS nom_producto,
-                COALESCE(dp.cod_bodega_default, '') AS cod_bodega,
-                COALESCE(db.nombre_bodega, 'SIN NOMBRE') AS nom_bodega,
-                COALESCE(dp.existencia, 0) AS cantidad_actual,
-                CURRENT_DATE AS snapshot_date
-            FROM silver_dim_producto dp
-            LEFT JOIN silver_dim_bodega db
-                ON dp.cod_bodega_default = db.cod_bodega
-        """)
+    Usa silver_fact_compras_detalle y silver_fact_ventas_detalle para
+    calcular el stock desde los movimientos reales. Esto garantiza
+    consistencia entre inventario y transacciones.
+
+    NOTA (2026-06-15): se removio el uso de silver_fact_inventario y
+    silver_dim_producto.existencia porque esos campos no se cargan
+    correctamente desde la exportacion R2. El stock ahora se deriva
+    de compras - ventas.
+    """
+    con.execute("""
+        CREATE OR REPLACE TABLE gold_mart_inventario_actual AS
+        WITH compras AS (
+            SELECT cod_producto, SUM(cantidad) AS total_comprado
+            FROM silver_fact_compras_detalle
+            WHERE business_date >= DATE '2020-01-01'
+              AND business_date <= CURRENT_DATE
+            GROUP BY cod_producto
+        ),
+        ventas AS (
+            SELECT cod_producto, SUM(cantidad) AS total_vendido
+            FROM silver_fact_ventas_detalle
+            WHERE business_date >= DATE '2020-01-01'
+              AND business_date <= CURRENT_DATE
+            GROUP BY cod_producto
+        )
+        SELECT
+            dp.cod_producto,
+            COALESCE(dp.nombre_producto, 'SIN NOMBRE') AS nom_producto,
+            COALESCE(dp.cod_bodega_default, '') AS cod_bodega,
+            COALESCE(db.nombre_bodega, 'SIN NOMBRE') AS nom_bodega,
+            ROUND(COALESCE(c.total_comprado, 0) - COALESCE(v.total_vendido, 0), 2) AS cantidad_actual,
+            CURRENT_DATE AS snapshot_date
+        FROM silver_dim_producto dp
+        LEFT JOIN compras c ON dp.cod_producto = c.cod_producto
+        LEFT JOIN ventas v ON dp.cod_producto = v.cod_producto
+        LEFT JOIN silver_dim_bodega db ON dp.cod_bodega_default = db.cod_bodega
+    """)
 
 
 def mart_rotacion_abc(con: duckdb.DuckDBPyConnection) -> None:

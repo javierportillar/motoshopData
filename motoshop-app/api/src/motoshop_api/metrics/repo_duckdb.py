@@ -1965,6 +1965,42 @@ class DuckDBMetricsRepo:
             "variacion_seis_meses": variacion,
         }
 
+    def close(self) -> None:
+        """Cierra la conexión DuckDB. Para cleanup explícito."""
+        try:
+            self._con.close()
+        except Exception:
+            pass
+
+    # ── Purchases Day Detail (V2.0) ────────────────────────────────────
+
+    def get_purchases_day_detail(self, date: str) -> dict:
+        """Retorna todas las compras de un día específico."""
+        rows = self._query("""
+            SELECT
+                cd.num_documento,
+                cd.cod_producto,
+                COALESCE(dp.nombre_producto, cd.nombre_detalle, 'SIN NOMBRE') AS nom_producto,
+                ROUND(cd.cantidad, 2) AS cantidad,
+                ROUND(cd.valor_unitario, 2) AS valor_unitario,
+                ROUND(cd.costo_producto, 2) AS costo_producto,
+                ROUND(cd.total_detalle, 2) AS total
+            FROM silver_fact_compras_detalle cd
+            LEFT JOIN silver_dim_producto dp ON cd.cod_producto = dp.cod_producto
+            WHERE cd.business_date = ?
+            ORDER BY cd.num_documento, cd.cod_producto
+        """, [date])
+
+        total_compras = round(sum(float(r["total"] or 0) for r in rows), 2)
+        docs = set(r["num_documento"] for r in rows)
+
+        return {
+            "date": date,
+            "total_compras": total_compras,
+            "total_documentos": len(docs),
+            "items": rows,
+        }
+
 
 _FORMAPAGO_LABELS = {
     "F01": "Contado/Efectivo",

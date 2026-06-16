@@ -47,5 +47,7 @@ class ProductMovementsResponse(BaseModel):
     ventas: list[MovementItem]
     compras: list[MovementItem]
     stock_actual: float = 0
-    total_ventas: int = 0
-    total_compras: int = 0
+    total_ventas: float = 0  # suma de UNIDADES vendidas, no documentos
+    total_compras: float = 0  # suma de UNIDADES compradas, no documentos
+    ultimo_costo_unitario: float | None = None
+    ultimo_precio_venta: float | None = None

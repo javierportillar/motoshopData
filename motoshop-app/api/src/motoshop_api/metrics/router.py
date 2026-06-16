@@ -41,6 +41,7 @@ from motoshop_api.metrics.schemas import (
     InventorySummary,
     PaymentsHistoryResponse,
     PlanComprasResponse,
+    PurchasesDayDetailResponse,
     SalesDailyResponse,
     SalesDayDetailResponse,
     SalesDayInvoicesResponse,
@@ -69,6 +70,10 @@ _cache: dict[str, tuple[float, object]] = {}
 _workspace_client = None  # lazy singleton
 _workspace_created_at: float = 0.0
 _WORKSPACE_TTL = 3600  # Refresh workspace client hourly
+
+# Cache de repos DuckDB por tenant para evitar fugas de conexión
+# (cada DuckDBMetricsRepo abre su propia conexión duckdb.connect())
+_duckdb_repos: dict[str, DuckDBMetricsRepo] = {}
 
 
 def _get_workspace():
@@ -114,7 +119,11 @@ def _clear_metrics_cache():
 def get_repo(tenant: str = Depends(get_tenant)) -> MetricsRepoProtocol:
     # V1.5: DATA_BACKEND env var determina el backend
     if settings.data_backend == "duckdb":
-        return DuckDBMetricsRepo(tenant=tenant)
+        # Singleton por tenant: abre UNA conexión DuckDB por proceso,
+        # no una por request (previene OOM en Render Free).
+        if tenant not in _duckdb_repos:
+            _duckdb_repos[tenant] = DuckDBMetricsRepo(tenant=tenant)
+        return _duckdb_repos[tenant]
     # Legacy: Databricks
     if settings.env == "prod":
         return _get_real_metrics_repo()
@@ -335,6 +344,22 @@ def payments_history(
     return _cached_or_fetch(
         f"{tenant}:payments-history:{months}",
         lambda: PaymentsHistoryResponse(**repo.get_payments_history(months)),
+    )
+
+
+@router.get("/metrics/purchases-day-detail", response_model=PurchasesDayDetailResponse)
+@limiter.limit("30/minute")
+def purchases_day_detail(
+    request: Request,
+    date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$", description="YYYY-MM-DD"),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+) -> PurchasesDayDetailResponse:
+    """Detalle de compras de un día específico. Sirve a la página /dashboards/compras/dia/[date]."""
+    return _cached_or_fetch(
+        f"{tenant}:purchases-day-detail:{date}",
+        lambda: PurchasesDayDetailResponse(**repo.get_purchases_day_detail(date)),
     )
 
 
