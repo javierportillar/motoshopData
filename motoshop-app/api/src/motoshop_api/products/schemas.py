@@ -28,3 +28,24 @@ class SemanticSearchResponse(BaseModel):
     query: str
     results: list[SemanticMatch]
     total: int
+
+
+class MovementItem(BaseModel):
+    """Un movimiento de entrada (compra) o salida (venta) de un producto."""
+
+    tipo: str  # "venta" | "compra"
+    fecha: str
+    documento: str
+    cantidad: float
+    valor_unitario: float
+    total: float
+
+
+class ProductMovementsResponse(BaseModel):
+    sku: str
+    nom_producto: str | None = None
+    ventas: list[MovementItem]
+    compras: list[MovementItem]
+    stock_actual: float = 0
+    total_ventas: int = 0
+    total_compras: int = 0

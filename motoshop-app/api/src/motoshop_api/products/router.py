@@ -14,7 +14,15 @@ from slowapi.util import get_remote_address
 from motoshop_api.auth.deps import get_current_user
 from motoshop_api.auth.users import User
 from motoshop_api.products.repo import ProductsRepo
-from motoshop_api.products.schemas import ProductOut, ProductPage, SemanticMatch, SemanticSearchResponse
+from motoshop_api.auth.tenant_dep import get_tenant
+from motoshop_api.products.schemas import (
+    MovementItem,
+    ProductOut,
+    ProductPage,
+    ProductMovementsResponse,
+    SemanticMatch,
+    SemanticSearchResponse,
+)
 
 router = APIRouter(tags=["products"])
 logger = logging.getLogger(__name__)
@@ -187,3 +195,121 @@ async def get_product(
     if row is None:
         raise HTTPException(status_code=404, detail=f"SKU '{sku}' no encontrado")
     return ProductOut(**row)
+
+
+@router.get("/products/{sku}/movements", response_model=ProductMovementsResponse)
+@limiter.limit("60/minute")
+async def get_product_movements(
+    request: Request,
+    sku: str,
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+) -> ProductMovementsResponse:
+    """Retorna historial de ventas y compras de un SKU desde DuckDB.
+
+    Requiere autenticación y que el tenant tenga datos en DuckDB.
+    """
+    from motoshop_api.config import settings as _settings
+    from motoshop_api.metrics.repo_duckdb import _make_db_path, _bootstrap_duckdb_from_r2
+
+    db_path = _settings.duckdb_path or str(_make_db_path(tenant))
+    _p = Path(db_path)
+    _bootstrap_duckdb_from_r2(_p, tenant)
+    if not _p.exists():
+        raise HTTPException(status_code=503, detail="DuckDB no disponible para este tenant")
+
+    try:
+        con = duckdb.connect(str(_p), read_only=True)
+    except Exception as exc:
+        logger.error("duckdb_connect_failed: %s", exc)
+        raise HTTPException(status_code=503, detail="No se pudo conectar a DuckDB")
+
+    try:
+        # ── Ventas ──
+        ventas_raw = con.execute("""
+            SELECT
+                CAST(business_date AS VARCHAR) AS fecha,
+                num_documento AS documento,
+                ROUND(SUM(cantidad), 2) AS cantidad,
+                ROUND(AVG(valor_unitario), 2) AS valor_unitario,
+                ROUND(SUM(total_detalle), 2) AS total
+            FROM silver_fact_ventas_detalle
+            WHERE cod_producto = ?
+            GROUP BY business_date, num_documento
+            ORDER BY business_date DESC
+            LIMIT 50
+        """, [sku]).fetchall()
+
+        # ── Compras ──
+        compras_raw = con.execute("""
+            SELECT
+                CAST(business_date AS VARCHAR) AS fecha,
+                num_documento AS documento,
+                ROUND(SUM(cantidad), 2) AS cantidad,
+                ROUND(AVG(valor_unitario), 2) AS valor_unitario,
+                ROUND(SUM(total_detalle), 2) AS total
+            FROM silver_fact_compras_detalle
+            WHERE cod_producto = ?
+            GROUP BY business_date, num_documento
+            ORDER BY business_date DESC
+            LIMIT 50
+        """, [sku]).fetchall()
+
+        # ── Stock actual ──
+        stock_raw = con.execute("""
+            SELECT COALESCE(SUM(cantidad_actual), 0) AS total
+            FROM gold_mart_inventario_actual
+            WHERE cod_producto = ?
+        """, [sku]).fetchone()
+
+        # ── Nombre producto ──
+        nombre = None
+        nombre_raw = con.execute("""
+            SELECT nom_producto FROM gold_mart_inventario_actual
+            WHERE cod_producto = ? AND nom_producto IS NOT NULL AND nom_producto != ''
+            LIMIT 1
+        """, [sku]).fetchone()
+        if nombre_raw:
+            nombre = str(nombre_raw[0])
+        else:
+            nombre_raw2 = con.execute("""
+                SELECT nombre_detalle FROM silver_fact_ventas_detalle
+                WHERE cod_producto = ? AND nombre_detalle IS NOT NULL
+                LIMIT 1
+            """, [sku]).fetchone()
+            if nombre_raw2:
+                nombre = str(nombre_raw2[0])
+
+    except Exception as exc:
+        con.close()
+        logger.error("duckdb_movements_query_failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Error al consultar movimientos")
+    finally:
+        con.close()
+
+    def _to_movements(rows: list, tipo: str) -> list:
+        return [
+            MovementItem(
+                tipo=tipo,
+                fecha=str(r[0]),
+                documento=str(r[1]),
+                cantidad=float(r[2] or 0),
+                valor_unitario=float(r[3] or 0),
+                total=float(r[4] or 0),
+            )
+            for r in rows
+        ]
+
+    ventas = _to_movements(ventas_raw, "venta")
+    compras = _to_movements(compras_raw, "compra")
+    stock_actual = float(stock_raw[0] or 0) if stock_raw else 0
+
+    return ProductMovementsResponse(
+        sku=sku,
+        nom_producto=nombre,
+        ventas=ventas,
+        compras=compras,
+        stock_actual=stock_actual,
+        total_ventas=len(ventas),
+        total_compras=len(compras),
+    )
