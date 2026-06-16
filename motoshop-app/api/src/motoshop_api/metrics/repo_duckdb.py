@@ -59,14 +59,15 @@ def _make_db_path(tenant: str) -> Path:
 
     En prod usa /tmp/{tenant}_gold.duckdb.
     En dev (local) usa out/{tenant}_gold.duckdb.
-    Respeta DUCKDB_PATH como override explícito.
+
+    NOTA (2026-06-15): se removio la lectura de DUCKDB_PATH env var. Estaba
+    causando que el override fijo a motoshop_gold.duckdb se aplicara a TODOS
+    los tenants, asi masvital leia el DuckDB equivocado. Si necesitas override
+    explicito por dev local, pasa db_path al constructor de DuckDBMetricsRepo.
     """
-    default = (
-        f"/tmp/{tenant}_gold.duckdb"
-        if os.environ.get("ENV") == "prod"
-        else f"out/{tenant}_gold.duckdb"
-    )
-    return Path(os.environ.get("DUCKDB_PATH", default))
+    if os.environ.get("ENV") == "prod":
+        return Path(f"/tmp/{tenant}_gold.duckdb")
+    return Path(f"out/{tenant}_gold.duckdb")
 
 
 def _bootstrap_duckdb_from_r2(db_path: Path, tenant: str = "motoshop") -> None:

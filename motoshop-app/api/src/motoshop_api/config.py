@@ -51,7 +51,10 @@ class Settings(BaseSettings):
 
     # ─── DuckDB backend (V1.5) ────────────────────────────────────────
     data_backend: str = Field(default="databricks", description="databricks | duckdb")
-    duckdb_path: str = Field(default="/tmp/motoshop_gold.duckdb", description="Path al archivo DuckDB local")
+    # default vacio (2026-06-15): cualquier valor no-vacio se aplica a TODOS los tenants
+    # rompiendo el multi-tenant. Vacio fuerza a los callers a usar _make_db_path(tenant).
+    # Si necesitas override explicito por dev local, setealo en .env.
+    duckdb_path: str = Field(default="", description="Path al archivo DuckDB local. Vacio → se usa _make_db_path(tenant) per-request.")
 
     # ─── Shared Refresh Token (V1.9) ───────────────────────────────────
     refresh_token: str = Field(default="", description="Token compartido para refresh automático vía capture script")
