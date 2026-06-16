@@ -12,6 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from motoshop_api.metrics.repo_duckdb import get_shared_connection
+
 logger = logging.getLogger(__name__)
 
 
@@ -21,12 +23,11 @@ class ToolExecutor:
     """Ejecuta tools contra DuckDB."""
 
     def __init__(self, duckdb_path: str | None = None, tenant: str = "motoshop"):
-        import duckdb
         import os
         from motoshop_api.metrics.repo_duckdb import _make_db_path
 
         path = duckdb_path or os.environ.get("DUCKDB_PATH") or str(_make_db_path(tenant))
-        self._con = duckdb.connect(path, read_only=True)
+        self._con = get_shared_connection(path)
 
     def _get_max_date(self) -> date:
         r = self._con.execute(
@@ -187,7 +188,7 @@ class ToolExecutor:
             return {"error": str(exc)}
 
     def close(self):
-        self._con.close()
+        pass  # Connection is shared and managed globally
 
 
 # ── Tool definitions (OpenAI-compatible) ────────────────────────────────────

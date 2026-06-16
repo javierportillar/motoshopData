@@ -15,6 +15,7 @@ from motoshop_api.auth.deps import get_current_user
 from motoshop_api.auth.users import User
 from motoshop_api.products.repo import ProductsRepo
 from motoshop_api.auth.tenant_dep import get_tenant
+from motoshop_api.metrics.repo_duckdb import get_shared_connection
 from motoshop_api.products.schemas import (
     MovementItem,
     ProductOut,
@@ -116,7 +117,8 @@ def search_semantic(
             else:
                 keyword_case = f" CASE WHEN {first_likes} THEN 1.0 ELSE 0.0 END"
 
-            con = duckdb.connect(db_path, read_only=True)
+            from motoshop_api.metrics.repo_duckdb import get_shared_connection
+            con = get_shared_connection(db_path)
             rows = con.execute(f"""
                 WITH semantic AS (
                     SELECT cod_producto, nombre_producto AS nomprod,
@@ -140,7 +142,6 @@ def search_semantic(
                 ORDER BY score DESC
                 LIMIT ?
             """, [limit]).fetchall()
-            con.close()
 
             if rows:
                 return SemanticSearchResponse(
@@ -217,7 +218,7 @@ async def get_product_movements(
         raise HTTPException(status_code=503, detail="DuckDB no disponible para este tenant")
 
     try:
-        con = duckdb.connect(str(_p), read_only=True)
+        con = get_shared_connection(_p)
     except Exception as exc:
         logger.error("duckdb_connect_failed: %s", exc)
         raise HTTPException(status_code=503, detail="No se pudo conectar a DuckDB")
@@ -298,11 +299,8 @@ async def get_product_movements(
                 nombre = str(nombre_raw2[0])
 
     except Exception as exc:
-        con.close()
         logger.error("duckdb_movements_query_failed: %s", exc)
         raise HTTPException(status_code=500, detail="Error al consultar movimientos")
-    finally:
-        con.close()
 
     def _to_movements(rows: list, tipo: str) -> list:
         return [

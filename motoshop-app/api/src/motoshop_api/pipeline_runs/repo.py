@@ -12,6 +12,8 @@ from pathlib import Path
 
 import duckdb
 
+from motoshop_api.metrics.repo_duckdb import get_shared_connection
+
 logger = logging.getLogger(__name__)
 
 # Ruta por defecto — /tmp en Render, out/ local
@@ -99,7 +101,7 @@ class PipelineRunsRepo:
     def __init__(self, db_path: str | Path | None = None) -> None:
         self._path = Path(db_path or _DEFAULT_DB_PATH)
         _bootstrap_pipeline_db_from_r2(self._path)
-        self._con = duckdb.connect(str(self._path), read_only=True)
+        self._con = get_shared_connection(self._path)
         logger.info("PipelineRunsRepo connected to %s", self._path)
 
     def list_runs(self, limit: int = 30, pipeline: str | None = None, status: str | None = None) -> list[dict]:
@@ -172,4 +174,4 @@ class PipelineRunsRepo:
         }
 
     def close(self) -> None:
-        self._con.close()
+        pass  # Connection is shared and managed globally in repo_duckdb

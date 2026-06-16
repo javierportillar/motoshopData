@@ -86,6 +86,10 @@ async def lifespan(app: FastAPI):
         log.warning("tenants_file_not_found", path=str(tenants_path))
 
     yield
+    # ── Shutdown: cerrar conexiones DuckDB compartidas ────────────────
+    from motoshop_api.metrics.repo_duckdb import close_all_shared_connections
+    close_all_shared_connections()
+    log.info("duckdb_shared_connections_closed")
     # ── Shutdown: limpiar conexiones pendientes ───────────────────────
     log.info("shutdown")
 

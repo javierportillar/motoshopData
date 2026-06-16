@@ -14,6 +14,7 @@ from typing import Literal, Protocol
 logger = logging.getLogger(__name__)
 
 from motoshop_api.alerts.schemas import AlertItem, AlertsResponse
+from motoshop_api.metrics.repo_duckdb import get_shared_connection
 
 
 Urgency = Literal["alta", "media", "baja"]
@@ -160,8 +161,7 @@ class DuckDBAlertsRepo:
     """Lee de gold_alertas_quiebre en el archivo DuckDB local."""
 
     def __init__(self, db_path: str | Path) -> None:
-        import duckdb
-        self._con = duckdb.connect(str(db_path), read_only=True)
+        self._con = get_shared_connection(db_path)
         logger.info("DuckDBAlertsRepo connected to %s", db_path)
 
     def get_stockout_alerts(self, urgency: str | None = None) -> AlertsResponse:

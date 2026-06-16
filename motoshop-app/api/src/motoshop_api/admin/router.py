@@ -18,6 +18,7 @@ from slowapi.util import get_remote_address
 from motoshop_api.auth.deps import get_current_user, require_refresh_token_or_admin, require_role
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
+from motoshop_api.metrics.repo_duckdb import get_shared_connection
 from motoshop_api.metrics.router import _clear_metrics_cache
 
 logger = logging.getLogger(__name__)
@@ -208,61 +209,54 @@ async def data_status(
     user: User = Depends(require_role("admin", "gerente")),
 ) -> DataStatusResponse:
     """Estado real de los datos: fecha máxima, lag, filas inválidas, frescura."""
-    import duckdb
     from datetime import date, datetime, timezone
 
     db_path = _get_duckdb_path()
-    con = duckdb.connect(str(db_path), read_only=True)
-    try:
-        # Max sales date
-        max_date = con.execute(
-            "SELECT MAX(business_date) FROM gold_mart_ventas_diarias_sku"
-        ).fetchone()[0]
+    con = get_shared_connection(db_path)
+    # Max sales date
+    max_date = con.execute(
+        "SELECT MAX(business_date) FROM gold_mart_ventas_diarias_sku"
+    ).fetchone()[0]
 
-        max_date_str = str(max_date) if max_date else None
-        days_lag = (date.today() - max_date).days if max_date else None
+    max_date_str = str(max_date) if max_date else None
+    days_lag = (date.today() - max_date).days if max_date else None
 
-        # Inventory snapshot
-        inv_snapshot = con.execute(
-            "SELECT MAX(snapshot_date) FROM gold_mart_inventario_actual"
-        ).fetchone()[0]
-        inv_snapshot_str = str(inv_snapshot) if inv_snapshot else None
+    # Inventory snapshot
+    inv_snapshot = con.execute(
+        "SELECT MAX(snapshot_date) FROM gold_mart_inventario_actual"
+    ).fetchone()[0]
+    inv_snapshot_str = str(inv_snapshot) if inv_snapshot else None
 
-        # Invalid future sales (> tomorrow)
-        invalid = con.execute(
-            "SELECT COUNT(*) FROM silver_fact_ventas WHERE business_date > CURRENT_DATE + 1"
-        ).fetchone()[0]
+    # Invalid future sales (> tomorrow)
+    invalid = con.execute(
+        "SELECT COUNT(*) FROM silver_fact_ventas WHERE business_date > CURRENT_DATE + 1"
+    ).fetchone()[0]
 
-        # DuckDB freshness
-        mtime = db_path.stat().st_mtime
-        freshness_utc = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+    # DuckDB freshness
+    mtime = db_path.stat().st_mtime
+    freshness_utc = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
 
-        # Latest pipeline run status
-        last_status: str | None = None
-        pipeline_db_path = _get_pipeline_runs_db_path()
-        if pipeline_db_path.exists():
-            try:
-                p_con = duckdb.connect(str(pipeline_db_path), read_only=True)
-                try:
-                    row = p_con.execute(
-                        "SELECT status FROM app_pipeline_runs ORDER BY started_at DESC LIMIT 1"
-                    ).fetchone()
-                    last_status = row[0] if row else None
-                finally:
-                    p_con.close()
-            except Exception:
-                logger.debug("Could not query pipeline_runs DB", exc_info=True)
+    # Latest pipeline run status
+    last_status: str | None = None
+    pipeline_db_path = _get_pipeline_runs_db_path()
+    if pipeline_db_path.exists():
+        try:
+            p_con = get_shared_connection(pipeline_db_path)
+            row = p_con.execute(
+                "SELECT status FROM app_pipeline_runs ORDER BY started_at DESC LIMIT 1"
+            ).fetchone()
+            last_status = row[0] if row else None
+        except Exception:
+            logger.debug("Could not query pipeline_runs DB", exc_info=True)
 
-        return DataStatusResponse(
-            sales_max_date=max_date_str,
-            sales_days_lag=days_lag,
-            inventory_snapshot_date=inv_snapshot_str,
-            invalid_future_sales_rows=int(invalid or 0),
-            latest_pipeline_run_status=last_status,
-            duckdb_freshness_utc=freshness_utc,
-        )
-    finally:
-        con.close()
+    return DataStatusResponse(
+        sales_max_date=max_date_str,
+        sales_days_lag=days_lag,
+        inventory_snapshot_date=inv_snapshot_str,
+        invalid_future_sales_rows=int(invalid or 0),
+        latest_pipeline_run_status=last_status,
+        duckdb_freshness_utc=freshness_utc,
+    )
 
 
 # ── LLM cost dashboard ─────────────────────────────────────────────────

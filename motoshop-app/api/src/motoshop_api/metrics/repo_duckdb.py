@@ -53,6 +53,38 @@ from motoshop_api.metrics.schemas import (
 
 logger = logging.getLogger(__name__)
 
+import threading
+
+# Shared DuckDB connection pool: key = resolved file path, value = connection
+# Prevents OOM by ensuring at most ONE connection per DuckDB file across all endpoints.
+_shared_connections: dict[str, duckdb.DuckDBPyConnection] = {}
+_shared_connections_lock = threading.Lock()
+
+
+def get_shared_connection(db_path: str | Path) -> duckdb.DuckDBPyConnection:
+    """Return a shared DuckDB read-only connection for *db_path*.
+
+    Creates one on first access, reuses on subsequent calls.
+    Thread-safe: the first caller creates the connection, all others share it.
+    """
+    key = str(Path(db_path).resolve())
+    if key not in _shared_connections:
+        with _shared_connections_lock:
+            # Double-check inside lock
+            if key not in _shared_connections:
+                _shared_connections[key] = duckdb.connect(key, read_only=True)
+    return _shared_connections[key]
+
+
+def close_all_shared_connections() -> None:
+    """Close every pooled connection. Call on application shutdown."""
+    for path, con in _shared_connections.items():
+        try:
+            con.close()
+        except Exception:
+            logger.warning("Error closing shared DuckDB connection for %s", path)
+    _shared_connections.clear()
+
 
 def _make_db_path(tenant: str) -> Path:
     """Construye la ruta al archivo DuckDB según tenant y entorno.
@@ -119,7 +151,7 @@ class DuckDBMetricsRepo:
                 f"DuckDB file not found at {self._path}. "
                 "Run 'python pipeline/run_all.py' first, or set DUCKDB_PATH."
             )
-        self._con = duckdb.connect(str(self._path), read_only=True)
+        self._con = get_shared_connection(self._path)
         logger.info("DuckDBMetricsRepo connected to %s", self._path)
 
     # ── Helpers ──────────────────────────────────────────────────────────

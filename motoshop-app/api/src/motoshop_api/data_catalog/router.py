@@ -8,12 +8,12 @@ Endpoints read-only para inspeccionar el DuckDB productivo por capas:
 
 from __future__ import annotations
 
-import duckdb
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from motoshop_api.auth.deps import require_role
 from motoshop_api.auth.users import User
 from motoshop_api.admin.router import _get_duckdb_path, DataStatusResponse
+from motoshop_api.metrics.repo_duckdb import get_shared_connection
 
 catalog_router = APIRouter(prefix="/admin/data", tags=["data_catalog"])
 
@@ -35,7 +35,7 @@ def _classify_layer(table_name: str) -> str:
 
 def _get_con():
     db_path = _get_duckdb_path()
-    return duckdb.connect(str(db_path), read_only=True)
+    return get_shared_connection(db_path)
 
 
 # ── Catalog ────────────────────────────────────────────────────────────────
@@ -48,64 +48,63 @@ def data_catalog(
 ):
     """Catálogo de tablas del DuckDB productivo por capa Medallion."""
     con = _get_con()
-    try:
-        # Todas las tablas (DuckDB: SHOW TABLES es más confiable que information_schema)
-        tables = con.execute("SHOW TABLES").fetchall()
+    # Connection is shared and managed globally; no try/finally needed.
 
-        table_list = []
-        layer_summary: dict[str, dict] = {}
+    # Todas las tablas (DuckDB: SHOW TABLES es más confiable que information_schema)
+    tables = con.execute("SHOW TABLES").fetchall()
 
-        for (tname,) in tables:
-            layer = _classify_layer(tname)
-            row_count = con.execute(f"SELECT COUNT(*) FROM \"{tname}\"").fetchone()[0]
+    table_list = []
+    layer_summary: dict[str, dict] = {}
 
-            # Columnas y date column
-            cols = con.execute(f"DESCRIBE \"{tname}\"").fetchall()
-            col_count = len(cols)
-            date_col = None
-            for c in cols:
-                if c[1] in ("DATE", "TIMESTAMP") and ("date" in c[0].lower() or "fecha" in c[0].lower()):
-                    date_col = c[0]
-                    break
+    for (tname,) in tables:
+        layer = _classify_layer(tname)
+        row_count = con.execute(f"SELECT COUNT(*) FROM \"{tname}\"").fetchone()[0]
 
-            max_date = None
-            if date_col:
-                try:
-                    md = con.execute(f"SELECT MAX(\"{date_col}\") FROM \"{tname}\"").fetchone()[0]
-                    max_date = str(md) if md else None
-                except Exception:
-                    pass
+        # Columnas y date column
+        cols = con.execute(f"DESCRIBE \"{tname}\"").fetchall()
+        col_count = len(cols)
+        date_col = None
+        for c in cols:
+            if c[1] in ("DATE", "TIMESTAMP") and ("date" in c[0].lower() or "fecha" in c[0].lower()):
+                date_col = c[0]
+                break
 
-            status = "ok"
-            warnings = []
-            if row_count == 0:
-                status = "empty"
-                warnings.append("Tabla vacía")
-            elif max_date and date_col and "2028" in str(max_date):
-                status = "stale"
-                warnings.append(f"Fecha futura anómala: {max_date}")
+        max_date = None
+        if date_col:
+            try:
+                md = con.execute(f"SELECT MAX(\"{date_col}\") FROM \"{tname}\"").fetchone()[0]
+                max_date = str(md) if md else None
+            except Exception:
+                pass
 
-            table_list.append({
-                "table_name": tname, "layer": layer, "row_count": row_count,
-                "column_count": col_count, "date_column": date_col,
-                "max_date": max_date, "status": status,
-            })
+        status = "ok"
+        warnings = []
+        if row_count == 0:
+            status = "empty"
+            warnings.append("Tabla vacía")
+        elif max_date and date_col and "2028" in str(max_date):
+            status = "stale"
+            warnings.append(f"Fecha futura anómala: {max_date}")
 
-            if layer not in layer_summary:
-                layer_summary[layer] = {"layer": layer, "table_count": 0, "total_rows": 0, "max_business_date": None, "warnings": []}
-            layer_summary[layer]["table_count"] += 1
-            layer_summary[layer]["total_rows"] += row_count
-            if max_date and (not layer_summary[layer]["max_business_date"] or max_date > layer_summary[layer]["max_business_date"]):
-                layer_summary[layer]["max_business_date"] = max_date
-            layer_summary[layer]["warnings"].extend(warnings)
+        table_list.append({
+            "table_name": tname, "layer": layer, "row_count": row_count,
+            "column_count": col_count, "date_column": date_col,
+            "max_date": max_date, "status": status,
+        })
 
-        return {
-            "duckdb_freshness_utc": DataStatusResponse().duckdb_freshness_utc,
-            "layers": sorted(layer_summary.values(), key=lambda x: ["bronze", "silver", "gold", "app", "other"].index(x["layer"])),
-            "tables": table_list,
-        }
-    finally:
-        con.close()
+        if layer not in layer_summary:
+            layer_summary[layer] = {"layer": layer, "table_count": 0, "total_rows": 0, "max_business_date": None, "warnings": []}
+        layer_summary[layer]["table_count"] += 1
+        layer_summary[layer]["total_rows"] += row_count
+        if max_date and (not layer_summary[layer]["max_business_date"] or max_date > layer_summary[layer]["max_business_date"]):
+            layer_summary[layer]["max_business_date"] = max_date
+        layer_summary[layer]["warnings"].extend(warnings)
+
+    return {
+        "duckdb_freshness_utc": DataStatusResponse().duckdb_freshness_utc,
+        "layers": sorted(layer_summary.values(), key=lambda x: ["bronze", "silver", "gold", "app", "other"].index(x["layer"])),
+        "tables": table_list,
+    }
 
 
 # ── Table detail ───────────────────────────────────────────────────────────
@@ -119,62 +118,61 @@ def data_catalog_detail(
 ):
     """Detalle de una tabla: columnas, muestra, calidad. Admin-only."""
     con = _get_con()
-    try:
-        # Validar que existe
-        exists = con.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ? AND table_schema = 'main'",
-            [table_name],
-        ).fetchone()[0]
-        if not exists:
-            raise HTTPException(status_code=404, detail=f"Tabla '{table_name}' no encontrada")
+    # Connection is shared and managed globally; no try/finally needed.
 
-        layer = _classify_layer(table_name)
-        row_count = con.execute(f"SELECT COUNT(*) FROM \"{table_name}\"").fetchone()[0]
+    # Validar que existe
+    exists = con.execute(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ? AND table_schema = 'main'",
+        [table_name],
+    ).fetchone()[0]
+    if not exists:
+        raise HTTPException(status_code=404, detail=f"Tabla '{table_name}' no encontrada")
 
-        # Columnas
-        cols = con.execute(f"DESCRIBE \"{table_name}\"").fetchall()
-        columns = [{"name": c[0], "type": c[1], "nullable": c[2] == "YES"} for c in cols]
+    layer = _classify_layer(table_name)
+    row_count = con.execute(f"SELECT COUNT(*) FROM \"{table_name}\"").fetchone()[0]
 
-        # Muestra
-        sample = con.execute(f"SELECT * FROM \"{table_name}\" LIMIT ?", [limit]).fetchall()
-        col_names = [c[0] for c in cols]
-        sample_rows = [dict(zip(col_names, [str(v) if v is not None else None for v in row])) for row in sample]
+    # Columnas
+    cols = con.execute(f"DESCRIBE \"{table_name}\"").fetchall()
+    columns = [{"name": c[0], "type": c[1], "nullable": c[2] == "YES"} for c in cols]
 
-        # Calidad: null counts + max date
-        null_counts = {}
-        for c in cols:
+    # Muestra
+    sample = con.execute(f"SELECT * FROM \"{table_name}\" LIMIT ?", [limit]).fetchall()
+    col_names = [c[0] for c in cols]
+    sample_rows = [dict(zip(col_names, [str(v) if v is not None else None for v in row])) for row in sample]
+
+    # Calidad: null counts + max date
+    null_counts = {}
+    for c in cols:
+        try:
+            n = con.execute(f"SELECT COUNT(*) FROM \"{table_name}\" WHERE \"{c[0]}\" IS NULL").fetchone()[0]
+            if n > 0:
+                null_counts[c[0]] = n
+        except Exception:
+            pass
+
+    max_date = None
+    for c in cols:
+        if c[1] in ("DATE", "TIMESTAMP") and ("date" in c[0].lower() or "fecha" in c[0].lower()):
             try:
-                n = con.execute(f"SELECT COUNT(*) FROM \"{table_name}\" WHERE \"{c[0]}\" IS NULL").fetchone()[0]
-                if n > 0:
-                    null_counts[c[0]] = n
+                md = con.execute(f"SELECT MAX(\"{c[0]}\") FROM \"{table_name}\"").fetchone()[0]
+                max_date = str(md) if md else None
             except Exception:
                 pass
+            break
 
-        max_date = None
-        for c in cols:
-            if c[1] in ("DATE", "TIMESTAMP") and ("date" in c[0].lower() or "fecha" in c[0].lower()):
-                try:
-                    md = con.execute(f"SELECT MAX(\"{c[0]}\") FROM \"{table_name}\"").fetchone()[0]
-                    max_date = str(md) if md else None
-                except Exception:
-                    pass
-                break
+    warnings = []
+    if row_count == 0:
+        warnings.append("Tabla vacía")
+    if null_counts:
+        for col, n in null_counts.items():
+            if n == row_count:
+                warnings.append(f"Columna '{col}' es 100% NULL")
 
-        warnings = []
-        if row_count == 0:
-            warnings.append("Tabla vacía")
-        if null_counts:
-            for col, n in null_counts.items():
-                if n == row_count:
-                    warnings.append(f"Columna '{col}' es 100% NULL")
-
-        return {
-            "table_name": table_name, "layer": layer, "row_count": row_count,
-            "columns": columns, "sample_rows": sample_rows,
-            "quality": {"null_counts": null_counts, "max_date": max_date, "warnings": warnings},
-        }
-    finally:
-        con.close()
+    return {
+        "table_name": table_name, "layer": layer, "row_count": row_count,
+        "columns": columns, "sample_rows": sample_rows,
+        "quality": {"null_counts": null_counts, "max_date": max_date, "warnings": warnings},
+    }
 
 
 # ── Lineage ─────────────────────────────────────────────────────────────────
