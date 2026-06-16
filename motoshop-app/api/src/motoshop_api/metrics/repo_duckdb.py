@@ -1151,8 +1151,25 @@ class DuckDBMetricsRepo:
             "dias_sin_venta": "COALESCE(DATE_DIFF('day', v.ultima_venta, CURRENT_DATE), 99999)",
             "ultima_venta": "v.ultima_venta",
             "abc": "CASE COALESCE(abc.categoria_abc, 'C') WHEN 'A' THEN 3 WHEN 'B' THEN 2 ELSE 1 END",
+            "es_dormido": "CASE WHEN d.cod_producto IS NOT NULL THEN 1 ELSE 0 END",
         }
-        sort_col = sort_map.get(sort, "inv.cod_producto")
+
+        # Multi-columna sort: formato "-es_dormido,-dias_sin_venta,abc"
+        # "-" prefix = DESC, "+" o sin prefix = ASC. Default = DESC (backward compat)
+        sort_parts = [s.strip() for s in sort.split(",") if s.strip()]
+        order_bys = []
+        for part in sort_parts:
+            desc = True  # default DESC
+            if part.startswith("-"):
+                desc = True
+                part = part[1:]
+            elif part.startswith("+"):
+                desc = False
+                part = part[1:]
+            col = sort_map.get(part)
+            if col:
+                order_bys.append(f"{col} {'DESC' if desc else 'ASC'}")
+        sort_clause = ", ".join(order_bys) if order_bys else "inv.cod_producto DESC"
 
         where = "1=1"
         where_params = []
@@ -1211,7 +1228,7 @@ class DuckDBMetricsRepo:
             LEFT JOIN gold_mart_productos_dormidos d ON inv.cod_producto = d.cod_producto
             LEFT JOIN abc_latest abc ON inv.cod_producto = abc.cod_producto
             WHERE {where}
-            ORDER BY {sort_col} DESC
+            ORDER BY {sort_clause}
             LIMIT ? OFFSET ?
         """, query_params).fetchall()
 
