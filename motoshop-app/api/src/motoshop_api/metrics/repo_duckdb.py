@@ -1200,7 +1200,29 @@ class DuckDBMetricsRepo:
         query_params = where_params + [page_size, offset]
 
         rows = self._con.execute(f"""
-            WITH latest_cost AS (
+            WITH inventario AS (
+                SELECT
+                    dp.cod_producto,
+                    COALESCE(dp.nombre_producto, 'SIN NOMBRE') AS nom_producto,
+                    COALESCE(dp.cod_bodega_default, '') AS cod_bodega,
+                    COALESCE(db.nombre_bodega, 'SIN NOMBRE') AS nom_bodega,
+                    ROUND(COALESCE(c.total_comprado, 0) - COALESCE(v.total_vendido, 0), 2) AS cantidad_actual
+                FROM silver_dim_producto dp
+                LEFT JOIN (
+                    SELECT cod_producto, SUM(cantidad) AS total_comprado
+                    FROM silver_fact_compras_detalle
+                    WHERE business_date >= DATE '2020-01-01' AND business_date <= CURRENT_DATE
+                    GROUP BY cod_producto
+                ) c ON dp.cod_producto = c.cod_producto
+                LEFT JOIN (
+                    SELECT cod_producto, SUM(cantidad) AS total_vendido
+                    FROM silver_fact_ventas_detalle
+                    WHERE business_date >= DATE '2020-01-01' AND business_date <= CURRENT_DATE
+                    GROUP BY cod_producto
+                ) v ON dp.cod_producto = v.cod_producto
+                LEFT JOIN silver_dim_bodega db ON dp.cod_bodega_default = db.cod_bodega
+            ),
+            latest_cost AS (
                 SELECT cod_producto, costo_producto,
                        ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_date DESC) AS rn
                 FROM silver_fact_compras_detalle WHERE costo_producto > 0
@@ -1222,7 +1244,7 @@ class DuckDBMetricsRepo:
                    COALESCE(DATE_DIFF('day', v.ultima_venta, CURRENT_DATE), 99999) AS dias_sin_venta,
                    CASE WHEN d.cod_producto IS NOT NULL THEN TRUE ELSE FALSE END AS es_dormido,
                    COALESCE(abc.categoria_abc, 'C') AS abc
-            FROM gold_mart_inventario_actual inv
+            FROM inventario inv
             LEFT JOIN latest_cost lc ON inv.cod_producto = lc.cod_producto AND lc.rn = 1
             LEFT JOIN last_sale v ON inv.cod_producto = v.cod_producto
             LEFT JOIN gold_mart_productos_dormidos d ON inv.cod_producto = d.cod_producto
@@ -1246,12 +1268,34 @@ class DuckDBMetricsRepo:
 
         # Count real con todos los filtros (sin LIMIT/OFFSET)
         total = self._con.execute(f"""
-            WITH abc_latest AS (
+            WITH inventario AS (
+                SELECT
+                    dp.cod_producto,
+                    COALESCE(dp.nombre_producto, 'SIN NOMBRE') AS nom_producto,
+                    COALESCE(dp.cod_bodega_default, '') AS cod_bodega,
+                    COALESCE(db.nombre_bodega, 'SIN NOMBRE') AS nom_bodega,
+                    ROUND(COALESCE(c.total_comprado, 0) - COALESCE(v.total_vendido, 0), 2) AS cantidad_actual
+                FROM silver_dim_producto dp
+                LEFT JOIN (
+                    SELECT cod_producto, SUM(cantidad) AS total_comprado
+                    FROM silver_fact_compras_detalle
+                    WHERE business_date >= DATE '2020-01-01' AND business_date <= CURRENT_DATE
+                    GROUP BY cod_producto
+                ) c ON dp.cod_producto = c.cod_producto
+                LEFT JOIN (
+                    SELECT cod_producto, SUM(cantidad) AS total_vendido
+                    FROM silver_fact_ventas_detalle
+                    WHERE business_date >= DATE '2020-01-01' AND business_date <= CURRENT_DATE
+                    GROUP BY cod_producto
+                ) v ON dp.cod_producto = v.cod_producto
+                LEFT JOIN silver_dim_bodega db ON dp.cod_bodega_default = db.cod_bodega
+            ),
+            abc_latest AS (
                 SELECT cod_producto, categoria_abc
                 FROM (SELECT cod_producto, categoria_abc, ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_month DESC) AS rn
                       FROM gold_mart_rotacion_abc) WHERE rn = 1
             )
-            SELECT COUNT(*) FROM gold_mart_inventario_actual inv
+            SELECT COUNT(*) FROM inventario inv
             LEFT JOIN gold_mart_productos_dormidos d ON inv.cod_producto = d.cod_producto
             LEFT JOIN abc_latest abc ON inv.cod_producto = abc.cod_producto
             WHERE {where}
