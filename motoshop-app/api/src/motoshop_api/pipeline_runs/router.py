@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from motoshop_api.auth.deps import get_current_user, require_role
+from motoshop_api.auth.tenant_dep import get_tenant
 from motoshop_api.auth.users import User
 
 router = APIRouter(prefix="/admin/pipeline", tags=["pipeline_runs"])
@@ -18,9 +19,9 @@ _cache: dict[str, tuple[float, object]] = {}
 _CACHE_TTL = 30  # seconds
 
 
-def get_repo():
+def get_repo(tenant: str = Depends(get_tenant)):
     from motoshop_api.pipeline_runs.repo import PipelineRunsRepo
-    return PipelineRunsRepo()
+    return PipelineRunsRepo(tenant=tenant)
 
 
 @router.get("/runs")
@@ -52,6 +53,7 @@ def get_run(
 
 @router.get("/summary")
 def get_summary(
+    tenant: str = Depends(get_tenant),
     _user: User = Depends(require_role("admin", "gerente")),
     repo=Depends(get_repo),
 ):

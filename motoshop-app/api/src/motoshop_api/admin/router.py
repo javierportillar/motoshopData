@@ -16,6 +16,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from motoshop_api.auth.deps import get_current_user, require_refresh_token_or_admin, require_role
+from motoshop_api.auth.tenant_dep import get_tenant
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
 from motoshop_api.metrics.repo_duckdb import get_shared_connection
@@ -36,25 +37,26 @@ class RefreshResponse(BaseModel):
     freshness_utc: str | None = None
 
 
-def _get_duckdb_path() -> Path:
+def _get_duckdb_path(tenant: str = "motoshop") -> Path:
     from motoshop_api.metrics.repo_duckdb import _make_db_path
 
-    db_path = settings.duckdb_path or str(_make_db_path("motoshop"))
+    db_path = settings.duckdb_path or str(_make_db_path(tenant))
     return Path(db_path)
 
 
-def _get_pipeline_runs_db_path() -> Path:
-    return Path(os.environ.get(
-        "PIPELINE_RUNS_DB_PATH",
-        "/tmp/pipeline_runs.duckdb" if os.environ.get("ENV") == "prod"
-        else "out/pipeline_runs.duckdb",
-    ))
+def _get_pipeline_runs_db_path(tenant: str = "motoshop") -> Path:
+    env_override = os.environ.get("PIPELINE_RUNS_DB_PATH")
+    if env_override:
+        return Path(env_override)
+    suffix = f"{tenant}_pipeline_runs.duckdb"
+    return Path(f"/tmp/{suffix}" if os.environ.get("ENV") == "prod" else f"out/{suffix}")
 
 
 @router.post("/data/refresh", response_model=RefreshResponse)
 @limiter.limit("3/minute")
 async def data_refresh(
     request: Request,
+    tenant: str = Depends(get_tenant),
     _: bool = Depends(require_refresh_token_or_admin),
 ) -> RefreshResponse:
     """Recarga el archivo DuckDB desde R2 y limpia el cache de métricas.
@@ -62,11 +64,11 @@ async def data_refresh(
     No requiere restart de uvicorn. La próxima request a cualquier endpoint
     de métricas usará los datos frescos.
 
-    Solo accesible por usuarios con rol admin.
+    Tenant-aware desde 2026-06-16: refresca el DuckDB del tenant activo.
     """
     from motoshop_api.metrics.repo_duckdb import _bootstrap_duckdb_from_r2
 
-    db_path = _get_duckdb_path()
+    db_path = _get_duckdb_path(tenant)
 
     r2_endpoint = os.environ.get("R2_ENDPOINT")
     r2_key = os.environ.get("R2_ACCESS_KEY_ID")
@@ -84,7 +86,7 @@ async def data_refresh(
             db_path.unlink()
             logger.info("Deleted existing DuckDB at %s before refresh", db_path)
 
-        _bootstrap_duckdb_from_r2(db_path)
+        _bootstrap_duckdb_from_r2(db_path, tenant=tenant)
 
         if not db_path.exists():
             raise HTTPException(
@@ -127,18 +129,16 @@ async def data_refresh(
 @limiter.limit("3/minute")
 async def pipeline_refresh(
     request: Request,
+    tenant: str = Depends(get_tenant),
     _: bool = Depends(require_refresh_token_or_admin),
 ) -> RefreshResponse:
     """Recarga pipeline_runs.duckdb desde R2 sin reiniciar uvicorn.
 
-    Solo accesible por usuarios con rol admin.
+    Tenant-aware desde 2026-06-16: refresca el pipeline_runs del tenant activo.
     """
     from motoshop_api.pipeline_runs.repo import _bootstrap_pipeline_db_from_r2
 
-    db_path = Path(os.environ.get(
-        "PIPELINE_RUNS_DB_PATH",
-        "/tmp/pipeline_runs.duckdb" if os.environ.get("ENV") == "prod" else "out/pipeline_runs.duckdb",
-    ))
+    db_path = _get_pipeline_runs_db_path(tenant)
 
     r2_endpoint = os.environ.get("R2_ENDPOINT")
     r2_key = os.environ.get("R2_ACCESS_KEY_ID")
@@ -155,7 +155,7 @@ async def pipeline_refresh(
             db_path.unlink()
             logger.info("Deleted existing pipeline_runs.duckdb at %s before refresh", db_path)
 
-        _bootstrap_pipeline_db_from_r2(db_path)
+        _bootstrap_pipeline_db_from_r2(db_path, tenant=tenant)
 
         if not db_path.exists():
             raise HTTPException(
@@ -206,12 +206,13 @@ class DataStatusResponse(BaseModel):
 @router.get("/data/status", response_model=DataStatusResponse)
 async def data_status(
     request: Request,
+    tenant: str = Depends(get_tenant),
     user: User = Depends(require_role("admin", "gerente")),
 ) -> DataStatusResponse:
     """Estado real de los datos: fecha máxima, lag, filas inválidas, frescura."""
     from datetime import date, datetime, timezone
 
-    db_path = _get_duckdb_path()
+    db_path = _get_duckdb_path(tenant)
     con = get_shared_connection(db_path)
     # Max sales date
     max_date = con.execute(
@@ -236,9 +237,9 @@ async def data_status(
     mtime = db_path.stat().st_mtime
     freshness_utc = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
 
-    # Latest pipeline run status
+    # Latest pipeline run status (tenant-specific)
     last_status: str | None = None
-    pipeline_db_path = _get_pipeline_runs_db_path()
+    pipeline_db_path = _get_pipeline_runs_db_path(tenant)
     if pipeline_db_path.exists():
         try:
             p_con = get_shared_connection(pipeline_db_path)

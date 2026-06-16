@@ -176,12 +176,14 @@ def capture_layer_stats(run_id: int, layer: str, gold_db_path: str) -> None:
     con_runs = _get_conn()
 
     # Determinar prefijos según la capa
+    # NOTA 2026-06-16: ambos tenants usan silver_*/gold_* sin prefijo de tenant.
+    # Se dejan los prefijos legacy (motoshop_*) por si hay DuckDBs viejos.
     if layer == "bronze":
         prefixes = ("bronze_", "motoshop_bronze_")
     elif layer == "silver":
-        prefixes = ("motoshop_silver_",)
+        prefixes = ("silver_", "motoshop_silver_")
     elif layer == "gold":
-        prefixes = ("motoshop_gold_",)
+        prefixes = ("gold_", "motoshop_gold_")
     else:
         print(f"  ⚠️  Unknown layer: {layer}")
         con_gold.close()

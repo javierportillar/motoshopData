@@ -15,9 +15,19 @@ from fastapi.testclient import TestClient
 @pytest.fixture(autouse=True)
 def _setup(monkeypatch):
     from motoshop_api.auth.users import load_users
-    users_yaml = Path(__file__).resolve().parent.parent.parent / "motoshop-app" / "api" / "users.yaml"
+    from motoshop_api.tenants import load_tenants
+
+    repo_root = Path(__file__).resolve().parent.parent.parent  # motoshopData/
+    api_dir = repo_root / "motoshop-app" / "api"
+
+    users_yaml = api_dir / "users.yaml"
     if users_yaml.exists():
         load_users(users_yaml)
+
+    tenants_yaml = api_dir / "tenants.yaml"
+    if tenants_yaml.exists():
+        load_tenants(tenants_yaml)
+
     monkeypatch.setattr("motoshop_api.config.settings.jwt_secret", "testsecret123-motoshop-prod-v15")
 
 

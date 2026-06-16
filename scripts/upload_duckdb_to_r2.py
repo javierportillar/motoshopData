@@ -56,6 +56,8 @@ def main():
     )
 
     _upload_file(s3, DB_PATH, "motoshop_gold.duckdb")
+    # Pipeline runs: subir como tenant-specific + legacy para transición
+    _upload_file(s3, PIPELINE_DB_PATH, "motoshop_pipeline_runs.duckdb")
     _upload_file(s3, PIPELINE_DB_PATH, "pipeline_runs.duckdb")
 
 

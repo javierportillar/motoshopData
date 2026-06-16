@@ -16,11 +16,13 @@ from motoshop_api.metrics.repo_duckdb import get_shared_connection
 
 logger = logging.getLogger(__name__)
 
-# Ruta por defecto — /tmp en Render, out/ local
-_DEFAULT_DB_PATH = Path(os.environ.get(
-    "PIPELINE_RUNS_DB_PATH",
-    "/tmp/pipeline_runs.duckdb" if os.environ.get("ENV") == "prod" else "out/pipeline_runs.duckdb"
-))
+# Ruta por defecto — /tmp en Render, out/ local (tenant-aware desde 2026-06-16)
+def _default_db_path(tenant: str = "motoshop") -> Path:
+    return Path(os.environ.get(
+        "PIPELINE_RUNS_DB_PATH",
+        f"/tmp/{tenant}_pipeline_runs.duckdb" if os.environ.get("ENV") == "prod"
+        else f"out/{tenant}_pipeline_runs.duckdb",
+    ))
 
 
 def _ensure_db_exists(db_path: Path) -> None:
@@ -62,8 +64,11 @@ def _ensure_db_exists(db_path: Path) -> None:
     logger.info("Created empty pipeline_runs.duckdb at %s", db_path)
 
 
-def _bootstrap_pipeline_db_from_r2(db_path: Path) -> None:
-    """Descarga pipeline_runs.duckdb desde R2 si no existe localmente."""
+def _bootstrap_pipeline_db_from_r2(db_path: Path, tenant: str = "motoshop") -> None:
+    """Descarga {tenant}_pipeline_runs.duckdb desde R2 si no existe localmente.
+
+    Fallback a pipeline_runs.duckdb (legacy) si el tenant-specific no existe.
+    """
     if db_path.exists():
         return
 
@@ -86,21 +91,33 @@ def _bootstrap_pipeline_db_from_r2(db_path: Path) -> None:
             aws_secret_access_key=r2_secret,
             region_name="auto",
         )
-        logger.info("Downloading pipeline_runs.duckdb from R2: %s/%s", r2_bucket, "pipeline_runs.duckdb")
+        r2_object_key = f"{tenant}_pipeline_runs.duckdb"
+        logger.info("Downloading pipeline_runs.duckdb from R2: %s/%s", r2_bucket, r2_object_key)
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        s3.download_file(r2_bucket, "pipeline_runs.duckdb", str(db_path))
-        logger.info("Pipeline runs DuckDB downloaded to %s", db_path)
+        try:
+            s3.download_file(r2_bucket, r2_object_key, str(db_path))
+            logger.info("Pipeline runs DuckDB downloaded to %s (tenant=%s)", db_path, tenant)
+        except Exception:
+            # Fallback al archivo legacy (sin prefijo de tenant)
+            logger.warning("%s not found in R2, trying legacy pipeline_runs.duckdb", r2_object_key)
+            s3.download_file(r2_bucket, "pipeline_runs.duckdb", str(db_path))
+            logger.info("Pipeline runs DuckDB downloaded from legacy key to %s", db_path)
     except Exception as exc:
         logger.warning("Failed to download pipeline_runs.duckdb from R2: %s — creating empty DB", exc)
         _ensure_db_exists(db_path)
 
 
 class PipelineRunsRepo:
-    """Repo de solo lectura sobre app_pipeline_runs + app_pipeline_steps vía DuckDB."""
+    """Repo de solo lectura sobre app_pipeline_runs + app_pipeline_steps vía DuckDB.
 
-    def __init__(self, db_path: str | Path | None = None) -> None:
-        self._path = Path(db_path or _DEFAULT_DB_PATH)
-        _bootstrap_pipeline_db_from_r2(self._path)
+    Tenant-aware desde 2026-06-16: cada tenant tiene su propio pipeline_runs.duckdb
+    en R2 con key {tenant}_pipeline_runs.duckdb. Fallback al legacy sin prefijo.
+    """
+
+    def __init__(self, db_path: str | Path | None = None, tenant: str = "motoshop") -> None:
+        self._tenant = tenant
+        self._path = Path(db_path or _default_db_path(tenant))
+        _bootstrap_pipeline_db_from_r2(self._path, tenant=tenant)
         self._con = get_shared_connection(self._path)
         logger.info("PipelineRunsRepo connected to %s", self._path)
 
