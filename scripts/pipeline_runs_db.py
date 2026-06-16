@@ -31,13 +31,17 @@ def _get_conn() -> duckdb.DuckDBPyConnection:
     for attempt in range(3):
         try:
             con = duckdb.connect(str(DB_PATH))
-            return con
+            break  # conexión exitosa, salimos del loop
         except Exception as exc:
             if "locked" in str(exc).lower() or "used by another process" in str(exc).lower():
                 if attempt < 2:
                     time.sleep(2 ** attempt)  # 1s, 2s
                     continue
             raise
+    else:
+        # Todas las conexiones fallaron por lock — intento final
+        con = duckdb.connect(str(DB_PATH))
+
     con.execute("""
         CREATE TABLE IF NOT EXISTS app_pipeline_runs (
             id INTEGER PRIMARY KEY,
