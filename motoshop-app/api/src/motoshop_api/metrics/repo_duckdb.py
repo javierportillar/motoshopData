@@ -1159,7 +1159,7 @@ class DuckDBMetricsRepo:
         sort_parts = [s.strip() for s in sort.split(",") if s.strip()]
         order_bys = []
         for part in sort_parts:
-            desc = True  # default DESC
+            desc = False  # default ASC (sin prefijo)
             if part.startswith("-"):
                 desc = True
                 part = part[1:]
