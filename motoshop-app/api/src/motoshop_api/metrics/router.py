@@ -43,6 +43,7 @@ from motoshop_api.metrics.schemas import (
     PlanComprasResponse,
     SalesDailyResponse,
     SalesDayDetailResponse,
+    SalesDayInvoicesResponse,
     SalesHistoricalResponse,
     SalesMonthDetailResponse,
     SalesMonthlyResponse,
@@ -281,6 +282,24 @@ def sales_month_detail(
     return _cached_or_fetch(
         f"{tenant}:sales-month-detail:{month}",
         lambda: SalesMonthDetailResponse(**repo.get_sales_month_detail(month)),
+    )
+
+
+@router.get("/metrics/sales-day-invoices", response_model=SalesDayInvoicesResponse)
+@limiter.limit("30/minute")
+def sales_day_invoices(
+    request: Request,
+    date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$", description="YYYY-MM-DD"),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+) -> SalesDayInvoicesResponse:
+    """Facturas del dia con detalle expandido de items por factura.
+    Sirve a la pagina dedicada del dia (no popup) — cada factura con
+    sus lineas: producto, cantidad, valor unitario, descuento, IVA, total."""
+    return _cached_or_fetch(
+        f"{tenant}:sales-day-invoices:{date}",
+        lambda: SalesDayInvoicesResponse(**repo.get_sales_day_invoices(date)),
     )
 
 

@@ -1374,7 +1374,9 @@ class DuckDBMetricsRepo:
                 max_ventas_hora = tv
                 hora_pico = hr
 
-        # 4. Productos top
+        # 4. TODOS los productos vendidos del dia (sin LIMIT — el frontend
+        # decide cuantos mostrar con colapsable). Ordenado de mas a menos
+        # vendido por valor.
         productos_top = self._query(
             """
             SELECT
@@ -1386,7 +1388,6 @@ class DuckDBMetricsRepo:
             WHERE business_date = ?
             GROUP BY cod_producto, nom_producto
             ORDER BY valor DESC
-            LIMIT 30
             """,
             [date],
         )
@@ -1657,6 +1658,106 @@ class DuckDBMetricsRepo:
             "peor_dia": peor_dia,
             "aceleradores": aceleradores,
             "frenadores": frenadores,
+        }
+
+    # ── Sales Day Invoices (V1.9.2 — facturas con items expandidos) ──────
+
+    def get_sales_day_invoices(self, date: str) -> dict:
+        """Lista todas las facturas del dia con su detalle de items.
+
+        Una sola query con JOIN para evitar N+1. El frontend recibe la
+        lista plana de items y la agrupa por num_documento+cod_clase.
+
+        Retorna:
+          - invoices: lista de facturas. Cada una tiene:
+              * num_documento, cod_clase, prefijo, hora HH:MM, cliente,
+                vendedor, cod_formapago + nombre_formapago, total,
+                subtotal, total_iva, total_descuentos
+              * items: lista [{cod_producto, nombre, cantidad,
+                valor_unitario, descuento_valor, iva_valor,
+                total_detalle, cod_bodega}]
+        """
+        # JOIN entre header (silver_fact_ventas) y lineas (silver_fact_ventas_detalle)
+        rows = self._query(
+            """
+            SELECT
+                v.num_documento,
+                v.cod_clase,
+                v.prefijo,
+                v.fecha_documento_ts,
+                COALESCE(NULLIF(TRIM(v.nombre_cliente), ''), 'Consumidor final') AS cliente,
+                COALESCE(NULLIF(TRIM(v.nombre_vendedor), ''), '(sin asignar)') AS vendedor,
+                COALESCE(NULLIF(TRIM(v.cod_formapago), ''), 'SIN_COD') AS cod_formapago,
+                ROUND(v.subtotal, 2) AS subtotal,
+                ROUND(v.total_descuentos, 2) AS total_descuentos,
+                ROUND(v.total_iva, 2) AS total_iva,
+                ROUND(v.total_factura, 2) AS total,
+                d.num_item,
+                d.cod_producto,
+                d.nombre_detalle AS producto_nombre,
+                d.cantidad,
+                ROUND(d.valor_unitario, 2) AS valor_unitario,
+                ROUND(d.descuento_valor, 2) AS descuento_valor,
+                ROUND(d.iva_valor, 2) AS iva_valor,
+                ROUND(d.total_detalle, 2) AS total_detalle,
+                d.cod_bodega
+            FROM silver_fact_ventas v
+            INNER JOIN silver_fact_ventas_detalle d
+              ON v.num_documento = d.num_documento
+             AND v.cod_clase = d.cod_clase
+            WHERE v.business_date = ?
+              AND v.estado_documento != 'A'
+            ORDER BY v.fecha_documento_ts, v.num_documento, d.num_item
+            """,
+            [date],
+        )
+
+        # Agrupar por (num_documento, cod_clase) -> factura con items
+        invoices_map: dict[tuple[str, str], dict] = {}
+        for r in rows:
+            key = (r["num_documento"], r["cod_clase"])
+            if key not in invoices_map:
+                ts = r["fecha_documento_ts"]
+                hora_str = ts.strftime("%H:%M") if hasattr(ts, "strftime") else (str(ts)[11:16] if ts else "")
+                invoices_map[key] = {
+                    "num_documento": r["num_documento"],
+                    "cod_clase": r["cod_clase"],
+                    "prefijo": r["prefijo"],
+                    "hora": hora_str,
+                    "cliente": r["cliente"],
+                    "vendedor": r["vendedor"],
+                    "cod_formapago": r["cod_formapago"],
+                    "nombre_formapago": _formapago_label(r["cod_formapago"]),
+                    "subtotal": float(r["subtotal"] or 0),
+                    "total_descuentos": float(r["total_descuentos"] or 0),
+                    "total_iva": float(r["total_iva"] or 0),
+                    "total": float(r["total"] or 0),
+                    "items": [],
+                }
+            invoices_map[key]["items"].append({
+                "num_item": int(r["num_item"] or 0),
+                "cod_producto": r["cod_producto"],
+                "nombre": r["producto_nombre"],
+                "cantidad": float(r["cantidad"] or 0),
+                "valor_unitario": float(r["valor_unitario"] or 0),
+                "descuento_valor": float(r["descuento_valor"] or 0),
+                "iva_valor": float(r["iva_valor"] or 0),
+                "total_detalle": float(r["total_detalle"] or 0),
+                "cod_bodega": r["cod_bodega"],
+            })
+
+        invoices = list(invoices_map.values())
+
+        # Resumen para mostrar arriba
+        total_dia = sum(inv["total"] for inv in invoices)
+        total_items = sum(len(inv["items"]) for inv in invoices)
+
+        return {
+            "date": date,
+            "total_facturas": len(invoices),
+            "total_dia": round(total_dia, 2),
+            "total_items": total_items,
+            "invoices": invoices,
         }
 
     # ── Cash Closure (V1.9.1 — cierre de caja del dia) ───────────────────

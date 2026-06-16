@@ -227,6 +227,44 @@ class PaymentsHistoryResponse(BaseModel):
     variacion_seis_meses: list[PaymentsVariacionItem]
 
 
+# ── Sales Day Invoices (V1.9.2 — facturas con items expandidos) ───────────
+
+class InvoiceItem(BaseModel):
+    num_item: int
+    cod_producto: str
+    nombre: str
+    cantidad: float
+    valor_unitario: float
+    descuento_valor: float
+    iva_valor: float
+    total_detalle: float
+    cod_bodega: str | None = None
+
+
+class DayInvoice(BaseModel):
+    num_documento: str
+    cod_clase: str
+    prefijo: str | None = None
+    hora: str  # HH:MM
+    cliente: str
+    vendedor: str
+    cod_formapago: str
+    nombre_formapago: str
+    subtotal: float
+    total_descuentos: float
+    total_iva: float
+    total: float
+    items: list[InvoiceItem]
+
+
+class SalesDayInvoicesResponse(BaseModel):
+    date: str
+    total_facturas: int
+    total_dia: float
+    total_items: int
+    invoices: list[DayInvoice]
+
+
 class SalesMonthlyResponse(BaseModel):
     month: str
     total_ventas: float
