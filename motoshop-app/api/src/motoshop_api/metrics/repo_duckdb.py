@@ -1280,6 +1280,405 @@ class DuckDBMetricsRepo:
             },
         }
 
+    # ── Sales Day Detail (V1.9 — popup detallado) ────────────────────────
+
+    def get_sales_day_detail(self, date: str) -> dict:
+        """Detalle completo de un dia para el popup del calendario.
+
+        Hace 6 queries:
+          1. KPIs principales (ventas, facturas, ticket, ticket maximo, items/factura)
+          2. Margen bruto (ventas - costo)
+          3. Distribucion horaria (extraida de fecha_documento_ts)
+          4. Productos top
+          5. Vendedores top
+          6. Forma de pago breakdown
+          7. Comparativas (semana, mes, ano)
+        """
+        # 1. KPIs - de silver para tener acceso a ticket maximo e items/factura
+        kpis_rows = self._query(
+            """
+            SELECT
+                ROUND(COALESCE(SUM(total_factura), 0), 2) AS total_ventas,
+                COUNT(*) AS total_facturas,
+                ROUND(COALESCE(MAX(total_factura), 0), 2) AS ticket_mas_alto
+            FROM silver_fact_ventas
+            WHERE business_date = ?
+              AND estado_documento != 'A'
+            """,
+            [date],
+        )
+        k = kpis_rows[0] if kpis_rows else {"total_ventas": 0, "total_facturas": 0, "ticket_mas_alto": 0}
+        total_ventas = float(k["total_ventas"] or 0)
+        total_facturas = int(k["total_facturas"] or 0)
+        ticket_promedio = round(total_ventas / total_facturas, 2) if total_facturas > 0 else 0.0
+
+        # Items por factura (avg)
+        items_rows = self._query(
+            """
+            SELECT ROUND(CAST(COUNT(*) AS DOUBLE) / NULLIF(COUNT(DISTINCT num_documento), 0), 2) AS items_promedio
+            FROM silver_fact_ventas_detalle
+            WHERE business_date = ?
+            """,
+            [date],
+        )
+        items_por_factura = float(items_rows[0]["items_promedio"] or 0) if items_rows else 0.0
+
+        # 2. Margen bruto: (valor_unitario * cantidad - costo_producto * cantidad) sumado
+        margen_rows = self._query(
+            """
+            SELECT
+                ROUND(COALESCE(SUM(total_detalle), 0), 2) AS revenue_detalle,
+                ROUND(COALESCE(SUM(costo_producto * cantidad), 0), 2) AS costo_total
+            FROM silver_fact_ventas_detalle
+            WHERE business_date = ?
+            """,
+            [date],
+        )
+        m = margen_rows[0] if margen_rows else {"revenue_detalle": 0, "costo_total": 0}
+        revenue_detalle = float(m["revenue_detalle"] or 0)
+        costo_total = float(m["costo_total"] or 0)
+        margen_bruto = round(revenue_detalle - costo_total, 2)
+        margen_pct = round((margen_bruto / revenue_detalle) * 100, 2) if revenue_detalle > 0 else None
+
+        # 3. Distribucion horaria
+        horarios = self._query(
+            """
+            SELECT
+                CAST(EXTRACT(hour FROM fecha_documento_ts) AS INTEGER) AS hour,
+                ROUND(COALESCE(SUM(total_factura), 0), 2) AS total_ventas,
+                COUNT(*) AS num_facturas
+            FROM silver_fact_ventas
+            WHERE business_date = ?
+              AND estado_documento != 'A'
+              AND fecha_documento_ts IS NOT NULL
+            GROUP BY hour
+            ORDER BY hour
+            """,
+            [date],
+        )
+        distribucion_horaria = []
+        hora_pico = None
+        max_ventas_hora = 0.0
+        for h in horarios:
+            hr = int(h["hour"])
+            tv = float(h["total_ventas"] or 0)
+            nf = int(h["num_facturas"] or 0)
+            tp = round(tv / nf, 2) if nf > 0 else 0.0
+            distribucion_horaria.append({
+                "hour": hr,
+                "total_ventas": tv,
+                "num_facturas": nf,
+                "ticket_promedio": tp,
+            })
+            if tv > max_ventas_hora:
+                max_ventas_hora = tv
+                hora_pico = hr
+
+        # 4. Productos top
+        productos_top = self._query(
+            """
+            SELECT
+                cod_producto AS sku,
+                nom_producto AS nombre,
+                ROUND(SUM(cantidad_total), 2) AS cantidad,
+                ROUND(SUM(valor_total), 2) AS valor
+            FROM gold_mart_ventas_diarias_sku
+            WHERE business_date = ?
+            GROUP BY cod_producto, nom_producto
+            ORDER BY valor DESC
+            LIMIT 30
+            """,
+            [date],
+        )
+
+        # 5. Vendedores top del dia
+        vendedores_rows = self._query(
+            """
+            SELECT
+                COALESCE(NULLIF(TRIM(nombre_vendedor), ''), '(sin asignar)') AS nombre_vendedor,
+                nit_vendedor,
+                ROUND(SUM(total_factura), 2) AS total_ventas,
+                COUNT(*) AS num_facturas
+            FROM silver_fact_ventas
+            WHERE business_date = ?
+              AND estado_documento != 'A'
+            GROUP BY nombre_vendedor, nit_vendedor
+            ORDER BY total_ventas DESC
+            LIMIT 10
+            """,
+            [date],
+        )
+        vendedores_top = []
+        for v in vendedores_rows:
+            tv = float(v["total_ventas"] or 0)
+            pct = round((tv / total_ventas) * 100, 2) if total_ventas > 0 else None
+            vendedores_top.append({
+                "nombre_vendedor": v["nombre_vendedor"],
+                "nit_vendedor": v["nit_vendedor"],
+                "total_ventas": tv,
+                "num_facturas": int(v["num_facturas"] or 0),
+                "porcentaje": pct,
+            })
+
+        # 6. Forma de pago breakdown
+        formas_rows = self._query(
+            """
+            SELECT
+                COALESCE(NULLIF(TRIM(cod_formapago), ''), 'SIN_COD') AS cod_formapago,
+                ROUND(SUM(total_factura), 2) AS total_ventas,
+                COUNT(*) AS num_facturas
+            FROM silver_fact_ventas
+            WHERE business_date = ?
+              AND estado_documento != 'A'
+            GROUP BY cod_formapago
+            ORDER BY total_ventas DESC
+            """,
+            [date],
+        )
+        formas_pago = []
+        for f in formas_rows:
+            tv = float(f["total_ventas"] or 0)
+            pct = round((tv / total_ventas) * 100, 2) if total_ventas > 0 else 0.0
+            formas_pago.append({
+                "cod_formapago": f["cod_formapago"],
+                "nombre": _formapago_label(f["cod_formapago"]),
+                "total_ventas": tv,
+                "num_facturas": int(f["num_facturas"] or 0),
+                "porcentaje": pct,
+            })
+
+        # 7. Comparativas. days_back es int literal (no parametrizable en INTERVAL de DuckDB).
+        comparativas = []
+        for label, days_back in [("semana pasada", 7), ("mes pasado", 30), ("año pasado", 365)]:
+            comp_rows = self._query(
+                f"""
+                SELECT
+                    CAST(? AS DATE) - INTERVAL '{int(days_back)}' DAY AS fecha_comp,
+                    ROUND(COALESCE(SUM(total_factura), 0), 2) AS tv
+                FROM silver_fact_ventas
+                WHERE business_date = CAST(? AS DATE) - INTERVAL '{int(days_back)}' DAY
+                  AND estado_documento != 'A'
+                """,
+                [date, date],
+            )
+            if comp_rows and comp_rows[0].get("fecha_comp"):
+                fecha_c = str(comp_rows[0]["fecha_comp"])[:10]
+                tv_c = float(comp_rows[0]["tv"] or 0)
+                delta = round(((total_ventas - tv_c) / tv_c) * 100, 2) if tv_c > 0 else None
+                comparativas.append({
+                    "label": label,
+                    "fecha_comparada": fecha_c,
+                    "total_ventas": tv_c,
+                    "delta_porcentaje": delta,
+                })
+
+        return {
+            "date": date,
+            "total_ventas": total_ventas,
+            "total_facturas": total_facturas,
+            "ticket_promedio": ticket_promedio,
+            "margen_bruto": margen_bruto,
+            "margen_porcentaje": margen_pct,
+            "items_por_factura": items_por_factura,
+            "ticket_mas_alto": float(k["ticket_mas_alto"] or 0),
+            "distribucion_horaria": distribucion_horaria,
+            "hora_pico": hora_pico,
+            "productos_top": productos_top,
+            "vendedores_top": vendedores_top,
+            "formas_pago": formas_pago,
+            "comparativas": comparativas,
+        }
+
+    # ── Sales Month Detail (V1.9) ─────────────────────────────────────────
+
+    def get_sales_month_detail(self, month: str) -> dict:
+        """Detalle enriquecido del mes para complementar sales-summary."""
+        # 1. Margen del mes
+        margen_rows = self._query(
+            """
+            SELECT
+                ROUND(COALESCE(SUM(total_detalle), 0), 2) AS revenue,
+                ROUND(COALESCE(SUM(costo_producto * cantidad), 0), 2) AS costo
+            FROM silver_fact_ventas_detalle
+            WHERE STRFTIME(business_date, '%Y-%m') = ?
+            """,
+            [month],
+        )
+        m = margen_rows[0] if margen_rows else {"revenue": 0, "costo": 0}
+        revenue = float(m["revenue"] or 0)
+        costo = float(m["costo"] or 0)
+        margen_bruto = round(revenue - costo, 2)
+        margen_pct = round((margen_bruto / revenue) * 100, 2) if revenue > 0 else None
+
+        # 2. Total mes (para % vendedores y forma de pago)
+        total_mes_rows = self._query(
+            """
+            SELECT ROUND(COALESCE(SUM(total_factura), 0), 2) AS total
+            FROM silver_fact_ventas
+            WHERE STRFTIME(business_date, '%Y-%m') = ?
+              AND estado_documento != 'A'
+            """,
+            [month],
+        )
+        total_mes = float(total_mes_rows[0]["total"] or 0) if total_mes_rows else 0.0
+
+        # 3. Vendedores top del mes
+        vend_rows = self._query(
+            """
+            SELECT
+                COALESCE(NULLIF(TRIM(nombre_vendedor), ''), '(sin asignar)') AS nombre_vendedor,
+                nit_vendedor,
+                ROUND(SUM(total_factura), 2) AS total_ventas,
+                COUNT(*) AS num_facturas
+            FROM silver_fact_ventas
+            WHERE STRFTIME(business_date, '%Y-%m') = ?
+              AND estado_documento != 'A'
+            GROUP BY nombre_vendedor, nit_vendedor
+            ORDER BY total_ventas DESC
+            LIMIT 10
+            """,
+            [month],
+        )
+        vendedores_top = []
+        for v in vend_rows:
+            tv = float(v["total_ventas"] or 0)
+            pct = round((tv / total_mes) * 100, 2) if total_mes > 0 else None
+            vendedores_top.append({
+                "nombre_vendedor": v["nombre_vendedor"],
+                "nit_vendedor": v["nit_vendedor"],
+                "total_ventas": tv,
+                "num_facturas": int(v["num_facturas"] or 0),
+                "porcentaje": pct,
+            })
+
+        # 4. Formas de pago del mes
+        formas_rows = self._query(
+            """
+            SELECT
+                COALESCE(NULLIF(TRIM(cod_formapago), ''), 'SIN_COD') AS cod_formapago,
+                ROUND(SUM(total_factura), 2) AS total_ventas,
+                COUNT(*) AS num_facturas
+            FROM silver_fact_ventas
+            WHERE STRFTIME(business_date, '%Y-%m') = ?
+              AND estado_documento != 'A'
+            GROUP BY cod_formapago
+            ORDER BY total_ventas DESC
+            """,
+            [month],
+        )
+        formas_pago = []
+        for f in formas_rows:
+            tv = float(f["total_ventas"] or 0)
+            pct = round((tv / total_mes) * 100, 2) if total_mes > 0 else 0.0
+            formas_pago.append({
+                "cod_formapago": f["cod_formapago"],
+                "nombre": _formapago_label(f["cod_formapago"]),
+                "total_ventas": tv,
+                "num_facturas": int(f["num_facturas"] or 0),
+                "porcentaje": pct,
+            })
+
+        # 5. Mejor y peor dia del mes
+        dias_rows = self._query(
+            """
+            SELECT
+                business_date,
+                ROUND(SUM(total_factura), 2) AS total_ventas,
+                COUNT(*) AS num_facturas
+            FROM silver_fact_ventas
+            WHERE STRFTIME(business_date, '%Y-%m') = ?
+              AND estado_documento != 'A'
+            GROUP BY business_date
+            ORDER BY total_ventas DESC
+            """,
+            [month],
+        )
+        mejor_dia = None
+        peor_dia = None
+        if dias_rows:
+            mejor = dias_rows[0]
+            mejor_dia = {
+                "date": str(mejor["business_date"]),
+                "total_ventas": float(mejor["total_ventas"] or 0),
+                "num_facturas": int(mejor["num_facturas"] or 0),
+            }
+            peor = dias_rows[-1]
+            peor_dia = {
+                "date": str(peor["business_date"]),
+                "total_ventas": float(peor["total_ventas"] or 0),
+                "num_facturas": int(peor["num_facturas"] or 0),
+            }
+
+        # 6. Aceleradores / Frenadores (productos que mas crecieron / cayeron vs mes anterior)
+        prev = _prev_month_str(month)
+        delta_rows = self._query(
+            """
+            WITH curr AS (
+                SELECT cod_producto, nom_producto, SUM(cantidad_total) AS cant_curr, SUM(valor_total) AS val_curr
+                FROM gold_mart_ventas_diarias_sku
+                WHERE STRFTIME(business_date, '%Y-%m') = ?
+                GROUP BY cod_producto, nom_producto
+            ),
+            prev AS (
+                SELECT cod_producto, SUM(valor_total) AS val_prev
+                FROM gold_mart_ventas_diarias_sku
+                WHERE STRFTIME(business_date, '%Y-%m') = ?
+                GROUP BY cod_producto
+            )
+            SELECT
+                c.cod_producto AS cod_producto,
+                c.nom_producto AS nom_producto,
+                ROUND(c.cant_curr, 2) AS cantidad_total,
+                ROUND(c.val_curr, 2) AS valor_total,
+                ROUND(COALESCE(c.val_curr - p.val_prev, c.val_curr), 2) AS delta
+            FROM curr c
+            LEFT JOIN prev p USING (cod_producto)
+            WHERE c.val_curr > 50000
+            """,
+            [month, prev],
+        )
+        # Ordenar por delta absoluto (positivo = acelerador, negativo = frenador)
+        sorted_delta = sorted(delta_rows, key=lambda r: float(r.get("delta") or 0), reverse=True)
+        aceleradores = [
+            {k: v for k, v in r.items() if k != "delta"} for r in sorted_delta[:3]
+        ]
+        frenadores = [
+            {k: v for k, v in r.items() if k != "delta"} for r in sorted_delta[-3:][::-1]
+            if float(r.get("delta") or 0) < 0
+        ]
+
+        return {
+            "month": month,
+            "margen_bruto": margen_bruto,
+            "margen_porcentaje": margen_pct,
+            "vendedores_top": vendedores_top,
+            "formas_pago": formas_pago,
+            "mejor_dia": mejor_dia,
+            "peor_dia": peor_dia,
+            "aceleradores": aceleradores,
+            "frenadores": frenadores,
+        }
+
+
+_FORMAPAGO_LABELS = {
+    "F01": "Contado/Efectivo",
+    "F02": "Tarjeta crédito",
+    "F03": "Tarjeta débito",
+    "F04": "Transferencia",
+    "F05": "Crédito a 30 días",
+    "F06": "Crédito a 60 días",
+    "F07": "Crédito a 90 días",
+    "F08": "Cheque",
+    "F09": "Nequi/Daviplata",
+    "F10": "Bono/Voucher",
+    "SIN_COD": "Sin clasificar",
+}
+
+
+def _formapago_label(cod: str) -> str:
+    """Mapea codigo de forma de pago a etiqueta legible. Cae al codigo si desconocido."""
+    return _FORMAPAGO_LABELS.get(cod, cod or "Sin clasificar")
+
 
 def _prev_month_str(month: str) -> str:
     """Retorna el mes anterior en formato YYYY-MM."""

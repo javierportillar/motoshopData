@@ -40,7 +40,9 @@ from motoshop_api.metrics.schemas import (
     InventorySummary,
     PlanComprasResponse,
     SalesDailyResponse,
+    SalesDayDetailResponse,
     SalesHistoricalResponse,
+    SalesMonthDetailResponse,
     SalesMonthlyResponse,
     SalesSummary,
     SalesTrendResponse,
@@ -241,6 +243,43 @@ def sales_monthly(
         from datetime import datetime
         month = datetime.now().strftime("%Y-%m")
     return _cached_or_fetch(f"{tenant}:sales-monthly:{month}", lambda: repo.get_sales_monthly(month))
+
+
+@router.get("/metrics/sales-day-detail", response_model=SalesDayDetailResponse)
+@limiter.limit("30/minute")
+def sales_day_detail(
+    request: Request,
+    date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$", description="YYYY-MM-DD"),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+) -> SalesDayDetailResponse:
+    """Detalle completo de un dia: KPIs, distribucion horaria, productos, vendedores,
+    forma de pago, margen, comparativas. Sirve al popup del calendario de la tab Diaria."""
+    return _cached_or_fetch(
+        f"{tenant}:sales-day-detail:{date}",
+        lambda: SalesDayDetailResponse(**repo.get_sales_day_detail(date)),
+    )
+
+
+@router.get("/metrics/sales-month-detail", response_model=SalesMonthDetailResponse)
+@limiter.limit("30/minute")
+def sales_month_detail(
+    request: Request,
+    month: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$", description="YYYY-MM"),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+) -> SalesMonthDetailResponse:
+    """Detalle enriquecido del mes: margen, vendedores top, forma de pago, mejor/peor dia,
+    productos en aceleracion/desaceleracion. Complementa a sales-summary."""
+    if not month:
+        from datetime import datetime
+        month = datetime.now().strftime("%Y-%m")
+    return _cached_or_fetch(
+        f"{tenant}:sales-month-detail:{month}",
+        lambda: SalesMonthDetailResponse(**repo.get_sales_month_detail(month)),
+    )
 
 
 @router.get("/metrics/sales-historical", response_model=SalesHistoricalResponse)

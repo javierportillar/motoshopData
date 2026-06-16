@@ -72,6 +72,86 @@ class SalesDailyResponse(BaseModel):
     productos_vendidos: list[SalesDailyItem]
 
 
+# ── Sales Day Detail (V1.9 — popup detallado por día) ─────────────────────
+
+class SalesHourBucket(BaseModel):
+    """Ventas agregadas por hora del día (0-23)."""
+    hour: int
+    total_ventas: float
+    num_facturas: int
+    ticket_promedio: float
+
+
+class VendedorDayItem(BaseModel):
+    """Vendedor con sus ventas del día/mes."""
+    nombre_vendedor: str
+    nit_vendedor: str | None = None
+    total_ventas: float
+    num_facturas: int
+    porcentaje: float | None = None  # % del total
+
+
+class FormaPagoItem(BaseModel):
+    """Forma de pago con su volumen."""
+    cod_formapago: str
+    nombre: str  # Etiqueta legible
+    total_ventas: float
+    num_facturas: int
+    porcentaje: float
+
+
+class DayComparativa(BaseModel):
+    """Comparativa de un día contra otro periodo (semana, mes, año)."""
+    label: str  # "semana pasada", "mes pasado", "año pasado"
+    fecha_comparada: str
+    total_ventas: float
+    delta_porcentaje: float | None  # null si el comparado fue 0
+
+
+class SalesDayDetailResponse(BaseModel):
+    """Detalle completo de un día específico para el popup del calendario."""
+    date: str
+    # KPIs principales
+    total_ventas: float
+    total_facturas: int
+    ticket_promedio: float
+    margen_bruto: float  # total_ventas - sum(costo)
+    margen_porcentaje: float | None  # null si total_ventas == 0
+    items_por_factura: float  # promedio
+    ticket_mas_alto: float
+    # Distribución horaria
+    distribucion_horaria: list[SalesHourBucket]
+    hora_pico: int | None  # hora con más ventas
+    # Productos top del día (hasta 30)
+    productos_top: list[SalesDailyItem]
+    # Vendedores del día
+    vendedores_top: list[VendedorDayItem]
+    # Forma de pago breakdown
+    formas_pago: list[FormaPagoItem]
+    # Comparativas
+    comparativas: list[DayComparativa]
+
+
+# ── Sales Month Detail (V1.9 — detalle enriquecido del mes) ────────────────
+
+class SalesMonthDetailResponse(BaseModel):
+    """Detalle enriquecido del mes: complementa a sales-summary."""
+    month: str
+    # Métricas de rentabilidad
+    margen_bruto: float
+    margen_porcentaje: float | None
+    # Vendedores top
+    vendedores_top: list[VendedorDayItem]
+    # Forma de pago breakdown
+    formas_pago: list[FormaPagoItem]
+    # Mejores y peores días del mes
+    mejor_dia: dict | None  # {"date": "YYYY-MM-DD", "total_ventas": ..., "num_facturas": ...}
+    peor_dia: dict | None
+    # Productos en aceleración / desaceleración vs mes anterior
+    aceleradores: list[TopSkuItem]  # top 3 que más crecieron
+    frenadores: list[TopSkuItem]    # top 3 que más cayeron
+
+
 class SalesMonthlyResponse(BaseModel):
     month: str
     total_ventas: float
