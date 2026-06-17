@@ -102,11 +102,23 @@ def _make_db_path(tenant: str) -> Path:
     return Path(f"out/{tenant}_gold.duckdb")
 
 
-def _bootstrap_duckdb_from_r2(db_path: Path, tenant: str = "motoshop") -> None:
-    """Descarga {tenant}_gold.duckdb desde R2 si no existe localmente."""
-    if db_path.exists():
-        return
+# V1.10.8: auto-refresh desde R2. Throttle de chequeo HEAD a R2 por
+# tenant (no chequear en cada request — solo cada N segundos).
+_R2_LAST_CHECK: dict[str, float] = {}
+_R2_CHECK_INTERVAL_SEC = 60  # chequear LastModified en R2 maximo 1 vez/min por tenant
 
+
+def _bootstrap_duckdb_from_r2(db_path: Path, tenant: str = "motoshop") -> None:
+    """Descarga {tenant}_gold.duckdb desde R2 si:
+       - no existe localmente, O
+       - el de R2 es mas nuevo que el local (auto-refresh).
+
+    El segundo caso es lo importante: el pipeline corre cada 30 min y
+    sube un archivo fresco a R2; sin esta logica el backend quedaba con
+    el archivo del arranque hasta el siguiente deploy.
+
+    Hay throttle: solo se hace HEAD a R2 maximo 1 vez por minuto por
+    tenant para no agregar latencia a cada request."""
     r2_endpoint = os.environ.get("R2_ENDPOINT")
     r2_key = os.environ.get("R2_ACCESS_KEY_ID")
     r2_secret = os.environ.get("R2_SECRET_ACCESS_KEY")
@@ -114,8 +126,21 @@ def _bootstrap_duckdb_from_r2(db_path: Path, tenant: str = "motoshop") -> None:
     r2_object_key = os.environ.get("R2_OBJECT_KEY", f"{tenant}_gold.duckdb")
 
     if not all([r2_endpoint, r2_key, r2_secret]):
-        logger.warning("R2 credentials not set; skipping bootstrap download")
+        if not db_path.exists():
+            logger.warning("R2 credentials not set; skipping bootstrap download")
         return
+
+    # Decidir si descargar:
+    # 1) no existe local -> SIEMPRE descargar
+    # 2) existe pero ya paso el throttle -> chequear R2 mtime
+    must_download = not db_path.exists()
+    if not must_download:
+        from time import time
+        last = _R2_LAST_CHECK.get(tenant, 0)
+        now = time()
+        if now - last < _R2_CHECK_INTERVAL_SEC:
+            return  # within throttle, no chequear
+        _R2_LAST_CHECK[tenant] = now
 
     try:
         import boto3
@@ -126,10 +151,44 @@ def _bootstrap_duckdb_from_r2(db_path: Path, tenant: str = "motoshop") -> None:
             aws_secret_access_key=r2_secret,
             region_name="auto",
         )
-        logger.info("Downloading DuckDB from R2: %s/%s", r2_bucket, r2_object_key)
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        s3.download_file(r2_bucket, r2_object_key, str(db_path))
-        logger.info("DuckDB downloaded to %s", db_path)
+
+        if not must_download:
+            # Comparar LastModified de R2 vs mtime local. Si R2 es mas nuevo
+            # por mas de 10s (margen de seguridad), re-descargar.
+            try:
+                head = s3.head_object(Bucket=r2_bucket, Key=r2_object_key)
+                r2_mtime = head['LastModified'].timestamp()
+                local_mtime = db_path.stat().st_mtime
+                if r2_mtime > local_mtime + 10:
+                    must_download = True
+                    logger.info(
+                        "R2 has newer file for %s (R2=%.0fs ago, local=%.0fs ago) — refreshing",
+                        tenant,
+                        (time() - r2_mtime),
+                        (time() - local_mtime),
+                    )
+            except Exception as exc:
+                logger.debug("HEAD check failed for %s: %s", tenant, exc)
+                return  # no romper si HEAD falla, mantener archivo local
+
+        if must_download:
+            logger.info("Downloading DuckDB from R2: %s/%s", r2_bucket, r2_object_key)
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            # bajar a un archivo temporal y mover atomicamente: asi una request
+            # concurrente no abre un archivo a medio bajar
+            tmp_path = db_path.with_suffix(db_path.suffix + ".downloading")
+            s3.download_file(r2_bucket, r2_object_key, str(tmp_path))
+            # Cerrar conexiones compartidas al archivo viejo ANTES de reemplazar
+            try:
+                key = str(db_path.resolve())
+                with _shared_connections_lock:
+                    con = _shared_connections.pop(key, None)
+                if con is not None:
+                    con.close()
+            except Exception as exc:
+                logger.warning("Could not close old connection for %s: %s", db_path, exc)
+            tmp_path.replace(db_path)
+            logger.info("DuckDB refreshed to %s", db_path)
     except Exception as exc:
         logger.warning("Failed to download DuckDB from R2: %s", exc)
 
@@ -151,8 +210,22 @@ class DuckDBMetricsRepo:
                 f"DuckDB file not found at {self._path}. "
                 "Run 'python pipeline/run_all.py' first, or set DUCKDB_PATH."
             )
-        self._con = get_shared_connection(self._path)
         logger.info("DuckDBMetricsRepo connected to %s", self._path)
+
+    @property
+    def _con(self) -> "duckdb.DuckDBPyConnection":
+        """Conexion DuckDB actual del pool compartido.
+
+        V1.10.8: hacemos esto property para que cada query agarre la conexion
+        viva del pool, no una referencia a una conexion que pudo haber sido
+        cerrada (por re-download desde R2 o /admin/refresh). Si la conexion
+        fue cerrada, _bootstrap re-descarga y get_shared_connection abre una
+        nueva al toque.
+        """
+        # Re-check freshness en cada acceso (esta throttleado a 1/min/tenant,
+        # asi que en la practica casi siempre devuelve inmediato sin tocar R2)
+        _bootstrap_duckdb_from_r2(self._path, self._tenant)
+        return get_shared_connection(self._path)
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
