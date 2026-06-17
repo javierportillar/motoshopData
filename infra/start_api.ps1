@@ -16,12 +16,20 @@ function Write-Log($msg) {
 
 Write-Log "=== INICIO VERIFICACION API ==="
 
-# 1. Verificar si ya está corriendo
-$listening = netstat -ano 2>$null | Select-String ":$Port.*LISTENING"
-if ($listening) {
-    Write-Log "API ya está corriendo en puerto $Port"
-    Write-Log "=== FIN ==="
-    exit 0
+# 1. Matar instancia previa si está corriendo (permite deploy sin restart manual)
+$apiProcs = Get-Process python -ErrorAction SilentlyContinue | Where-Object {
+    try {
+        $cmdLine = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)").CommandLine
+        $cmdLine -match "uvicorn|motoshop_api"
+    } catch { $false }
+}
+if ($apiProcs) {
+    $apiProcs | ForEach-Object {
+        Write-Log "Deteniendo uvicorn PID $($_.Id)"
+        Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds 3
+    Write-Log "Proceso anterior detenido."
 }
 
 # 2. Verificar MySQL
