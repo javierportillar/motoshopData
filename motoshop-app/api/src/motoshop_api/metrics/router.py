@@ -454,6 +454,42 @@ def product_detail(
     )
 
 
+@router.get("/metrics/product-abc-map")
+@limiter.limit("60/minute")
+def product_abc_map(
+    request: Request,
+    window: int = Query(default=180, ge=30, le=720),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+):
+    """Mapa liviano sku → {abc, estado, pct_revenue, rank}. El frontend lo usa
+    para etiquetar productos en cualquier lista (mensual, diaria, facturas)
+    sin recalcular ABC en esos endpoints."""
+    return _cached_or_fetch(
+        f"{tenant}:abc-map:{window}",
+        lambda: repo.get_product_abc_map(window),
+        ttl=300,
+    )
+
+
+@router.get("/metrics/sales-history-extended")
+@limiter.limit("30/minute")
+def sales_history_extended(
+    request: Request,
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+):
+    """Histórico enriquecido: serie mensual con margen, mejor/peor mes y
+    comparativa año vs año."""
+    return _cached_or_fetch(
+        f"{tenant}:sales-hist-ext",
+        repo.get_sales_history_extended,
+        ttl=300,
+    )
+
+
 @router.get("/metrics/abc-segmentation", response_model=AbcSegmentation)
 @limiter.limit("30/minute")
 def abc_segmentation(

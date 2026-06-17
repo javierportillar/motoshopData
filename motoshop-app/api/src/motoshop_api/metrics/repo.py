@@ -67,6 +67,8 @@ class MetricsRepoProtocol(Protocol):
                               q: str | None = None, abc: str | None = None, estado: str | None = None,
                               sort: str = "revenue_win", order: str = "desc") -> dict: ...  # V1.10
     def get_product_detail(self, sku: str, window_days: int = 180) -> dict: ...  # V1.10
+    def get_product_abc_map(self, window_days: int = 180) -> dict: ...  # V1.10.1
+    def get_sales_history_extended(self) -> dict: ...  # V1.10.1
     def get_inventory_summary(self) -> InventorySummary: ...
     def get_abc_segmentation(self) -> AbcSegmentation: ...
     def get_dormidos(

@@ -2471,6 +2471,85 @@ class DuckDBMetricsRepo:
             "items": rows,
         }
 
+    def get_product_abc_map(self, window_days: int = 180) -> dict:
+        """Mapa liviano {sku → abc/estado/pct_revenue} de TODOS los productos
+        con venta en la ventana. El frontend lo busca una vez y decora
+        cualquier lista de productos (mensual, diaria, facturas) sin que esos
+        endpoints tengan que recalcular ABC."""
+        cte = self._product_metrics_cte(window_days)
+        rows = self._query(f"""
+            WITH {cte}
+            SELECT cod_producto, abc, estado, pct_revenue, rank_rev
+            FROM metrics
+            WHERE revenue_win > 0
+        """)
+        return {
+            "window_days": window_days,
+            "productos": {
+                r["cod_producto"]: {
+                    "abc": r["abc"],
+                    "estado": r["estado"],
+                    "pct_revenue": float(r["pct_revenue"] or 0),
+                    "rank": int(r["rank_rev"]) if r["rank_rev"] is not None else None,
+                }
+                for r in rows
+            },
+        }
+
+    def get_sales_history_extended(self) -> dict:
+        """Histórico enriquecido: serie mensual con revenue + margen + facturas,
+        mejor/peor mes, comparativa año vs año (mismo mes), y mezcla por
+        categoría ABC del último mes cerrado."""
+        # Serie mensual completa con margen
+        serie = self._query("""
+            SELECT
+                STRFTIME(v.business_date, '%Y-%m') AS mes,
+                ROUND(SUM(v.total_detalle), 2) AS revenue,
+                ROUND(SUM(v.total_detalle - v.costo_producto * v.cantidad), 2) AS margen,
+                COUNT(DISTINCT v.num_documento) AS facturas,
+                ROUND(SUM(v.cantidad), 0) AS unidades
+            FROM silver_fact_ventas_detalle v
+            GROUP BY 1 ORDER BY 1
+        """)
+        for s in serie:
+            rev = float(s["revenue"] or 0)
+            s["revenue"] = rev
+            s["margen"] = float(s["margen"] or 0)
+            s["margen_pct"] = round(s["margen"] / rev * 100, 1) if rev > 0 else None
+            s["facturas"] = int(s["facturas"] or 0)
+            s["unidades"] = float(s["unidades"] or 0)
+            s["ticket_promedio"] = round(rev / s["facturas"], 2) if s["facturas"] > 0 else 0
+
+        # Mejor / peor mes (excluyendo el mes en curso si está incompleto)
+        completos = serie[:-1] if len(serie) > 1 else serie
+        mejor = max(completos, key=lambda x: x["revenue"], default=None) if completos else None
+        peor = min(completos, key=lambda x: x["revenue"], default=None) if completos else None
+
+        # Comparativa año vs año (mismo mes calendario)
+        by_mes = {s["mes"]: s for s in serie}
+        yoy = []
+        for s in serie:
+            y, m = s["mes"].split("-")
+            prev_key = f"{int(y)-1}-{m}"
+            if prev_key in by_mes:
+                prev_rev = by_mes[prev_key]["revenue"]
+                delta = round((s["revenue"] - prev_rev) / prev_rev * 100, 1) if prev_rev > 0 else None
+                yoy.append({
+                    "mes": s["mes"],
+                    "revenue_actual": s["revenue"],
+                    "revenue_anterior": prev_rev,
+                    "delta_pct": delta,
+                })
+
+        return {
+            "serie": serie,
+            "mejor_mes": mejor,
+            "peor_mes": peor,
+            "yoy": yoy,
+            "total_revenue": round(sum(s["revenue"] for s in serie), 2),
+            "total_margen": round(sum(s["margen"] for s in serie), 2),
+        }
+
     def get_product_detail(self, sku: str, window_days: int = 180) -> dict:
         """Ficha completa de un producto: métricas + timeline mensual de
         compras vs ventas + últimos movimientos."""
