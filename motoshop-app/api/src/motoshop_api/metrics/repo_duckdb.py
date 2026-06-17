@@ -404,25 +404,34 @@ class DuckDBMetricsRepo:
     # ── Inventory Summary ────────────────────────────────────────────────
 
     def get_inventory_summary(self) -> InventorySummary:
-        rows = self._query("""
+        # V1.9.3 (2026-06-16): inventario REAL calculado on-the-fly
+        # (compras - ventas) en vez de leer del snapshot gold_mart_inventario_actual
+        # que se quedaba desactualizado entre corridas. Usa INVENTARIO_REAL_CTE.
+        # Solo contamos como "productos" los SKUs con cantidad > 0 (los que
+        # realmente tienen stock fisico), aunque el cantidad_actual sume todo
+        # el inventario disponible.
+        rows = self._query(f"""
+            WITH inventario AS ({INVENTARIO_REAL_CTE})
             SELECT
-                SUM(cantidad_actual) AS stock_total,
-                COUNT(DISTINCT cod_producto) AS num_productos
-            FROM gold_mart_inventario_actual
+                ROUND(SUM(GREATEST(cantidad_actual, 0)), 2) AS stock_total,
+                SUM(CASE WHEN cantidad_actual > 0 THEN 1 ELSE 0 END) AS num_productos
+            FROM inventario
         """)
-        valor = self._query("""
-            WITH latest_cost AS (
+        valor = self._query(f"""
+            WITH inventario AS ({INVENTARIO_REAL_CTE}),
+            latest_cost AS (
                 SELECT cod_producto, costo_producto,
                        ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_date DESC) AS rn
                 FROM silver_fact_compras_detalle
                 WHERE costo_producto > 0
             )
-            SELECT COALESCE(ROUND(SUM(i.cantidad_actual * COALESCE(lc.costo_producto, 0)), 2), 0) AS valor_total
-            FROM gold_mart_inventario_actual i
+            SELECT COALESCE(ROUND(SUM(GREATEST(i.cantidad_actual, 0) * COALESCE(lc.costo_producto, 0)), 2), 0) AS valor_total
+            FROM inventario i
             LEFT JOIN latest_cost lc ON i.cod_producto = lc.cod_producto AND lc.rn = 1
         """)
-        bodegas = self._query("""
-            WITH default_bodega AS (
+        bodegas = self._query(f"""
+            WITH inventario AS ({INVENTARIO_REAL_CTE}),
+            default_bodega AS (
                 SELECT cod_bodega AS def_cod, nombre_bodega AS def_nom
                 FROM silver_dim_bodega
                 ORDER BY snapshot_date DESC
@@ -441,15 +450,16 @@ class DuckDBMetricsRepo:
                         THEN COALESCE(db.def_nom, CONCAT('Bodega ', inv.cod_bodega))
                     ELSE inv.nom_bodega
                 END AS nom_bodega,
-                ROUND(SUM(inv.cantidad_actual), 2) AS cantidad,
-                ROUND(SUM(inv.cantidad_actual) / NULLIF(SUM(SUM(inv.cantidad_actual)) OVER(), 0) * 100, 1) AS porcentaje
-            FROM gold_mart_inventario_actual inv
+                ROUND(SUM(GREATEST(inv.cantidad_actual, 0)), 2) AS cantidad,
+                ROUND(SUM(GREATEST(inv.cantidad_actual, 0)) / NULLIF(SUM(SUM(GREATEST(inv.cantidad_actual, 0))) OVER(), 0) * 100, 1) AS porcentaje
+            FROM inventario inv
             CROSS JOIN default_bodega db
+            WHERE inv.cantidad_actual > 0
             GROUP BY 1, 2
             ORDER BY cantidad DESC
         """)
         if not rows:
-            raise RuntimeError("No inventory data found in gold mart")
+            raise RuntimeError("No inventory data found")
         r = rows[0]
         valor_total = float(valor[0]["valor_total"]) if valor else 0.0
         return InventorySummary(
@@ -856,8 +866,13 @@ class DuckDBMetricsRepo:
     # ── Plan Compras ────────────────────────────────────────────────────
 
     def get_plan_compras(self) -> PlanComprasResponse:
-        rows = self._query("""
-            WITH demanda_7d AS (
+        # V1.9.3 (2026-06-16): usar INVENTARIO_REAL_CTE en vez de snapshot.
+        # Con el snapshot quedaban excluidos los SKUs que tenian stock real
+        # pero estaban en 0 en gold_mart_inventario_actual, lo que falsificaba
+        # el plan de compras al "sugerir" comprar cosas que ya estaban en stock.
+        rows = self._query(f"""
+            WITH inventario AS ({INVENTARIO_REAL_CTE}),
+            demanda_7d AS (
                 SELECT cod_producto, SUM(cantidad) AS qty_7d
                 FROM silver_fact_ventas_detalle
                 WHERE business_date >= CURRENT_DATE - INTERVAL '7' DAY
@@ -899,7 +914,7 @@ class DuckDBMetricsRepo:
                 al.urgencia,
                 CASE WHEN dorm.cod_producto IS NOT NULL THEN TRUE ELSE FALSE END AS dormido,
                 COALESCE(s.supplier, 'Sin proveedor') AS supplier
-            FROM gold_mart_inventario_actual inv
+            FROM inventario inv
             LEFT JOIN demanda_7d d ON inv.cod_producto = d.cod_producto
             LEFT JOIN abc_latest abc ON inv.cod_producto = abc.cod_producto
             LEFT JOIN alertas_latest al ON inv.cod_producto = al.sku
@@ -2096,6 +2111,46 @@ _FORMAPAGO_LABELS = {
 def _formapago_label(cod: str) -> str:
     """Mapea codigo de forma de pago a etiqueta legible. Cae al codigo si desconocido."""
     return _FORMAPAGO_LABELS.get(cod, cod or "Sin clasificar")
+
+
+# ── Helper compartido: Inventario REAL (V1.9.3 — fix consistencia) ────────
+#
+# CTE reutilizable que reemplaza a `gold_mart_inventario_actual` (snapshot
+# estatico del pipeline). Calcula la cantidad actual real de cada SKU
+# dinamicamente como SUM(compras) - SUM(ventas).
+#
+# Por que: el snapshot quedaba desactualizado entre corridas del pipeline
+# y mostraba numeros que no cuadraban con la realidad (17x menos stock,
+# 1400 SKUs faltantes en MotoShop). El fix `6ecbd04` del Dev Back resolvio
+# esto en `get_inventory_detail`. Esta constante propaga el mismo fix al
+# resto de endpoints (summary, plan-compras, recommendations, etc.) y
+# unifica la fuente de verdad del inventario.
+#
+# Columnas: cod_producto, nom_producto, cod_bodega, nom_bodega, cantidad_actual
+# (los mismos campos que tenia gold_mart_inventario_actual, drop-in
+# replacement con `FROM (` + CTE + `) inv`).
+INVENTARIO_REAL_CTE = """
+    SELECT
+        dp.cod_producto,
+        COALESCE(dp.nombre_producto, 'SIN NOMBRE') AS nom_producto,
+        COALESCE(dp.cod_bodega_default, '') AS cod_bodega,
+        COALESCE(db.nombre_bodega, 'SIN NOMBRE') AS nom_bodega,
+        ROUND(COALESCE(c.total_comprado, 0) - COALESCE(v.total_vendido, 0), 2) AS cantidad_actual
+    FROM silver_dim_producto dp
+    LEFT JOIN (
+        SELECT cod_producto, SUM(cantidad) AS total_comprado
+        FROM silver_fact_compras_detalle
+        WHERE business_date <= CURRENT_DATE
+        GROUP BY cod_producto
+    ) c ON dp.cod_producto = c.cod_producto
+    LEFT JOIN (
+        SELECT cod_producto, SUM(cantidad) AS total_vendido
+        FROM silver_fact_ventas_detalle
+        WHERE business_date <= CURRENT_DATE
+        GROUP BY cod_producto
+    ) v ON dp.cod_producto = v.cod_producto
+    LEFT JOIN silver_dim_bodega db ON dp.cod_bodega_default = db.cod_bodega
+"""
 
 
 def _prev_month_str(month: str) -> str:
