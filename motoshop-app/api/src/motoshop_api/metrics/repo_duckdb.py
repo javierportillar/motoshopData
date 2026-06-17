@@ -1790,23 +1790,19 @@ class DuckDBMetricsRepo:
                 valor_unitario, descuento_valor, iva_valor,
                 total_detalle, cod_bodega}]
         """
-        # JOIN entre header (silver_fact_ventas) y lineas (silver_fact_ventas_detalle)
+        # V1.10.4: query DRIVEN POR EL DETALLE (silver_fact_ventas_detalle),
+        # con LEFT JOIN a la cabecera (silver_fact_ventas). Antes era un
+        # INNER JOIN a la cabecera, pero la tabla de cabeceras a veces esta
+        # incompleta para dias recientes (lag del pipeline). Con INNER JOIN
+        # esas facturas desaparecian ("sin facturas en este dia" aunque
+        # SI hubo ventas). Ahora el detalle manda y la cabecera aporta
+        # metadata (cliente, vendedor, forma de pago, hora) cuando existe.
         rows = self._query(
-            """
-            WITH costo_ref AS (
-                -- Costo de la ULTIMA compra de cada producto. Sirve de
-                -- fallback cuando la linea de venta no trae costo (la POS
-                -- a veces lo deja en 0 en ventas frescas). "Si lo compraste,
-                -- sabes el costo".
-                SELECT cod_producto, costo_producto FROM (
-                    SELECT cod_producto, costo_producto,
-                           ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_date DESC) rn
-                    FROM silver_fact_compras_detalle WHERE costo_producto > 0
-                ) WHERE rn = 1
-            )
+            f"""
+            WITH costo_ref AS ({COSTO_REF_CTE})
             SELECT
-                v.num_documento,
-                v.cod_clase,
+                d.num_documento,
+                d.cod_clase,
                 v.prefijo,
                 v.fecha_documento_ts,
                 COALESCE(NULLIF(TRIM(v.nombre_cliente), ''), 'Consumidor final') AS cliente,
@@ -1815,7 +1811,7 @@ class DuckDBMetricsRepo:
                 ROUND(v.subtotal, 2) AS subtotal,
                 ROUND(v.total_descuentos, 2) AS total_descuentos,
                 ROUND(v.total_iva, 2) AS total_iva,
-                ROUND(v.total_factura, 2) AS total,
+                ROUND(v.total_factura, 2) AS total_header,
                 d.num_item,
                 d.cod_producto,
                 d.nombre_detalle AS producto_nombre,
@@ -1828,14 +1824,14 @@ class DuckDBMetricsRepo:
                 ROUND(COALESCE(NULLIF(d.costo_producto, 0), cr.costo_producto, 0), 2) AS costo_unitario,
                 ROUND(COALESCE(NULLIF(d.costo_producto, 0), cr.costo_producto, 0) * d.cantidad, 2) AS costo_total,
                 d.cod_bodega
-            FROM silver_fact_ventas v
-            INNER JOIN silver_fact_ventas_detalle d
-              ON v.num_documento = d.num_documento
-             AND v.cod_clase = d.cod_clase
+            FROM silver_fact_ventas_detalle d
+            LEFT JOIN silver_fact_ventas v
+              ON d.num_documento = v.num_documento
+             AND d.cod_clase = v.cod_clase
             LEFT JOIN costo_ref cr ON d.cod_producto = cr.cod_producto
-            WHERE v.business_date = ?
-              AND v.estado_documento != 'A'
-            ORDER BY v.fecha_documento_ts, v.num_documento, d.num_item
+            WHERE d.business_date = ?
+              AND (v.estado_documento IS NULL OR v.estado_documento != 'A')
+            ORDER BY v.fecha_documento_ts NULLS LAST, d.num_documento, d.num_item
             """,
             [date],
         )
@@ -1859,7 +1855,10 @@ class DuckDBMetricsRepo:
                     "subtotal": float(r["subtotal"] or 0),
                     "total_descuentos": float(r["total_descuentos"] or 0),
                     "total_iva": float(r["total_iva"] or 0),
-                    "total": float(r["total"] or 0),
+                    # total del header si existe; si la cabecera falta (lag
+                    # del pipeline) se completa abajo con la suma del detalle.
+                    "total": float(r["total_header"] or 0),
+                    "_total_header_presente": r["total_header"] is not None,
                     "items": [],
                 }
             costo_total = float(r["costo_total"] or 0)
@@ -1884,8 +1883,14 @@ class DuckDBMetricsRepo:
 
         invoices = list(invoices_map.values())
 
-        # Totales de factura: costo y ganancia agregados de los items con costo
+        # Totales de factura: costo, ganancia y total
         for inv in invoices:
+            # Si la cabecera no traia total (o venia 0), usar la suma del
+            # detalle como total de la factura. Asi nunca queda en $0 cuando
+            # el header esta incompleto.
+            suma_detalle = round(sum(it["total_detalle"] for it in inv["items"]), 2)
+            if not inv.pop("_total_header_presente", True) or inv["total"] <= 0:
+                inv["total"] = suma_detalle
             inv_costo = sum(it["costo_total"] for it in inv["items"] if it["costo_total"] > 0)
             inv["costo_total"] = round(inv_costo, 2)
             inv["ganancia"] = round(inv["total"] - inv_costo, 2) if inv_costo > 0 else None
