@@ -238,6 +238,11 @@ class InvoiceItem(BaseModel):
     descuento_valor: float
     iva_valor: float
     total_detalle: float
+    # V1.10.2: costo y ganancia (costo con fallback a ultima compra)
+    costo_unitario: float = 0.0
+    costo_total: float = 0.0
+    ganancia: float | None = None
+    margen_pct: float | None = None
     cod_bodega: str | None = None
 
 
@@ -254,6 +259,9 @@ class DayInvoice(BaseModel):
     total_descuentos: float
     total_iva: float
     total: float
+    costo_total: float = 0.0
+    ganancia: float | None = None
+    margen_pct: float | None = None
     items: list[InvoiceItem]
 
 
@@ -261,6 +269,8 @@ class SalesDayInvoicesResponse(BaseModel):
     date: str
     total_facturas: int
     total_dia: float
+    total_costo: float = 0.0
+    total_ganancia: float | None = None
     total_items: int
     invoices: list[DayInvoice]
 
