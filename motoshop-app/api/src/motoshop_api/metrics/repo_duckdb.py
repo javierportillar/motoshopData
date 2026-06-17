@@ -2092,6 +2092,454 @@ class DuckDBMetricsRepo:
             "items": rows,
         }
 
+    # ══════════════════════════════════════════════════════════════════════
+    # ANALÍTICA DE PRODUCTOS / INVENTARIO (V1.10)
+    # ══════════════════════════════════════════════════════════════════════
+    #
+    # Motor de métricas por producto. Cruza inventario real (compras-ventas)
+    # con la contribución a las ventas (Pareto/ABC dinámico) y la velocidad
+    # de rotación. Responde: "¿qué productos importan más y cómo se mueven?"
+    #
+    # Tres consumidores:
+    #   get_inventory_overview  → KPIs + Pareto + listas de decisión
+    #   get_product_analytics   → tabla rica paginada y filtrable
+    #   get_product_detail      → ficha completa de un SKU + timeline
+
+    @staticmethod
+    def _product_metrics_cte(window_days: int) -> str:
+        """Devuelve las CTEs (sin el WITH inicial) que terminan en `metrics`.
+
+        El caller escribe:  f"WITH {cte} SELECT ... FROM metrics WHERE ..."
+
+        `metrics` tiene una fila por SKU con TODAS las métricas calculadas:
+        stock real, costo, precio, valor inventario, revenue/unidades en la
+        ventana, velocidad mensual, días de stock, rotación anual, días sin
+        venta/compra, proveedor, % del revenue (Pareto), ranking, ABC
+        dinámico, margen, estado y acción sugerida.
+        """
+        wmonths = round(window_days / 30.0, 4)
+        return f"""
+            compras_tot AS (
+                SELECT cod_producto, SUM(cantidad) AS comprado_total
+                FROM silver_fact_compras_detalle WHERE business_date <= CURRENT_DATE
+                GROUP BY cod_producto
+            ),
+            ventas_tot AS (
+                SELECT cod_producto, SUM(cantidad) AS vendido_total
+                FROM silver_fact_ventas_detalle WHERE business_date <= CURRENT_DATE
+                GROUP BY cod_producto
+            ),
+            ventas_win AS (
+                SELECT cod_producto,
+                       SUM(total_detalle) AS revenue_win,
+                       SUM(cantidad) AS unidades_win,
+                       SUM(total_detalle - costo_producto * cantidad) AS margen_win
+                FROM silver_fact_ventas_detalle
+                WHERE business_date >= CURRENT_DATE - INTERVAL '{int(window_days)}' DAY
+                  AND business_date <= CURRENT_DATE
+                GROUP BY cod_producto
+            ),
+            ultima_venta AS (
+                SELECT cod_producto, MAX(business_date) AS uv
+                FROM silver_fact_ventas_detalle GROUP BY cod_producto
+            ),
+            ultima_compra AS (
+                SELECT cod_producto, MAX(business_date) AS uc
+                FROM silver_fact_compras_detalle GROUP BY cod_producto
+            ),
+            costo AS (
+                SELECT cod_producto, costo_producto FROM (
+                    SELECT cod_producto, costo_producto,
+                           ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_date DESC) rn
+                    FROM silver_fact_compras_detalle WHERE costo_producto > 0
+                ) WHERE rn = 1
+            ),
+            proveedor AS (
+                SELECT cod_producto, supplier FROM (
+                    SELECT d.cod_producto, c.nombre_proveedor AS supplier,
+                           ROW_NUMBER() OVER (PARTITION BY d.cod_producto ORDER BY d.business_date DESC) rn
+                    FROM silver_fact_compras_detalle d
+                    INNER JOIN silver_fact_compras c
+                        ON d.num_documento = c.num_documento AND d.cod_clase = c.cod_clase
+                    WHERE c.nombre_proveedor IS NOT NULL AND TRIM(c.nombre_proveedor) != ''
+                ) WHERE rn = 1
+            ),
+            base AS (
+                SELECT
+                    dp.cod_producto,
+                    COALESCE(NULLIF(TRIM(dp.nombre_producto), ''), dp.cod_producto) AS nombre,
+                    ROUND(COALESCE(ct.comprado_total, 0) - COALESCE(vt.vendido_total, 0), 2) AS cantidad_actual,
+                    COALESCE(c.costo_producto, 0) AS costo_unit,
+                    COALESCE(dp.precio_venta_con_iva, 0) AS precio,
+                    COALESCE(vw.revenue_win, 0) AS revenue_win,
+                    COALESCE(vw.unidades_win, 0) AS unidades_win,
+                    COALESCE(vw.margen_win, 0) AS margen_win,
+                    uv.uv AS ultima_venta,
+                    uc.uc AS ultima_compra,
+                    pr.supplier AS proveedor,
+                    CASE WHEN ct.comprado_total IS NULL AND vt.vendido_total > 0 THEN TRUE ELSE FALSE END AS es_servicio
+                FROM silver_dim_producto dp
+                LEFT JOIN compras_tot ct USING(cod_producto)
+                LEFT JOIN ventas_tot vt USING(cod_producto)
+                LEFT JOIN ventas_win vw USING(cod_producto)
+                LEFT JOIN ultima_venta uv USING(cod_producto)
+                LEFT JOIN ultima_compra uc USING(cod_producto)
+                LEFT JOIN costo c USING(cod_producto)
+                LEFT JOIN proveedor pr USING(cod_producto)
+            ),
+            pareto AS (
+                SELECT cod_producto, revenue_win,
+                       SUM(revenue_win) OVER (ORDER BY revenue_win DESC, cod_producto) AS acum,
+                       SUM(revenue_win) OVER () AS total_rev,
+                       ROW_NUMBER() OVER (ORDER BY revenue_win DESC, cod_producto) AS rank_rev
+                FROM base WHERE revenue_win > 0
+            ),
+            metrics AS (
+                SELECT
+                    b.cod_producto,
+                    b.nombre,
+                    b.cantidad_actual,
+                    b.costo_unit,
+                    b.precio,
+                    ROUND(GREATEST(b.cantidad_actual, 0) * b.costo_unit, 2) AS valor_inventario,
+                    ROUND(b.revenue_win, 2) AS revenue_win,
+                    b.unidades_win,
+                    ROUND(b.margen_win, 2) AS margen_win,
+                    CASE WHEN b.revenue_win > 0 THEN ROUND(b.margen_win / b.revenue_win * 100, 1) ELSE NULL END AS margen_pct,
+                    ROUND(b.unidades_win / {wmonths}, 2) AS velocidad_mensual,
+                    CASE WHEN b.unidades_win > 0 AND b.cantidad_actual > 0
+                         THEN ROUND(b.cantidad_actual / (b.unidades_win / {int(window_days)}.0), 0)
+                         ELSE NULL END AS dias_stock,
+                    CASE WHEN b.cantidad_actual > 0 AND b.unidades_win > 0
+                         THEN ROUND((b.unidades_win / {wmonths} * 12) / b.cantidad_actual, 2)
+                         ELSE NULL END AS rotacion_anual,
+                    b.ultima_venta,
+                    CASE WHEN b.ultima_venta IS NOT NULL THEN DATE_DIFF('day', b.ultima_venta, CURRENT_DATE) ELSE NULL END AS dias_sin_venta,
+                    b.ultima_compra,
+                    CASE WHEN b.ultima_compra IS NOT NULL THEN DATE_DIFF('day', b.ultima_compra, CURRENT_DATE) ELSE NULL END AS dias_sin_compra,
+                    b.proveedor,
+                    b.es_servicio,
+                    COALESCE(ROUND(b.revenue_win / NULLIF(p.total_rev, 0) * 100, 3), 0) AS pct_revenue,
+                    p.rank_rev,
+                    CASE
+                        WHEN p.acum IS NULL THEN 'sin_venta'
+                        WHEN p.acum <= 0.80 * p.total_rev THEN 'A'
+                        WHEN p.acum <= 0.95 * p.total_rev THEN 'B'
+                        ELSE 'C'
+                    END AS abc,
+                    CASE
+                        WHEN b.es_servicio THEN 'servicio'
+                        WHEN b.cantidad_actual <= 0 AND b.unidades_win > 0 THEN 'agotado'
+                        WHEN b.cantidad_actual <= 0 THEN 'sin_stock'
+                        WHEN b.unidades_win > 0 AND b.cantidad_actual / (b.unidades_win / {int(window_days)}.0) < 15 THEN 'quiebre'
+                        WHEN b.cantidad_actual > 0 AND (b.ultima_venta IS NULL OR DATE_DIFF('day', b.ultima_venta, CURRENT_DATE) > 90) THEN 'dormido'
+                        WHEN b.unidades_win > 0 AND b.cantidad_actual / (b.unidades_win / {int(window_days)}.0) > 180 THEN 'sobrestock'
+                        WHEN b.unidades_win > 0 THEN 'saludable'
+                        ELSE 'sin_movimiento'
+                    END AS estado
+                FROM base b
+                LEFT JOIN pareto p USING(cod_producto)
+            )
+        """
+
+    @staticmethod
+    def _accion_for(estado: str, abc: str) -> str:
+        """Acción sugerida derivada del estado + importancia ABC."""
+        if estado == "servicio":
+            return "n/a"
+        if estado in ("agotado", "quiebre"):
+            return "reabastecer"
+        if estado in ("sobrestock", "dormido"):
+            return "liquidar"
+        if estado in ("sin_stock", "sin_movimiento"):
+            return "revisar"
+        return "ok"
+
+    def get_inventory_overview(self, window_days: int = 180) -> dict:
+        """Resumen ejecutivo del inventario: KPIs reales, curva de Pareto y
+        las 4 listas de decisión (quiebre, capital atrapado, importantes sin
+        recompra, dormidos premium)."""
+        cte = self._product_metrics_cte(window_days)
+
+        # KPIs globales
+        kpis = self._query(f"""
+            WITH {cte}
+            SELECT
+                ROUND(SUM(valor_inventario), 2) AS valor_inventario_total,
+                SUM(CASE WHEN cantidad_actual > 0 THEN 1 ELSE 0 END) AS skus_con_stock,
+                SUM(CASE WHEN unidades_win > 0 THEN 1 ELSE 0 END) AS skus_activos,
+                ROUND(AVG(rotacion_anual) FILTER (WHERE rotacion_anual IS NOT NULL), 2) AS rotacion_promedio,
+                ROUND(SUM(revenue_win), 2) AS revenue_total_win,
+                ROUND(SUM(margen_win), 2) AS margen_total_win
+            FROM metrics
+        """)[0]
+
+        # Concentración Pareto: cuántos SKUs hacen el 80% del revenue
+        pareto = self._query(f"""
+            WITH {cte},
+            activos AS (
+                SELECT cod_producto, revenue_win, rank_rev,
+                       SUM(revenue_win) OVER (ORDER BY rank_rev) AS acum,
+                       SUM(revenue_win) OVER () AS total
+                FROM metrics WHERE revenue_win > 0
+            )
+            SELECT
+                COUNT(*) AS skus_activos,
+                MIN(CASE WHEN acum >= 0.80 * total THEN rank_rev END) AS skus_para_80,
+                MIN(CASE WHEN acum >= 0.50 * total THEN rank_rev END) AS skus_para_50
+            FROM activos
+        """)[0]
+
+        # Curva de Pareto para graficar (deciles del ranking)
+        curva = self._query(f"""
+            WITH {cte},
+            activos AS (
+                SELECT revenue_win, rank_rev,
+                       SUM(revenue_win) OVER (ORDER BY rank_rev) AS acum,
+                       SUM(revenue_win) OVER () AS total,
+                       COUNT(*) OVER () AS n
+                FROM metrics WHERE revenue_win > 0
+            )
+            SELECT
+                ROUND(rank_rev * 100.0 / n, 1) AS pct_productos,
+                ROUND(acum * 100.0 / NULLIF(total, 0), 1) AS pct_revenue_acum
+            FROM activos
+            WHERE rank_rev % GREATEST(CAST(n / 40 AS INTEGER), 1) = 0 OR rank_rev = n
+            ORDER BY rank_rev
+        """)
+
+        # Las 4 listas de decisión (resumen: count + monto, top 8 cada una)
+        def _add_accion(rows):
+            for r in rows:
+                r["accion"] = self._accion_for(r.get("estado", ""), r.get("abc", "C"))
+            return rows
+
+        quiebre = _add_accion(self._query(f"""
+            WITH {cte}
+            SELECT cod_producto, nombre, cantidad_actual, dias_stock, velocidad_mensual,
+                   pct_revenue, abc, estado, valor_inventario, revenue_win
+            FROM metrics
+            WHERE estado IN ('agotado', 'quiebre') AND NOT es_servicio
+            ORDER BY pct_revenue DESC, dias_stock ASC NULLS FIRST
+            LIMIT 50
+        """))
+
+        capital = _add_accion(self._query(f"""
+            WITH {cte}
+            SELECT cod_producto, nombre, cantidad_actual, dias_stock, valor_inventario,
+                   dias_sin_venta, abc, estado, pct_revenue, velocidad_mensual
+            FROM metrics
+            WHERE estado = 'sobrestock'
+            ORDER BY valor_inventario DESC
+            LIMIT 50
+        """))
+
+        importantes = _add_accion(self._query(f"""
+            WITH {cte}
+            SELECT cod_producto, nombre, cantidad_actual, dias_stock, dias_sin_compra,
+                   pct_revenue, abc, estado, valor_inventario, velocidad_mensual, proveedor
+            FROM metrics
+            WHERE abc IN ('A', 'B') AND unidades_win > 0 AND NOT es_servicio
+              AND (dias_sin_compra IS NULL OR dias_sin_compra > 45)
+            ORDER BY pct_revenue DESC
+            LIMIT 50
+        """))
+
+        dormidos = _add_accion(self._query(f"""
+            WITH {cte}
+            SELECT cod_producto, nombre, cantidad_actual, valor_inventario,
+                   dias_sin_venta, abc, estado, ultima_venta
+            FROM metrics
+            WHERE estado = 'dormido' AND valor_inventario > 0
+            ORDER BY valor_inventario DESC
+            LIMIT 50
+        """))
+
+        # Distribución por estado (para un donut)
+        estados = self._query(f"""
+            WITH {cte}
+            SELECT estado, COUNT(*) AS n, ROUND(SUM(valor_inventario), 2) AS valor
+            FROM metrics GROUP BY estado ORDER BY n DESC
+        """)
+
+        return {
+            "window_days": window_days,
+            "kpis": {
+                "valor_inventario_total": float(kpis["valor_inventario_total"] or 0),
+                "skus_con_stock": int(kpis["skus_con_stock"] or 0),
+                "skus_activos": int(kpis["skus_activos"] or 0),
+                "rotacion_promedio": float(kpis["rotacion_promedio"] or 0),
+                "revenue_total_win": float(kpis["revenue_total_win"] or 0),
+                "margen_total_win": float(kpis["margen_total_win"] or 0),
+            },
+            "pareto": {
+                "skus_activos": int(pareto["skus_activos"] or 0),
+                "skus_para_80": int(pareto["skus_para_80"] or 0),
+                "skus_para_50": int(pareto["skus_para_50"] or 0),
+                "pct_para_80": round((pareto["skus_para_80"] or 0) / (pareto["skus_activos"] or 1) * 100, 1),
+                "curva": curva,
+            },
+            "estados": estados,
+            "listas": {
+                "quiebre_inminente": {
+                    "total": len(quiebre),
+                    "items": quiebre[:8],
+                    "valor": round(sum(float(r["valor_inventario"] or 0) for r in quiebre), 2),
+                },
+                "capital_atrapado": {
+                    "total": len(capital),
+                    "items": capital[:8],
+                    "valor": round(sum(float(r["valor_inventario"] or 0) for r in capital), 2),
+                },
+                "importantes_sin_recompra": {
+                    "total": len(importantes),
+                    "items": importantes[:8],
+                    "valor": round(sum(float(r["valor_inventario"] or 0) for r in importantes), 2),
+                },
+                "dormidos_premium": {
+                    "total": len(dormidos),
+                    "items": dormidos[:8],
+                    "valor": round(sum(float(r["valor_inventario"] or 0) for r in dormidos), 2),
+                },
+            },
+        }
+
+    def get_product_analytics(
+        self,
+        window_days: int = 180,
+        page: int = 1,
+        page_size: int = 50,
+        q: str | None = None,
+        abc: str | None = None,
+        estado: str | None = None,
+        sort: str = "revenue_win",
+        order: str = "desc",
+    ) -> dict:
+        """Tabla rica de productos con filtros, búsqueda, orden y paginación."""
+        cte = self._product_metrics_cte(window_days)
+
+        where = ["1=1"]
+        params: list = []
+        if q:
+            where.append("(LOWER(nombre) LIKE ? OR LOWER(cod_producto) LIKE ?)")
+            like = f"%{q.lower()}%"
+            params += [like, like]
+        if abc in ("A", "B", "C"):
+            where.append("abc = ?")
+            params.append(abc)
+        if estado:
+            where.append("estado = ?")
+            params.append(estado)
+        where_sql = " AND ".join(where)
+
+        sort_cols = {
+            "revenue_win", "unidades_win", "cantidad_actual", "valor_inventario",
+            "velocidad_mensual", "dias_stock", "rotacion_anual", "dias_sin_venta",
+            "pct_revenue", "margen_pct", "margen_win",
+        }
+        sort_col = sort if sort in sort_cols else "revenue_win"
+        order_dir = "ASC" if order == "asc" else "DESC"
+        nulls = "NULLS LAST"
+
+        offset = (page - 1) * page_size
+        rows = self._query(f"""
+            WITH {cte}
+            SELECT cod_producto, nombre, cantidad_actual, costo_unit, precio,
+                   valor_inventario, revenue_win, unidades_win, margen_win, margen_pct,
+                   velocidad_mensual, dias_stock, rotacion_anual,
+                   ultima_venta, dias_sin_venta, ultima_compra, dias_sin_compra,
+                   proveedor, pct_revenue, rank_rev, abc, estado, es_servicio
+            FROM metrics
+            WHERE {where_sql}
+            ORDER BY {sort_col} {order_dir} {nulls}, cod_producto
+            LIMIT ? OFFSET ?
+        """, params + [page_size, offset])
+
+        for r in rows:
+            r["accion"] = self._accion_for(r.get("estado", ""), r.get("abc", "C"))
+
+        total = self._query(f"""
+            WITH {cte}
+            SELECT COUNT(*) AS n FROM metrics WHERE {where_sql}
+        """, params)[0]["n"]
+
+        return {
+            "window_days": window_days,
+            "page": page,
+            "page_size": page_size,
+            "total": int(total or 0),
+            "items": rows,
+        }
+
+    def get_product_detail(self, sku: str, window_days: int = 180) -> dict:
+        """Ficha completa de un producto: métricas + timeline mensual de
+        compras vs ventas + últimos movimientos."""
+        cte = self._product_metrics_cte(window_days)
+
+        metric_rows = self._query(f"""
+            WITH {cte}
+            SELECT * FROM metrics WHERE cod_producto = ?
+        """, [sku])
+        if not metric_rows:
+            return {"found": False, "sku": sku}
+        m = metric_rows[0]
+        m["accion"] = self._accion_for(m.get("estado", ""), m.get("abc", "C"))
+
+        # Timeline mensual: compras vs ventas (últimos 18 meses)
+        timeline = self._query("""
+            WITH meses AS (
+                SELECT DISTINCT STRFTIME(business_date, '%Y-%m') AS mes
+                FROM (
+                    SELECT business_date FROM silver_fact_ventas_detalle WHERE cod_producto = ?
+                    UNION ALL
+                    SELECT business_date FROM silver_fact_compras_detalle WHERE cod_producto = ?
+                )
+                WHERE business_date >= CURRENT_DATE - INTERVAL '18' MONTH
+            ),
+            ventas AS (
+                SELECT STRFTIME(business_date, '%Y-%m') AS mes,
+                       SUM(cantidad) AS unidades, ROUND(SUM(total_detalle), 2) AS valor
+                FROM silver_fact_ventas_detalle WHERE cod_producto = ?
+                GROUP BY 1
+            ),
+            compras AS (
+                SELECT STRFTIME(business_date, '%Y-%m') AS mes,
+                       SUM(cantidad) AS unidades, ROUND(SUM(total_detalle), 2) AS valor
+                FROM silver_fact_compras_detalle WHERE cod_producto = ?
+                GROUP BY 1
+            )
+            SELECT m.mes,
+                   COALESCE(v.unidades, 0) AS unidades_vendidas,
+                   COALESCE(v.valor, 0) AS valor_vendido,
+                   COALESCE(c.unidades, 0) AS unidades_compradas,
+                   COALESCE(c.valor, 0) AS valor_comprado
+            FROM meses m
+            LEFT JOIN ventas v USING(mes)
+            LEFT JOIN compras c USING(mes)
+            ORDER BY m.mes
+        """, [sku, sku, sku, sku])
+
+        # Últimos 20 movimientos (ventas + compras intercalados)
+        movimientos = self._query("""
+            SELECT business_date AS fecha, 'venta' AS tipo, cantidad,
+                   ROUND(total_detalle, 2) AS valor, num_documento
+            FROM silver_fact_ventas_detalle WHERE cod_producto = ?
+            UNION ALL
+            SELECT business_date AS fecha, 'compra' AS tipo, cantidad,
+                   ROUND(total_detalle, 2) AS valor, num_documento
+            FROM silver_fact_compras_detalle WHERE cod_producto = ?
+            ORDER BY fecha DESC
+            LIMIT 20
+        """, [sku, sku])
+
+        return {
+            "found": True,
+            "window_days": window_days,
+            "metrics": m,
+            "timeline": timeline,
+            "movimientos": movimientos,
+        }
+
 
 _FORMAPAGO_LABELS = {
     "F01": "Contado/Efectivo",

@@ -387,6 +387,73 @@ def inventory_summary(
     return _cached_or_fetch(f"{tenant}:inventory-summary", repo.get_inventory_summary)
 
 
+# ── Analítica de productos / inventario (V1.10) ──────────────────────────
+
+@router.get("/metrics/inventory-overview")
+@limiter.limit("30/minute")
+def inventory_overview(
+    request: Request,
+    window: int = Query(default=180, ge=30, le=720, description="Ventana de análisis en días"),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+):
+    """Resumen ejecutivo del inventario: KPIs reales, concentración Pareto
+    (qué % de productos hace el 80% de las ventas), distribución por estado,
+    y las 4 listas de decisión (quiebre, capital atrapado, importantes sin
+    recompra, dormidos premium)."""
+    return _cached_or_fetch(
+        f"{tenant}:inv-overview:{window}",
+        lambda: repo.get_inventory_overview(window),
+        ttl=120,
+    )
+
+
+@router.get("/metrics/product-analytics")
+@limiter.limit("60/minute")
+def product_analytics(
+    request: Request,
+    window: int = Query(default=180, ge=30, le=720),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    q: str | None = Query(default=None),
+    abc: str | None = Query(default=None, pattern="^(A|B|C)$"),
+    estado: str | None = Query(default=None),
+    sort: str = Query(default="revenue_win"),
+    order: str = Query(default="desc", pattern="^(asc|desc)$"),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+):
+    """Tabla rica de productos: stock real, velocidad, días de stock, rotación,
+    ABC dinámico, margen, estado y acción sugerida. Con búsqueda, filtros y orden."""
+    key = f"{tenant}:prod-analytics:{window}:{page}:{page_size}:{q or ''}:{abc or ''}:{estado or ''}:{sort}:{order}"
+    return _cached_or_fetch(
+        key,
+        lambda: repo.get_product_analytics(window, page, page_size, q, abc, estado, sort, order),
+        ttl=120,
+    )
+
+
+@router.get("/metrics/product-detail/{sku}")
+@limiter.limit("60/minute")
+def product_detail(
+    request: Request,
+    sku: str,
+    window: int = Query(default=180, ge=30, le=720),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+):
+    """Ficha completa de un producto: todas las métricas + timeline mensual
+    de compras vs ventas + últimos movimientos."""
+    return _cached_or_fetch(
+        f"{tenant}:prod-detail:{sku}:{window}",
+        lambda: repo.get_product_detail(sku, window),
+        ttl=120,
+    )
+
+
 @router.get("/metrics/abc-segmentation", response_model=AbcSegmentation)
 @limiter.limit("30/minute")
 def abc_segmentation(

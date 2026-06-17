@@ -62,6 +62,11 @@ class MetricsRepoProtocol(Protocol):
     def get_cash_closure(self, date: str) -> dict: ...  # V1.9.1: cierre de caja Z-report
     def get_payments_history(self, months: int = 12) -> dict: ...  # V1.9.1: tendencia formas pago
     def get_sales_day_invoices(self, date: str) -> dict: ...  # V1.9.2: facturas con items
+    def get_inventory_overview(self, window_days: int = 180) -> dict: ...  # V1.10: analitica inventario
+    def get_product_analytics(self, window_days: int = 180, page: int = 1, page_size: int = 50,
+                              q: str | None = None, abc: str | None = None, estado: str | None = None,
+                              sort: str = "revenue_win", order: str = "desc") -> dict: ...  # V1.10
+    def get_product_detail(self, sku: str, window_days: int = 180) -> dict: ...  # V1.10
     def get_inventory_summary(self) -> InventorySummary: ...
     def get_abc_segmentation(self) -> AbcSegmentation: ...
     def get_dormidos(
