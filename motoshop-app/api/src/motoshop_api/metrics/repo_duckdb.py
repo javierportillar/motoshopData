@@ -1808,6 +1808,8 @@ class DuckDBMetricsRepo:
                 ROUND(d.descuento_valor, 2) AS descuento_valor,
                 ROUND(d.iva_valor, 2) AS iva_valor,
                 ROUND(d.total_detalle, 2) AS total_detalle,
+                ROUND(COALESCE(d.costo_producto, 0), 2) AS costo_unitario,
+                ROUND(COALESCE(d.costo_producto, 0) * d.cantidad, 2) AS costo_total,
                 d.cod_bodega
             FROM silver_fact_ventas v
             INNER JOIN silver_fact_ventas_detalle d
@@ -1842,6 +1844,8 @@ class DuckDBMetricsRepo:
                     "total": float(r["total"] or 0),
                     "items": [],
                 }
+            costo_total = float(r["costo_total"] or 0)
+            venta_total = float(r["total_detalle"] or 0)
             invoices_map[key]["items"].append({
                 "num_item": int(r["num_item"] or 0),
                 "cod_producto": r["cod_producto"],
@@ -1850,20 +1854,36 @@ class DuckDBMetricsRepo:
                 "valor_unitario": float(r["valor_unitario"] or 0),
                 "descuento_valor": float(r["descuento_valor"] or 0),
                 "iva_valor": float(r["iva_valor"] or 0),
-                "total_detalle": float(r["total_detalle"] or 0),
+                "total_detalle": venta_total,
+                "costo_unitario": float(r["costo_unitario"] or 0),
+                "costo_total": costo_total,
+                # Ganancia bruta de la linea (venta - costo). Si no hay costo
+                # registrado queda igual a la venta (no penaliza con ganancia falsa).
+                "ganancia": round(venta_total - costo_total, 2) if costo_total > 0 else None,
+                "margen_pct": round((venta_total - costo_total) / venta_total * 100, 1) if costo_total > 0 and venta_total > 0 else None,
                 "cod_bodega": r["cod_bodega"],
             })
 
         invoices = list(invoices_map.values())
 
+        # Totales de factura: costo y ganancia agregados de los items con costo
+        for inv in invoices:
+            inv_costo = sum(it["costo_total"] for it in inv["items"] if it["costo_total"] > 0)
+            inv["costo_total"] = round(inv_costo, 2)
+            inv["ganancia"] = round(inv["total"] - inv_costo, 2) if inv_costo > 0 else None
+            inv["margen_pct"] = round((inv["total"] - inv_costo) / inv["total"] * 100, 1) if inv_costo > 0 and inv["total"] > 0 else None
+
         # Resumen para mostrar arriba
         total_dia = sum(inv["total"] for inv in invoices)
         total_items = sum(len(inv["items"]) for inv in invoices)
+        total_costo = sum(inv["costo_total"] for inv in invoices)
 
         return {
             "date": date,
             "total_facturas": len(invoices),
             "total_dia": round(total_dia, 2),
+            "total_costo": round(total_costo, 2),
+            "total_ganancia": round(total_dia - total_costo, 2) if total_costo > 0 else None,
             "total_items": total_items,
             "invoices": invoices,
         }
