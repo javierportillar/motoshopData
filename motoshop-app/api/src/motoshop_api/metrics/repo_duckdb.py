@@ -1431,14 +1431,17 @@ class DuckDBMetricsRepo:
         )
         items_por_factura = float(items_rows[0]["items_promedio"] or 0) if items_rows else 0.0
 
-        # 2. Margen bruto: (valor_unitario * cantidad - costo_producto * cantidad) sumado
+        # 2. Margen bruto. Costo = el de la venta, o el de la ultima compra
+        # si la venta no lo trae (V1.10.3 — fallback de costo).
         margen_rows = self._query(
-            """
+            f"""
+            WITH costo_ref AS ({COSTO_REF_CTE})
             SELECT
-                ROUND(COALESCE(SUM(total_detalle), 0), 2) AS revenue_detalle,
-                ROUND(COALESCE(SUM(costo_producto * cantidad), 0), 2) AS costo_total
-            FROM silver_fact_ventas_detalle
-            WHERE business_date = ?
+                ROUND(COALESCE(SUM(d.total_detalle), 0), 2) AS revenue_detalle,
+                ROUND(COALESCE(SUM(COALESCE(NULLIF(d.costo_producto, 0), cr.costo_producto, 0) * d.cantidad), 0), 2) AS costo_total
+            FROM silver_fact_ventas_detalle d
+            LEFT JOIN costo_ref cr ON d.cod_producto = cr.cod_producto
+            WHERE d.business_date = ?
             """,
             [date],
         )
@@ -1602,14 +1605,16 @@ class DuckDBMetricsRepo:
 
     def get_sales_month_detail(self, month: str) -> dict:
         """Detalle enriquecido del mes para complementar sales-summary."""
-        # 1. Margen del mes
+        # 1. Margen del mes (costo con fallback a ultima compra — V1.10.3)
         margen_rows = self._query(
-            """
+            f"""
+            WITH costo_ref AS ({COSTO_REF_CTE})
             SELECT
-                ROUND(COALESCE(SUM(total_detalle), 0), 2) AS revenue,
-                ROUND(COALESCE(SUM(costo_producto * cantidad), 0), 2) AS costo
-            FROM silver_fact_ventas_detalle
-            WHERE STRFTIME(business_date, '%Y-%m') = ?
+                ROUND(COALESCE(SUM(d.total_detalle), 0), 2) AS revenue,
+                ROUND(COALESCE(SUM(COALESCE(NULLIF(d.costo_producto, 0), cr.costo_producto, 0) * d.cantidad), 0), 2) AS costo
+            FROM silver_fact_ventas_detalle d
+            LEFT JOIN costo_ref cr ON d.cod_producto = cr.cod_producto
+            WHERE STRFTIME(d.business_date, '%Y-%m') = ?
             """,
             [month],
         )
@@ -1788,6 +1793,17 @@ class DuckDBMetricsRepo:
         # JOIN entre header (silver_fact_ventas) y lineas (silver_fact_ventas_detalle)
         rows = self._query(
             """
+            WITH costo_ref AS (
+                -- Costo de la ULTIMA compra de cada producto. Sirve de
+                -- fallback cuando la linea de venta no trae costo (la POS
+                -- a veces lo deja en 0 en ventas frescas). "Si lo compraste,
+                -- sabes el costo".
+                SELECT cod_producto, costo_producto FROM (
+                    SELECT cod_producto, costo_producto,
+                           ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_date DESC) rn
+                    FROM silver_fact_compras_detalle WHERE costo_producto > 0
+                ) WHERE rn = 1
+            )
             SELECT
                 v.num_documento,
                 v.cod_clase,
@@ -1808,13 +1824,15 @@ class DuckDBMetricsRepo:
                 ROUND(d.descuento_valor, 2) AS descuento_valor,
                 ROUND(d.iva_valor, 2) AS iva_valor,
                 ROUND(d.total_detalle, 2) AS total_detalle,
-                ROUND(COALESCE(d.costo_producto, 0), 2) AS costo_unitario,
-                ROUND(COALESCE(d.costo_producto, 0) * d.cantidad, 2) AS costo_total,
+                -- Costo efectivo: el de la venta si existe, si no el de la ultima compra
+                ROUND(COALESCE(NULLIF(d.costo_producto, 0), cr.costo_producto, 0), 2) AS costo_unitario,
+                ROUND(COALESCE(NULLIF(d.costo_producto, 0), cr.costo_producto, 0) * d.cantidad, 2) AS costo_total,
                 d.cod_bodega
             FROM silver_fact_ventas v
             INNER JOIN silver_fact_ventas_detalle d
               ON v.num_documento = d.num_documento
              AND v.cod_clase = d.cod_clase
+            LEFT JOIN costo_ref cr ON d.cod_producto = cr.cod_producto
             WHERE v.business_date = ?
               AND v.estado_documento != 'A'
             ORDER BY v.fecha_documento_ts, v.num_documento, d.num_item
@@ -2150,14 +2168,16 @@ class DuckDBMetricsRepo:
                 GROUP BY cod_producto
             ),
             ventas_win AS (
-                SELECT cod_producto,
-                       SUM(total_detalle) AS revenue_win,
-                       SUM(cantidad) AS unidades_win,
-                       SUM(total_detalle - costo_producto * cantidad) AS margen_win
-                FROM silver_fact_ventas_detalle
-                WHERE business_date >= CURRENT_DATE - INTERVAL '{int(window_days)}' DAY
-                  AND business_date <= CURRENT_DATE
-                GROUP BY cod_producto
+                -- margen con costo fallback a ultima compra (V1.10.3)
+                SELECT d.cod_producto AS cod_producto,
+                       SUM(d.total_detalle) AS revenue_win,
+                       SUM(d.cantidad) AS unidades_win,
+                       SUM(d.total_detalle - COALESCE(NULLIF(d.costo_producto, 0), cref.costo_producto, 0) * d.cantidad) AS margen_win
+                FROM silver_fact_ventas_detalle d
+                LEFT JOIN ({COSTO_REF_CTE}) cref ON d.cod_producto = cref.cod_producto
+                WHERE d.business_date >= CURRENT_DATE - INTERVAL '{int(window_days)}' DAY
+                  AND d.business_date <= CURRENT_DATE
+                GROUP BY d.cod_producto
             ),
             ultima_venta AS (
                 SELECT cod_producto, MAX(business_date) AS uv
@@ -2658,6 +2678,24 @@ _FORMAPAGO_LABELS = {
 def _formapago_label(cod: str) -> str:
     """Mapea codigo de forma de pago a etiqueta legible. Cae al codigo si desconocido."""
     return _FORMAPAGO_LABELS.get(cod, cod or "Sin clasificar")
+
+
+# ── Helper compartido: costo de referencia (V1.10.3) ──────────────────────
+#
+# Costo de la ULTIMA compra de cada producto. Se usa como fallback del
+# costo cuando la linea de venta trae costo_producto = 0 (la POS a veces
+# no lo llena, sobre todo en ventas frescas del dia). Filosofia: "si lo
+# compraste, sabes cuanto te costo".
+#
+# Uso: LEFT JOIN costo_ref cr ON x.cod_producto = cr.cod_producto
+#      ... COALESCE(NULLIF(x.costo_producto, 0), cr.costo_producto, 0)
+COSTO_REF_CTE = """
+    SELECT cod_producto, costo_producto FROM (
+        SELECT cod_producto, costo_producto,
+               ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_date DESC) rn
+        FROM silver_fact_compras_detalle WHERE costo_producto > 0
+    ) WHERE rn = 1
+"""
 
 
 # ── Helper compartido: Inventario REAL (V1.9.3 — fix consistencia) ────────
