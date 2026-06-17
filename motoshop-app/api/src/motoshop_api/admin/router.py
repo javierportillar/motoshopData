@@ -19,7 +19,10 @@ from motoshop_api.auth.deps import get_current_user, require_refresh_token_or_ad
 from motoshop_api.auth.tenant_dep import get_tenant
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
-from motoshop_api.metrics.repo_duckdb import get_shared_connection
+from motoshop_api.metrics.repo_duckdb import (
+    close_all_shared_connections,
+    get_shared_connection,
+)
 from motoshop_api.metrics.router import _clear_metrics_cache
 
 logger = logging.getLogger(__name__)
@@ -97,6 +100,12 @@ async def data_refresh(
         # Limpiar cache de métricas para que la próxima request use datos frescos
         _clear_metrics_cache()
         logger.info("Metrics cache cleared after DuckDB refresh")
+
+        # Cerrar conexión DuckDB compartida vieja. Sin esto, la próxima request
+        # sigue usando la conexión abierta antes del re-download y devuelve datos
+        # stale aunque el archivo en disco ya sea el nuevo.
+        close_all_shared_connections()
+        logger.info("Shared DuckDB connections closed after refresh")
 
         size_bytes = db_path.stat().st_size
         freshness = None
