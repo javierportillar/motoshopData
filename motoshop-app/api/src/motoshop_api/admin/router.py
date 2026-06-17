@@ -105,7 +105,15 @@ async def data_refresh(
         # sigue usando la conexión abierta antes del re-download y devuelve datos
         # stale aunque el archivo en disco ya sea el nuevo.
         close_all_shared_connections()
-        logger.info("Shared DuckDB connections closed after refresh")
+        # CRITICAL (v1.10.7): el router cachea instancias de DuckDBMetricsRepo por
+        # tenant, y cada repo guarda self._con apuntando a la conexión compartida.
+        # Si cerramos las conexiones pero dejamos los repos cacheados, todas las
+        # queries posteriores fallan con HTTP 500 ("connection closed") hasta
+        # reiniciar el proceso. Hay que vaciar el cache de repos también para que
+        # la próxima request reconstruya el repo y abra una conexión fresca.
+        from motoshop_api.metrics.router import _duckdb_repos
+        _duckdb_repos.clear()
+        logger.info("Shared DuckDB connections closed and repo cache cleared")
 
         size_bytes = db_path.stat().st_size
         freshness = None
