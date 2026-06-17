@@ -19,7 +19,8 @@ R2_ENDPOINT = os.environ.get("R2_ENDPOINT", "https://4bd1502b7fa3f33d1d3c45ae2d2
 R2_KEY = os.environ.get("R2_ACCESS_KEY_ID")
 R2_SECRET = os.environ.get("R2_SECRET_ACCESS_KEY")
 R2_BUCKET = os.environ.get("R2_BUCKET", "motoshop-gold")
-DB_PATH = Path(os.environ.get("DUCKDB_PATH", "out/motoshop_gold.duckdb"))
+TENANT = os.environ.get("TENANT", "motoshop")
+DB_PATH = Path(os.environ.get("DUCKDB_PATH", f"out/{TENANT}_gold.duckdb"))
 PIPELINE_DB_PATH = Path("out/pipeline_runs.duckdb")
 
 
@@ -55,9 +56,9 @@ def main():
         region_name="auto",
     )
 
-    _upload_file(s3, DB_PATH, "motoshop_gold.duckdb")
+    _upload_file(s3, DB_PATH, f"{TENANT}_gold.duckdb")
     # Pipeline runs: subir como tenant-specific + legacy para transición
-    _upload_file(s3, PIPELINE_DB_PATH, "motoshop_pipeline_runs.duckdb")
+    _upload_file(s3, PIPELINE_DB_PATH, f"{TENANT}_pipeline_runs.duckdb")
     _upload_file(s3, PIPELINE_DB_PATH, "pipeline_runs.duckdb")
 
 

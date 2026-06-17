@@ -27,7 +27,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("capture")
 
-DB_PATH = Path(os.environ.get("DUCKDB_PATH", "out/motoshop_gold.duckdb"))
+TENANT = os.environ.get("TENANT", "motoshop")
+DB_PATH = Path(os.environ.get("DUCKDB_PATH", f"out/{TENANT}_gold.duckdb"))
 
 # ── Heler: comparar timestamps ───────────────────────────────────────────────
 

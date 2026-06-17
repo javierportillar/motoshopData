@@ -1,12 +1,17 @@
-# MotoShop V1.5 · DuckDB Data Refresh
+# V1.5 · DuckDB Data Refresh (multi-tenant)
 #
 # Programar via Windows Scheduled Task a las 02:00 COL diario.
 # Llama al endpoint POST /api/admin/data/refresh con token de admin.
 # Loguea cada step a pipeline_runs.duckdb y lo sube a R2.
+#
+# Uso:
+#   .\refresh_v15.ps1 -Tenant motoshop
+#   .\refresh_v15.ps1 -Tenant masvital
 
 param(
-    [string]$ApiBaseUrl = "http://localhost:8000",
-    [string]$ApiToken = $env:MOTO_API_TOKEN
+    [string]$ApiBaseUrl = "https://api.fragloesja.uk",
+    [string]$ApiToken = $env:MOTO_API_TOKEN,
+    [string]$Tenant = "motoshop"
 )
 
 # Fallback a REFRESH_TOKEN si no hay MOTO_API_TOKEN
@@ -161,6 +166,7 @@ function Invoke-ApiEndpoint {
     $headers = @{
         "Authorization" = "Bearer $ApiToken"
         "Content-Type"  = "application/json"
+        "X-Tenant"      = $Tenant
     }
     try {
         if ($Method -eq "GET") {
@@ -178,7 +184,9 @@ function Invoke-ApiEndpoint {
 }
 
 # Inicializar run en DuckDB
-Start-PipelineRun -PipelineName "refresh_v15" -TriggeredBy "scheduled"
+$PipelineName = "refresh_$Tenant"  # ej: refresh_motoshop, refresh_masvital
+Start-PipelineRun -PipelineName $PipelineName -TriggeredBy "scheduled"
+Write-Log "Pipeline run iniciado para tenant '$Tenant' como '$PipelineName'"
 
 try {
     $stepOrder = 0
@@ -186,35 +194,38 @@ try {
     # ── Step 1: Pipeline (run_all.py) ─────────────────────────────────────
     $stepOrder++
     Invoke-Step -StepOrder $stepOrder -StepName "run_all" -ScriptBlock {
+        $env:TENANT = $Tenant
         & $python (Join-Path $rootDir "pipeline\run_all.py")
     }
 
     # ── Cerrar run (local) ANTES de publicar a R2 ─────────────────────────
     $totalDur = [math]::Round(((Get-Date) - $globalStart).TotalSeconds, 1)
     Complete-PipelineRun -DurationSeconds $totalDur -Status "success"
-    Write-Log "Pipeline completado (${totalDur}s)" "OK"
+    Write-Log "Pipeline completado para $Tenant (${totalDur}s)" "OK"
 
-    # ── Publicar AMBOS DuckDB a R2 (datos frescos + pipeline finalizado) ──
-    Write-Log "Subiendo motoshop_gold.duckdb + pipeline_runs.duckdb a R2..." "INFO"
+    # ── Publicar DuckDB a R2 (datos frescos + pipeline finalizado) ──
+    Write-Log "Subiendo ${Tenant}_gold.duckdb + pipeline_runs.duckdb a R2..." "INFO"
+    $env:TENANT = $Tenant
     $result = & $python $uploadScript 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "Upload a R2 falló: $($result[-1])"
     }
-    Write-Log "Upload a R2 completado" "OK"
+    Write-Log "Upload a R2 completado para $Tenant" "OK"
 
     # ── Refrescar API desde R2 (encuentra datos frescos + run completo) ───
     Invoke-ApiEndpoint -Method POST -Url "$ApiBaseUrl/api/admin/data/refresh"
     Invoke-ApiEndpoint -Method POST -Url "$ApiBaseUrl/api/admin/pipeline/refresh"
 
-    Write-Log "Pipeline refresh_v15 completado exitosamente" "OK"
+    Write-Log "Pipeline refresh de $Tenant completado exitosamente" "OK"
 
 } catch {
     $err = $_.Exception.Message
-    Write-Log "Refresh failed: $err" "ERROR"
+    Write-Log "Refresh failed para $Tenant: $err" "ERROR"
     $totalDur = [math]::Round(((Get-Date) - $globalStart).TotalSeconds, 1)
     Complete-PipelineRun -DurationSeconds $totalDur -Status "failed" -ErrorMessage $err
 
     # Publicar incluso en falla para que el estado sea visible en API
+    $env:TENANT = $Tenant
     & $python $uploadScript 2>$null
     Invoke-ApiEndpoint -Method POST -Url "$ApiBaseUrl/api/admin/data/refresh"
     Invoke-ApiEndpoint -Method POST -Url "$ApiBaseUrl/api/admin/pipeline/refresh"

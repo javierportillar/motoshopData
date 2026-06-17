@@ -6,10 +6,12 @@ Modos:
 - seed:  desde JSON exports (build_duckdb_from_export) → reverse-engineer bronze → pipeline
 - mysql: lee MySQL bronze → silver → gold (produccion Windows, requiere MySQL accesible)
 
-El DuckDB final es out/motoshop_gold.duckdb y contiene tablas bronze, silver y gold.
+Multi-tenant desde 2026-06-16: cada tenant tiene su propio DuckDB.
+Usar TENANT=motoshop (default) o TENANT=masvital.
 
 Usage:
     python -m pipeline.run_all
+    TENANT=masvital python -m pipeline.run_all
 
 No funciona con `python pipeline/run_all.py` directo porque usa imports
 relativos (from pipeline import gold, silver). Siempre usar -m.
@@ -18,6 +20,7 @@ relativos (from pipeline import gold, silver). Siempre usar -m.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from pathlib import Path
 
@@ -29,7 +32,8 @@ from scripts.pipeline_runs_db import capture_layer_stats, start_stats_run, compl
 
 logger = logging.getLogger(__name__)
 
-OUTPUT_PATH = Path("out/motoshop_gold.duckdb")
+TENANT = os.environ.get("TENANT", "motoshop")
+OUTPUT_PATH = Path(os.environ.get("DUCKDB_PATH", f"out/{TENANT}_gold.duckdb"))
 
 # Map MySQL tables → bronze table names and their column aliases
 # Formato: (mysql_table, bronze_table, [(mysql_col, bronze_col), ...])
