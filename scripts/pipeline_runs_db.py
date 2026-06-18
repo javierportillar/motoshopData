@@ -151,15 +151,87 @@ def start_stats_run(pipeline_name: str = "run_all") -> int:
     return max_id
 
 
-def complete_stats_run(run_id: int, status: str = "success") -> None:
-    """Marca un pipeline run como completado."""
+def complete_stats_run(run_id: int, status: str = "success",
+                       rows_processed: int | None = None) -> None:
+    """Marca un pipeline run como completado.
+
+    Calcula duration_seconds = NOW() - started_at automáticamente.
+    Opcionalmente guarda rows_processed; si no se conoce aún (caso run_all),
+    usar set_run_rows_processed después de capturar las stats.
+    """
+    con = _get_conn()
+    if rows_processed is not None:
+        con.execute(
+            """UPDATE app_pipeline_runs
+               SET finished_at = NOW(),
+                   status = ?,
+                   duration_seconds = CAST(EXTRACT(EPOCH FROM (NOW() - started_at)) AS INTEGER),
+                   rows_processed = ?
+               WHERE id = ?""",
+            [status, int(rows_processed), run_id],
+        )
+    else:
+        con.execute(
+            """UPDATE app_pipeline_runs
+               SET finished_at = NOW(),
+                   status = ?,
+                   duration_seconds = CAST(EXTRACT(EPOCH FROM (NOW() - started_at)) AS INTEGER)
+               WHERE id = ?""",
+            [status, run_id],
+        )
+    con.commit()
+    con.close()
+
+
+def set_run_rows_processed(run_id: int, rows: int) -> None:
+    """Setea rows_processed en un run existente (post stats-capture)."""
     con = _get_conn()
     con.execute(
-        "UPDATE app_pipeline_runs SET finished_at=NOW(), status=? WHERE id=?",
-        [status, run_id],
+        "UPDATE app_pipeline_runs SET rows_processed = ? WHERE id = ?",
+        [int(rows), run_id],
     )
     con.commit()
     con.close()
+
+
+def backfill_durations() -> int:
+    """Recalcula duration_seconds y rows_processed para runs viejos.
+
+    duration_seconds = finished_at - started_at (donde estaba null).
+    rows_processed = SUM(row_count) de app_pipeline_table_stats para el run
+                     (donde estaba null y existe la tabla).
+    Retorna la cantidad de runs actualizados.
+    """
+    con = _get_conn()
+    # duration
+    res_dur = con.execute("""
+        UPDATE app_pipeline_runs
+        SET duration_seconds = CAST(EXTRACT(EPOCH FROM (finished_at - started_at)) AS INTEGER)
+        WHERE duration_seconds IS NULL
+          AND finished_at IS NOT NULL
+          AND started_at IS NOT NULL
+    """).fetchall()
+    # rows desde table_stats
+    con.execute("""
+        UPDATE app_pipeline_runs r
+        SET rows_processed = (
+            SELECT COALESCE(SUM(row_count), 0)
+            FROM app_pipeline_table_stats s
+            WHERE s.run_id = r.id
+              AND s.layer IN ('silver', 'gold')
+              AND s.row_count > 0
+        )
+        WHERE rows_processed IS NULL
+          AND EXISTS (SELECT 1 FROM app_pipeline_table_stats s WHERE s.run_id = r.id)
+    """)
+    # Contar updated
+    total = con.execute(
+        "SELECT COUNT(*) FROM app_pipeline_runs "
+        "WHERE duration_seconds IS NOT NULL OR rows_processed IS NOT NULL"
+    ).fetchone()[0]
+    con.commit()
+    con.close()
+    return int(total)
 
 
 # ── Detect date-like columns for max_date heuristic ────────────────────
@@ -328,6 +400,9 @@ def main() -> None:
     p5.add_argument("--db-path", default="out/motoshop_gold.duckdb",
                     help="Path al DuckDB productivo")
 
+    sub.add_parser("backfill-durations",
+                   help="Recalcula duration_seconds y rows_processed para runs viejos")
+
     args = parser.parse_args()
 
     if args.command == "start-run":
@@ -340,6 +415,9 @@ def main() -> None:
         complete_run(args.run_id, args.duration, args.status, args.error_message)
     elif args.command == "capture-layer-stats":
         capture_layer_stats(args.run_id, args.layer, args.db_path)
+    elif args.command == "backfill-durations":
+        updated = backfill_durations()
+        print(f"Backfilled {updated} runs")
     else:
         parser.print_help()
         sys.exit(1)

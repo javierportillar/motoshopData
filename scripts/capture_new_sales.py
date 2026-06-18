@@ -371,7 +371,7 @@ def main() -> int:
 
         # ── 7. Completar run (status final local) ─────────────────────────
         if stats_run_id is not None:
-            complete_stats_run(stats_run_id, "success")
+            complete_stats_run(stats_run_id, "success", rows_processed=count)
 
             # Stats capture (solo si hubo datos, DuckDB ya está cerrado)
             if count > 0:

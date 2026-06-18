@@ -28,7 +28,11 @@ import duckdb
 
 from pipeline import gold, silver
 from pipeline.mysql_source import get_mysql_connection
-from scripts.pipeline_runs_db import capture_layer_stats, start_stats_run, complete_stats_run
+from scripts.pipeline_runs_db import (
+    capture_layer_stats,
+    complete_stats_run,
+    start_stats_run,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -441,8 +445,24 @@ def run_all(enable_stats: bool = True) -> str:
         try:
             logger.info("Capturing gold stats...")
             capture_layer_stats(stats_run_id, "gold", str(OUTPUT_PATH))
-            complete_stats_run(stats_run_id, "success")
-            logger.info("Stats capture run #%d complete", stats_run_id)
+            # Sumar filas de las table_stats capturadas (silver+gold) y
+            # guardarlas como rows_processed del run global.
+            try:
+                import duckdb as _ddb
+                _con = _ddb.connect("out/pipeline_runs.duckdb")
+                _row = _con.execute(
+                    "SELECT COALESCE(SUM(row_count), 0) "
+                    "FROM app_pipeline_table_stats "
+                    "WHERE run_id = ? AND layer IN ('silver', 'gold') AND row_count > 0",
+                    [stats_run_id],
+                ).fetchone()
+                _total_rows = int(_row[0]) if _row and _row[0] else 0
+                _con.close()
+            except Exception as exc:
+                logger.warning("No se pudo sumar rows_processed: %s", exc)
+                _total_rows = 0
+            complete_stats_run(stats_run_id, "success", rows_processed=_total_rows)
+            logger.info("Stats capture run #%d complete (rows=%d)", stats_run_id, _total_rows)
         except Exception as exc:
             logger.warning("Gold stats capture failed: %s", exc)
             try:
