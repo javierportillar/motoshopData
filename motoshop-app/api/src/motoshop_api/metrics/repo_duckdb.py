@@ -695,11 +695,12 @@ class DuckDBMetricsRepo:
     # ── Sales Trend ──────────────────────────────────────────────────────
 
     def get_sales_trend(self, periods: int = 6, year: int | None = None) -> SalesTrendResponse:
-        where_year = ""
-        params = [periods]
-        if year is not None:
-            where_year = "AND YEAR(business_date) = ?"
-            params.append(year)
+        # V1.10.9: periods y year son int validados (FastAPI Query); los
+        # embedemos inline para evitar un bug intermitente del binding
+        # mixto (interval dinamico + parametro entero) que en prod hacia
+        # que con year=2026 devuelva vacio aunque el archivo tenia datos.
+        periods_int = max(1, min(int(periods), 24))
+        where_year = f"AND YEAR(business_date) = {int(year)}" if year is not None else ""
         rows = self._query(f"""
             SELECT YEAR(business_date) AS year,
                     MONTH(business_date) AS month,
@@ -707,11 +708,11 @@ class DuckDBMetricsRepo:
                     COALESCE(SUM(num_facturas), 0) AS num_facturas,
                     ROUND(SUM(valor_total) / NULLIF(SUM(num_facturas), 0), 2) AS ticket_promedio
             FROM gold_mart_ventas_diarias_sku
-            WHERE business_date >= CURRENT_DATE - (CAST(? AS VARCHAR) || ' months')::INTERVAL
+            WHERE business_date >= CURRENT_DATE - INTERVAL '{periods_int}' MONTH
             {where_year}
             GROUP BY YEAR(business_date), MONTH(business_date)
             ORDER BY year, month
-        """, params)
+        """, [])
         if not rows:
             logger.warning("No sales trend data found")
             return SalesTrendResponse(periods=periods, items=[])
