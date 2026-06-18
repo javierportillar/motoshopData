@@ -2738,6 +2738,162 @@ class DuckDBMetricsRepo:
             "movimientos": movimientos,
         }
 
+    # ── Horas pico (V1.11) ────────────────────────────────────────────────
+    #
+    # Ventas y facturas agregadas por hora del día (0-23) en un rango.
+    # Sirve para el dashboard de Análisis: ver cuándo concentra el negocio
+    # su movimiento. Promedia por día con datos para suavizar.
+
+    def get_hours_peak(self, fecha_inicio: str, fecha_fin: str) -> dict:
+        """Agregado por hora del día en el rango [fecha_inicio, fecha_fin].
+
+        Retorna ventas, facturas y ticket promedio por hora.
+        Identifica la hora pico (mayor cantidad de facturas y mayor venta).
+        """
+        rows = self._query(
+            """
+            SELECT
+                CAST(EXTRACT(hour FROM fecha_documento_ts) AS INTEGER) AS hour,
+                ROUND(COALESCE(SUM(total_factura), 0), 2) AS total_ventas,
+                COUNT(*) AS num_facturas
+            FROM silver_fact_ventas
+            WHERE business_date BETWEEN ? AND ?
+              AND estado_documento != 'A'
+              AND fecha_documento_ts IS NOT NULL
+            GROUP BY hour
+            ORDER BY hour
+            """,
+            [fecha_inicio, fecha_fin],
+        )
+
+        by_hour = {int(r["hour"]): r for r in rows}
+        items = []
+        max_facturas = 0
+        hora_pico_facturas = None
+        max_ventas = 0.0
+        hora_pico_ventas = None
+        for h in range(24):
+            r = by_hour.get(h)
+            tv = float(r["total_ventas"]) if r else 0.0
+            nf = int(r["num_facturas"]) if r else 0
+            tp = round(tv / nf, 2) if nf > 0 else 0.0
+            items.append({
+                "hour": h,
+                "total_ventas": tv,
+                "num_facturas": nf,
+                "ticket_promedio": tp,
+            })
+            if nf > max_facturas:
+                max_facturas = nf
+                hora_pico_facturas = h
+            if tv > max_ventas:
+                max_ventas = tv
+                hora_pico_ventas = h
+
+        return {
+            "fecha_inicio": fecha_inicio,
+            "fecha_fin": fecha_fin,
+            "items": items,
+            "hora_pico_facturas": hora_pico_facturas,
+            "hora_pico_ventas": hora_pico_ventas,
+        }
+
+    # ── Balance financiero (V1.11) ────────────────────────────────────────
+    #
+    # Día a día: ventas, costo de la mercancía vendida (no de la mercancía
+    # comprada — eso ya es inventario), gastos operativos (Supabase), ganancia
+    # bruta y neta, balance acumulado. Filosofía: vender es bueno solo si
+    # ganás dinero, y ganar dinero requiere descontar lo que pagás cada mes.
+
+    def get_analisis_balance(
+        self,
+        fecha_inicio: str,
+        fecha_fin: str,
+        gastos_diarios: dict[str, float] | None = None,
+    ) -> dict:
+        """Balance financiero día a día.
+
+        gastos_diarios: dict {date_str: monto} desde Supabase. Los gastos
+        mensuales se prorratean por día calendario del mes en la capa de
+        servicio antes de pasarlos a este método.
+        """
+        gastos_diarios = gastos_diarios or {}
+
+        rows = self._query(
+            f"""
+            WITH costo_ref AS ({COSTO_REF_CTE}),
+            ventas_dia AS (
+                SELECT business_date AS date,
+                       ROUND(COALESCE(SUM(total_factura), 0), 2) AS ventas
+                FROM silver_fact_ventas
+                WHERE business_date BETWEEN ? AND ?
+                  AND estado_documento != 'A'
+                GROUP BY business_date
+            ),
+            costo_dia AS (
+                SELECT d.business_date AS date,
+                       ROUND(COALESCE(SUM(
+                           COALESCE(NULLIF(d.costo_producto, 0), cr.costo_producto, 0) * d.cantidad
+                       ), 0), 2) AS costo
+                FROM silver_fact_ventas_detalle d
+                LEFT JOIN costo_ref cr ON d.cod_producto = cr.cod_producto
+                WHERE d.business_date BETWEEN ? AND ?
+                GROUP BY d.business_date
+            )
+            SELECT v.date,
+                   COALESCE(v.ventas, 0) AS ventas,
+                   COALESCE(c.costo, 0)  AS costo_mercancia
+            FROM ventas_dia v
+            LEFT JOIN costo_dia c ON v.date = c.date
+            ORDER BY v.date
+            """,
+            [fecha_inicio, fecha_fin, fecha_inicio, fecha_fin],
+        )
+
+        items = []
+        acumulado = 0.0
+        total_ventas = 0.0
+        total_costo = 0.0
+        total_gastos = 0.0
+        for r in rows:
+            date_str = str(r["date"])
+            ventas = float(r["ventas"] or 0)
+            costo = float(r["costo_mercancia"] or 0)
+            gastos = float(gastos_diarios.get(date_str, 0.0))
+            ganancia_bruta = round(ventas - costo, 2)
+            ganancia_neta = round(ganancia_bruta - gastos, 2)
+            acumulado = round(acumulado + ganancia_neta, 2)
+            items.append({
+                "date": date_str,
+                "ventas": round(ventas, 2),
+                "costo_mercancia": round(costo, 2),
+                "gastos_operativos": round(gastos, 2),
+                "ganancia_bruta": ganancia_bruta,
+                "ganancia_neta": ganancia_neta,
+                "balance_acumulado": acumulado,
+            })
+            total_ventas += ventas
+            total_costo += costo
+            total_gastos += gastos
+
+        total_ganancia_bruta = round(total_ventas - total_costo, 2)
+        total_ganancia_neta = round(total_ganancia_bruta - total_gastos, 2)
+        margen_bruto_pct = round(total_ganancia_bruta / total_ventas * 100, 2) if total_ventas > 0 else None
+        margen_neto_pct = round(total_ganancia_neta / total_ventas * 100, 2) if total_ventas > 0 else None
+
+        return {
+            "fecha_inicio": fecha_inicio,
+            "fecha_fin": fecha_fin,
+            "items": items,
+            "total_ventas": round(total_ventas, 2),
+            "total_costo_mercancia": round(total_costo, 2),
+            "total_gastos_operativos": round(total_gastos, 2),
+            "total_ganancia_bruta": total_ganancia_bruta,
+            "total_ganancia_neta": total_ganancia_neta,
+            "margen_bruto_pct": margen_bruto_pct,
+            "margen_neto_pct": margen_neto_pct,
+        }
+
 
 _FORMAPAGO_LABELS = {
     "F01": "Contado/Efectivo",

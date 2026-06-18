@@ -499,3 +499,45 @@ class PurchasesDayDetailResponse(BaseModel):
     total_compras: float
     total_documentos: int
     items: list[PurchaseDayDocument]
+
+
+# ── Análisis financiero (V1.11: horas-pico + balance) ───────────────────────
+
+class HoraPicoItem(BaseModel):
+    """Ventas y pedidos agregados por hora del día (0-23)."""
+    hour: int
+    total_ventas: float
+    num_facturas: int
+    ticket_promedio: float
+
+
+class HoraPicoResponse(BaseModel):
+    fecha_inicio: str
+    fecha_fin: str
+    items: list[HoraPicoItem]
+    hora_pico_facturas: int | None = None
+    hora_pico_ventas: int | None = None
+
+
+class BalanceDiaItem(BaseModel):
+    """Un día del balance: ventas, costo mercancía vendida, gastos operativos."""
+    date: str
+    ventas: float
+    costo_mercancia: float
+    gastos_operativos: float
+    ganancia_bruta: float       # ventas - costo_mercancia
+    ganancia_neta: float        # ganancia_bruta - gastos_operativos
+    balance_acumulado: float    # acumulado de ganancia_neta
+
+
+class BalanceResponse(BaseModel):
+    fecha_inicio: str
+    fecha_fin: str
+    items: list[BalanceDiaItem]
+    total_ventas: float
+    total_costo_mercancia: float
+    total_gastos_operativos: float
+    total_ganancia_bruta: float
+    total_ganancia_neta: float
+    margen_bruto_pct: float | None = None
+    margen_neto_pct: float | None = None

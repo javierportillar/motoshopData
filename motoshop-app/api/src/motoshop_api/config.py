@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     # ─── Shared Refresh Token (V1.9) ───────────────────────────────────
     refresh_token: str = Field(default="", description="Token compartido para refresh automático vía capture script")
 
+    # ─── Supabase (V1.11 — gastos operativos) ──────────────────────────
+    supabase_url: str = Field(default="", description="URL del proyecto Supabase (https://xxx.supabase.co)")
+    supabase_service_key: str = Field(default="", description="Service Role Key — bypassa RLS. Guardar como secreto.")
+
     @field_validator("jwt_secret")
     @classmethod
     def validate_jwt_secret(cls, v: str, info) -> str:

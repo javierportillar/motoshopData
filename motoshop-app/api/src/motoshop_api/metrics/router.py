@@ -37,7 +37,9 @@ from motoshop_api.metrics.schemas import (
     DriftSummaryResponse,
     ActionRecommendationItem,
     ActionRecommendationsResponse,
+    BalanceResponse,
     ForecastCategoriaResponse,
+    HoraPicoResponse,
     InventorySummary,
     PaymentsHistoryResponse,
     PlanComprasResponse,
@@ -705,3 +707,69 @@ def action_recommendations(
         )
 
     return ActionRecommendationsResponse(period=period, total=len(items), items=items)
+
+
+# ── Análisis financiero (V1.11) ─────────────────────────────────────────────
+
+def _validate_date_range(fecha_inicio: str, fecha_fin: str) -> None:
+    """Valida formato YYYY-MM-DD y que inicio <= fin."""
+    import re
+    fmt = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    if not fmt.match(fecha_inicio) or not fmt.match(fecha_fin):
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido. Usar YYYY-MM-DD.")
+    if fecha_inicio > fecha_fin:
+        raise HTTPException(status_code=400, detail="fecha_inicio debe ser <= fecha_fin.")
+
+
+@router.get("/metrics/horas-pico", response_model=HoraPicoResponse)
+@limiter.limit("30/minute")
+def horas_pico(
+    request: Request,
+    fecha_inicio: str = Query(..., description="YYYY-MM-DD"),
+    fecha_fin: str = Query(..., description="YYYY-MM-DD"),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+) -> HoraPicoResponse:
+    """Ventas y facturas agregadas por hora del día (0-23) en el rango."""
+    _validate_date_range(fecha_inicio, fecha_fin)
+    cache_key = f"{tenant}:horas-pico:{fecha_inicio}:{fecha_fin}"
+    return _cached_or_fetch(
+        cache_key,
+        lambda: repo.get_hours_peak(fecha_inicio, fecha_fin),
+        ttl=300,
+    )
+
+
+@router.get("/metrics/analisis-balance", response_model=BalanceResponse)
+@limiter.limit("30/minute")
+def analisis_balance(
+    request: Request,
+    fecha_inicio: str = Query(..., description="YYYY-MM-DD"),
+    fecha_fin: str = Query(..., description="YYYY-MM-DD"),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+) -> BalanceResponse:
+    """Balance financiero día a día: ventas, costo mercancía, gastos operativos,
+    ganancia bruta/neta y balance acumulado.
+
+    Los gastos operativos vienen de Supabase y se prorratean entre los días
+    calendario del mes correspondiente.
+    """
+    _validate_date_range(fecha_inicio, fecha_fin)
+
+    # Gastos operativos prorrateados por día desde Supabase.
+    # Si Supabase no está configurado, el helper devuelve {} y el balance
+    # se calcula sin gastos operativos (queda ganancia_bruta == ganancia_neta).
+    from motoshop_api.gastos.supabase_client import gastos_prorrateados_por_dia
+    gastos_diarios = gastos_prorrateados_por_dia(tenant, fecha_inicio, fecha_fin)
+
+    # Cache key incluye un hash de gastos para invalidar al modificarlos
+    gastos_signature = hash(tuple(sorted(gastos_diarios.items())))
+    cache_key = f"{tenant}:analisis-balance:{fecha_inicio}:{fecha_fin}:{gastos_signature}"
+    return _cached_or_fetch(
+        cache_key,
+        lambda: repo.get_analisis_balance(fecha_inicio, fecha_fin, gastos_diarios),
+        ttl=60,  # TTL bajo: si el user carga un gasto, lo ve casi al instante
+    )
