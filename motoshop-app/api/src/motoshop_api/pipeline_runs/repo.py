@@ -12,9 +12,18 @@ from pathlib import Path
 
 import duckdb
 
-from motoshop_api.metrics.repo_duckdb import get_shared_connection
+from motoshop_api.metrics.repo_duckdb import (
+    _shared_connections,
+    _shared_connections_lock,
+    get_shared_connection,
+)
 
 logger = logging.getLogger(__name__)
+
+# V1.11: auto-refresh desde R2 (mismo patron que metrics/repo_duckdb.py).
+# Throttle separado para no chocar con el de gold.duckdb.
+_PIPELINE_R2_LAST_CHECK: dict[str, float] = {}
+_PIPELINE_R2_CHECK_INTERVAL_SEC = 60
 
 # Ruta por defecto — /tmp en Render, out/ local (tenant-aware desde 2026-06-16)
 def _default_db_path(tenant: str = "motoshop") -> Path:
@@ -65,22 +74,40 @@ def _ensure_db_exists(db_path: Path) -> None:
 
 
 def _bootstrap_pipeline_db_from_r2(db_path: Path, tenant: str = "motoshop") -> None:
-    """Descarga {tenant}_pipeline_runs.duckdb desde R2 si no existe localmente.
+    """Descarga {tenant}_pipeline_runs.duckdb desde R2 si:
+       - no existe localmente, O
+       - el de R2 es mas nuevo que el local (auto-refresh).
 
     Fallback a pipeline_runs.duckdb (legacy) si el tenant-specific no existe.
-    """
-    if db_path.exists():
-        return
 
+    V1.11: agregado auto-refresh con throttle (1/min/tenant). Antes el backend
+    bajaba el archivo UNA VEZ al arranque y quedaba congelado hasta el siguiente
+    deploy. El pipeline subia a R2 cada 2 min pero la API mostraba el snapshot
+    viejo. Esto causaba que los runs nuevos no se vieran en /api/admin/pipeline.
+    """
     r2_endpoint = os.environ.get("R2_ENDPOINT")
     r2_key = os.environ.get("R2_ACCESS_KEY_ID")
     r2_secret = os.environ.get("R2_SECRET_ACCESS_KEY")
     r2_bucket = os.environ.get("R2_BUCKET", "motoshop-gold")
+    r2_object_key = f"{tenant}_pipeline_runs.duckdb"
 
     if not all([r2_endpoint, r2_key, r2_secret]):
-        logger.warning("R2 credentials not set; creating empty DB")
-        _ensure_db_exists(db_path)
+        if not db_path.exists():
+            logger.warning("R2 credentials not set; creating empty DB")
+            _ensure_db_exists(db_path)
         return
+
+    # Decidir si descargar:
+    # 1) no existe local -> SIEMPRE descargar
+    # 2) existe pero ya paso el throttle -> chequear R2 mtime
+    must_download = not db_path.exists()
+    if not must_download:
+        from time import time
+        last = _PIPELINE_R2_LAST_CHECK.get(tenant, 0)
+        now = time()
+        if now - last < _PIPELINE_R2_CHECK_INTERVAL_SEC:
+            return  # dentro del throttle, no chequear
+        _PIPELINE_R2_LAST_CHECK[tenant] = now
 
     try:
         import boto3
@@ -91,20 +118,62 @@ def _bootstrap_pipeline_db_from_r2(db_path: Path, tenant: str = "motoshop") -> N
             aws_secret_access_key=r2_secret,
             region_name="auto",
         )
-        r2_object_key = f"{tenant}_pipeline_runs.duckdb"
-        logger.info("Downloading pipeline_runs.duckdb from R2: %s/%s", r2_bucket, r2_object_key)
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            s3.download_file(r2_bucket, r2_object_key, str(db_path))
-            logger.info("Pipeline runs DuckDB downloaded to %s (tenant=%s)", db_path, tenant)
-        except Exception:
-            # Fallback al archivo legacy (sin prefijo de tenant)
-            logger.warning("%s not found in R2, trying legacy pipeline_runs.duckdb", r2_object_key)
-            s3.download_file(r2_bucket, "pipeline_runs.duckdb", str(db_path))
-            logger.info("Pipeline runs DuckDB downloaded from legacy key to %s", db_path)
+
+        # Determinar qué key existe en R2 (tenant-aware o legacy)
+        effective_key = r2_object_key
+        if not must_download:
+            from time import time
+            # HEAD para comparar LastModified
+            try:
+                head = s3.head_object(Bucket=r2_bucket, Key=r2_object_key)
+            except Exception:
+                # Fallback a legacy
+                try:
+                    head = s3.head_object(Bucket=r2_bucket, Key="pipeline_runs.duckdb")
+                    effective_key = "pipeline_runs.duckdb"
+                except Exception as exc:
+                    logger.debug("HEAD check failed for %s: %s", tenant, exc)
+                    return
+            r2_mtime = head['LastModified'].timestamp()
+            local_mtime = db_path.stat().st_mtime
+            if r2_mtime > local_mtime + 10:
+                must_download = True
+                logger.info(
+                    "R2 has newer pipeline_runs for %s (R2=%.0fs ago, local=%.0fs ago) — refreshing",
+                    tenant,
+                    (time() - r2_mtime),
+                    (time() - local_mtime),
+                )
+
+        if must_download:
+            logger.info("Downloading pipeline_runs.duckdb from R2: %s/%s", r2_bucket, effective_key)
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            # Bajar a un .downloading y mover atomicamente
+            tmp_path = db_path.with_suffix(db_path.suffix + ".downloading")
+            try:
+                s3.download_file(r2_bucket, effective_key, str(tmp_path))
+            except Exception:
+                # Si falla el tenant-aware, intentar legacy
+                if effective_key == r2_object_key:
+                    logger.warning("%s not found in R2, trying legacy pipeline_runs.duckdb", r2_object_key)
+                    s3.download_file(r2_bucket, "pipeline_runs.duckdb", str(tmp_path))
+                else:
+                    raise
+            # Cerrar conexion compartida al archivo viejo antes de reemplazar
+            try:
+                key = str(db_path.resolve())
+                with _shared_connections_lock:
+                    con = _shared_connections.pop(key, None)
+                if con is not None:
+                    con.close()
+            except Exception as exc:
+                logger.warning("Could not close old pipeline_runs connection: %s", exc)
+            tmp_path.replace(db_path)
+            logger.info("pipeline_runs.duckdb refreshed to %s", db_path)
     except Exception as exc:
-        logger.warning("Failed to download pipeline_runs.duckdb from R2: %s — creating empty DB", exc)
-        _ensure_db_exists(db_path)
+        logger.warning("Failed to refresh pipeline_runs.duckdb from R2: %s", exc)
+        if not db_path.exists():
+            _ensure_db_exists(db_path)
 
 
 class PipelineRunsRepo:
