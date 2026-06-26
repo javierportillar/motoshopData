@@ -107,6 +107,14 @@ def _make_db_path(tenant: str) -> Path:
 _R2_LAST_CHECK: dict[str, float] = {}
 _R2_CHECK_INTERVAL_SEC = 60  # chequear LastModified en R2 maximo 1 vez/min por tenant
 
+# V1.12: trackear el LastModified de R2 de la ULTIMA bajada por tenant.
+# Antes comparabamos mtime de R2 con mtime del filesystem local, pero el
+# replace() del archivo bajado actualiza el mtime local a NOW (no preserva
+# el mtime original de R2). Eso causaba que uploads posteriores cercanos
+# en tiempo no triggeraran la bajada (margen de 10s + diferencia de relojes
+# se comian las nuevas versiones). Ahora trackeamos r2_mtime explicito.
+_R2_DOWNLOADED_MTIME: dict[str, float] = {}
+
 
 def _bootstrap_duckdb_from_r2(db_path: Path, tenant: str = "motoshop") -> None:
     """Descarga {tenant}_gold.duckdb desde R2 si:
@@ -152,20 +160,22 @@ def _bootstrap_duckdb_from_r2(db_path: Path, tenant: str = "motoshop") -> None:
             region_name="auto",
         )
 
+        r2_mtime = None
         if not must_download:
-            # Comparar LastModified de R2 vs mtime local. Si R2 es mas nuevo
-            # por mas de 10s (margen de seguridad), re-descargar.
+            # V1.12: comparar LastModified de R2 contra el r2_mtime de la
+            # ULTIMA bajada (no contra el mtime local, que se actualiza con
+            # cada replace y rompia la deteccion de uploads cercanos).
             try:
                 head = s3.head_object(Bucket=r2_bucket, Key=r2_object_key)
                 r2_mtime = head['LastModified'].timestamp()
-                local_mtime = db_path.stat().st_mtime
-                if r2_mtime > local_mtime + 10:
+                last_downloaded = _R2_DOWNLOADED_MTIME.get(tenant, 0)
+                if r2_mtime > last_downloaded:
                     must_download = True
                     logger.info(
-                        "R2 has newer file for %s (R2=%.0fs ago, local=%.0fs ago) — refreshing",
+                        "R2 has newer file for %s (R2=%.0fs ago, last_dl=%.0fs ago) — refreshing",
                         tenant,
                         (time() - r2_mtime),
-                        (time() - local_mtime),
+                        (time() - last_downloaded) if last_downloaded else -1,
                     )
             except Exception as exc:
                 logger.debug("HEAD check failed for %s: %s", tenant, exc)
@@ -178,6 +188,14 @@ def _bootstrap_duckdb_from_r2(db_path: Path, tenant: str = "motoshop") -> None:
             # concurrente no abre un archivo a medio bajar
             tmp_path = db_path.with_suffix(db_path.suffix + ".downloading")
             s3.download_file(r2_bucket, r2_object_key, str(tmp_path))
+            # Si no teniamos r2_mtime (caso must_download = not db_path.exists()),
+            # ahora lo conseguimos del HEAD
+            if r2_mtime is None:
+                try:
+                    head = s3.head_object(Bucket=r2_bucket, Key=r2_object_key)
+                    r2_mtime = head['LastModified'].timestamp()
+                except Exception:
+                    r2_mtime = time()  # fallback al wall clock
             # Cerrar conexiones compartidas al archivo viejo ANTES de reemplazar
             try:
                 key = str(db_path.resolve())
@@ -188,7 +206,8 @@ def _bootstrap_duckdb_from_r2(db_path: Path, tenant: str = "motoshop") -> None:
             except Exception as exc:
                 logger.warning("Could not close old connection for %s: %s", db_path, exc)
             tmp_path.replace(db_path)
-            logger.info("DuckDB refreshed to %s", db_path)
+            _R2_DOWNLOADED_MTIME[tenant] = r2_mtime
+            logger.info("DuckDB refreshed to %s (r2_mtime=%.0f)", db_path, r2_mtime)
     except Exception as exc:
         logger.warning("Failed to download DuckDB from R2: %s", exc)
 

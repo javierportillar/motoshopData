@@ -25,6 +25,11 @@ logger = logging.getLogger(__name__)
 _PIPELINE_R2_LAST_CHECK: dict[str, float] = {}
 _PIPELINE_R2_CHECK_INTERVAL_SEC = 60
 
+# V1.12: trackear el LastModified de R2 de la ULTIMA bajada por tenant.
+# Ver explicacion en metrics/repo_duckdb.py: comparar contra mtime local
+# se rompia cuando uploads sucedian poco despues del replace local.
+_PIPELINE_R2_DOWNLOADED_MTIME: dict[str, float] = {}
+
 # Ruta por defecto — /tmp en Render, out/ local (tenant-aware desde 2026-06-16)
 def _default_db_path(tenant: str = "motoshop") -> Path:
     return Path(os.environ.get(
@@ -121,6 +126,7 @@ def _bootstrap_pipeline_db_from_r2(db_path: Path, tenant: str = "motoshop") -> N
 
         # Determinar qué key existe en R2 (tenant-aware o legacy)
         effective_key = r2_object_key
+        r2_mtime = None
         if not must_download:
             from time import time
             # HEAD para comparar LastModified
@@ -135,14 +141,16 @@ def _bootstrap_pipeline_db_from_r2(db_path: Path, tenant: str = "motoshop") -> N
                     logger.debug("HEAD check failed for %s: %s", tenant, exc)
                     return
             r2_mtime = head['LastModified'].timestamp()
-            local_mtime = db_path.stat().st_mtime
-            if r2_mtime > local_mtime + 10:
+            last_downloaded = _PIPELINE_R2_DOWNLOADED_MTIME.get(tenant, 0)
+            # V1.12: comparar contra r2_mtime de la ultima bajada, no contra
+            # mtime local (que se actualiza con cada replace).
+            if r2_mtime > last_downloaded:
                 must_download = True
                 logger.info(
-                    "R2 has newer pipeline_runs for %s (R2=%.0fs ago, local=%.0fs ago) — refreshing",
+                    "R2 has newer pipeline_runs for %s (R2=%.0fs ago, last_dl=%.0fs ago) — refreshing",
                     tenant,
                     (time() - r2_mtime),
-                    (time() - local_mtime),
+                    (time() - last_downloaded) if last_downloaded else -1,
                 )
 
         if must_download:
@@ -157,8 +165,17 @@ def _bootstrap_pipeline_db_from_r2(db_path: Path, tenant: str = "motoshop") -> N
                 if effective_key == r2_object_key:
                     logger.warning("%s not found in R2, trying legacy pipeline_runs.duckdb", r2_object_key)
                     s3.download_file(r2_bucket, "pipeline_runs.duckdb", str(tmp_path))
+                    effective_key = "pipeline_runs.duckdb"
                 else:
                     raise
+            # Si no teniamos r2_mtime (caso must_download = not db_path.exists())
+            if r2_mtime is None:
+                from time import time
+                try:
+                    head = s3.head_object(Bucket=r2_bucket, Key=effective_key)
+                    r2_mtime = head['LastModified'].timestamp()
+                except Exception:
+                    r2_mtime = time()
             # Cerrar conexion compartida al archivo viejo antes de reemplazar
             try:
                 key = str(db_path.resolve())
@@ -169,7 +186,8 @@ def _bootstrap_pipeline_db_from_r2(db_path: Path, tenant: str = "motoshop") -> N
             except Exception as exc:
                 logger.warning("Could not close old pipeline_runs connection: %s", exc)
             tmp_path.replace(db_path)
-            logger.info("pipeline_runs.duckdb refreshed to %s", db_path)
+            _PIPELINE_R2_DOWNLOADED_MTIME[tenant] = r2_mtime
+            logger.info("pipeline_runs.duckdb refreshed to %s (r2_mtime=%.0f)", db_path, r2_mtime)
     except Exception as exc:
         logger.warning("Failed to refresh pipeline_runs.duckdb from R2: %s", exc)
         if not db_path.exists():
