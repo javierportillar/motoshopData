@@ -176,15 +176,15 @@ def _bootstrap_pipeline_db_from_r2(db_path: Path, tenant: str = "motoshop") -> N
                     r2_mtime = head['LastModified'].timestamp()
                 except Exception:
                     r2_mtime = time()
-            # Cerrar conexion compartida al archivo viejo antes de reemplazar
+            # V1.12.1: solo evict del pool, NO cerrar (evita race con queries
+            # en vuelo concurrentes que tirarian "No open result set").
+            # Ver explicacion completa en metrics/repo_duckdb.py
             try:
                 key = str(db_path.resolve())
                 with _shared_connections_lock:
-                    con = _shared_connections.pop(key, None)
-                if con is not None:
-                    con.close()
+                    _shared_connections.pop(key, None)
             except Exception as exc:
-                logger.warning("Could not close old pipeline_runs connection: %s", exc)
+                logger.warning("Could not evict old pipeline_runs connection: %s", exc)
             tmp_path.replace(db_path)
             _PIPELINE_R2_DOWNLOADED_MTIME[tenant] = r2_mtime
             logger.info("pipeline_runs.duckdb refreshed to %s (r2_mtime=%.0f)", db_path, r2_mtime)

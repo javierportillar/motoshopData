@@ -196,15 +196,19 @@ def _bootstrap_duckdb_from_r2(db_path: Path, tenant: str = "motoshop") -> None:
                     r2_mtime = head['LastModified'].timestamp()
                 except Exception:
                     r2_mtime = time()  # fallback al wall clock
-            # Cerrar conexiones compartidas al archivo viejo ANTES de reemplazar
+            # V1.12.1: REMOVER la conexion vieja del pool sin cerrarla.
+            # Antes haciamos con.close() inmediato, pero eso rompia queries
+            # concurrentes con "No open result set". Al solo pop()-earla, el
+            # proximo request abre una conexion nueva al archivo nuevo, y las
+            # queries en vuelo siguen leyendo del inode viejo (replace es
+            # atomico en Linux y el FD viejo sigue valido hasta que se libere).
+            # Python GC cierra la conexion vieja cuando nadie la referencia.
             try:
                 key = str(db_path.resolve())
                 with _shared_connections_lock:
-                    con = _shared_connections.pop(key, None)
-                if con is not None:
-                    con.close()
+                    _shared_connections.pop(key, None)
             except Exception as exc:
-                logger.warning("Could not close old connection for %s: %s", db_path, exc)
+                logger.warning("Could not evict old connection for %s: %s", db_path, exc)
             tmp_path.replace(db_path)
             _R2_DOWNLOADED_MTIME[tenant] = r2_mtime
             logger.info("DuckDB refreshed to %s (r2_mtime=%.0f)", db_path, r2_mtime)
