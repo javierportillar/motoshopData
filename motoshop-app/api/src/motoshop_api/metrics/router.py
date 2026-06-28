@@ -248,15 +248,38 @@ def sales_daily(
 def sales_monthly(
     request: Request,
     month: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$", description="YYYY-MM"),
+    products_limit: int = Query(default=10, ge=1, le=5000,
+                                description="Cantidad de productos top. Pasar >10 para 'ver todos'."),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
     tenant: str = Depends(get_tenant),
 ) -> SalesMonthlyResponse:
-    """Ventas del mes: total vs mes anterior + top 10 SKUs."""
+    """Ventas del mes: total vs mes anterior + productos top (limit configurable)."""
     if not month:
         from datetime import datetime
         month = datetime.now().strftime("%Y-%m")
-    return _cached_or_fetch(f"{tenant}:sales-monthly:{month}", lambda: repo.get_sales_monthly(month))
+    return _cached_or_fetch(
+        f"{tenant}:sales-monthly:{month}:lim{products_limit}",
+        lambda: repo.get_sales_monthly(month, products_limit=products_limit),
+    )
+
+
+@router.get("/metrics/sales-historical-products")
+@limiter.limit("30/minute")
+def sales_historical_products(
+    request: Request,
+    limit: int = Query(default=10, ge=1, le=5000,
+                       description="Cantidad de productos top. Pasar >10 para 'ver todos'."),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+):
+    """Top productos vendidos en TODO el histórico (agregado por SKU)."""
+    return _cached_or_fetch(
+        f"{tenant}:sales-historical-products:lim{limit}",
+        lambda: repo.get_sales_historical_products(limit=limit),
+        ttl=600,
+    )
 
 
 @router.get("/metrics/sales-day-detail", response_model=SalesDayDetailResponse)

@@ -423,7 +423,11 @@ class DuckDBMetricsRepo:
 
     # ── Sales Monthly ────────────────────────────────────────────────────
 
-    def get_sales_monthly(self, month: str) -> SalesMonthlyResponse:
+    def get_sales_monthly(self, month: str, products_limit: int = 10) -> SalesMonthlyResponse:
+        # products_limit: cantidad maxima de productos top a devolver.
+        # default 10 (preview). Pasar >10 (ej 5000) trae TODOS los productos
+        # del mes ordenados por valor — el front decide cuantos mostrar.
+        products_limit = max(1, min(int(products_limit), 5000))
         totals = self._query("""
             SELECT
                 ROUND(COALESCE(SUM(valor_total), 0.0), 2) AS total_ventas,
@@ -436,7 +440,7 @@ class DuckDBMetricsRepo:
             FROM gold_mart_ventas_diarias_sku
             WHERE STRFTIME(business_date, '%Y-%m') = ?
         """, [_prev_month_str(month)])
-        top = self._query("""
+        top = self._query(f"""
             SELECT
                 cod_producto AS cod_producto,
                 nom_producto AS nom_producto,
@@ -447,7 +451,7 @@ class DuckDBMetricsRepo:
             WHERE STRFTIME(business_date, '%Y-%m') = ?
             GROUP BY cod_producto, nom_producto
             ORDER BY valor_total DESC
-            LIMIT 10
+            LIMIT {products_limit}
         """, [month])
         if not totals:
             raise RuntimeError(f"No sales data found for month {month}")
@@ -464,6 +468,34 @@ class DuckDBMetricsRepo:
         )
 
     # ── Sales Historical ─────────────────────────────────────────────────
+
+    def get_sales_historical_products(self, limit: int = 10) -> dict:
+        """Top productos vendidos en TODO el histórico (agregado por SKU).
+
+        Reusa la misma estructura TopSkuItem que sales-monthly. Default 10
+        para preview; el front pide >10 cuando el usuario expande "ver todos".
+        """
+        limit = max(1, min(int(limit), 5000))
+        rows = self._query(f"""
+            SELECT
+                cod_producto AS cod_producto,
+                nom_producto AS nom_producto,
+                ROUND(SUM(cantidad_total), 2) AS cantidad_total,
+                ROUND(SUM(valor_total), 2) AS valor_total,
+                ROUND(SUM(valor_total) / NULLIF(SUM(SUM(valor_total)) OVER(), 0) * 100, 1) AS porcentaje_ingreso
+            FROM gold_mart_ventas_diarias_sku
+            GROUP BY cod_producto, nom_producto
+            ORDER BY valor_total DESC
+            LIMIT {limit}
+        """)
+        total_skus = self._query("""
+            SELECT COUNT(DISTINCT cod_producto) AS n
+            FROM gold_mart_ventas_diarias_sku
+        """)
+        return {
+            "items": [TopSkuItem(**r).model_dump() for r in rows],
+            "total_skus_con_venta": int(total_skus[0]["n"] or 0) if total_skus else 0,
+        }
 
     def get_sales_historical(self) -> SalesHistoricalResponse:
         totals = self._query("""
