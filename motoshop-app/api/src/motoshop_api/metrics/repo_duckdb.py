@@ -2871,12 +2871,34 @@ class DuckDBMetricsRepo:
         gastos_diarios: dict {date_str: monto} desde Supabase. Los gastos
         mensuales se prorratean por día calendario del mes en la capa de
         servicio antes de pasarlos a este método.
+
+        V1.14: el query ahora produce serie continua de días con generate_series,
+        no solo días con ventas. Filosofía financiera: el arriendo, nómina,
+        servicios se pagan TODOS los días, hay ventas o no. Si el local cierra
+        un domingo, el gasto operativo prorrateado ese día sigue contando como
+        pérdida. Antes los días sin ventas se omitían y la ganancia neta
+        aparecía artificialmente inflada.
+
+        El rango efectivo se corta a MAX(business_date) de ventas para no
+        mostrar días futuros vacíos (si el user pide hasta fin de mes pero
+        hoy es día 24, solo mostramos hasta 24).
         """
         gastos_diarios = gastos_diarios or {}
+
+        # Cortar fecha_fin a la última fecha con datos en ventas para no mostrar
+        # días futuros completamente vacíos en el gráfico.
+        max_date_rows = self._query(
+            "SELECT MAX(business_date) AS m FROM silver_fact_ventas WHERE estado_documento != 'A'"
+        )
+        max_data_date = str(max_date_rows[0]["m"]) if max_date_rows and max_date_rows[0]["m"] else fecha_fin
+        effective_fin = min(fecha_fin, max_data_date)
 
         rows = self._query(
             f"""
             WITH costo_ref AS ({COSTO_REF_CTE}),
+            dias AS (
+                SELECT UNNEST(generate_series(?::DATE, ?::DATE, INTERVAL '1 day'))::DATE AS date
+            ),
             ventas_dia AS (
                 SELECT business_date AS date,
                        ROUND(COALESCE(SUM(total_factura), 0), 2) AS ventas
@@ -2895,14 +2917,15 @@ class DuckDBMetricsRepo:
                 WHERE d.business_date BETWEEN ? AND ?
                 GROUP BY d.business_date
             )
-            SELECT v.date,
+            SELECT d.date,
                    COALESCE(v.ventas, 0) AS ventas,
                    COALESCE(c.costo, 0)  AS costo_mercancia
-            FROM ventas_dia v
-            LEFT JOIN costo_dia c ON v.date = c.date
-            ORDER BY v.date
+            FROM dias d
+            LEFT JOIN ventas_dia v ON v.date = d.date
+            LEFT JOIN costo_dia c ON c.date = d.date
+            ORDER BY d.date
             """,
-            [fecha_inicio, fecha_fin, fecha_inicio, fecha_fin],
+            [fecha_inicio, effective_fin, fecha_inicio, effective_fin, fecha_inicio, effective_fin],
         )
 
         items = []
