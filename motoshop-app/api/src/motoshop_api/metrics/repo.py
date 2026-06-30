@@ -87,6 +87,12 @@ class MetricsRepoProtocol(Protocol):
     def get_compras_proveedor_detalle(  # V1.20
         self, nit_proveedor: str, fecha_inicio: str, fecha_fin: str,
     ) -> dict: ...
+    def get_analisis_productos(  # V1.21
+        self, fecha_inicio: str, fecha_fin: str, limit: int = 50,
+    ) -> dict: ...
+    def get_analisis_proveedores(  # V1.21
+        self, fecha_inicio: str, fecha_fin: str,
+    ) -> dict: ...
     def get_hours_peak(self, fecha_inicio: str, fecha_fin: str) -> dict: ...  # V1.11
     def get_analisis_balance(  # V1.11
         self,

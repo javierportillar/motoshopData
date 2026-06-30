@@ -1009,3 +1009,46 @@ def compras_proveedor_detalle(
         lambda: repo.get_compras_proveedor_detalle(nit_proveedor, fecha_inicio, fecha_fin),
         ttl=300,
     )
+
+
+# ── V1.21: Análisis de productos y proveedores ──────────────────────────
+
+@router.get("/metrics/analisis-productos")
+@limiter.limit("30/minute")
+def analisis_productos(
+    request: Request,
+    fecha_inicio: str = Query(..., description="YYYY-MM-DD"),
+    fecha_fin: str = Query(..., description="YYYY-MM-DD"),
+    limit: int = Query(default=50, ge=10, le=200),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+):
+    """Análisis de productos: 3 rankings (revenue, margen, unidades) +
+    Pareto + crecimiento vs período anterior comparable."""
+    _validate_date_range(fecha_inicio, fecha_fin)
+    return _cached_or_fetch(
+        f"{tenant}:analisis-prod:{fecha_inicio}:{fecha_fin}:{limit}",
+        lambda: repo.get_analisis_productos(fecha_inicio, fecha_fin, limit),
+        ttl=300,
+    )
+
+
+@router.get("/metrics/analisis-proveedores")
+@limiter.limit("30/minute")
+def analisis_proveedores(
+    request: Request,
+    fecha_inicio: str = Query(..., description="YYYY-MM-DD"),
+    fecha_fin: str = Query(..., description="YYYY-MM-DD"),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+):
+    """Análisis estratégico de proveedores: top + concentración (HHI, top
+    1/3/5) + frecuencia + alertas de dependencia."""
+    _validate_date_range(fecha_inicio, fecha_fin)
+    return _cached_or_fetch(
+        f"{tenant}:analisis-prov:{fecha_inicio}:{fecha_fin}",
+        lambda: repo.get_analisis_proveedores(fecha_inicio, fecha_fin),
+        ttl=300,
+    )

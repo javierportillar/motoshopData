@@ -3412,6 +3412,276 @@ class DuckDBMetricsRepo:
             "margen_neto_pct": margen_neto_pct,
         }
 
+    # ── V1.21: Análisis de productos y proveedores (sección Análisis) ────
+
+    def get_analisis_productos(self, fecha_inicio: str, fecha_fin: str, limit: int = 50) -> dict:
+        """Top productos por aporte a ventas en un rango. 3 rankings:
+        revenue, margen $, unidades. Más distribución Pareto y comparativa
+        contra el período inmediatamente anterior (mismo largo) para
+        identificar crecimiento/caída.
+        """
+        # Período actual: ventas + costo con fallback a última compra
+        actual_rows = self._query(
+            f"""
+            WITH costo_ref AS ({COSTO_REF_CTE})
+            SELECT
+                d.cod_producto,
+                COALESCE(dp.nombre_producto, ANY_VALUE(d.nombre_detalle), 'SIN NOMBRE') AS nom_producto,
+                ROUND(SUM(d.cantidad), 2) AS unidades,
+                ROUND(SUM(d.total_detalle), 2) AS revenue,
+                ROUND(SUM(COALESCE(NULLIF(d.costo_producto, 0), cr.costo_producto, 0) * d.cantidad), 2) AS costo,
+                ROUND(SUM(d.total_detalle - COALESCE(NULLIF(d.costo_producto, 0), cr.costo_producto, 0) * d.cantidad), 2) AS margen,
+                dp.presentacion,
+                COUNT(DISTINCT d.num_documento) AS num_facturas
+            FROM silver_fact_ventas_detalle d
+            LEFT JOIN costo_ref cr ON d.cod_producto = cr.cod_producto
+            LEFT JOIN silver_dim_producto dp ON dp.cod_producto = d.cod_producto
+            WHERE d.business_date BETWEEN ? AND ?
+            GROUP BY d.cod_producto, dp.nombre_producto, dp.presentacion
+            HAVING SUM(d.total_detalle) > 0
+            """,
+            [fecha_inicio, fecha_fin],
+        )
+
+        # Período anterior (mismo número de días para comparación justa)
+        from datetime import date, timedelta
+        try:
+            ini_d = date.fromisoformat(fecha_inicio)
+            fin_d = date.fromisoformat(fecha_fin)
+            dias = (fin_d - ini_d).days + 1
+            prev_fin = ini_d - timedelta(days=1)
+            prev_ini = prev_fin - timedelta(days=dias - 1)
+            prev_rows = self._query(
+                """
+                SELECT cod_producto, ROUND(SUM(total_detalle), 2) AS revenue_prev
+                FROM silver_fact_ventas_detalle
+                WHERE business_date BETWEEN ? AND ?
+                GROUP BY cod_producto
+                """,
+                [prev_ini.isoformat(), prev_fin.isoformat()],
+            )
+            prev_by_cod = {r["cod_producto"]: float(r["revenue_prev"] or 0) for r in prev_rows}
+            comparable = True
+        except (ValueError, TypeError):
+            prev_by_cod = {}
+            comparable = False
+
+        # Procesar y rankear
+        productos = []
+        total_revenue = 0.0
+        total_margen = 0.0
+        total_unidades = 0.0
+        for r in actual_rows:
+            rev = float(r["revenue"] or 0)
+            cost = float(r["costo"] or 0)
+            marg = float(r["margen"] or 0)
+            uds = float(r["unidades"] or 0)
+            rev_prev = prev_by_cod.get(r["cod_producto"], 0)
+            delta_pct = round((rev - rev_prev) / rev_prev * 100, 1) if rev_prev > 0 else None
+            margen_pct = round(marg / rev * 100, 1) if rev > 0 else None
+            productos.append({
+                "cod_producto": r["cod_producto"],
+                "nom_producto": r["nom_producto"],
+                "unidades": uds,
+                "revenue": rev,
+                "costo": cost,
+                "margen": marg,
+                "margen_pct": margen_pct,
+                "num_facturas": int(r["num_facturas"] or 0),
+                "presentacion": r["presentacion"],
+                "unidad_medida": _presentacion_to_unidad(r["presentacion"]),
+                "revenue_prev": rev_prev if comparable else None,
+                "delta_pct": delta_pct,
+            })
+            total_revenue += rev
+            total_margen += marg
+            total_unidades += uds
+
+        # Rankings (top N por cada criterio)
+        top_revenue = sorted(productos, key=lambda p: -p["revenue"])[:limit]
+        top_margen = sorted(productos, key=lambda p: -p["margen"])[:limit]
+        top_unidades = sorted(productos, key=lambda p: -p["unidades"])[:limit]
+
+        # Pareto: cuántos productos generan el 80% del revenue
+        sorted_rev = sorted(productos, key=lambda p: -p["revenue"])
+        acumulado = 0.0
+        productos_para_80 = 0
+        for p in sorted_rev:
+            acumulado += p["revenue"]
+            productos_para_80 += 1
+            if total_revenue > 0 and acumulado >= 0.8 * total_revenue:
+                break
+        pareto_pct_skus = round(productos_para_80 / len(productos) * 100, 1) if productos else 0.0
+
+        # Crecimiento: top crecimiento y caída (solo productos comparables)
+        if comparable:
+            ganadores = [p for p in productos if p["delta_pct"] is not None and p["delta_pct"] > 0]
+            perdedores = [p for p in productos if p["delta_pct"] is not None and p["delta_pct"] < 0 and p["revenue_prev"] and p["revenue_prev"] > 1000]
+            top_ganadores = sorted(ganadores, key=lambda p: -p["delta_pct"])[:10]
+            top_perdedores = sorted(perdedores, key=lambda p: p["delta_pct"])[:10]
+        else:
+            top_ganadores = []
+            top_perdedores = []
+
+        return {
+            "fecha_inicio": fecha_inicio,
+            "fecha_fin": fecha_fin,
+            "total_skus_vendidos": len(productos),
+            "total_revenue": round(total_revenue, 2),
+            "total_margen": round(total_margen, 2),
+            "total_unidades": round(total_unidades, 2),
+            "margen_promedio_pct": round(total_margen / total_revenue * 100, 1) if total_revenue > 0 else None,
+            "pareto": {
+                "skus_para_80_pct": productos_para_80,
+                "pct_skus": pareto_pct_skus,
+                "total_skus": len(productos),
+            },
+            "top_revenue": top_revenue,
+            "top_margen": top_margen,
+            "top_unidades": top_unidades,
+            "top_ganadores": top_ganadores,
+            "top_perdedores": top_perdedores,
+            "periodo_comparado": {
+                "inicio": prev_ini.isoformat() if comparable else None,
+                "fin": prev_fin.isoformat() if comparable else None,
+            } if comparable else None,
+        }
+
+    def get_analisis_proveedores(self, fecha_inicio: str, fecha_fin: str) -> dict:
+        """Análisis estratégico de proveedores en un rango: top, concentración
+        de riesgo (HHI, top 1/3/5), frecuencia de compra, días desde última
+        compra. Identifica dependencias excesivas.
+        """
+        prov_rows = self._query(
+            """
+            SELECT
+                nit_proveedor,
+                COALESCE(MAX(nombre_proveedor), '?') AS nombre,
+                COUNT(*) AS num_documentos,
+                ROUND(SUM(total_factura), 2) AS total_compras,
+                CAST(MIN(business_date) AS VARCHAR) AS primera_compra,
+                CAST(MAX(business_date) AS VARCHAR) AS ultima_compra,
+                CAST(MAX(business_date) AS DATE) AS ultima_compra_dt
+            FROM silver_fact_compras
+            WHERE business_date BETWEEN ? AND ?
+              AND nit_proveedor IS NOT NULL
+              AND TRIM(nit_proveedor) != ''
+            GROUP BY nit_proveedor
+            ORDER BY total_compras DESC
+            """,
+            [fecha_inicio, fecha_fin],
+        )
+
+        if not prov_rows:
+            return {
+                "fecha_inicio": fecha_inicio,
+                "fecha_fin": fecha_fin,
+                "total_proveedores": 0,
+                "total_compras": 0.0,
+                "concentracion": {"top1_pct": 0, "top3_pct": 0, "top5_pct": 0, "hhi": 0, "riesgo": "n/a"},
+                "proveedores": [],
+                "alertas": [],
+                "pareto": {"prov_para_80_pct": 0, "pct_prov": 0},
+            }
+
+        from datetime import date
+        today = date.today()
+        total_general = sum(float(p["total_compras"] or 0) for p in prov_rows)
+
+        proveedores = []
+        for p in prov_rows:
+            total = float(p["total_compras"] or 0)
+            pct = round(total / total_general * 100, 1) if total_general > 0 else 0.0
+            ultima_dt = p["ultima_compra_dt"]
+            dias_desde = (today - ultima_dt).days if ultima_dt else None
+            # Frecuencia: días promedio entre compras (si tiene >=2 docs)
+            primera_dt = None
+            try:
+                primera_dt = date.fromisoformat(p["primera_compra"]) if p["primera_compra"] else None
+            except (ValueError, TypeError):
+                pass
+            num_docs = int(p["num_documentos"])
+            frecuencia_dias = None
+            if num_docs >= 2 and primera_dt and ultima_dt:
+                span = (ultima_dt - primera_dt).days
+                frecuencia_dias = round(span / (num_docs - 1), 1) if num_docs > 1 else None
+
+            proveedores.append({
+                "nit": p["nit_proveedor"],
+                "nombre": p["nombre"],
+                "num_documentos": num_docs,
+                "total_compras": total,
+                "pct_del_total": pct,
+                "primera_compra": p["primera_compra"],
+                "ultima_compra": p["ultima_compra"],
+                "dias_desde_ultima_compra": dias_desde,
+                "frecuencia_dias_promedio": frecuencia_dias,
+                "ticket_promedio": round(total / num_docs, 2) if num_docs > 0 else 0.0,
+            })
+
+        # Concentración de riesgo
+        top1 = proveedores[0]["pct_del_total"] if proveedores else 0
+        top3 = sum(p["pct_del_total"] for p in proveedores[:3])
+        top5 = sum(p["pct_del_total"] for p in proveedores[:5])
+        # HHI (Herfindahl-Hirschman Index) = suma de cuadrados de cuotas
+        hhi = round(sum((p["pct_del_total"]) ** 2 for p in proveedores), 0)
+        # Clasificación de riesgo
+        if top1 >= 70:
+            riesgo = "crítico"
+        elif top1 >= 50:
+            riesgo = "alto"
+        elif top3 >= 75:
+            riesgo = "medio"
+        else:
+            riesgo = "diversificado"
+
+        # Pareto proveedores
+        acum = 0.0
+        prov_para_80 = 0
+        for p in proveedores:
+            acum += p["total_compras"]
+            prov_para_80 += 1
+            if total_general > 0 and acum >= 0.8 * total_general:
+                break
+
+        # Alertas
+        alertas = []
+        if top1 >= 50 and proveedores:
+            alertas.append({
+                "tipo": "concentracion_critica",
+                "severidad": "alta",
+                "mensaje": f"Dependés de {proveedores[0]['nombre']} para el {top1:.0f}% de tus compras. Si te falla, te quedás sin reposición.",
+            })
+        # Proveedores que dejaron de comprar (>180 días)
+        durmiendo = [p for p in proveedores if (p["dias_desde_ultima_compra"] or 0) > 180]
+        if durmiendo:
+            alertas.append({
+                "tipo": "proveedores_durmiendo",
+                "severidad": "media",
+                "mensaje": f"{len(durmiendo)} proveedor{'es' if len(durmiendo) > 1 else ''} con más de 180 días sin comprarles. Revisá si la relación sigue activa.",
+            })
+
+        return {
+            "fecha_inicio": fecha_inicio,
+            "fecha_fin": fecha_fin,
+            "total_proveedores": len(proveedores),
+            "total_compras": round(total_general, 2),
+            "concentracion": {
+                "top1_pct": round(top1, 1),
+                "top3_pct": round(top3, 1),
+                "top5_pct": round(top5, 1),
+                "hhi": hhi,
+                "riesgo": riesgo,
+            },
+            "pareto": {
+                "prov_para_80_pct": prov_para_80,
+                "pct_prov": round(prov_para_80 / len(proveedores) * 100, 1) if proveedores else 0.0,
+                "total_prov": len(proveedores),
+            },
+            "alertas": alertas,
+            "proveedores": proveedores,
+        }
+
     # ── Compras: overview mensual + histórico (V1.19) ────────────────────
 
     def get_compras_overview(self, month: str) -> dict:
