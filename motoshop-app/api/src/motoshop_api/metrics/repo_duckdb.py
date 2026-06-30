@@ -4191,24 +4191,42 @@ class DuckDBMetricsRepo:
         from math import ceil
 
         rows = self._query(f"""
-            WITH v90 AS (
-                SELECT cod_producto,
-                       SUM(cantidad_total) AS uds_90d,
-                       SUM(valor_total) AS rev_90d
-                FROM gold_mart_ventas_diarias_sku
-                WHERE business_date >= CURRENT_DATE - INTERVAL '90 days'
+            WITH compras_tot AS (
+                SELECT cod_producto, SUM(cantidad) AS comprado_total
+                FROM silver_fact_compras_detalle
+                WHERE business_date <= CURRENT_DATE
                 GROUP BY cod_producto
+            ),
+            ventas_tot AS (
+                SELECT cod_producto, SUM(cantidad) AS vendido_total
+                FROM silver_fact_ventas_detalle
+                WHERE business_date <= CURRENT_DATE
+                GROUP BY cod_producto
+            ),
+            v90 AS (
+                SELECT d.cod_producto,
+                       SUM(d.cantidad) AS uds_90d,
+                       SUM(d.total_detalle) AS rev_90d
+                FROM silver_fact_ventas_detalle d
+                JOIN silver_fact_ventas h ON h.num_documento = d.num_documento AND h.cod_clase = d.cod_clase
+                WHERE d.business_date >= CURRENT_DATE - INTERVAL '90 days'
+                  AND h.estado_documento != 'A'
+                GROUP BY d.cod_producto
             ),
             v180 AS (
-                SELECT cod_producto, SUM(cantidad_total) AS uds_180d
-                FROM gold_mart_ventas_diarias_sku
-                WHERE business_date >= CURRENT_DATE - INTERVAL '180 days'
-                GROUP BY cod_producto
+                SELECT d.cod_producto, SUM(d.cantidad) AS uds_180d
+                FROM silver_fact_ventas_detalle d
+                JOIN silver_fact_ventas h ON h.num_documento = d.num_documento AND h.cod_clase = d.cod_clase
+                WHERE d.business_date >= CURRENT_DATE - INTERVAL '180 days'
+                  AND h.estado_documento != 'A'
+                GROUP BY d.cod_producto
             ),
             v_global AS (
-                SELECT cod_producto, MAX(business_date) AS ultima_venta_global
-                FROM gold_mart_ventas_diarias_sku
-                GROUP BY cod_producto
+                SELECT d.cod_producto, MAX(d.business_date) AS ultima_venta_global
+                FROM silver_fact_ventas_detalle d
+                JOIN silver_fact_ventas h ON h.num_documento = d.num_documento AND h.cod_clase = d.cod_clase
+                WHERE h.estado_documento != 'A'
+                GROUP BY d.cod_producto
             ),
             uc AS (
                 -- Última compra POR PRODUCTO + nit/nombre del proveedor de
@@ -4236,7 +4254,7 @@ class DuckDBMetricsRepo:
                 dp.cod_producto,
                 dp.nombre_producto,
                 dp.presentacion,
-                COALESCE(dp.existencia, 0) AS stock,
+                COALESCE(ct.comprado_total, 0) - COALESCE(vt.vendido_total, 0) AS stock,
                 COALESCE(v90.uds_90d, 0) AS uds_90d,
                 COALESCE(v90.rev_90d, 0) AS rev_90d,
                 COALESCE(v180.uds_180d, 0) AS uds_180d,
@@ -4248,6 +4266,8 @@ class DuckDBMetricsRepo:
                 COALESCE(dp.precio_venta_con_iva, dp.precio_venta_sin_iva, 0) AS precio_venta,
                 abc.abc
             FROM silver_dim_producto dp
+            LEFT JOIN compras_tot ct ON dp.cod_producto = ct.cod_producto
+            LEFT JOIN ventas_tot vt ON dp.cod_producto = vt.cod_producto
             LEFT JOIN v90 ON dp.cod_producto = v90.cod_producto
             LEFT JOIN v180 ON dp.cod_producto = v180.cod_producto
             LEFT JOIN v_global ON dp.cod_producto = v_global.cod_producto
