@@ -442,17 +442,22 @@ class DuckDBMetricsRepo:
         """, [_prev_month_str(month)])
         top = self._query(f"""
             SELECT
-                cod_producto AS cod_producto,
-                nom_producto AS nom_producto,
-                ROUND(SUM(cantidad_total), 2) AS cantidad_total,
-                ROUND(SUM(valor_total), 2) AS valor_total,
-                ROUND(SUM(valor_total) / NULLIF(SUM(SUM(valor_total)) OVER(), 0) * 100, 1) AS porcentaje_ingreso
-            FROM gold_mart_ventas_diarias_sku
-            WHERE STRFTIME(business_date, '%Y-%m') = ?
-            GROUP BY cod_producto, nom_producto
+                v.cod_producto AS cod_producto,
+                v.nom_producto AS nom_producto,
+                ROUND(SUM(v.cantidad_total), 2) AS cantidad_total,
+                ROUND(SUM(v.valor_total), 2) AS valor_total,
+                ROUND(SUM(v.valor_total) / NULLIF(SUM(SUM(v.valor_total)) OVER(), 0) * 100, 1) AS porcentaje_ingreso,
+                ANY_VALUE(dp.presentacion) AS presentacion
+            FROM gold_mart_ventas_diarias_sku v
+            LEFT JOIN silver_dim_producto dp ON dp.cod_producto = v.cod_producto
+            WHERE STRFTIME(v.business_date, '%Y-%m') = ?
+            GROUP BY v.cod_producto, v.nom_producto
             ORDER BY valor_total DESC
             LIMIT {products_limit}
         """, [month])
+        # Mapear presentacion -> unidad_medida label corto
+        for r in top:
+            r["unidad_medida"] = _presentacion_to_unidad(r.get("presentacion"))
         if not totals:
             raise RuntimeError(f"No sales data found for month {month}")
         t = totals[0]
@@ -478,16 +483,20 @@ class DuckDBMetricsRepo:
         limit = max(1, min(int(limit), 5000))
         rows = self._query(f"""
             SELECT
-                cod_producto AS cod_producto,
-                nom_producto AS nom_producto,
-                ROUND(SUM(cantidad_total), 2) AS cantidad_total,
-                ROUND(SUM(valor_total), 2) AS valor_total,
-                ROUND(SUM(valor_total) / NULLIF(SUM(SUM(valor_total)) OVER(), 0) * 100, 1) AS porcentaje_ingreso
-            FROM gold_mart_ventas_diarias_sku
-            GROUP BY cod_producto, nom_producto
+                v.cod_producto AS cod_producto,
+                v.nom_producto AS nom_producto,
+                ROUND(SUM(v.cantidad_total), 2) AS cantidad_total,
+                ROUND(SUM(v.valor_total), 2) AS valor_total,
+                ROUND(SUM(v.valor_total) / NULLIF(SUM(SUM(v.valor_total)) OVER(), 0) * 100, 1) AS porcentaje_ingreso,
+                ANY_VALUE(dp.presentacion) AS presentacion
+            FROM gold_mart_ventas_diarias_sku v
+            LEFT JOIN silver_dim_producto dp ON dp.cod_producto = v.cod_producto
+            GROUP BY v.cod_producto, v.nom_producto
             ORDER BY valor_total DESC
             LIMIT {limit}
         """)
+        for r in rows:
+            r["unidad_medida"] = _presentacion_to_unidad(r.get("presentacion"))
         total_skus = self._query("""
             SELECT COUNT(DISTINCT cod_producto) AS n
             FROM gold_mart_ventas_diarias_sku
@@ -1616,21 +1625,25 @@ class DuckDBMetricsRepo:
 
         # 4. TODOS los productos vendidos del dia (sin LIMIT — el frontend
         # decide cuantos mostrar con colapsable). Ordenado de mas a menos
-        # vendido por valor.
+        # vendido por valor. V1.15: incluye unidad_medida (g/u/kg/etc).
         productos_top = self._query(
             """
             SELECT
-                cod_producto AS sku,
-                nom_producto AS nombre,
-                ROUND(SUM(cantidad_total), 2) AS cantidad,
-                ROUND(SUM(valor_total), 2) AS valor
-            FROM gold_mart_ventas_diarias_sku
-            WHERE business_date = ?
-            GROUP BY cod_producto, nom_producto
+                v.cod_producto AS sku,
+                v.nom_producto AS nombre,
+                ROUND(SUM(v.cantidad_total), 2) AS cantidad,
+                ROUND(SUM(v.valor_total), 2) AS valor,
+                ANY_VALUE(dp.presentacion) AS presentacion
+            FROM gold_mart_ventas_diarias_sku v
+            LEFT JOIN silver_dim_producto dp ON dp.cod_producto = v.cod_producto
+            WHERE v.business_date = ?
+            GROUP BY v.cod_producto, v.nom_producto
             ORDER BY valor DESC
             """,
             [date],
         )
+        for r in productos_top:
+            r["unidad_medida"] = _presentacion_to_unidad(r.get("presentacion"))
 
         # 5. Vendedores top del dia
         vendedores_rows = self._query(
@@ -3002,6 +3015,42 @@ def _formapago_label(cod: str) -> str:
 #
 # Uso: LEFT JOIN costo_ref cr ON x.cod_producto = cr.cod_producto
 #      ... COALESCE(NULLIF(x.costo_producto, 0), cr.costo_producto, 0)
+# V1.15: Map de presentaciones del POS Hermes a label corto para UI.
+# Algunos productos en MasVital se venden por gramo (granel — chía, almendras,
+# maní, etc). El mart de ventas no traía esta info y el frontend mostraba
+# todo como "u", confundiendo al usuario que veía "1310 u" de maní en vez
+# de "1310 g".
+_PRESENTACION_LABELS = {
+    "UNIDAD": "u",
+    "UND": "u",
+    "U": "u",
+    "GRAMO": "g",
+    "GRAMOS": "g",
+    "G": "g",
+    "KILO": "kg",
+    "KILOS": "kg",
+    "KG": "kg",
+    "LITRO": "L",
+    "LITROS": "L",
+    "ML": "ml",
+    "CAJA": "ca",
+    "PAQUETE": "paq",
+    "DOCENA": "doc",
+}
+
+
+def _presentacion_to_unidad(presentacion: str | None) -> str:
+    """Convierte la presentación textual del POS a label corto para UI.
+    Default 'u' si la presentación es null o no está mapeada."""
+    if not presentacion:
+        return "u"
+    key = presentacion.strip().upper()
+    if key in _PRESENTACION_LABELS:
+        return _PRESENTACION_LABELS[key]
+    # Fallback: primeras letras lowercase
+    return key[:3].lower() if key else "u"
+
+
 COSTO_REF_CTE = """
     SELECT cod_producto, costo_producto FROM (
         SELECT cod_producto, costo_producto,

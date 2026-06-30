@@ -22,6 +22,11 @@ class TopSkuItem(BaseModel):
     cantidad_total: float
     valor_total: float
     porcentaje_ingreso: float | None = None
+    # V1.15: unidad de medida del producto (UNIDAD, GRAMO, KILO, etc.)
+    # Necesaria para distinguir "1310 g de maní" de "5 u de aceite".
+    # Default "u" si la dimensión no tiene presentación cargada.
+    unidad_medida: str = "u"
+    presentacion: str | None = None
 
 
 class BodegaItem(BaseModel):
