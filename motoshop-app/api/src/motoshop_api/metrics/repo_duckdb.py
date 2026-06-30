@@ -3253,9 +3253,21 @@ class DuckDBMetricsRepo:
                 GROUP BY cod_producto
             ),
             uc AS (
-                SELECT cod_producto, MAX(business_date) AS ultima_compra
-                FROM silver_fact_compras_detalle
-                GROUP BY cod_producto
+                -- Última compra POR PRODUCTO + nit/nombre del proveedor de
+                -- esa compra. Se hace via JOIN entre detalle y header de
+                -- compras porque silver_dim_producto.nit_proveedor está
+                -- 99-100% NULL (bug del POS, no se llena al alta del SKU).
+                -- Fuente real del proveedor: silver_fact_compras (header).
+                SELECT
+                    d.cod_producto,
+                    MAX(d.business_date) AS ultima_compra,
+                    ARG_MAX(h.nit_proveedor, d.business_date) AS nit_proveedor,
+                    ARG_MAX(h.nombre_proveedor, d.business_date) AS nombre_proveedor
+                FROM silver_fact_compras_detalle d
+                LEFT JOIN silver_fact_compras h
+                  ON h.num_documento = d.num_documento
+                 AND h.cod_clase = d.cod_clase
+                GROUP BY d.cod_producto
             ),
             abc AS (
                 SELECT cod_producto, abc
@@ -3272,6 +3284,8 @@ class DuckDBMetricsRepo:
                 COALESCE(v180.uds_180d, 0) AS uds_180d,
                 CAST(v_global.ultima_venta_global AS VARCHAR) AS ultima_venta,
                 CAST(uc.ultima_compra AS VARCHAR) AS ultima_compra,
+                uc.nit_proveedor,
+                uc.nombre_proveedor,
                 COALESCE(NULLIF(dp.costo_producto, 0), dp.costo_ultima_compra, 0) AS costo_unit,
                 COALESCE(dp.precio_venta_con_iva, dp.precio_venta_sin_iva, 0) AS precio_venta,
                 abc.abc
@@ -3358,6 +3372,10 @@ class DuckDBMetricsRepo:
                 "unidad_medida": _presentacion_to_unidad(r["presentacion"]),
                 "accion": accion,
                 "ingreso_perdido_estimado": ingreso_perdido_estimado,
+                # V1.18: proveedor de la última compra (puede ser None si el
+                # producto nunca se compró por este canal).
+                "nit_proveedor": r.get("nit_proveedor"),
+                "nombre_proveedor": r.get("nombre_proveedor"),
             })
 
         # Resumen agregado para el tab "Resumen"
