@@ -322,36 +322,51 @@ class DuckDBMetricsRepo:
     # ── Sales Summary ────────────────────────────────────────────────────
 
     def get_sales_summary(self) -> SalesSummary:
-        """Resumen de ventas mes actual vs mes anterior + top 10 SKUs."""
+        """Resumen de ventas mes actual vs mes anterior + top 10 SKUs.
+
+        NOTA (2026-06-30): migrado de gold_mart_ventas_diarias_sku a
+        silver_fact_ventas para consistencia automatica sin depender
+        de la pipeline gold.
+        """
         rows = self._query("""
-            WITH max_dates AS (
-                SELECT MAX(business_date) AS max_date FROM gold_mart_ventas_diarias_sku
+            WITH max_date AS (
+                SELECT MAX(business_date) AS md FROM silver_fact_ventas
+                WHERE estado_documento != 'A'
             )
             SELECT
                 STRFTIME(business_date, '%Y-%m') AS business_month,
-                ROUND(SUM(valor_total), 2) AS ventas_mes,
-                ROUND(SUM(cantidad_total), 2) AS cantidad_total,
-                SUM(num_facturas) AS num_facturas,
-                ROUND(SUM(valor_total) / NULLIF(SUM(num_facturas), 0), 2) AS ticket_promedio
-            FROM gold_mart_ventas_diarias_sku, max_dates
-            WHERE business_date >= max_dates.max_date - INTERVAL '60' DAY
+                ROUND(SUM(total_factura), 2) AS ventas_mes,
+                COUNT(*) AS num_facturas,
+                ROUND(SUM(total_factura) / NULLIF(COUNT(*), 0), 2) AS ticket_promedio
+            FROM silver_fact_ventas, max_date
+            WHERE business_date >= max_date.md - INTERVAL '60' DAY
+              AND estado_documento != 'A'
             GROUP BY STRFTIME(business_date, '%Y-%m')
             ORDER BY business_month DESC
             LIMIT 2
         """)
 
         top = self._query("""
-            WITH max_dates AS (
-                SELECT MAX(business_date) AS max_date FROM gold_mart_ventas_diarias_sku
+            WITH max_date AS (
+                SELECT MAX(business_date) AS md FROM silver_fact_ventas
+                WHERE estado_documento != 'A'
             )
             SELECT
-                cod_producto, nom_producto,
-                ROUND(SUM(cantidad_total), 2) AS cantidad_total,
-                ROUND(SUM(valor_total), 2) AS valor_total,
-                ROUND(SUM(valor_total) / NULLIF(SUM(SUM(valor_total)) OVER(), 0) * 100, 1) AS porcentaje_ingreso
-            FROM gold_mart_ventas_diarias_sku, max_dates
-            WHERE business_date >= max_dates.max_date - INTERVAL '30' DAY
-            GROUP BY cod_producto, nom_producto
+                fvd.cod_producto,
+                COALESCE(dp.nombre_producto, 'SIN NOMBRE') AS nom_producto,
+                ROUND(SUM(fvd.cantidad), 2) AS cantidad_total,
+                ROUND(SUM(fvd.total_detalle), 2) AS valor_total,
+                ROUND(SUM(fvd.total_detalle) / NULLIF(SUM(SUM(fvd.total_detalle)) OVER(), 0) * 100, 1) AS porcentaje_ingreso
+            FROM silver_fact_ventas_detalle fvd
+            INNER JOIN silver_fact_ventas fv
+                ON fvd.num_documento = fv.num_documento
+                AND fvd.cod_clase = fv.cod_clase
+                AND fvd.business_date = fv.business_date
+            LEFT JOIN silver_dim_producto dp ON dp.cod_producto = fvd.cod_producto
+            CROSS JOIN max_date
+            WHERE fv.business_date >= max_date.md - INTERVAL '30' DAY
+              AND fv.estado_documento != 'A'
+            GROUP BY fvd.cod_producto, dp.nombre_producto
             ORDER BY valor_total DESC
             LIMIT 10
         """)
@@ -430,28 +445,35 @@ class DuckDBMetricsRepo:
         products_limit = max(1, min(int(products_limit), 5000))
         totals = self._query("""
             SELECT
-                ROUND(COALESCE(SUM(valor_total), 0.0), 2) AS total_ventas,
-                COALESCE(SUM(num_facturas), 0) AS total_facturas
-            FROM gold_mart_ventas_diarias_sku
+                ROUND(COALESCE(SUM(total_factura), 0.0), 2) AS total_ventas,
+                COUNT(*) AS total_facturas
+            FROM silver_fact_ventas
             WHERE STRFTIME(business_date, '%Y-%m') = ?
+              AND estado_documento != 'A'
         """, [month])
         prev = self._query("""
-            SELECT ROUND(COALESCE(SUM(valor_total), 0.0), 2) AS total_ventas
-            FROM gold_mart_ventas_diarias_sku
+            SELECT ROUND(COALESCE(SUM(total_factura), 0.0), 2) AS total_ventas
+            FROM silver_fact_ventas
             WHERE STRFTIME(business_date, '%Y-%m') = ?
+              AND estado_documento != 'A'
         """, [_prev_month_str(month)])
         top = self._query(f"""
             SELECT
-                v.cod_producto AS cod_producto,
-                v.nom_producto AS nom_producto,
-                ROUND(SUM(v.cantidad_total), 2) AS cantidad_total,
-                ROUND(SUM(v.valor_total), 2) AS valor_total,
-                ROUND(SUM(v.valor_total) / NULLIF(SUM(SUM(v.valor_total)) OVER(), 0) * 100, 1) AS porcentaje_ingreso,
+                fvd.cod_producto,
+                COALESCE(dp.nombre_producto, 'SIN NOMBRE') AS nom_producto,
+                ROUND(SUM(fvd.cantidad), 2) AS cantidad_total,
+                ROUND(SUM(fvd.total_detalle), 2) AS valor_total,
+                ROUND(SUM(fvd.total_detalle) / NULLIF(SUM(SUM(fvd.total_detalle)) OVER(), 0) * 100, 1) AS porcentaje_ingreso,
                 ANY_VALUE(dp.presentacion) AS presentacion
-            FROM gold_mart_ventas_diarias_sku v
-            LEFT JOIN silver_dim_producto dp ON dp.cod_producto = v.cod_producto
-            WHERE STRFTIME(v.business_date, '%Y-%m') = ?
-            GROUP BY v.cod_producto, v.nom_producto
+            FROM silver_fact_ventas_detalle fvd
+            INNER JOIN silver_fact_ventas fv
+                ON fvd.num_documento = fv.num_documento
+                AND fvd.cod_clase = fv.cod_clase
+                AND fvd.business_date = fv.business_date
+            LEFT JOIN silver_dim_producto dp ON dp.cod_producto = fvd.cod_producto
+            WHERE STRFTIME(fv.business_date, '%Y-%m') = ?
+              AND fv.estado_documento != 'A'
+            GROUP BY fvd.cod_producto, dp.nombre_producto
             ORDER BY valor_total DESC
             LIMIT {products_limit}
         """, [month])
@@ -479,19 +501,27 @@ class DuckDBMetricsRepo:
 
         Reusa la misma estructura TopSkuItem que sales-monthly. Default 10
         para preview; el front pide >10 cuando el usuario expande "ver todos".
+
+        NOTA (2026-06-30): migrado de gold_mart_ventas_diarias_sku a
+        silver_fact_ventas_detalle por coherencia con el resto de endpoints.
         """
         limit = max(1, min(int(limit), 5000))
         rows = self._query(f"""
             SELECT
-                v.cod_producto AS cod_producto,
-                v.nom_producto AS nom_producto,
-                ROUND(SUM(v.cantidad_total), 2) AS cantidad_total,
-                ROUND(SUM(v.valor_total), 2) AS valor_total,
-                ROUND(SUM(v.valor_total) / NULLIF(SUM(SUM(v.valor_total)) OVER(), 0) * 100, 1) AS porcentaje_ingreso,
+                fvd.cod_producto,
+                COALESCE(dp.nombre_producto, 'SIN NOMBRE') AS nom_producto,
+                ROUND(SUM(fvd.cantidad), 2) AS cantidad_total,
+                ROUND(SUM(fvd.total_detalle), 2) AS valor_total,
+                ROUND(SUM(fvd.total_detalle) / NULLIF(SUM(SUM(fvd.total_detalle)) OVER(), 0) * 100, 1) AS porcentaje_ingreso,
                 ANY_VALUE(dp.presentacion) AS presentacion
-            FROM gold_mart_ventas_diarias_sku v
-            LEFT JOIN silver_dim_producto dp ON dp.cod_producto = v.cod_producto
-            GROUP BY v.cod_producto, v.nom_producto
+            FROM silver_fact_ventas_detalle fvd
+            INNER JOIN silver_fact_ventas fv
+                ON fvd.num_documento = fv.num_documento
+                AND fvd.cod_clase = fv.cod_clase
+                AND fvd.business_date = fv.business_date
+            LEFT JOIN silver_dim_producto dp ON dp.cod_producto = fvd.cod_producto
+            WHERE fv.estado_documento != 'A'
+            GROUP BY fvd.cod_producto, dp.nombre_producto
             ORDER BY valor_total DESC
             LIMIT {limit}
         """)
@@ -499,7 +529,7 @@ class DuckDBMetricsRepo:
             r["unidad_medida"] = _presentacion_to_unidad(r.get("presentacion"))
         total_skus = self._query("""
             SELECT COUNT(DISTINCT cod_producto) AS n
-            FROM gold_mart_ventas_diarias_sku
+            FROM silver_fact_ventas_detalle
         """)
         return {
             "items": [TopSkuItem(**r).model_dump() for r in rows],
@@ -509,23 +539,26 @@ class DuckDBMetricsRepo:
     def get_sales_historical(self) -> SalesHistoricalResponse:
         totals = self._query("""
             SELECT
-                ROUND(SUM(valor_total), 2) AS total_ventas,
-                COALESCE(SUM(num_facturas), 0) AS total_facturas
-            FROM gold_mart_ventas_diarias_sku
+                ROUND(COALESCE(SUM(total_factura), 0), 2) AS total_ventas,
+                COUNT(*) AS total_facturas
+            FROM silver_fact_ventas
+            WHERE estado_documento != 'A'
         """)
         meses = self._query("""
             SELECT YEAR(business_date) AS year,
                    MONTH(business_date) AS month,
-                   ROUND(SUM(valor_total), 2) AS total_ventas,
-                   COALESCE(SUM(num_facturas), 0) AS num_facturas,
-                   ROUND(SUM(valor_total) / NULLIF(SUM(num_facturas), 0), 2) AS ticket_promedio
-            FROM gold_mart_ventas_diarias_sku
+                   ROUND(SUM(total_factura), 2) AS total_ventas,
+                   COUNT(*) AS num_facturas,
+                   ROUND(SUM(total_factura) / NULLIF(COUNT(*), 0), 2) AS ticket_promedio
+            FROM silver_fact_ventas
+            WHERE estado_documento != 'A'
             GROUP BY YEAR(business_date), MONTH(business_date)
             ORDER BY year, month
         """)
         first = self._query("""
             SELECT MIN(business_date) AS first_date
-            FROM gold_mart_ventas_diarias_sku
+            FROM silver_fact_ventas
+            WHERE estado_documento != 'A'
         """)
         if not totals or not meses:
             raise RuntimeError("No historical sales data found")
@@ -978,16 +1011,20 @@ class DuckDBMetricsRepo:
         # embedemos inline para evitar un bug intermitente del binding
         # mixto (interval dinamico + parametro entero) que en prod hacia
         # que con year=2026 devuelva vacio aunque el archivo tenia datos.
+        #
+        # V1.16 (2026-06-30): migrado de gold_mart_ventas_diarias_sku a
+        # silver_fact_ventas para consistencia automatica.
         periods_int = max(1, min(int(periods), 24))
         where_year = f"AND YEAR(business_date) = {int(year)}" if year is not None else ""
         rows = self._query(f"""
             SELECT YEAR(business_date) AS year,
                     MONTH(business_date) AS month,
-                    ROUND(SUM(valor_total), 2) AS total_ventas,
-                    COALESCE(SUM(num_facturas), 0) AS num_facturas,
-                    ROUND(SUM(valor_total) / NULLIF(SUM(num_facturas), 0), 2) AS ticket_promedio
-            FROM gold_mart_ventas_diarias_sku
+                    ROUND(SUM(total_factura), 2) AS total_ventas,
+                    COUNT(*) AS num_facturas,
+                    ROUND(SUM(total_factura) / NULLIF(COUNT(*), 0), 2) AS ticket_promedio
+            FROM silver_fact_ventas
             WHERE business_date >= CURRENT_DATE - INTERVAL '{periods_int}' MONTH
+              AND estado_documento != 'A'
             {where_year}
             GROUP BY YEAR(business_date), MONTH(business_date)
             ORDER BY year, month
@@ -1476,11 +1513,15 @@ class DuckDBMetricsRepo:
     # ── Sales Forecast Monthly (V1.8) ─────────────────────────────────
 
     def get_sales_forecast_monthly(self, horizon: int = 2) -> dict:
-        """Proyección run-rate: mes actual + siguiente. Modelo simple, sin LLM."""
+        """Proyección run-rate: mes actual + siguiente. Modelo simple, sin LLM.
+
+        NOTA (2026-06-30): migrado de gold_mart_ventas_diarias_sku a
+        silver_fact_ventas para consistencia automatica.
+        """
         from datetime import date
 
         max_d = self._con.execute(
-            "SELECT MAX(business_date) FROM gold_mart_ventas_diarias_sku"
+            "SELECT MAX(business_date) FROM silver_fact_ventas WHERE estado_documento != 'A'"
         ).fetchone()[0]
         max_date = max_d if max_d else date.today()
         current_month = max_date.strftime("%Y-%m")
@@ -1488,9 +1529,10 @@ class DuckDBMetricsRepo:
 
         # Current month: acumulado / días con venta → run-rate diario
         curr = self._con.execute("""
-            SELECT ROUND(COALESCE(SUM(valor_total),0),2), COUNT(DISTINCT business_date)
-            FROM gold_mart_ventas_diarias_sku
+            SELECT ROUND(COALESCE(SUM(total_factura),0),2), COUNT(DISTINCT business_date)
+            FROM silver_fact_ventas
             WHERE STRFTIME(business_date,'%Y-%m') = ?
+              AND estado_documento != 'A'
         """, [current_month]).fetchone()
         accum = float(curr[0] or 0)
         days_with_sales = int(curr[1] or 1) or 1
@@ -1510,8 +1552,9 @@ class DuckDBMetricsRepo:
         # Seasonal: same month last year
         ly_month = f"{max_date.year - 1}-{max_date.month:02d}"
         ly_sales = self._con.execute("""
-            SELECT ROUND(COALESCE(SUM(valor_total),0),2)
-            FROM gold_mart_ventas_diarias_sku WHERE STRFTIME(business_date,'%Y-%m') = ?
+            SELECT ROUND(COALESCE(SUM(total_factura),0),2)
+            FROM silver_fact_ventas WHERE STRFTIME(business_date,'%Y-%m') = ?
+              AND estado_documento != 'A'
         """, [ly_month]).fetchone()
         ly_val = float(ly_sales[0] or 0)
 
@@ -1525,8 +1568,9 @@ class DuckDBMetricsRepo:
                 y -= 1
             m_str = f"{y}-{m:02d}"
             mv = self._con.execute("""
-                SELECT ROUND(COALESCE(SUM(valor_total),0),2)
-                FROM gold_mart_ventas_diarias_sku WHERE STRFTIME(business_date,'%Y-%m') = ?
+                SELECT ROUND(COALESCE(SUM(total_factura),0),2)
+                FROM silver_fact_ventas WHERE STRFTIME(business_date,'%Y-%m') = ?
+                  AND estado_documento != 'A'
             """, [m_str]).fetchone()
             months.append(float(mv[0] or 0))
 
@@ -2102,20 +2146,39 @@ class DuckDBMetricsRepo:
             }
 
         # 6. Aceleradores / Frenadores (productos que mas crecieron / cayeron vs mes anterior)
+        # NOTA (2026-06-30): migrado de gold_mart_ventas_diarias_sku a
+        # silver_fact_ventas_detalle para consistencia automatica.
         prev = _prev_month_str(month)
         delta_rows = self._query(
             """
             WITH curr AS (
-                SELECT cod_producto, nom_producto, SUM(cantidad_total) AS cant_curr, SUM(valor_total) AS val_curr
-                FROM gold_mart_ventas_diarias_sku
-                WHERE STRFTIME(business_date, '%Y-%m') = ?
-                GROUP BY cod_producto, nom_producto
+                SELECT
+                    fvd.cod_producto,
+                    COALESCE(dp.nombre_producto, 'SIN NOMBRE') AS nom_producto,
+                    SUM(fvd.cantidad) AS cant_curr,
+                    SUM(fvd.total_detalle) AS val_curr
+                FROM silver_fact_ventas_detalle fvd
+                INNER JOIN silver_fact_ventas fv
+                    ON fvd.num_documento = fv.num_documento
+                    AND fvd.cod_clase = fv.cod_clase
+                    AND fvd.business_date = fv.business_date
+                LEFT JOIN silver_dim_producto dp ON dp.cod_producto = fvd.cod_producto
+                WHERE STRFTIME(fv.business_date, '%Y-%m') = ?
+                  AND fv.estado_documento != 'A'
+                GROUP BY fvd.cod_producto, dp.nombre_producto
             ),
             prev AS (
-                SELECT cod_producto, SUM(valor_total) AS val_prev
-                FROM gold_mart_ventas_diarias_sku
-                WHERE STRFTIME(business_date, '%Y-%m') = ?
-                GROUP BY cod_producto
+                SELECT
+                    fvd.cod_producto,
+                    SUM(fvd.total_detalle) AS val_prev
+                FROM silver_fact_ventas_detalle fvd
+                INNER JOIN silver_fact_ventas fv
+                    ON fvd.num_documento = fv.num_documento
+                    AND fvd.cod_clase = fv.cod_clase
+                    AND fvd.business_date = fv.business_date
+                WHERE STRFTIME(fv.business_date, '%Y-%m') = ?
+                  AND fv.estado_documento != 'A'
+                GROUP BY fvd.cod_producto
             )
             SELECT
                 c.cod_producto AS cod_producto,
@@ -3446,10 +3509,16 @@ class DuckDBMetricsRepo:
     # ── V1.21: Análisis de productos y proveedores (sección Análisis) ────
 
     def get_analisis_productos(self, fecha_inicio: str, fecha_fin: str, limit: int = 50) -> dict:
-        """Top productos por aporte a ventas en un rango. 3 rankings:
-        revenue, margen $, unidades. Más distribución Pareto y comparativa
-        contra el período inmediatamente anterior (mismo largo) para
-        identificar crecimiento/caída.
+        """Top productos por aporte a ventas Y compras en un rango.
+
+        V1.22: cruza ventas y compras. Para cada producto vendido o comprado
+        en el período:
+          - lado venta: revenue, margen $, unidades vendidas
+          - lado compra: valor_comprado, unidades_compradas, num_docs_compra
+        Permite construir ratio venta/compra y entender qué SKUs roto bien.
+
+        Rankings: top_revenue, top_margen, top_unidades, top_compras +
+        Pareto + ganadores/perdedores vs período comparable anterior.
         """
         # Período actual: ventas + costo con fallback a última compra
         actual_rows = self._query(
@@ -3474,6 +3543,25 @@ class DuckDBMetricsRepo:
             [fecha_inicio, fecha_fin],
         )
 
+        # V1.22: compras del período por producto (independiente de si vendió)
+        compras_rows = self._query(
+            """
+            SELECT
+                cd.cod_producto,
+                COALESCE(dp.nombre_producto, ANY_VALUE(cd.nombre_detalle), 'SIN NOMBRE') AS nom_producto,
+                ROUND(SUM(cd.cantidad), 2) AS uds_compradas,
+                ROUND(SUM(cd.total_detalle), 2) AS valor_comprado,
+                COUNT(DISTINCT cd.num_documento) AS num_docs_compra,
+                dp.presentacion
+            FROM silver_fact_compras_detalle cd
+            LEFT JOIN silver_dim_producto dp ON dp.cod_producto = cd.cod_producto
+            WHERE cd.business_date BETWEEN ? AND ?
+            GROUP BY cd.cod_producto, dp.nombre_producto, dp.presentacion
+            """,
+            [fecha_inicio, fecha_fin],
+        )
+        compras_by_cod = {r["cod_producto"]: r for r in compras_rows}
+
         # Período anterior (mismo número de días para comparación justa)
         from datetime import date, timedelta
         try:
@@ -3497,12 +3585,15 @@ class DuckDBMetricsRepo:
             prev_by_cod = {}
             comparable = False
 
-        # Procesar y rankear
+        # Procesar y rankear. Universo = unión de productos vendidos + comprados
         productos = []
         total_revenue = 0.0
         total_margen = 0.0
         total_unidades = 0.0
+        total_compras = 0.0
+        cod_set = set()
         for r in actual_rows:
+            cod_set.add(r["cod_producto"])
             rev = float(r["revenue"] or 0)
             cost = float(r["costo"] or 0)
             marg = float(r["margen"] or 0)
@@ -3510,6 +3601,13 @@ class DuckDBMetricsRepo:
             rev_prev = prev_by_cod.get(r["cod_producto"], 0)
             delta_pct = round((rev - rev_prev) / rev_prev * 100, 1) if rev_prev > 0 else None
             margen_pct = round(marg / rev * 100, 1) if rev > 0 else None
+            # Compras del producto (puede no existir)
+            comp = compras_by_cod.get(r["cod_producto"])
+            valor_comprado = float(comp["valor_comprado"] or 0) if comp else 0.0
+            uds_compradas = float(comp["uds_compradas"] or 0) if comp else 0.0
+            num_docs_compra = int(comp["num_docs_compra"]) if comp else 0
+            # Ratio venta / compra (cuánto vendiste por cada peso comprado)
+            ratio_venta_compra = round(rev / valor_comprado, 2) if valor_comprado > 0 else None
             productos.append({
                 "cod_producto": r["cod_producto"],
                 "nom_producto": r["nom_producto"],
@@ -3523,15 +3621,47 @@ class DuckDBMetricsRepo:
                 "unidad_medida": _presentacion_to_unidad(r["presentacion"]),
                 "revenue_prev": rev_prev if comparable else None,
                 "delta_pct": delta_pct,
+                # V1.22: lado compras
+                "valor_comprado": round(valor_comprado, 2),
+                "uds_compradas": round(uds_compradas, 2),
+                "num_docs_compra": num_docs_compra,
+                "ratio_venta_compra": ratio_venta_compra,
             })
             total_revenue += rev
             total_margen += marg
             total_unidades += uds
+            total_compras += valor_comprado
+
+        # Agregar productos que SOLO se compraron en el período (no se vendieron)
+        for cod, comp in compras_by_cod.items():
+            if cod in cod_set:
+                continue
+            valor_comprado = float(comp["valor_comprado"] or 0)
+            productos.append({
+                "cod_producto": cod,
+                "nom_producto": comp["nom_producto"],
+                "unidades": 0.0,
+                "revenue": 0.0,
+                "costo": 0.0,
+                "margen": 0.0,
+                "margen_pct": None,
+                "num_facturas": 0,
+                "presentacion": comp["presentacion"],
+                "unidad_medida": _presentacion_to_unidad(comp["presentacion"]),
+                "revenue_prev": None,
+                "delta_pct": None,
+                "valor_comprado": round(valor_comprado, 2),
+                "uds_compradas": float(comp["uds_compradas"] or 0),
+                "num_docs_compra": int(comp["num_docs_compra"]),
+                "ratio_venta_compra": 0.0,
+            })
+            total_compras += valor_comprado
 
         # Rankings (top N por cada criterio)
         top_revenue = sorted(productos, key=lambda p: -p["revenue"])[:limit]
         top_margen = sorted(productos, key=lambda p: -p["margen"])[:limit]
         top_unidades = sorted(productos, key=lambda p: -p["unidades"])[:limit]
+        top_compras = sorted(productos, key=lambda p: -p["valor_comprado"])[:limit]
 
         # Pareto: cuántos productos generan el 80% del revenue
         sorted_rev = sorted(productos, key=lambda p: -p["revenue"])
@@ -3554,20 +3684,27 @@ class DuckDBMetricsRepo:
             top_ganadores = []
             top_perdedores = []
 
+        # Conteos separados para informar correctamente
+        skus_vendidos = sum(1 for p in productos if p["revenue"] > 0)
+        skus_comprados = sum(1 for p in productos if p["valor_comprado"] > 0)
+
         return {
             "fecha_inicio": fecha_inicio,
             "fecha_fin": fecha_fin,
-            "total_skus_vendidos": len(productos),
+            "total_skus_vendidos": skus_vendidos,
+            "total_skus_comprados": skus_comprados,
             "total_revenue": round(total_revenue, 2),
             "total_margen": round(total_margen, 2),
             "total_unidades": round(total_unidades, 2),
+            "total_compras_periodo": round(total_compras, 2),
             "margen_promedio_pct": round(total_margen / total_revenue * 100, 1) if total_revenue > 0 else None,
             "pareto": {
                 "skus_para_80_pct": productos_para_80,
                 "pct_skus": pareto_pct_skus,
-                "total_skus": len(productos),
+                "total_skus": skus_vendidos,
             },
             "top_revenue": top_revenue,
+            "top_compras": top_compras,
             "top_margen": top_margen,
             "top_unidades": top_unidades,
             "top_ganadores": top_ganadores,
@@ -3609,15 +3746,63 @@ class DuckDBMetricsRepo:
                 "fecha_fin": fecha_fin,
                 "total_proveedores": 0,
                 "total_compras": 0.0,
+                "total_ventas_de_proveedores": 0.0,
+                "total_margen_de_proveedores": 0.0,
                 "concentracion": {"top1_pct": 0, "top3_pct": 0, "top5_pct": 0, "hhi": 0, "riesgo": "n/a"},
                 "proveedores": [],
                 "alertas": [],
                 "pareto": {"prov_para_80_pct": 0, "pct_prov": 0},
             }
 
+        # V1.22: ventas en el período asociadas a cada proveedor.
+        # Lógica: cada producto se asocia a su ÚLTIMO proveedor histórico
+        # (mismo criterio que inventario-overview). Sumamos ventas+margen
+        # del producto en el período al proveedor que se lo trajo.
+        ventas_por_prov_rows = self._query(
+            f"""
+            WITH costo_ref AS ({COSTO_REF_CTE}),
+            ult_prov AS (
+                -- último proveedor que compró cada SKU (histórico, ARG_MAX por fecha)
+                SELECT
+                    d.cod_producto,
+                    ARG_MAX(h.nit_proveedor, d.business_date) AS nit_proveedor
+                FROM silver_fact_compras_detalle d
+                LEFT JOIN silver_fact_compras h
+                    ON h.num_documento = d.num_documento AND h.cod_clase = d.cod_clase
+                WHERE h.nit_proveedor IS NOT NULL
+                  AND TRIM(h.nit_proveedor) != ''
+                GROUP BY d.cod_producto
+            ),
+            ventas_producto AS (
+                SELECT
+                    v.cod_producto,
+                    SUM(v.total_detalle) AS revenue,
+                    SUM(v.total_detalle - COALESCE(NULLIF(v.costo_producto, 0), cr.costo_producto, 0) * v.cantidad) AS margen,
+                    COUNT(DISTINCT v.num_documento) AS num_facturas_venta
+                FROM silver_fact_ventas_detalle v
+                LEFT JOIN costo_ref cr ON v.cod_producto = cr.cod_producto
+                WHERE v.business_date BETWEEN ? AND ?
+                GROUP BY v.cod_producto
+            )
+            SELECT
+                up.nit_proveedor,
+                ROUND(SUM(vp.revenue), 2) AS revenue_periodo,
+                ROUND(SUM(vp.margen), 2) AS margen_periodo,
+                COUNT(DISTINCT vp.cod_producto) AS skus_vendidos,
+                SUM(vp.num_facturas_venta) AS facturas_de_venta
+            FROM ventas_producto vp
+            INNER JOIN ult_prov up ON up.cod_producto = vp.cod_producto
+            GROUP BY up.nit_proveedor
+            """,
+            [fecha_inicio, fecha_fin],
+        )
+        ventas_by_nit = {r["nit_proveedor"]: r for r in ventas_por_prov_rows}
+
         from datetime import date
         today = date.today()
         total_general = sum(float(p["total_compras"] or 0) for p in prov_rows)
+        total_ventas_asociadas = sum(float(r["revenue_periodo"] or 0) for r in ventas_por_prov_rows)
+        total_margen_asociado = sum(float(r["margen_periodo"] or 0) for r in ventas_por_prov_rows)
 
         proveedores = []
         for p in prov_rows:
@@ -3637,6 +3822,17 @@ class DuckDBMetricsRepo:
                 span = (ultima_dt - primera_dt).days
                 frecuencia_dias = round(span / (num_docs - 1), 1) if num_docs > 1 else None
 
+            # V1.22: ventas en el período de productos asociados a este proveedor
+            v = ventas_by_nit.get(p["nit_proveedor"])
+            revenue_periodo = float(v["revenue_periodo"] or 0) if v else 0.0
+            margen_periodo = float(v["margen_periodo"] or 0) if v else 0.0
+            skus_vendidos = int(v["skus_vendidos"]) if v else 0
+            # Ratio: pesos vendidos por cada peso comprado (>1 = bien rotado)
+            ratio_venta_compra = round(revenue_periodo / total, 2) if total > 0 else None
+            # Margen pct sobre ventas
+            margen_pct = round(margen_periodo / revenue_periodo * 100, 1) if revenue_periodo > 0 else None
+            pct_ventas = round(revenue_periodo / total_ventas_asociadas * 100, 1) if total_ventas_asociadas > 0 else 0.0
+
             proveedores.append({
                 "nit": p["nit_proveedor"],
                 "nombre": p["nombre"],
@@ -3648,6 +3844,13 @@ class DuckDBMetricsRepo:
                 "dias_desde_ultima_compra": dias_desde,
                 "frecuencia_dias_promedio": frecuencia_dias,
                 "ticket_promedio": round(total / num_docs, 2) if num_docs > 0 else 0.0,
+                # V1.22: lado ventas
+                "revenue_periodo": round(revenue_periodo, 2),
+                "margen_periodo": round(margen_periodo, 2),
+                "margen_pct": margen_pct,
+                "skus_vendidos": skus_vendidos,
+                "ratio_venta_compra": ratio_venta_compra,
+                "pct_ventas_asociadas": pct_ventas,
             })
 
         # Concentración de riesgo
@@ -3697,6 +3900,9 @@ class DuckDBMetricsRepo:
             "fecha_fin": fecha_fin,
             "total_proveedores": len(proveedores),
             "total_compras": round(total_general, 2),
+            # V1.22: totales lado ventas
+            "total_ventas_de_proveedores": round(total_ventas_asociadas, 2),
+            "total_margen_de_proveedores": round(total_margen_asociado, 2),
             "concentracion": {
                 "top1_pct": round(top1, 1),
                 "top3_pct": round(top3, 1),
