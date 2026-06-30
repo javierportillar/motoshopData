@@ -3212,17 +3212,27 @@ class DuckDBMetricsRepo:
             ORDER BY m.mes
         """, [sku, sku, sku, sku])
 
-        # Últimos 20 movimientos (ventas + compras intercalados)
+        # Últimos movimientos: últimos 25 de cada tipo, mezclados ordenados
+        # Para que siempre aparezcan compras aunque el producto venda muy seguido
         movimientos = self._query("""
-            SELECT business_date AS fecha, 'venta' AS tipo, cantidad,
-                   ROUND(total_detalle, 2) AS valor, num_documento
-            FROM silver_fact_ventas_detalle WHERE cod_producto = ?
+            WITH ventas AS (
+                SELECT business_date AS fecha, 'venta' AS tipo, cantidad,
+                       ROUND(total_detalle, 2) AS valor, num_documento
+                FROM silver_fact_ventas_detalle WHERE cod_producto = ?
+                ORDER BY business_date DESC
+                LIMIT 25
+            ),
+            compras AS (
+                SELECT business_date AS fecha, 'compra' AS tipo, cantidad,
+                       ROUND(total_detalle, 2) AS valor, num_documento
+                FROM silver_fact_compras_detalle WHERE cod_producto = ?
+                ORDER BY business_date DESC
+                LIMIT 25
+            )
+            SELECT * FROM ventas
             UNION ALL
-            SELECT business_date AS fecha, 'compra' AS tipo, cantidad,
-                   ROUND(total_detalle, 2) AS valor, num_documento
-            FROM silver_fact_compras_detalle WHERE cod_producto = ?
+            SELECT * FROM compras
             ORDER BY fecha DESC
-            LIMIT 20
         """, [sku, sku])
 
         return {
