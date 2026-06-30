@@ -1513,10 +1513,17 @@ class DuckDBMetricsRepo:
     # ── Sales Forecast Monthly (V1.8) ─────────────────────────────────
 
     def get_sales_forecast_monthly(self, horizon: int = 2) -> dict:
-        """Proyección run-rate: mes actual + siguiente. Modelo simple, sin LLM.
+        """Proyección run-rate estable: mes actual + siguiente.
 
-        NOTA (2026-06-30): migrado de gold_mart_ventas_diarias_sku a
-        silver_fact_ventas para consistencia automatica.
+        V1.23 (2026-06-30): el daily_rate ahora se calcula sobre los últimos
+        90 días COMPLETOS (excluyendo el mes en curso). Antes se basaba en el
+        mes en curso, lo que hacía que el forecast cambiara día a día y
+        arrancara cerca de $0 al inicio del mes. Con este cambio:
+          - El forecast del mes en curso y el siguiente NO cambia durante el mes.
+          - Al cerrar el mes, el rate se actualiza naturalmente con el mes recién terminado.
+          - La parte "observada" del mes en curso sigue siendo real (lo ya vendido).
+        Fallbacks: si los últimos 90d no tienen ventas, cae al mes anterior
+        completo. Si tampoco, al run-rate del mes en curso (comportamiento viejo).
         """
         from datetime import date
 
@@ -1527,7 +1534,7 @@ class DuckDBMetricsRepo:
         current_month = max_date.strftime("%Y-%m")
         day_num = max_date.day
 
-        # Current month: acumulado / días con venta → run-rate diario
+        # Acumulado real del mes en curso (lo ya vendido)
         curr = self._con.execute("""
             SELECT ROUND(COALESCE(SUM(total_factura),0),2), COUNT(DISTINCT business_date)
             FROM silver_fact_ventas
@@ -1535,21 +1542,62 @@ class DuckDBMetricsRepo:
               AND estado_documento != 'A'
         """, [current_month]).fetchone()
         accum = float(curr[0] or 0)
-        days_with_sales = int(curr[1] or 1) or 1
+        days_with_sales_curr = int(curr[1] or 0)
 
         total_days = (max_date.replace(day=1) + timedelta(days=32)).replace(day=1) - timedelta(days=1)
-        remaining_days = total_days.day - day_num
-        daily_rate = accum / days_with_sales
+
+        # ── Daily rate estable: últimos 90d COMPLETOS (excluye mes en curso) ──
+        first_of_current = max_date.replace(day=1)
+        window_end = first_of_current - timedelta(days=1)        # último día del mes pasado
+        window_start = window_end - timedelta(days=89)           # 90 días hacia atrás
+        rolling = self._con.execute("""
+            SELECT ROUND(COALESCE(SUM(total_factura),0),2), COUNT(DISTINCT business_date)
+            FROM silver_fact_ventas
+            WHERE business_date BETWEEN ? AND ?
+              AND estado_documento != 'A'
+        """, [window_start, window_end]).fetchone()
+        rolling_total = float(rolling[0] or 0)
+        rolling_days = int(rolling[1] or 0)
+
+        rate_basis = "rolling_90d_complete"
+        if rolling_days > 0 and rolling_total > 0:
+            # Promedio sobre días CALENDARIO de la ventana (90), no sólo días con venta.
+            # Así el rate refleja el throughput real esperado por día (incluye días flojos).
+            window_calendar_days = (window_end - window_start).days + 1
+            daily_rate = rolling_total / window_calendar_days
+        else:
+            # Fallback 1: mes anterior completo
+            prev_month_last_day = first_of_current - timedelta(days=1)
+            prev_month_str = prev_month_last_day.strftime("%Y-%m")
+            prev_first = prev_month_last_day.replace(day=1)
+            prev_calendar_days = (prev_month_last_day - prev_first).days + 1
+            prev = self._con.execute("""
+                SELECT ROUND(COALESCE(SUM(total_factura),0),2)
+                FROM silver_fact_ventas
+                WHERE STRFTIME(business_date,'%Y-%m') = ?
+                  AND estado_documento != 'A'
+            """, [prev_month_str]).fetchone()
+            prev_total = float(prev[0] or 0)
+            if prev_total > 0:
+                daily_rate = prev_total / prev_calendar_days
+                rate_basis = "previous_month_complete"
+            else:
+                # Fallback 2 (último recurso): run-rate del mes en curso
+                daily_rate = (accum / max(days_with_sales_curr, 1)) if days_with_sales_curr > 0 else 0.0
+                rate_basis = "current_month_run_rate"
+
+        # Proyección mes en curso: observado real + rate × días restantes
+        remaining_days = max(0, total_days.day - day_num)
         projected_current = round(accum + daily_rate * remaining_days, 2)
 
-        # Next month: run-rate + seasonal factor from same month last year
+        # Mes siguiente
         next_month_num = max_date.month + 1
         next_year = max_date.year if next_month_num <= 12 else max_date.year + 1
         next_month_num = next_month_num if next_month_num <= 12 else 1
         next_month_str = f"{next_year}-{next_month_num:02d}"
         next_total_days = (date(next_year, next_month_num, 1) + timedelta(days=32)).replace(day=1) - timedelta(days=1)
 
-        # Seasonal: same month last year
+        # Mes mismo año pasado (sólo metadato/contexto)
         ly_month = f"{max_date.year - 1}-{max_date.month:02d}"
         ly_sales = self._con.execute("""
             SELECT ROUND(COALESCE(SUM(total_factura),0),2)
@@ -1558,24 +1606,17 @@ class DuckDBMetricsRepo:
         """, [ly_month]).fetchone()
         ly_val = float(ly_sales[0] or 0)
 
-        # Last 3 complete months
-        months = []
-        for i in range(1, 4):
-            m = max_date.month - i
-            y = max_date.year
-            if m <= 0:
-                m += 12
-                y -= 1
-            m_str = f"{y}-{m:02d}"
-            mv = self._con.execute("""
-                SELECT ROUND(COALESCE(SUM(total_factura),0),2)
-                FROM silver_fact_ventas WHERE STRFTIME(business_date,'%Y-%m') = ?
-                  AND estado_documento != 'A'
-            """, [m_str]).fetchone()
-            months.append(float(mv[0] or 0))
-
-        avg_last_3 = sum(months) / len([m for m in months if m > 0]) if any(months) else accum
         next_projected = round(daily_rate * next_total_days.day, 2)
+
+        # Confianza basada en cuántos días de la ventana de 90d tienen ventas
+        if rate_basis == "rolling_90d_complete" and rolling_days >= 60:
+            confidence_next = "high"
+        elif rate_basis == "rolling_90d_complete" and rolling_days >= 30:
+            confidence_next = "medium"
+        elif rate_basis == "previous_month_complete":
+            confidence_next = "medium"
+        else:
+            confidence_next = "low"
 
         return {
             "current_month": {
@@ -1585,17 +1626,23 @@ class DuckDBMetricsRepo:
                 "daily_rate": round(daily_rate, 2),
                 "days_observed": day_num,
                 "days_total": total_days.day,
-                "confidence": "high" if day_num > 7 else "medium",
+                "confidence": "high" if rate_basis == "rolling_90d_complete" else "medium",
             },
             "next_month": {
                 "month": next_month_str,
                 "projected_amount": next_projected,
                 "days_total": next_total_days.day,
                 "last_year_same_month": ly_val,
-                "confidence": "low",
+                "confidence": confidence_next,
             },
-            "model_version": "run_rate_v1",
-            "drivers": ["daily_run_rate", "same_month_last_year"],
+            "rate_basis": rate_basis,
+            "rate_window": {
+                "start": str(window_start),
+                "end": str(window_end),
+                "days_with_sales": rolling_days,
+            } if rate_basis == "rolling_90d_complete" else None,
+            "model_version": "run_rate_v2_rolling90",
+            "drivers": ["rolling_90d_daily_rate", "same_month_last_year"],
         }
 
 
