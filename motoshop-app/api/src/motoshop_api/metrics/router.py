@@ -796,3 +796,85 @@ def analisis_balance(
         lambda: repo.get_analisis_balance(fecha_inicio, fecha_fin, gastos_diarios),
         ttl=60,  # TTL bajo: si el user carga un gasto, lo ve casi al instante
     )
+
+
+# ── V1.16: catálogo zombie, salud, heatmap, vendor flag (derivados del EDA) ──
+
+@router.get("/metrics/productos-zombie")
+@limiter.limit("30/minute")
+def productos_zombie(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=500),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+):
+    """Productos que NUNCA se vendieron desde que entraron al catálogo.
+
+    Distinto a 'dormidos' (productos que vendían y dejaron de vender).
+    Útil para liquidación, devolución a proveedor, descatalogación.
+    Incluye capital_inmovilizado (stock × costo) por SKU y total.
+    """
+    return _cached_or_fetch(
+        f"{tenant}:productos-zombie:p{page}:ps{page_size}",
+        lambda: repo.get_productos_zombie(page=page, page_size=page_size),
+        ttl=600,
+    )
+
+
+@router.get("/metrics/salud-catalogo")
+@limiter.limit("30/minute")
+def salud_catalogo(
+    request: Request,
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+):
+    """KPI agregado del catálogo: activos/lentos/dormidos/zombie + score salud."""
+    return _cached_or_fetch(
+        f"{tenant}:salud-catalogo",
+        repo.get_salud_catalogo,
+        ttl=600,
+    )
+
+
+@router.get("/metrics/heatmap-dia-hora")
+@limiter.limit("30/minute")
+def heatmap_dia_hora(
+    request: Request,
+    fecha_inicio: str = Query(..., description="YYYY-MM-DD"),
+    fecha_fin: str = Query(..., description="YYYY-MM-DD"),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+):
+    """Matriz 7 días × 24 horas: facturas, ventas, ticket promedio por celda.
+
+    Útil para identificar picos cruzados (ej: 'sábados a las 5pm') y
+    detectar patrones de cierre (ej: 'masvital cierra dominicales')."""
+    _validate_date_range(fecha_inicio, fecha_fin)
+    return _cached_or_fetch(
+        f"{tenant}:heatmap-dia-hora:{fecha_inicio}:{fecha_fin}",
+        lambda: repo.get_heatmap_dia_hora(fecha_inicio, fecha_fin),
+        ttl=300,
+    )
+
+
+@router.get("/metrics/vendor-data-flag")
+@limiter.limit("30/minute")
+def vendor_data_flag(
+    request: Request,
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+):
+    """Indica si el tenant tiene datos confiables de vendedor (NULL <50%).
+
+    El frontend usa este flag para ocultar el bloque 'Top vendedores'
+    cuando no es útil (caso MasVital con 99% NULL)."""
+    return _cached_or_fetch(
+        f"{tenant}:vendor-data-flag",
+        repo.get_vendor_data_flag,
+        ttl=600,
+    )

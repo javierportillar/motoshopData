@@ -684,9 +684,21 @@ class DuckDBMetricsRepo:
         sort_by: str = "dias_sin_venta",
         sort_order: str = "desc",
     ) -> DormidosResponse:
+        """Productos dormidos REALES — vendían y dejaron de vender.
+
+        V1.16: filtra el bug epoch del pipeline (productos NUNCA vendidos
+        con ultima_fecha_venta='1970-01-01' en gold_mart_productos_dormidos).
+        Los nunca vendidos viven ahora en get_productos_zombie() — son un
+        concepto distinto: nunca movieron, no se durmieron.
+        """
+        # Filtro principal: EXISTS en silver_fact_ventas_detalle (vendió alguna vez)
         count_rows = self._query("""
             SELECT COUNT(*) AS total
             FROM gold_mart_productos_dormidos d
+            WHERE EXISTS (
+                SELECT 1 FROM silver_fact_ventas_detalle v
+                WHERE v.cod_producto = d.cod_producto
+            )
         """)
         total = int(count_rows[0]["total"]) if count_rows else 0
         offset = (page - 1) * page_size
@@ -699,10 +711,10 @@ class DuckDBMetricsRepo:
         rows = self._query(f"""
             SELECT d.cod_producto, d.nom_producto, d.stock_actual,
                     CAST(c.ultima_compra AS VARCHAR) AS ultima_compra,
-                    COALESCE(CAST(v.ultima_venta AS VARCHAR), CAST(d.ultima_fecha_venta AS VARCHAR)) AS ultima_venta,
-                    DATE_DIFF('day', COALESCE(v.ultima_venta, d.ultima_fecha_venta), CURRENT_DATE) AS dias_sin_venta
+                    CAST(v.ultima_venta AS VARCHAR) AS ultima_venta,
+                    DATE_DIFF('day', v.ultima_venta, CURRENT_DATE) AS dias_sin_venta
             FROM gold_mart_productos_dormidos d
-            LEFT JOIN (
+            INNER JOIN (
                 SELECT cod_producto, MAX(business_date) AS ultima_venta
                 FROM silver_fact_ventas_detalle
                 GROUP BY cod_producto
@@ -727,6 +739,209 @@ class DuckDBMetricsRepo:
                 r["ultima_venta"] = str(r["ultima_venta"])
         items = [DormidoItem(**r) for r in rows]
         return DormidosResponse(page=page, page_size=page_size, total=total, items=items, productos=items)
+
+    def get_productos_zombie(
+        self,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict:
+        """Productos que NUNCA se vendieron desde que entraron al catálogo.
+
+        V1.16: separa el concepto de 'nunca vendido' (catálogo zombie) del
+        de 'dormido' (vendía y dejó de vender). Acción típica: liquidar,
+        devolver al proveedor, descatalogar.
+
+        Calcula capital inmovilizado: stock × costo (última compra como
+        fallback si costo_producto=0).
+        """
+        # Total + capital
+        totals_rows = self._query("""
+            SELECT
+                COUNT(*) AS total,
+                ROUND(COALESCE(SUM(
+                    dp.existencia * COALESCE(NULLIF(dp.costo_producto, 0), dp.costo_ultima_compra)
+                ), 0), 0) AS capital_inmovilizado
+            FROM silver_dim_producto dp
+            WHERE NOT EXISTS (
+                SELECT 1 FROM silver_fact_ventas_detalle v
+                WHERE v.cod_producto = dp.cod_producto
+            )
+        """)
+        total = int(totals_rows[0]["total"]) if totals_rows else 0
+        capital = float(totals_rows[0]["capital_inmovilizado"] or 0) if totals_rows else 0.0
+
+        offset = (page - 1) * page_size
+        rows = self._query("""
+            SELECT
+                dp.cod_producto,
+                dp.nombre_producto AS nom_producto,
+                COALESCE(dp.existencia, 0) AS stock_actual,
+                COALESCE(NULLIF(dp.costo_producto, 0), dp.costo_ultima_compra, 0) AS costo_unitario,
+                ROUND(COALESCE(dp.existencia, 0) *
+                    COALESCE(NULLIF(dp.costo_producto, 0), dp.costo_ultima_compra, 0), 0) AS capital_invertido,
+                CAST(c.ultima_compra AS VARCHAR) AS ultima_compra,
+                DATE_DIFF('day', c.ultima_compra, CURRENT_DATE) AS dias_en_catalogo,
+                dp.presentacion
+            FROM silver_dim_producto dp
+            LEFT JOIN (
+                SELECT cod_producto, MAX(business_date) AS ultima_compra
+                FROM silver_fact_compras_detalle
+                GROUP BY cod_producto
+            ) c ON dp.cod_producto = c.cod_producto
+            WHERE NOT EXISTS (
+                SELECT 1 FROM silver_fact_ventas_detalle v
+                WHERE v.cod_producto = dp.cod_producto
+            )
+            ORDER BY capital_invertido DESC NULLS LAST, dp.cod_producto
+            LIMIT ? OFFSET ?
+        """, [page_size, offset])
+        items = []
+        for r in rows:
+            items.append({
+                "cod_producto": r["cod_producto"],
+                "nom_producto": r["nom_producto"] or "",
+                "stock_actual": float(r["stock_actual"] or 0),
+                "costo_unitario": float(r["costo_unitario"] or 0),
+                "capital_invertido": float(r["capital_invertido"] or 0),
+                "ultima_compra": str(r["ultima_compra"]) if r["ultima_compra"] else None,
+                "dias_en_catalogo": int(r["dias_en_catalogo"]) if r["dias_en_catalogo"] is not None else None,
+                "presentacion": r["presentacion"],
+                "unidad_medida": _presentacion_to_unidad(r.get("presentacion")),
+            })
+        return {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "capital_inmovilizado": capital,
+            "items": items,
+        }
+
+    # ── Salud del catálogo (V1.16, F6 del EDA) ───────────────────────────
+
+    def get_salud_catalogo(self) -> dict:
+        """KPI agregado del catálogo: cuántos SKUs están activos, lentos,
+        dormidos o nunca vendidos. Útil como medidor único de la salud
+        del inventario y motivador de acción.
+
+        Buckets:
+          - activos: vendieron en últimos 30 días
+          - lentos: vendieron 30-90 días atrás
+          - dormidos: vendieron hace >90 días pero alguna vez
+          - zombie: nunca se vendieron
+        """
+        rows = self._query("""
+            WITH ultima_venta AS (
+                SELECT cod_producto, MAX(business_date) AS uv
+                FROM silver_fact_ventas_detalle
+                GROUP BY cod_producto
+            )
+            SELECT
+                SUM(CASE WHEN uv.uv IS NULL THEN 1 ELSE 0 END) AS zombie,
+                SUM(CASE WHEN uv.uv IS NOT NULL
+                          AND DATE_DIFF('day', uv.uv, CURRENT_DATE) > 90 THEN 1 ELSE 0 END) AS dormidos,
+                SUM(CASE WHEN uv.uv IS NOT NULL
+                          AND DATE_DIFF('day', uv.uv, CURRENT_DATE) BETWEEN 31 AND 90 THEN 1 ELSE 0 END) AS lentos,
+                SUM(CASE WHEN uv.uv IS NOT NULL
+                          AND DATE_DIFF('day', uv.uv, CURRENT_DATE) <= 30 THEN 1 ELSE 0 END) AS activos,
+                COUNT(*) AS total
+            FROM silver_dim_producto dp
+            LEFT JOIN ultima_venta uv ON uv.cod_producto = dp.cod_producto
+        """)
+        r = rows[0] if rows else {}
+        total = int(r.get("total") or 0)
+        activos = int(r.get("activos") or 0)
+        lentos = int(r.get("lentos") or 0)
+        dormidos = int(r.get("dormidos") or 0)
+        zombie = int(r.get("zombie") or 0)
+        # Score salud: porcentaje activos + lentos (los que generan negocio)
+        salud_pct = round((activos + lentos) / total * 100, 1) if total else 0.0
+        return {
+            "total_skus": total,
+            "activos": activos,
+            "activos_pct": round(activos / total * 100, 1) if total else 0.0,
+            "lentos": lentos,
+            "lentos_pct": round(lentos / total * 100, 1) if total else 0.0,
+            "dormidos": dormidos,
+            "dormidos_pct": round(dormidos / total * 100, 1) if total else 0.0,
+            "zombie": zombie,
+            "zombie_pct": round(zombie / total * 100, 1) if total else 0.0,
+            "salud_pct": salud_pct,
+        }
+
+    # ── Heatmap día × hora (V1.16, F4 del EDA) ───────────────────────────
+
+    def get_heatmap_dia_hora(self, fecha_inicio: str, fecha_fin: str) -> dict:
+        """Matriz 7 días × 24 horas con ventas + facturas + ticket promedio.
+
+        Útil para decidir personal, identificar picos (ej: 'sábados a las 5pm
+        es siempre el techo'), y detectar gaps (ej: 'masvital cierra dominicales').
+        """
+        rows = self._query("""
+            SELECT
+                EXTRACT(dow FROM business_date)::INT AS dow,
+                EXTRACT(hour FROM fecha_documento_ts)::INT AS hora,
+                COUNT(*) AS num_facturas,
+                ROUND(SUM(total_factura), 2) AS total_ventas,
+                ROUND(AVG(total_factura), 2) AS ticket_promedio
+            FROM silver_fact_ventas
+            WHERE business_date BETWEEN ? AND ?
+              AND estado_documento != 'A'
+              AND fecha_documento_ts IS NOT NULL
+            GROUP BY dow, hora
+        """, [fecha_inicio, fecha_fin])
+        # Construir matriz completa 7×24 con 0s para celdas vacías
+        cells = []
+        by_key = {(int(r["dow"]), int(r["hora"])): r for r in rows}
+        dias_label = ["DOM", "LUN", "MAR", "MIE", "JUE", "VIE", "SAB"]
+        for dow in range(7):
+            for hora in range(24):
+                r = by_key.get((dow, hora))
+                cells.append({
+                    "dow": dow,
+                    "dow_label": dias_label[dow],
+                    "hora": hora,
+                    "num_facturas": int(r["num_facturas"]) if r else 0,
+                    "total_ventas": float(r["total_ventas"]) if r else 0.0,
+                    "ticket_promedio": float(r["ticket_promedio"]) if r and r["ticket_promedio"] else 0.0,
+                })
+        # Stats globales para colorizar bien
+        max_facturas = max((c["num_facturas"] for c in cells), default=0)
+        max_ventas = max((c["total_ventas"] for c in cells), default=0.0)
+        return {
+            "fecha_inicio": fecha_inicio,
+            "fecha_fin": fecha_fin,
+            "cells": cells,
+            "max_facturas": max_facturas,
+            "max_ventas": max_ventas,
+        }
+
+    # ── Vendor data availability flag (V1.16, F7 del EDA) ────────────────
+
+    def get_vendor_data_flag(self) -> dict:
+        """Detecta si este tenant tiene datos confiables de vendedor.
+
+        Si >50% de las facturas tienen nit_vendedor NULL/vacío, el front
+        debería ocultar el bloque de 'Top vendedores' porque no es útil.
+        Caso típico: MasVital tiene 99% NULL, MotoShop 0.4% NULL.
+        """
+        rows = self._query("""
+            SELECT
+                SUM(CASE WHEN nit_vendedor IS NULL OR TRIM(nit_vendedor) = '' THEN 1 ELSE 0 END) AS sin_vendedor,
+                COUNT(*) AS total
+            FROM silver_fact_ventas
+            WHERE estado_documento != 'A'
+        """)
+        r = rows[0] if rows else {}
+        total = int(r.get("total") or 0)
+        sin = int(r.get("sin_vendedor") or 0)
+        pct_sin = (sin / total * 100) if total else 0.0
+        has_data = pct_sin < 50.0
+        return {
+            "has_vendor_data": has_data,
+            "facturas_sin_vendedor": sin,
+            "facturas_totales": total,
+            "porcentaje_sin_vendedor": round(pct_sin, 1),
+        }
 
     # ── Cohortes ─────────────────────────────────────────────────────────
 
