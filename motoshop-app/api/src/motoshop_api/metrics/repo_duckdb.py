@@ -1343,12 +1343,17 @@ class DuckDBMetricsRepo:
     # ── Sales Summary V2 (V1.8) ──────────────────────────────────────────
 
     def get_sales_summary_v2(self) -> dict:
-        """Ventas con comparación justa: parcial vs parcial, años anteriores."""
+        """Ventas con comparación justa: parcial vs parcial, años anteriores.
+        
+        NOTA (2026-06-30): migrado de gold_mart_ventas_diarias_sku a
+        silver_fact_ventas por misma razón que get_sales_daily_month — el gold
+        se quedó sin data de Jun 2026.
+        """
         from datetime import date
 
-        # Max date
+        # Max date from silver (siempre actualizada)
         max_d = self._con.execute(
-            "SELECT MAX(business_date) FROM gold_mart_ventas_diarias_sku"
+            "SELECT MAX(business_date) FROM silver_fact_ventas WHERE estado_documento != 'A'"
         ).fetchone()[0]
         max_date = max_d if max_d else date.today()
         max_date_str = str(max_date)
@@ -1357,11 +1362,13 @@ class DuckDBMetricsRepo:
 
         # Current month accumulated
         curr = self._con.execute("""
-            SELECT ROUND(COALESCE(SUM(valor_total),0),2), COALESCE(SUM(num_facturas),0),
-                   ROUND(COALESCE(SUM(valor_total),0)/NULLIF(COALESCE(SUM(num_facturas),0),0),2),
+            SELECT ROUND(COALESCE(SUM(total_factura),0),2),
+                   COUNT(*) AS facturas,
+                   ROUND(COALESCE(SUM(total_factura),0)/NULLIF(COUNT(*),0),2),
                    COUNT(DISTINCT business_date)
-            FROM gold_mart_ventas_diarias_sku
-            WHERE STRFTIME(business_date,'%Y-%m') = ?
+            FROM silver_fact_ventas
+            WHERE STRFTIME(business_date, '%Y-%m') = ?
+              AND estado_documento != 'A'
         """, [current_month]).fetchone()
 
         # Previous month, same day window
@@ -1372,9 +1379,10 @@ class DuckDBMetricsRepo:
         prev_end = f"{prev_month}-{prev_day:02d}"
 
         prev = self._con.execute("""
-            SELECT ROUND(COALESCE(SUM(valor_total),0),2)
-            FROM gold_mart_ventas_diarias_sku
+            SELECT ROUND(COALESCE(SUM(total_factura),0),2)
+            FROM silver_fact_ventas
             WHERE business_date >= ? AND business_date <= ?
+              AND estado_documento != 'A'
         """, [prev_start, prev_end]).fetchone()
 
         va_curr = float(curr[0] or 0)
@@ -1388,12 +1396,16 @@ class DuckDBMetricsRepo:
                 y_start = f"{yr}-{max_date.month:02d}-01"
                 y_end = f"{yr}-{max_date.month:02d}-{day_num:02d}"
                 y_same = self._con.execute("""
-                    SELECT ROUND(COALESCE(SUM(valor_total),0),2) FROM gold_mart_ventas_diarias_sku
+                    SELECT ROUND(COALESCE(SUM(total_factura),0),2)
+                    FROM silver_fact_ventas
                     WHERE business_date >= ? AND business_date <= ?
+                      AND estado_documento != 'A'
                 """, [y_start, y_end]).fetchone()
                 y_full = self._con.execute("""
-                    SELECT ROUND(COALESCE(SUM(valor_total),0),2) FROM gold_mart_ventas_diarias_sku
-                    WHERE STRFTIME(business_date,'%Y-%m') = ?
+                    SELECT ROUND(COALESCE(SUM(total_factura),0),2)
+                    FROM silver_fact_ventas
+                    WHERE STRFTIME(business_date, '%Y-%m') = ?
+                      AND estado_documento != 'A'
                 """, [f"{yr}-{max_date.month:02d}"]).fetchone()
                 y_amount = float(y_same[0] or 0)
                 y_delta = round((va_curr - y_amount) / y_amount * 100, 1) if y_amount else None
@@ -1426,14 +1438,23 @@ class DuckDBMetricsRepo:
     # ── Sales Daily Month (V1.8) ──────────────────────────────────────
 
     def get_sales_daily_month(self, month: str) -> dict:
-        """Evolución diaria del mes: ventas, facturas, acumulado por día."""
+        """Evolución diaria del mes: ventas, facturas, acumulado por día.
+        
+        NOTA (2026-06-30): se migró de gold_mart_ventas_diarias_sku (pre-agregado
+        y a veces desactualizado) a silver_fact_ventas directo, que siempre está
+        actualizado porque la pipeline exporta las silver primero. El gold se
+        quedó sin data de Jun 2026 y nadie corrió la pipeline.
+        """
         rows = self._con.execute("""
-            SELECT business_date, ROUND(COALESCE(SUM(valor_total),0),2) AS ventas,
-                   COALESCE(SUM(num_facturas),0) AS facturas,
-                   ROUND(COALESCE(SUM(valor_total),0)/NULLIF(COALESCE(SUM(num_facturas),0),0),2) AS ticket
-            FROM gold_mart_ventas_diarias_sku
-            WHERE STRFTIME(business_date,'%Y-%m') = ?
-            GROUP BY business_date ORDER BY business_date
+            SELECT business_date,
+                   ROUND(COALESCE(SUM(total_factura), 0), 2) AS ventas,
+                   COUNT(*) AS facturas,
+                   ROUND(COALESCE(SUM(total_factura), 0) / NULLIF(COUNT(*), 0), 2) AS ticket
+            FROM silver_fact_ventas
+            WHERE STRFTIME(business_date, '%Y-%m') = ?
+              AND estado_documento != 'A'
+            GROUP BY business_date
+            ORDER BY business_date
         """, [month]).fetchall()
 
         days = []
