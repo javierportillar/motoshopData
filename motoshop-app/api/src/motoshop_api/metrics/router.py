@@ -909,3 +909,60 @@ def inventario_overview(
         ),
         ttl=300,
     )
+
+
+# ── V1.19: Compras refactor (overview mensual + histórico + por proveedor) ──
+
+@router.get("/metrics/compras-overview")
+@limiter.limit("30/minute")
+def compras_overview(
+    request: Request,
+    month: str = Query(..., pattern=r"^\d{4}-\d{2}$", description="YYYY-MM"),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+):
+    """Overview de compras del mes: KPIs + serie diaria (calendario) +
+    top proveedores + top productos."""
+    return _cached_or_fetch(
+        f"{tenant}:compras-overview:{month}",
+        lambda: repo.get_compras_overview(month),
+        ttl=300,
+    )
+
+
+@router.get("/metrics/compras-historico")
+@limiter.limit("30/minute")
+def compras_historico(
+    request: Request,
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+):
+    """Histórico mensual de compras + agregados totales (para gráfico
+    de tendencia y comparativo año-vs-año)."""
+    return _cached_or_fetch(
+        f"{tenant}:compras-historico",
+        repo.get_compras_historico,
+        ttl=600,
+    )
+
+
+@router.get("/metrics/compras-por-proveedor")
+@limiter.limit("30/minute")
+def compras_por_proveedor(
+    request: Request,
+    fecha_inicio: str = Query(..., description="YYYY-MM-DD"),
+    fecha_fin: str = Query(..., description="YYYY-MM-DD"),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+):
+    """Compras agrupadas por proveedor en un rango. # docs, total,
+    primera/última compra por proveedor. Ordenado por total desc."""
+    _validate_date_range(fecha_inicio, fecha_fin)
+    return _cached_or_fetch(
+        f"{tenant}:compras-por-prov:{fecha_inicio}:{fecha_fin}",
+        lambda: repo.get_compras_por_proveedor(fecha_inicio, fecha_fin),
+        ttl=300,
+    )

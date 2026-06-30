@@ -80,6 +80,9 @@ class MetricsRepoProtocol(Protocol):
         colchon_dias: int = 14,
         umbral_sobrestock_dias: int = 180,
     ) -> dict: ...
+    def get_compras_overview(self, month: str) -> dict: ...  # V1.19
+    def get_compras_historico(self) -> dict: ...  # V1.19
+    def get_compras_por_proveedor(self, fecha_inicio: str, fecha_fin: str) -> dict: ...  # V1.19
     def get_hours_peak(self, fecha_inicio: str, fecha_fin: str) -> dict: ...  # V1.11
     def get_analisis_balance(  # V1.11
         self,

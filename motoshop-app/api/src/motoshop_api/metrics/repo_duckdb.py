@@ -3200,6 +3200,187 @@ class DuckDBMetricsRepo:
             "margen_neto_pct": margen_neto_pct,
         }
 
+    # ── Compras: overview mensual + histórico (V1.19) ────────────────────
+
+    def get_compras_overview(self, month: str) -> dict:
+        """Datos del mes de compras: KPIs, serie diaria, top proveedores y
+        productos, lista de documentos. Reemplaza /plan-compras como vista
+        operacional y se conecta con el calendario del frontend.
+
+        month: formato YYYY-MM
+        """
+        # 1. KPIs y serie diaria del mes
+        kpis_row = self._query("""
+            SELECT
+                ROUND(COALESCE(SUM(total_factura), 0), 2) AS total_compras,
+                COUNT(*) AS total_documentos,
+                COUNT(DISTINCT nit_proveedor) AS proveedores_unicos,
+                ROUND(COALESCE(AVG(total_factura), 0), 2) AS ticket_promedio
+            FROM silver_fact_compras
+            WHERE STRFTIME(business_date, '%Y-%m') = ?
+        """, [month])
+        k = kpis_row[0] if kpis_row else {}
+
+        # 2. Compras por día del mes (para calendario)
+        dias_rows = self._query("""
+            SELECT
+                CAST(business_date AS VARCHAR) AS date,
+                EXTRACT(day FROM business_date)::INTEGER AS day,
+                ROUND(SUM(total_factura), 2) AS total,
+                COUNT(*) AS num_documentos
+            FROM silver_fact_compras
+            WHERE STRFTIME(business_date, '%Y-%m') = ?
+            GROUP BY business_date
+            ORDER BY business_date
+        """, [month])
+
+        # 3. Top proveedores del mes
+        top_prov_rows = self._query("""
+            SELECT
+                nit_proveedor,
+                nombre_proveedor,
+                COUNT(*) AS num_documentos,
+                ROUND(SUM(total_factura), 2) AS total_compras
+            FROM silver_fact_compras
+            WHERE STRFTIME(business_date, '%Y-%m') = ?
+              AND nit_proveedor IS NOT NULL
+            GROUP BY nit_proveedor, nombre_proveedor
+            ORDER BY total_compras DESC
+            LIMIT 10
+        """, [month])
+
+        # 4. Top productos del mes (por valor comprado)
+        top_prod_rows = self._query("""
+            SELECT
+                cd.cod_producto,
+                COALESCE(dp.nombre_producto, ANY_VALUE(cd.nombre_detalle), 'SIN NOMBRE') AS nom_producto,
+                ROUND(SUM(cd.cantidad), 2) AS cantidad_total,
+                ROUND(SUM(cd.total_detalle), 2) AS valor_total,
+                dp.presentacion
+            FROM silver_fact_compras_detalle cd
+            LEFT JOIN silver_dim_producto dp ON cd.cod_producto = dp.cod_producto
+            WHERE STRFTIME(cd.business_date, '%Y-%m') = ?
+            GROUP BY cd.cod_producto, dp.nombre_producto, dp.presentacion
+            ORDER BY valor_total DESC
+            LIMIT 15
+        """, [month])
+
+        return {
+            "month": month,
+            "total_compras": float(k.get("total_compras") or 0),
+            "total_documentos": int(k.get("total_documentos") or 0),
+            "proveedores_unicos": int(k.get("proveedores_unicos") or 0),
+            "ticket_promedio": float(k.get("ticket_promedio") or 0),
+            "dias": [
+                {
+                    "date": d["date"],
+                    "day": int(d["day"]),
+                    "total": float(d["total"] or 0),
+                    "num_documentos": int(d["num_documentos"] or 0),
+                }
+                for d in dias_rows
+            ],
+            "top_proveedores": [
+                {
+                    "nit": p["nit_proveedor"],
+                    "nombre": p["nombre_proveedor"] or "?",
+                    "num_documentos": int(p["num_documentos"]),
+                    "total_compras": float(p["total_compras"] or 0),
+                }
+                for p in top_prov_rows
+            ],
+            "top_productos": [
+                {
+                    "cod_producto": p["cod_producto"],
+                    "nom_producto": p["nom_producto"],
+                    "cantidad_total": float(p["cantidad_total"] or 0),
+                    "valor_total": float(p["valor_total"] or 0),
+                    "presentacion": p["presentacion"],
+                    "unidad_medida": _presentacion_to_unidad(p["presentacion"]),
+                }
+                for p in top_prod_rows
+            ],
+        }
+
+    def get_compras_historico(self) -> dict:
+        """Serie mensual histórica de compras. Para el gráfico de tendencia
+        y comparativo año-vs-año.
+        """
+        rows = self._query("""
+            SELECT
+                STRFTIME(business_date, '%Y-%m') AS mes,
+                ROUND(SUM(total_factura), 2) AS total,
+                COUNT(*) AS num_documentos,
+                COUNT(DISTINCT nit_proveedor) AS proveedores_unicos
+            FROM silver_fact_compras
+            GROUP BY mes
+            ORDER BY mes
+        """)
+        totals = self._query("""
+            SELECT
+                ROUND(SUM(total_factura), 2) AS total_compras,
+                COUNT(*) AS total_documentos,
+                COUNT(DISTINCT nit_proveedor) AS proveedores_totales,
+                CAST(MIN(business_date) AS VARCHAR) AS fecha_primera_compra,
+                CAST(MAX(business_date) AS VARCHAR) AS fecha_ultima_compra
+            FROM silver_fact_compras
+        """)
+        t = totals[0] if totals else {}
+        return {
+            "total_compras": float(t.get("total_compras") or 0),
+            "total_documentos": int(t.get("total_documentos") or 0),
+            "proveedores_totales": int(t.get("proveedores_totales") or 0),
+            "fecha_primera_compra": t.get("fecha_primera_compra"),
+            "fecha_ultima_compra": t.get("fecha_ultima_compra"),
+            "serie": [
+                {
+                    "mes": r["mes"],
+                    "total": float(r["total"] or 0),
+                    "num_documentos": int(r["num_documentos"]),
+                    "proveedores_unicos": int(r["proveedores_unicos"]),
+                }
+                for r in rows
+            ],
+        }
+
+    def get_compras_por_proveedor(
+        self,
+        fecha_inicio: str,
+        fecha_fin: str,
+    ) -> dict:
+        """Agrupado por proveedor en un rango de fechas. Cada proveedor con
+        # documentos, total y top productos que les compraste.
+        """
+        prov_rows = self._query("""
+            SELECT
+                h.nit_proveedor AS nit,
+                COALESCE(MAX(h.nombre_proveedor), '?') AS nombre,
+                COUNT(*) AS num_documentos,
+                ROUND(SUM(h.total_factura), 2) AS total_compras,
+                CAST(MIN(h.business_date) AS VARCHAR) AS primera_compra,
+                CAST(MAX(h.business_date) AS VARCHAR) AS ultima_compra
+            FROM silver_fact_compras h
+            WHERE h.business_date BETWEEN ? AND ?
+              AND h.nit_proveedor IS NOT NULL
+            GROUP BY h.nit_proveedor
+            ORDER BY total_compras DESC
+        """, [fecha_inicio, fecha_fin])
+        return {
+            "fecha_inicio": fecha_inicio,
+            "fecha_fin": fecha_fin,
+            "proveedores": [
+                {
+                    "nit": p["nit"],
+                    "nombre": p["nombre"],
+                    "num_documentos": int(p["num_documentos"]),
+                    "total_compras": float(p["total_compras"] or 0),
+                    "primera_compra": p["primera_compra"],
+                    "ultima_compra": p["ultima_compra"],
+                }
+                for p in prov_rows
+            ],
+        }
+
     # ── Inventario inteligente (V1.17 — refactor /dashboards/inventario) ──
     #
     # Endpoint único que clasifica TODOS los SKUs en buckets de acción según
