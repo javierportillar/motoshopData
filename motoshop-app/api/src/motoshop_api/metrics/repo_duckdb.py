@@ -2866,6 +2866,8 @@ class DuckDBMetricsRepo:
                 SELECT
                     dp.cod_producto,
                     COALESCE(NULLIF(TRIM(dp.nombre_producto), ''), dp.cod_producto) AS nombre,
+                    COALESCE(ct.comprado_total, 0) AS comprado_total,
+                    COALESCE(vt.vendido_total, 0) AS vendido_total,
                     ROUND(COALESCE(ct.comprado_total, 0) - COALESCE(vt.vendido_total, 0), 2) AS cantidad_actual,
                     COALESCE(c.costo_producto, 0) AS costo_unit,
                     COALESCE(dp.precio_venta_con_iva, 0) AS precio,
@@ -2896,6 +2898,8 @@ class DuckDBMetricsRepo:
                 SELECT
                     b.cod_producto,
                     b.nombre,
+                    ROUND(COALESCE(b.comprado_total, 0), 2) AS comprado_total,
+                    ROUND(COALESCE(b.vendido_total, 0), 2) AS vendido_total,
                     b.cantidad_actual,
                     b.costo_unit,
                     b.precio,
@@ -3296,22 +3300,19 @@ class DuckDBMetricsRepo:
             ORDER BY m.mes
         """, [sku, sku, sku, sku])
 
-        # Últimos movimientos: últimos 25 de cada tipo, mezclados ordenados
-        # Para que siempre aparezcan compras aunque el producto venda muy seguido
+        # Movimientos completos del producto, mezclados y ordenados.
+        # V1.16: antes traía últimos 25 de cada tipo. Eso ocultaba ventas
+        # históricas y hacía que el stock pareciera no cuadrar en la ficha.
         movimientos = self._query("""
             WITH ventas AS (
                 SELECT business_date AS fecha, 'venta' AS tipo, cantidad,
                        ROUND(total_detalle, 2) AS valor, num_documento
                 FROM silver_fact_ventas_detalle WHERE cod_producto = ?
-                ORDER BY business_date DESC
-                LIMIT 25
             ),
             compras AS (
                 SELECT business_date AS fecha, 'compra' AS tipo, cantidad,
                        ROUND(total_detalle, 2) AS valor, num_documento
                 FROM silver_fact_compras_detalle WHERE cod_producto = ?
-                ORDER BY business_date DESC
-                LIMIT 25
             )
             SELECT * FROM ventas
             UNION ALL
