@@ -460,18 +460,21 @@ def product_analytics(
     )
 
 
-@router.get("/metrics/product-detail/{sku}")
+@router.get("/metrics/product-detail")
 @limiter.limit("60/minute")
 def product_detail(
     request: Request,
-    sku: str,
+    sku: str = Query(..., description="Código del producto (puede contener /, se pasa como query param para evitar problemas de encoding)"),
     window: int = Query(default=180, ge=30, le=720),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
     tenant: str = Depends(get_tenant),
 ):
     """Ficha completa de un producto: todas las métricas + timeline mensual
-    de compras vs ventas + últimos movimientos."""
+    de compras vs ventas + últimos movimientos.
+
+    NOTA: SKU se pasa como query parameter (no path) porque muchos SKUs
+    contienen '/' en su nombre y rompen el route matching si van en el path."""
     return _cached_or_fetch(
         f"{tenant}:prod-detail:{sku}:{window}",
         lambda: repo.get_product_detail(sku, window),
