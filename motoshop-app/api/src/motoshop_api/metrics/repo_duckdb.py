@@ -3063,12 +3063,44 @@ class DuckDBMetricsRepo:
                 r["accion"] = self._accion_for(r.get("estado", ""), r.get("abc", "C"))
             return rows
 
+        # V1.24: separamos COUNT(*) real del SELECT con LIMIT para no mentir.
+        # Antes 'total' era len(items_limitados) → siempre topeaba en 50 aunque
+        # hubiera 200 productos en el bucket.
+        quiebre_where = "estado IN ('agotado', 'quiebre') AND NOT es_servicio"
+        capital_where = "estado = 'sobrestock'"
+        importantes_where = (
+            "abc IN ('A', 'B') AND unidades_win > 0 AND NOT es_servicio "
+            "AND (dias_sin_compra IS NULL OR dias_sin_compra > 45)"
+        )
+        dormidos_where = "estado = 'dormido' AND valor_inventario > 0"
+
+        def _count(where: str) -> int:
+            row = self._query(f"WITH {cte} SELECT COUNT(*) AS n, ROUND(SUM(valor_inventario),2) AS v FROM metrics WHERE {where}")
+            if not row:
+                return 0
+            return int(row[0].get("n") or 0)
+
+        def _sum_valor(where: str) -> float:
+            row = self._query(f"WITH {cte} SELECT ROUND(COALESCE(SUM(valor_inventario),0),2) AS v FROM metrics WHERE {where}")
+            if not row:
+                return 0.0
+            return float(row[0].get("v") or 0)
+
+        quiebre_total = _count(quiebre_where)
+        quiebre_valor = _sum_valor(quiebre_where)
+        capital_total = _count(capital_where)
+        capital_valor = _sum_valor(capital_where)
+        importantes_total = _count(importantes_where)
+        importantes_valor = _sum_valor(importantes_where)
+        dormidos_total = _count(dormidos_where)
+        dormidos_valor = _sum_valor(dormidos_where)
+
         quiebre = _add_accion(self._query(f"""
             WITH {cte}
             SELECT cod_producto, nombre, cantidad_actual, dias_stock, velocidad_mensual,
                    pct_revenue, abc, estado, valor_inventario, revenue_win
             FROM metrics
-            WHERE estado IN ('agotado', 'quiebre') AND NOT es_servicio
+            WHERE {quiebre_where}
             ORDER BY pct_revenue DESC, dias_stock ASC NULLS FIRST
             LIMIT 50
         """))
@@ -3078,7 +3110,7 @@ class DuckDBMetricsRepo:
             SELECT cod_producto, nombre, cantidad_actual, dias_stock, valor_inventario,
                    dias_sin_venta, abc, estado, pct_revenue, velocidad_mensual
             FROM metrics
-            WHERE estado = 'sobrestock'
+            WHERE {capital_where}
             ORDER BY valor_inventario DESC
             LIMIT 50
         """))
@@ -3088,8 +3120,7 @@ class DuckDBMetricsRepo:
             SELECT cod_producto, nombre, cantidad_actual, dias_stock, dias_sin_compra,
                    pct_revenue, abc, estado, valor_inventario, velocidad_mensual, proveedor
             FROM metrics
-            WHERE abc IN ('A', 'B') AND unidades_win > 0 AND NOT es_servicio
-              AND (dias_sin_compra IS NULL OR dias_sin_compra > 45)
+            WHERE {importantes_where}
             ORDER BY pct_revenue DESC
             LIMIT 50
         """))
@@ -3099,7 +3130,7 @@ class DuckDBMetricsRepo:
             SELECT cod_producto, nombre, cantidad_actual, valor_inventario,
                    dias_sin_venta, abc, estado, ultima_venta
             FROM metrics
-            WHERE estado = 'dormido' AND valor_inventario > 0
+            WHERE {dormidos_where}
             ORDER BY valor_inventario DESC
             LIMIT 50
         """))
@@ -3131,24 +3162,24 @@ class DuckDBMetricsRepo:
             "estados": estados,
             "listas": {
                 "quiebre_inminente": {
-                    "total": len(quiebre),
+                    "total": quiebre_total,
                     "items": quiebre[:8],
-                    "valor": round(sum(float(r["valor_inventario"] or 0) for r in quiebre), 2),
+                    "valor": quiebre_valor,
                 },
                 "capital_atrapado": {
-                    "total": len(capital),
+                    "total": capital_total,
                     "items": capital[:8],
-                    "valor": round(sum(float(r["valor_inventario"] or 0) for r in capital), 2),
+                    "valor": capital_valor,
                 },
                 "importantes_sin_recompra": {
-                    "total": len(importantes),
+                    "total": importantes_total,
                     "items": importantes[:8],
-                    "valor": round(sum(float(r["valor_inventario"] or 0) for r in importantes), 2),
+                    "valor": importantes_valor,
                 },
                 "dormidos_premium": {
-                    "total": len(dormidos),
+                    "total": dormidos_total,
                     "items": dormidos[:8],
-                    "valor": round(sum(float(r["valor_inventario"] or 0) for r in dormidos), 2),
+                    "valor": dormidos_valor,
                 },
             },
         }
