@@ -74,6 +74,12 @@ class MetricsRepoProtocol(Protocol):
     def get_salud_catalogo(self) -> dict: ...  # V1.16
     def get_heatmap_dia_hora(self, fecha_inicio: str, fecha_fin: str) -> dict: ...  # V1.16
     def get_vendor_data_flag(self) -> dict: ...  # V1.16
+    def get_inventario_overview(  # V1.17
+        self,
+        lead_time_dias: int = 7,
+        colchon_dias: int = 14,
+        umbral_sobrestock_dias: int = 180,
+    ) -> dict: ...
     def get_hours_peak(self, fecha_inicio: str, fecha_fin: str) -> dict: ...  # V1.11
     def get_analisis_balance(  # V1.11
         self,

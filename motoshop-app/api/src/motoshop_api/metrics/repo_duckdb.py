@@ -3200,6 +3200,196 @@ class DuckDBMetricsRepo:
             "margen_neto_pct": margen_neto_pct,
         }
 
+    # ── Inventario inteligente (V1.17 — refactor /dashboards/inventario) ──
+    #
+    # Endpoint único que clasifica TODOS los SKUs en buckets de acción según
+    # combinación stock × rotación. Reemplaza la lógica fragmentada que
+    # estaba esparcida en /productos, /abc, /plan-compras, /dormidos.
+    #
+    # Filosofía: una sola fuente de verdad para la pregunta "¿qué hago con
+    # cada producto del catálogo?". El front presenta esto en 4 tabs
+    # (Resumen, Comprar, Optimizar, Catálogo) pero la lógica vive acá.
+
+    def get_inventario_overview(
+        self,
+        lead_time_dias: int = 7,
+        colchon_dias: int = 14,
+        umbral_sobrestock_dias: int = 180,
+    ) -> dict:
+        """Devuelve TODOS los SKUs con su clasificación + métricas.
+
+        Clasificación (un SKU cae en el primer bucket que matchea):
+          1. COMPRAR_YA: stock<=0 AND vendió en últimos 90d (perder ventas)
+          2. COMPRAR_PRONTO: stock>0 AND cobertura<lead_time (a quebrar pronto)
+          3. SOBRESTOCK: stock>0 AND cobertura>umbral (capital innecesario)
+          4. LIQUIDAR: stock>0 AND vendió alguna vez pero NO en últ 90d
+          5. ZOMBIE_CON_STOCK: stock>0 AND nunca vendió histórico (zombie acción)
+          6. OK: stock>0 AND cobertura entre lead_time y umbral (sano)
+          7. SIN_ACCION: stock<=0 sin venta reciente (descatalogable)
+
+        Cantidad sugerida a comprar (cuando aplica):
+          sugerido = ceil(rotacion_diaria * (lead_time + colchon)) - stock_actual
+        """
+        from math import ceil
+
+        rows = self._query(f"""
+            WITH v90 AS (
+                SELECT cod_producto,
+                       SUM(cantidad_total) AS uds_90d,
+                       SUM(valor_total) AS rev_90d
+                FROM gold_mart_ventas_diarias_sku
+                WHERE business_date >= CURRENT_DATE - INTERVAL '90 days'
+                GROUP BY cod_producto
+            ),
+            v180 AS (
+                SELECT cod_producto, SUM(cantidad_total) AS uds_180d
+                FROM gold_mart_ventas_diarias_sku
+                WHERE business_date >= CURRENT_DATE - INTERVAL '180 days'
+                GROUP BY cod_producto
+            ),
+            v_global AS (
+                SELECT cod_producto, MAX(business_date) AS ultima_venta_global
+                FROM gold_mart_ventas_diarias_sku
+                GROUP BY cod_producto
+            ),
+            uc AS (
+                SELECT cod_producto, MAX(business_date) AS ultima_compra
+                FROM silver_fact_compras_detalle
+                GROUP BY cod_producto
+            ),
+            abc AS (
+                SELECT cod_producto, abc
+                FROM gold_mart_abc_xyz
+                WHERE business_month = (SELECT MAX(business_month) FROM gold_mart_abc_xyz)
+            )
+            SELECT
+                dp.cod_producto,
+                dp.nombre_producto,
+                dp.presentacion,
+                COALESCE(dp.existencia, 0) AS stock,
+                COALESCE(v90.uds_90d, 0) AS uds_90d,
+                COALESCE(v90.rev_90d, 0) AS rev_90d,
+                COALESCE(v180.uds_180d, 0) AS uds_180d,
+                CAST(v_global.ultima_venta_global AS VARCHAR) AS ultima_venta,
+                CAST(uc.ultima_compra AS VARCHAR) AS ultima_compra,
+                COALESCE(NULLIF(dp.costo_producto, 0), dp.costo_ultima_compra, 0) AS costo_unit,
+                COALESCE(dp.precio_venta_con_iva, dp.precio_venta_sin_iva, 0) AS precio_venta,
+                abc.abc
+            FROM silver_dim_producto dp
+            LEFT JOIN v90 ON dp.cod_producto = v90.cod_producto
+            LEFT JOIN v180 ON dp.cod_producto = v180.cod_producto
+            LEFT JOIN v_global ON dp.cod_producto = v_global.cod_producto
+            LEFT JOIN uc ON dp.cod_producto = uc.cod_producto
+            LEFT JOIN abc ON dp.cod_producto = abc.cod_producto
+        """)
+
+        # Clasificar en Python (más simple que CASEs anidados en SQL)
+        items = []
+        for r in rows:
+            stock = float(r["stock"] or 0)
+            uds_90d = float(r["uds_90d"] or 0)
+            uds_180d = float(r["uds_180d"] or 0)
+            rev_90d = float(r["rev_90d"] or 0)
+            costo = float(r["costo_unit"] or 0)
+            precio = float(r["precio_venta"] or 0)
+            ultima_venta = r["ultima_venta"]
+
+            # Rotación diaria (uds/día) basada en 90 días
+            rotacion_diaria = uds_90d / 90.0
+            # Cobertura: cuántos días dura el stock al ritmo actual
+            cobertura_dias = (stock / rotacion_diaria) if rotacion_diaria > 0 else None
+
+            # Días desde última venta (histórico real)
+            dias_desde_venta = None
+            if ultima_venta and ultima_venta != "1970-01-01":
+                from datetime import date
+                try:
+                    uv = date.fromisoformat(str(ultima_venta))
+                    dias_desde_venta = (date.today() - uv).days
+                except (ValueError, TypeError):
+                    pass
+            nunca_vendio = ultima_venta is None or ultima_venta == "1970-01-01"
+
+            # Sugerencia de compra
+            objetivo_dias = lead_time_dias + colchon_dias
+            sugerido = 0
+            if rotacion_diaria > 0:
+                sugerido = max(0, int(ceil(rotacion_diaria * objetivo_dias - stock)))
+
+            # Clasificación (orden importa: primer match gana)
+            if stock <= 0 and uds_90d > 0:
+                accion = "comprar_ya"
+            elif stock > 0 and cobertura_dias is not None and cobertura_dias < lead_time_dias:
+                accion = "comprar_pronto"
+            elif stock > 0 and cobertura_dias is not None and cobertura_dias > umbral_sobrestock_dias:
+                accion = "sobrestock"
+            elif stock > 0 and uds_90d == 0 and not nunca_vendio:
+                accion = "liquidar"
+            elif stock > 0 and nunca_vendio:
+                accion = "zombie_con_stock"
+            elif stock > 0 and rotacion_diaria > 0:
+                accion = "ok"
+            else:
+                accion = "sin_accion"  # stock=0 sin venta reciente
+
+            capital = stock * costo
+            ingreso_perdido_estimado = 0.0
+            if accion == "comprar_ya":
+                # Aprox: 30 días sin stock × rotación × precio
+                ingreso_perdido_estimado = round(rotacion_diaria * 30 * precio, 0)
+
+            items.append({
+                "cod_producto": r["cod_producto"],
+                "nom_producto": r["nombre_producto"] or "",
+                "stock": stock,
+                "uds_90d": uds_90d,
+                "rev_90d": rev_90d,
+                "rotacion_diaria": round(rotacion_diaria, 3),
+                "cobertura_dias": int(cobertura_dias) if cobertura_dias is not None else None,
+                "ultima_venta": str(ultima_venta) if ultima_venta and ultima_venta != "1970-01-01" else None,
+                "ultima_compra": str(r["ultima_compra"]) if r["ultima_compra"] else None,
+                "dias_desde_venta": dias_desde_venta,
+                "costo_unit": round(costo, 2),
+                "precio_venta": round(precio, 2),
+                "capital_inmovilizado": round(capital, 0),
+                "sugerido_comprar": sugerido,
+                "abc": r["abc"],
+                "presentacion": r["presentacion"],
+                "unidad_medida": _presentacion_to_unidad(r["presentacion"]),
+                "accion": accion,
+                "ingreso_perdido_estimado": ingreso_perdido_estimado,
+            })
+
+        # Resumen agregado para el tab "Resumen"
+        from collections import Counter
+        cnt = Counter(it["accion"] for it in items)
+        valor_total_inv = sum(it["capital_inmovilizado"] for it in items)
+        capital_ocioso = sum(
+            it["capital_inmovilizado"] for it in items
+            if it["accion"] in ("liquidar", "zombie_con_stock", "sobrestock")
+        )
+        ingreso_perdido_total = sum(it["ingreso_perdido_estimado"] for it in items)
+
+        return {
+            "total_skus": len(items),
+            "lead_time_dias": lead_time_dias,
+            "colchon_dias": colchon_dias,
+            "umbral_sobrestock_dias": umbral_sobrestock_dias,
+            "valor_total_inventario": round(valor_total_inv, 0),
+            "capital_ocioso": round(capital_ocioso, 0),
+            "ingreso_perdido_estimado_mensual": round(ingreso_perdido_total, 0),
+            "buckets_count": {
+                "comprar_ya": cnt.get("comprar_ya", 0),
+                "comprar_pronto": cnt.get("comprar_pronto", 0),
+                "sobrestock": cnt.get("sobrestock", 0),
+                "liquidar": cnt.get("liquidar", 0),
+                "zombie_con_stock": cnt.get("zombie_con_stock", 0),
+                "ok": cnt.get("ok", 0),
+                "sin_accion": cnt.get("sin_accion", 0),
+            },
+            "items": items,
+        }
+
 
 _FORMAPAGO_LABELS = {
     "F01": "Contado/Efectivo",

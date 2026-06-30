@@ -878,3 +878,34 @@ def vendor_data_flag(
         repo.get_vendor_data_flag,
         ttl=600,
     )
+
+
+# ── V1.17: Inventario inteligente (refactor /dashboards/inventario) ──
+
+@router.get("/metrics/inventario-overview")
+@limiter.limit("30/minute")
+def inventario_overview(
+    request: Request,
+    lead_time_dias: int = Query(default=7, ge=1, le=90),
+    colchon_dias: int = Query(default=14, ge=0, le=180),
+    umbral_sobrestock_dias: int = Query(default=180, ge=30, le=720),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+):
+    """Endpoint único de inventario. Devuelve TODOS los SKUs clasificados
+    en buckets de acción (comprar_ya, comprar_pronto, sobrestock, liquidar,
+    zombie_con_stock, ok, sin_accion) + cobertura, sugerencia de compra,
+    capital inmovilizado y resumen agregado.
+
+    Reemplaza la lógica fragmentada de /abc, /plan-compras, /dormidos
+    consolidando todo en una sola fuente de verdad."""
+    return _cached_or_fetch(
+        f"{tenant}:inv-overview:{lead_time_dias}:{colchon_dias}:{umbral_sobrestock_dias}",
+        lambda: repo.get_inventario_overview(
+            lead_time_dias=lead_time_dias,
+            colchon_dias=colchon_dias,
+            umbral_sobrestock_dias=umbral_sobrestock_dias,
+        ),
+        ttl=300,
+    )
