@@ -83,6 +83,10 @@ class MetricsRepoProtocol(Protocol):
     def get_compras_overview(self, month: str) -> dict: ...  # V1.19
     def get_compras_historico(self) -> dict: ...  # V1.19
     def get_compras_por_proveedor(self, fecha_inicio: str, fecha_fin: str) -> dict: ...  # V1.19
+    def get_purchases_day_grouped(self, date: str) -> dict: ...  # V1.20
+    def get_compras_proveedor_detalle(  # V1.20
+        self, nit_proveedor: str, fecha_inicio: str, fecha_fin: str,
+    ) -> dict: ...
     def get_hours_peak(self, fecha_inicio: str, fecha_fin: str) -> dict: ...  # V1.11
     def get_analisis_balance(  # V1.11
         self,

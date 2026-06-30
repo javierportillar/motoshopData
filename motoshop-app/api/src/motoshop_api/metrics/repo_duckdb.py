@@ -2466,7 +2466,7 @@ class DuckDBMetricsRepo:
     # ── Purchases Day Detail (V2.0) ────────────────────────────────────
 
     def get_purchases_day_detail(self, date: str) -> dict:
-        """Retorna todas las compras de un día específico."""
+        """Retorna todas las compras de un día específico (plano — legacy V1)."""
         rows = self._query("""
             SELECT
                 cd.num_documento,
@@ -2490,6 +2490,218 @@ class DuckDBMetricsRepo:
             "total_compras": total_compras,
             "total_documentos": len(docs),
             "items": rows,
+        }
+
+    def get_purchases_day_grouped(self, date: str) -> dict:
+        """V1.20: detalle del día AGRUPADO por documento + proveedor.
+
+        Estructura: { documentos: [{num_documento, nit_proveedor,
+        nombre_proveedor, total_factura, items: [...]}] }.
+
+        Reemplaza el shape plano de get_purchases_day_detail para que el
+        UI pueda mostrar 'cada compra' con su proveedor y productos
+        respectivos. Cada documento es UNA factura del proveedor.
+        """
+        # Headers del día (uno por documento) — para nit/nombre proveedor
+        headers_rows = self._query("""
+            SELECT
+                num_documento,
+                cod_clase,
+                nit_proveedor,
+                nombre_proveedor,
+                ROUND(total_factura, 2) AS total_factura
+            FROM silver_fact_compras
+            WHERE business_date = ?
+            ORDER BY num_documento
+        """, [date])
+
+        # Items con detalle de producto
+        items_rows = self._query("""
+            SELECT
+                cd.num_documento,
+                cd.cod_clase,
+                cd.cod_producto,
+                COALESCE(dp.nombre_producto, cd.nombre_detalle, 'SIN NOMBRE') AS nom_producto,
+                ROUND(cd.cantidad, 2) AS cantidad,
+                ROUND(cd.valor_unitario, 2) AS valor_unitario,
+                ROUND(cd.costo_producto, 2) AS costo_producto,
+                ROUND(cd.total_detalle, 2) AS total,
+                dp.presentacion
+            FROM silver_fact_compras_detalle cd
+            LEFT JOIN silver_dim_producto dp ON cd.cod_producto = dp.cod_producto
+            WHERE cd.business_date = ?
+            ORDER BY cd.num_documento, cd.cod_producto
+        """, [date])
+
+        # Agrupar items por documento
+        items_by_doc: dict[tuple, list[dict]] = {}
+        for it in items_rows:
+            key = (it["num_documento"], it["cod_clase"])
+            items_by_doc.setdefault(key, []).append({
+                "cod_producto": it["cod_producto"],
+                "nom_producto": it["nom_producto"],
+                "cantidad": float(it["cantidad"] or 0),
+                "valor_unitario": float(it["valor_unitario"] or 0),
+                "costo_producto": float(it["costo_producto"] or 0),
+                "total": float(it["total"] or 0),
+                "presentacion": it["presentacion"],
+                "unidad_medida": _presentacion_to_unidad(it["presentacion"]),
+            })
+
+        documentos = []
+        for h in headers_rows:
+            key = (h["num_documento"], h["cod_clase"])
+            items = items_by_doc.get(key, [])
+            documentos.append({
+                "num_documento": h["num_documento"],
+                "cod_clase": h["cod_clase"],
+                "nit_proveedor": h["nit_proveedor"],
+                "nombre_proveedor": h["nombre_proveedor"] or "?",
+                "total_factura": float(h["total_factura"] or 0),
+                "num_items": len(items),
+                "items": items,
+            })
+
+        # Casos borde: items que no tienen header (data inconsistente)
+        for (num_doc, cod_clase), items in items_by_doc.items():
+            if not any(d["num_documento"] == num_doc and d["cod_clase"] == cod_clase for d in documentos):
+                documentos.append({
+                    "num_documento": num_doc,
+                    "cod_clase": cod_clase,
+                    "nit_proveedor": None,
+                    "nombre_proveedor": "? (sin header)",
+                    "total_factura": sum(i["total"] for i in items),
+                    "num_items": len(items),
+                    "items": items,
+                })
+
+        total_compras = sum(d["total_factura"] for d in documentos)
+        return {
+            "date": date,
+            "total_compras": round(total_compras, 2),
+            "total_documentos": len(documentos),
+            "documentos": documentos,
+        }
+
+    def get_compras_proveedor_detalle(
+        self,
+        nit_proveedor: str,
+        fecha_inicio: str,
+        fecha_fin: str,
+    ) -> dict:
+        """V1.20: detalle de compras a un proveedor específico en un rango.
+
+        Lista de documentos (cada uno con sus items) que se compraron a
+        ese proveedor en el período. Útil para click en proveedor del
+        top 10 mensual o histórico.
+        """
+        # Headers del proveedor en el rango
+        headers_rows = self._query("""
+            SELECT
+                num_documento,
+                cod_clase,
+                CAST(business_date AS VARCHAR) AS fecha,
+                ROUND(total_factura, 2) AS total_factura,
+                nombre_proveedor
+            FROM silver_fact_compras
+            WHERE nit_proveedor = ?
+              AND business_date BETWEEN ? AND ?
+            ORDER BY business_date DESC, num_documento
+        """, [nit_proveedor, fecha_inicio, fecha_fin])
+
+        if not headers_rows:
+            return {
+                "nit_proveedor": nit_proveedor,
+                "nombre_proveedor": "?",
+                "fecha_inicio": fecha_inicio,
+                "fecha_fin": fecha_fin,
+                "total_compras": 0.0,
+                "total_documentos": 0,
+                "documentos": [],
+                "productos_resumen": [],
+            }
+
+        nombre_prov = headers_rows[0]["nombre_proveedor"] or "?"
+
+        # Items del proveedor en el rango
+        items_rows = self._query("""
+            SELECT
+                cd.num_documento,
+                cd.cod_clase,
+                CAST(cd.business_date AS VARCHAR) AS fecha,
+                cd.cod_producto,
+                COALESCE(dp.nombre_producto, cd.nombre_detalle, 'SIN NOMBRE') AS nom_producto,
+                ROUND(cd.cantidad, 2) AS cantidad,
+                ROUND(cd.valor_unitario, 2) AS valor_unitario,
+                ROUND(cd.total_detalle, 2) AS total,
+                dp.presentacion
+            FROM silver_fact_compras_detalle cd
+            LEFT JOIN silver_fact_compras h
+              ON h.num_documento = cd.num_documento AND h.cod_clase = cd.cod_clase
+            LEFT JOIN silver_dim_producto dp ON cd.cod_producto = dp.cod_producto
+            WHERE h.nit_proveedor = ?
+              AND cd.business_date BETWEEN ? AND ?
+            ORDER BY cd.business_date DESC, cd.num_documento, cd.cod_producto
+        """, [nit_proveedor, fecha_inicio, fecha_fin])
+
+        items_by_doc: dict[tuple, list[dict]] = {}
+        for it in items_rows:
+            key = (it["num_documento"], it["cod_clase"])
+            items_by_doc.setdefault(key, []).append({
+                "cod_producto": it["cod_producto"],
+                "nom_producto": it["nom_producto"],
+                "cantidad": float(it["cantidad"] or 0),
+                "valor_unitario": float(it["valor_unitario"] or 0),
+                "total": float(it["total"] or 0),
+                "presentacion": it["presentacion"],
+                "unidad_medida": _presentacion_to_unidad(it["presentacion"]),
+            })
+
+        documentos = []
+        for h in headers_rows:
+            key = (h["num_documento"], h["cod_clase"])
+            items = items_by_doc.get(key, [])
+            documentos.append({
+                "num_documento": h["num_documento"],
+                "cod_clase": h["cod_clase"],
+                "fecha": h["fecha"],
+                "total_factura": float(h["total_factura"] or 0),
+                "num_items": len(items),
+                "items": items,
+            })
+
+        # Resumen de productos agregado (cuánto compraste de cada cosa a este prov en el rango)
+        prod_agg: dict[str, dict] = {}
+        for it in items_rows:
+            cod = it["cod_producto"]
+            if cod not in prod_agg:
+                prod_agg[cod] = {
+                    "cod_producto": cod,
+                    "nom_producto": it["nom_producto"],
+                    "presentacion": it["presentacion"],
+                    "unidad_medida": _presentacion_to_unidad(it["presentacion"]),
+                    "cantidad_total": 0.0,
+                    "valor_total": 0.0,
+                    "veces_comprado": 0,
+                }
+            prod_agg[cod]["cantidad_total"] += float(it["cantidad"] or 0)
+            prod_agg[cod]["valor_total"] += float(it["total"] or 0)
+            prod_agg[cod]["veces_comprado"] += 1
+
+        productos_resumen = sorted(
+            prod_agg.values(), key=lambda p: -p["valor_total"]
+        )
+
+        total_compras = sum(d["total_factura"] for d in documentos)
+        return {
+            "nit_proveedor": nit_proveedor,
+            "nombre_proveedor": nombre_prov,
+            "fecha_inicio": fecha_inicio,
+            "fecha_fin": fecha_fin,
+            "total_compras": round(total_compras, 2),
+            "total_documentos": len(documentos),
+            "documentos": documentos,
+            "productos_resumen": productos_resumen,
         }
 
     # ══════════════════════════════════════════════════════════════════════
@@ -3303,8 +3515,9 @@ class DuckDBMetricsRepo:
         }
 
     def get_compras_historico(self) -> dict:
-        """Serie mensual histórica de compras. Para el gráfico de tendencia
-        y comparativo año-vs-año.
+        """V1.19/V1.20: serie mensual histórica de compras + top proveedores
+        y productos del histórico completo. Para el gráfico de tendencia,
+        comparativo año-vs-año y vistas agregadas.
         """
         rows = self._query("""
             SELECT
@@ -3325,6 +3538,39 @@ class DuckDBMetricsRepo:
                 CAST(MAX(business_date) AS VARCHAR) AS fecha_ultima_compra
             FROM silver_fact_compras
         """)
+
+        # V1.20: top proveedores histórico (con primera/última compra)
+        top_provs = self._query("""
+            SELECT
+                nit_proveedor,
+                COALESCE(MAX(nombre_proveedor), '?') AS nombre,
+                COUNT(*) AS num_documentos,
+                ROUND(SUM(total_factura), 2) AS total_compras,
+                CAST(MIN(business_date) AS VARCHAR) AS primera_compra,
+                CAST(MAX(business_date) AS VARCHAR) AS ultima_compra
+            FROM silver_fact_compras
+            WHERE nit_proveedor IS NOT NULL
+            GROUP BY nit_proveedor
+            ORDER BY total_compras DESC
+            LIMIT 15
+        """)
+
+        # V1.20: top productos histórico
+        top_prods = self._query("""
+            SELECT
+                cd.cod_producto,
+                COALESCE(dp.nombre_producto, ANY_VALUE(cd.nombre_detalle), 'SIN NOMBRE') AS nom_producto,
+                ROUND(SUM(cd.cantidad), 2) AS cantidad_total,
+                ROUND(SUM(cd.total_detalle), 2) AS valor_total,
+                COUNT(DISTINCT cd.num_documento) AS veces_comprado,
+                dp.presentacion
+            FROM silver_fact_compras_detalle cd
+            LEFT JOIN silver_dim_producto dp ON cd.cod_producto = dp.cod_producto
+            GROUP BY cd.cod_producto, dp.nombre_producto, dp.presentacion
+            ORDER BY valor_total DESC
+            LIMIT 15
+        """)
+
         t = totals[0] if totals else {}
         return {
             "total_compras": float(t.get("total_compras") or 0),
@@ -3340,6 +3586,29 @@ class DuckDBMetricsRepo:
                     "proveedores_unicos": int(r["proveedores_unicos"]),
                 }
                 for r in rows
+            ],
+            "top_proveedores": [
+                {
+                    "nit": p["nit_proveedor"],
+                    "nombre": p["nombre"],
+                    "num_documentos": int(p["num_documentos"]),
+                    "total_compras": float(p["total_compras"] or 0),
+                    "primera_compra": p["primera_compra"],
+                    "ultima_compra": p["ultima_compra"],
+                }
+                for p in top_provs
+            ],
+            "top_productos": [
+                {
+                    "cod_producto": p["cod_producto"],
+                    "nom_producto": p["nom_producto"],
+                    "cantidad_total": float(p["cantidad_total"] or 0),
+                    "valor_total": float(p["valor_total"] or 0),
+                    "veces_comprado": int(p["veces_comprado"]),
+                    "presentacion": p["presentacion"],
+                    "unidad_medida": _presentacion_to_unidad(p["presentacion"]),
+                }
+                for p in top_prods
             ],
         }
 

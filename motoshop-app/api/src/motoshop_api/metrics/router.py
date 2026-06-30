@@ -966,3 +966,46 @@ def compras_por_proveedor(
         lambda: repo.get_compras_por_proveedor(fecha_inicio, fecha_fin),
         ttl=300,
     )
+
+
+# ── V1.20: Compras enriquecidas (popup día + proveedor detalle) ──────────
+
+@router.get("/metrics/purchases-day-grouped")
+@limiter.limit("30/minute")
+def purchases_day_grouped(
+    request: Request,
+    date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+):
+    """Detalle del día agrupado por DOCUMENTO + PROVEEDOR. Cada compra
+    aparece con su proveedor y la lista de productos que se compraron
+    en ella. Reemplaza al shape plano de purchases-day-detail."""
+    return _cached_or_fetch(
+        f"{tenant}:purchases-day-grouped:{date}",
+        lambda: repo.get_purchases_day_grouped(date),
+        ttl=300,
+    )
+
+
+@router.get("/metrics/compras-proveedor-detalle")
+@limiter.limit("30/minute")
+def compras_proveedor_detalle(
+    request: Request,
+    nit_proveedor: str = Query(..., min_length=1),
+    fecha_inicio: str = Query(..., description="YYYY-MM-DD"),
+    fecha_fin: str = Query(..., description="YYYY-MM-DD"),
+    repo: MetricsRepoProtocol = Depends(get_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+):
+    """Detalle de compras a un proveedor específico en un rango. Devuelve
+    todos los documentos del proveedor + sus items + un resumen agregado
+    de qué productos le comprás más a ese proveedor."""
+    _validate_date_range(fecha_inicio, fecha_fin)
+    return _cached_or_fetch(
+        f"{tenant}:compras-prov-det:{nit_proveedor}:{fecha_inicio}:{fecha_fin}",
+        lambda: repo.get_compras_proveedor_detalle(nit_proveedor, fecha_inicio, fecha_fin),
+        ttl=300,
+    )
