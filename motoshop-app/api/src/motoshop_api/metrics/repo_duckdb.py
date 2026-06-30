@@ -4254,7 +4254,7 @@ class DuckDBMetricsRepo:
                 dp.cod_producto,
                 dp.nombre_producto,
                 dp.presentacion,
-                COALESCE(ct.comprado_total, 0) - COALESCE(vt.vendido_total, 0) AS stock,
+                GREATEST(0, COALESCE(ct.comprado_total, 0) - COALESCE(vt.vendido_total, 0)) AS stock,
                 COALESCE(v90.uds_90d, 0) AS uds_90d,
                 COALESCE(v90.rev_90d, 0) AS rev_90d,
                 COALESCE(v180.uds_180d, 0) AS uds_180d,
@@ -4309,6 +4309,7 @@ class DuckDBMetricsRepo:
                 sugerido = max(0, int(ceil(rotacion_diaria * objetivo_dias - stock)))
 
             # Clasificación (orden importa: primer match gana)
+            es_servicio = "SERVICIO" in str(r.get("nombre_producto", "")).upper()
             if stock <= 0 and uds_90d > 0:
                 accion = "comprar_ya"
             elif stock > 0 and cobertura_dias is not None and cobertura_dias < lead_time_dias:
@@ -4323,6 +4324,10 @@ class DuckDBMetricsRepo:
                 accion = "ok"
             else:
                 accion = "sin_accion"  # stock=0 sin venta reciente
+            # Los servicios (mantenimiento, mano de obra) no se compran ni
+            # tienen stock; si aparecen como comprar_ya es un falso positivo.
+            if es_servicio and accion in ("comprar_ya", "comprar_pronto"):
+                accion = "sin_accion"
 
             capital = stock * costo
             ingreso_perdido_estimado = 0.0
