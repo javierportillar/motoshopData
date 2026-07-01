@@ -480,6 +480,18 @@ class DuckDBMetricsRepo:
         # Mapear presentacion -> unidad_medida label corto
         for r in top:
             r["unidad_medida"] = _presentacion_to_unidad(r.get("presentacion"))
+        # V1.33: total de SKUs distintos vendidos en el mes (para "Ver todos")
+        count_prod = self._query("""
+            SELECT COUNT(DISTINCT fvd.cod_producto) AS n
+            FROM silver_fact_ventas_detalle fvd
+            INNER JOIN silver_fact_ventas fv
+                ON fvd.num_documento = fv.num_documento
+                AND fvd.cod_clase = fv.cod_clase
+                AND fvd.business_date = fv.business_date
+            WHERE STRFTIME(fv.business_date, '%Y-%m') = ?
+              AND fv.estado_documento != 'A'
+        """, [month])
+        total_productos = int(count_prod[0]["n"] or 0) if count_prod else 0
         if not totals:
             raise RuntimeError(f"No sales data found for month {month}")
         t = totals[0]
@@ -492,6 +504,7 @@ class DuckDBMetricsRepo:
             total_facturas=int(t["total_facturas"]),
             delta_porcentaje=delta,
             productos_top=[TopSkuItem(**r) for r in top],
+            total_productos=total_productos,
         )
 
     # ── Sales Historical ─────────────────────────────────────────────────

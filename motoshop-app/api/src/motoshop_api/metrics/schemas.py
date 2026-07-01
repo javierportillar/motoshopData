@@ -286,6 +286,9 @@ class SalesMonthlyResponse(BaseModel):
     total_facturas: int
     delta_porcentaje: float | None = None
     productos_top: list[TopSkuItem]
+    # V1.33: total de SKUs distintos vendidos en el mes (para que el front sepa
+    # cuántos hay más allá del preview de `productos_top` y muestre "Ver todos").
+    total_productos: int = 0
 
 
 class SalesHistoricalResponse(BaseModel):
