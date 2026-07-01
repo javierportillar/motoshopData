@@ -3068,12 +3068,21 @@ class DuckDBMetricsRepo:
         recompra, dormidos premium)."""
         cte = self._product_metrics_cte(window_days)
 
-        # KPIs globales
+        # KPIs globales — V1.28: desglose transparente para responder al usuario
+        # "cuántos productos puedo vender". Distinguimos:
+        #   - total_catalogo: TODOS los SKUs registrados
+        #   - con_stock: cantidad_actual > 0 (piezas físicas disponibles)
+        #   - vendibles: con_stock AND NOT es_servicio (productos que sí se venden)
+        #   - vendibles_con_historia: vendibles AND ultima_venta IS NOT NULL
+        #     (los que efectivamente ya se han vendido alguna vez en la historia)
         kpis = self._query(f"""
             WITH {cte}
             SELECT
                 ROUND(SUM(valor_inventario), 2) AS valor_inventario_total,
                 SUM(CASE WHEN cantidad_actual > 0 THEN 1 ELSE 0 END) AS skus_con_stock,
+                SUM(CASE WHEN cantidad_actual > 0 AND NOT es_servicio THEN 1 ELSE 0 END) AS skus_vendibles,
+                SUM(CASE WHEN cantidad_actual > 0 AND NOT es_servicio AND ultima_venta IS NOT NULL THEN 1 ELSE 0 END) AS skus_vendibles_con_historia,
+                COUNT(*) AS total_catalogo,
                 SUM(CASE WHEN unidades_win > 0 THEN 1 ELSE 0 END) AS skus_activos,
                 ROUND(AVG(rotacion_anual) FILTER (WHERE rotacion_anual IS NOT NULL), 2) AS rotacion_promedio,
                 ROUND(SUM(revenue_win), 2) AS revenue_total_win,
@@ -3205,6 +3214,10 @@ class DuckDBMetricsRepo:
             "kpis": {
                 "valor_inventario_total": float(kpis["valor_inventario_total"] or 0),
                 "skus_con_stock": int(kpis["skus_con_stock"] or 0),
+                # V1.28: campos nuevos para responder "cuántos productos puedo vender"
+                "skus_vendibles": int(kpis["skus_vendibles"] or 0),
+                "skus_vendibles_con_historia": int(kpis["skus_vendibles_con_historia"] or 0),
+                "total_catalogo": int(kpis["total_catalogo"] or 0),
                 "skus_activos": int(kpis["skus_activos"] or 0),
                 "rotacion_promedio": float(kpis["rotacion_promedio"] or 0),
                 "revenue_total_win": float(kpis["revenue_total_win"] or 0),
