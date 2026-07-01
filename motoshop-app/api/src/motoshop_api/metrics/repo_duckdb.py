@@ -1618,6 +1618,63 @@ class DuckDBMetricsRepo:
         else:
             confidence_next = "low"
 
+        # ── Backtest histórico: qué habría proyectado la fórmula para los
+        #    últimos 6 meses CERRADOS, comparado con lo que efectivamente vendió.
+        #    Sirve para que el usuario vea el error real del modelo y calibre
+        #    su confianza en el número proyectado del mes actual.
+        history = []
+        for i in range(1, 7):
+            back_month_num = max_date.month - i
+            back_year = max_date.year
+            while back_month_num <= 0:
+                back_month_num += 12
+                back_year -= 1
+            back_month_str = f"{back_year}-{back_month_num:02d}"
+            back_first = date(back_year, back_month_num, 1)
+            # último día del mes
+            next_first = (back_first + timedelta(days=32)).replace(day=1)
+            back_last = next_first - timedelta(days=1)
+
+            # Real: ventas efectivas del mes
+            real_row = self._con.execute("""
+                SELECT ROUND(COALESCE(SUM(total_factura),0),2)
+                FROM silver_fact_ventas
+                WHERE STRFTIME(business_date,'%Y-%m') = ?
+                  AND estado_documento != 'A'
+            """, [back_month_str]).fetchone()
+            real_amount = float(real_row[0] or 0)
+
+            # Proyección retro: rate rolling-90d de los 90 días previos al mes
+            retro_win_end = back_first - timedelta(days=1)
+            retro_win_start = retro_win_end - timedelta(days=89)
+            retro_row = self._con.execute("""
+                SELECT ROUND(COALESCE(SUM(total_factura),0),2)
+                FROM silver_fact_ventas
+                WHERE business_date BETWEEN ? AND ?
+                  AND estado_documento != 'A'
+            """, [retro_win_start, retro_win_end]).fetchone()
+            retro_total = float(retro_row[0] or 0)
+            retro_calendar_days = (retro_win_end - retro_win_start).days + 1
+            retro_daily_rate = (retro_total / retro_calendar_days) if retro_calendar_days > 0 else 0.0
+            back_days_total = (back_last - back_first).days + 1
+            projected_amount = round(retro_daily_rate * back_days_total, 2)
+
+            # Error: % de diferencia entre real y proyectado (positivo = vendió más de lo esperado)
+            if real_amount > 0:
+                error_pct = round((real_amount - projected_amount) / real_amount * 100, 1)
+            else:
+                error_pct = None
+
+            history.append({
+                "month": back_month_str,
+                "actual_amount": real_amount,
+                "projected_amount": projected_amount,
+                "error_pct": error_pct,
+                "days_total": back_days_total,
+            })
+        # Meses en orden cronológico ascendente para render natural
+        history.reverse()
+
         return {
             "current_month": {
                 "month": current_month,
@@ -1635,13 +1692,14 @@ class DuckDBMetricsRepo:
                 "last_year_same_month": ly_val,
                 "confidence": confidence_next,
             },
+            "history": history,
             "rate_basis": rate_basis,
             "rate_window": {
                 "start": str(window_start),
                 "end": str(window_end),
                 "days_with_sales": rolling_days,
             } if rate_basis == "rolling_90d_complete" else None,
-            "model_version": "run_rate_v2_rolling90",
+            "model_version": "run_rate_v2_rolling90_bt",
             "drivers": ["rolling_90d_daily_rate", "same_month_last_year"],
         }
 
