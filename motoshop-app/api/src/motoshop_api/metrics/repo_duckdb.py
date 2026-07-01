@@ -3208,8 +3208,17 @@ class DuckDBMetricsRepo:
             where.append("abc = ?")
             params.append(abc)
         if estado:
-            where.append("estado = ?")
-            params.append(estado)
+            # V1.24: soportar múltiples estados separados por coma para que
+            # las decision cards puedan hacer drilldown consistente (por ej.
+            # "Por agotarse" = quiebre + agotado).
+            estados = [e.strip() for e in estado.split(",") if e.strip()]
+            if len(estados) == 1:
+                where.append("estado = ?")
+                params.append(estados[0])
+            elif estados:
+                placeholders = ",".join(["?"] * len(estados))
+                where.append(f"estado IN ({placeholders})")
+                params += estados
         where_sql = " AND ".join(where)
 
         sort_cols = {
