@@ -65,7 +65,8 @@ class MetricsRepoProtocol(Protocol):
     def get_inventory_overview(self, window_days: int = 180) -> dict: ...  # V1.10: analitica inventario
     def get_product_analytics(self, window_days: int = 180, page: int = 1, page_size: int = 50,
                               q: str | None = None, abc: str | None = None, estado: str | None = None,
-                              sort: str = "revenue_win", order: str = "desc") -> dict: ...  # V1.10
+                              sort: str = "revenue_win", order: str = "desc",
+                              preset: str | None = None) -> dict: ...  # V1.10 / V1.31 preset
     def get_product_detail(self, sku: str, window_days: int = 180) -> dict: ...  # V1.10
     def get_product_abc_map(self, window_days: int = 180) -> dict: ...  # V1.10.1
     def get_sales_history_extended(self) -> dict: ...  # V1.10.1

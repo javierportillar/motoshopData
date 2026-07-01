@@ -446,16 +446,21 @@ def product_analytics(
     estado: str | None = Query(default=None),
     sort: str = Query(default="revenue_win"),
     order: str = Query(default="desc", pattern="^(asc|desc)$"),
+    preset: str | None = Query(default=None, pattern="^(por_agotarse|capital_atrapado|importantes|dormidos)$"),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
     tenant: str = Depends(get_tenant),
 ):
     """Tabla rica de productos: stock real, velocidad, días de stock, rotación,
-    ABC dinámico, margen, estado y acción sugerida. Con búsqueda, filtros y orden."""
-    key = f"{tenant}:prod-analytics:{window}:{page}:{page_size}:{q or ''}:{abc or ''}:{estado or ''}:{sort}:{order}"
+    ABC dinámico, margen, estado y acción sugerida. Con búsqueda, filtros y orden.
+
+    V1.31: `preset` scopea al criterio EXACTO de una decision card
+    (por_agotarse, capital_atrapado, importantes, dormidos) para que el plan
+    del frontend muestre el mismo count que la card."""
+    key = f"{tenant}:prod-analytics:{window}:{page}:{page_size}:{q or ''}:{abc or ''}:{estado or ''}:{sort}:{order}:{preset or ''}"
     return _cached_or_fetch(
         key,
-        lambda: repo.get_product_analytics(window, page, page_size, q, abc, estado, sort, order),
+        lambda: repo.get_product_analytics(window, page, page_size, q, abc, estado, sort, order, preset),
         ttl=120,
     )
 

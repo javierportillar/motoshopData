@@ -3255,6 +3255,20 @@ class DuckDBMetricsRepo:
             },
         }
 
+    # V1.31: presets con el WHERE IDÉNTICO al de las 4 decision cards de
+    # get_inventory_overview, para que el "plan scopeado" del frontend muestre
+    # exactamente los mismos productos (y el mismo COUNT) que la card clickeada.
+    # Mantener sincronizados con get_inventory_overview (quiebre/capital/importantes/dormidos).
+    _ANALYTICS_PRESETS: dict[str, str] = {
+        "por_agotarse": "estado IN ('agotado', 'quiebre') AND NOT es_servicio",
+        "capital_atrapado": "estado = 'sobrestock'",
+        "importantes": (
+            "abc IN ('A', 'B') AND unidades_win > 0 AND NOT es_servicio "
+            "AND (dias_sin_compra IS NULL OR dias_sin_compra > 45)"
+        ),
+        "dormidos": "estado = 'dormido' AND valor_inventario > 0",
+    }
+
     def get_product_analytics(
         self,
         window_days: int = 180,
@@ -3265,6 +3279,7 @@ class DuckDBMetricsRepo:
         estado: str | None = None,
         sort: str = "revenue_win",
         order: str = "desc",
+        preset: str | None = None,
     ) -> dict:
         """Tabla rica de productos con filtros, búsqueda, orden y paginación."""
         cte = self._product_metrics_cte(window_days)
@@ -3290,6 +3305,9 @@ class DuckDBMetricsRepo:
                 placeholders = ",".join(["?"] * len(estados))
                 where.append(f"estado IN ({placeholders})")
                 params += estados
+        # V1.31: preset scopeado — inyecta el WHERE exacto de la card de origen
+        if preset and preset in self._ANALYTICS_PRESETS:
+            where.append(f"({self._ANALYTICS_PRESETS[preset]})")
         where_sql = " AND ".join(where)
 
         sort_cols = {
