@@ -53,6 +53,11 @@ from motoshop_api.metrics.schemas import (
 
 logger = logging.getLogger(__name__)
 
+# Un SKU está en riesgo cuando el stock actual no cubre el horizonte estándar
+# de reposición usado por la UI de compras: 7 días de lead time + 14 días de
+# colchón. En ese rango debe pedir reabastecimiento, no mostrarse saludable.
+REORDER_COVERAGE_DAYS = 21
+
 import threading
 
 # Shared DuckDB connection pool: key = resolved file path, value = connection
@@ -2933,6 +2938,15 @@ class DuckDBMetricsRepo:
         """
         wmonths = round(window_days / 30.0, 4)
         return f"""
+            ventas_validas AS (
+                SELECT d.*
+                FROM silver_fact_ventas_detalle d
+                LEFT JOIN silver_fact_ventas v
+                    ON d.num_documento = v.num_documento
+                    AND d.cod_clase = v.cod_clase
+                    AND d.business_date = v.business_date
+                WHERE COALESCE(v.estado_documento, '') != 'A'
+            ),
             compras_tot AS (
                 SELECT cod_producto, SUM(cantidad) AS comprado_total
                 FROM silver_fact_compras_detalle WHERE business_date <= CURRENT_DATE
@@ -2940,16 +2954,16 @@ class DuckDBMetricsRepo:
             ),
             ventas_tot AS (
                 SELECT cod_producto, SUM(cantidad) AS vendido_total
-                FROM silver_fact_ventas_detalle WHERE business_date <= CURRENT_DATE
+                FROM ventas_validas WHERE business_date <= CURRENT_DATE
                 GROUP BY cod_producto
             ),
             ventas_win AS (
                 -- margen con costo fallback a ultima compra (V1.10.3)
                 SELECT d.cod_producto AS cod_producto,
                        SUM(d.total_detalle) AS revenue_win,
-                       SUM(d.cantidad) AS unidades_win,
-                       SUM(d.total_detalle - COALESCE(NULLIF(d.costo_producto, 0), cref.costo_producto, 0) * d.cantidad) AS margen_win
-                FROM silver_fact_ventas_detalle d
+                        SUM(d.cantidad) AS unidades_win,
+                        SUM(d.total_detalle - COALESCE(NULLIF(d.costo_producto, 0), cref.costo_producto, 0) * d.cantidad) AS margen_win
+                FROM ventas_validas d
                 LEFT JOIN ({COSTO_REF_CTE}) cref ON d.cod_producto = cref.cod_producto
                 WHERE d.business_date >= CURRENT_DATE - INTERVAL '{int(window_days)}' DAY
                   AND d.business_date <= CURRENT_DATE
@@ -2957,7 +2971,7 @@ class DuckDBMetricsRepo:
             ),
             ultima_venta AS (
                 SELECT cod_producto, MAX(business_date) AS uv
-                FROM silver_fact_ventas_detalle GROUP BY cod_producto
+                FROM ventas_validas GROUP BY cod_producto
             ),
             ultima_compra AS (
                 SELECT cod_producto, MAX(business_date) AS uc
@@ -3051,7 +3065,7 @@ class DuckDBMetricsRepo:
                         WHEN b.es_servicio THEN 'servicio'
                         WHEN b.cantidad_actual <= 0 AND b.unidades_win > 0 THEN 'agotado'
                         WHEN b.cantidad_actual <= 0 THEN 'sin_stock'
-                        WHEN b.unidades_win > 0 AND b.cantidad_actual / (b.unidades_win / {int(window_days)}.0) < 15 THEN 'quiebre'
+                        WHEN b.unidades_win > 0 AND b.cantidad_actual / (b.unidades_win / {int(window_days)}.0) <= {REORDER_COVERAGE_DAYS} THEN 'quiebre'
                         WHEN b.cantidad_actual > 0 AND (b.ultima_venta IS NULL OR DATE_DIFF('day', b.ultima_venta, CURRENT_DATE) > 90) THEN 'dormido'
                         WHEN b.unidades_win > 0 AND b.cantidad_actual / (b.unidades_win / {int(window_days)}.0) > 180 THEN 'sobrestock'
                         WHEN b.unidades_win > 0 THEN 'saludable'
@@ -3457,19 +3471,29 @@ class DuckDBMetricsRepo:
 
         # Timeline mensual: compras vs ventas (últimos 18 meses)
         timeline = self._query("""
-            WITH meses AS (
+            WITH ventas_validas AS (
+                SELECT d.*
+                FROM silver_fact_ventas_detalle d
+                LEFT JOIN silver_fact_ventas v
+                    ON d.num_documento = v.num_documento
+                    AND d.cod_clase = v.cod_clase
+                    AND d.business_date = v.business_date
+                WHERE COALESCE(v.estado_documento, '') != 'A'
+            ),
+            movimientos_producto AS (
+                SELECT business_date FROM ventas_validas WHERE cod_producto = ?
+                UNION ALL
+                SELECT business_date FROM silver_fact_compras_detalle WHERE cod_producto = ?
+            ),
+            meses AS (
                 SELECT DISTINCT STRFTIME(business_date, '%Y-%m') AS mes
-                FROM (
-                    SELECT business_date FROM silver_fact_ventas_detalle WHERE cod_producto = ?
-                    UNION ALL
-                    SELECT business_date FROM silver_fact_compras_detalle WHERE cod_producto = ?
-                )
+                FROM movimientos_producto
                 WHERE business_date >= CURRENT_DATE - INTERVAL '18' MONTH
             ),
             ventas AS (
                 SELECT STRFTIME(business_date, '%Y-%m') AS mes,
                        SUM(cantidad) AS unidades, ROUND(SUM(total_detalle), 2) AS valor
-                FROM silver_fact_ventas_detalle WHERE cod_producto = ?
+                FROM ventas_validas WHERE cod_producto = ?
                 GROUP BY 1
             ),
             compras AS (
@@ -3493,10 +3517,19 @@ class DuckDBMetricsRepo:
         # V1.16: antes traía últimos 25 de cada tipo. Eso ocultaba ventas
         # históricas y hacía que el stock pareciera no cuadrar en la ficha.
         movimientos = self._query("""
-            WITH ventas AS (
+            WITH ventas_validas AS (
+                SELECT d.*
+                FROM silver_fact_ventas_detalle d
+                LEFT JOIN silver_fact_ventas v
+                    ON d.num_documento = v.num_documento
+                    AND d.cod_clase = v.cod_clase
+                    AND d.business_date = v.business_date
+                WHERE COALESCE(v.estado_documento, '') != 'A'
+            ),
+            ventas AS (
                 SELECT business_date AS fecha, 'venta' AS tipo, cantidad,
                        ROUND(total_detalle, 2) AS valor, num_documento
-                FROM silver_fact_ventas_detalle WHERE cod_producto = ?
+                FROM ventas_validas WHERE cod_producto = ?
             ),
             compras AS (
                 SELECT business_date AS fecha, 'compra' AS tipo, cantidad,
@@ -4367,7 +4400,7 @@ class DuckDBMetricsRepo:
 
         Clasificación (un SKU cae en el primer bucket que matchea):
           1. COMPRAR_YA: stock<=0 AND vendió en últimos 90d (perder ventas)
-          2. COMPRAR_PRONTO: stock>0 AND cobertura<lead_time (a quebrar pronto)
+          2. COMPRAR_PRONTO: stock>0 AND no cubre lead_time + colchon
           3. SOBRESTOCK: stock>0 AND cobertura>umbral (capital innecesario)
           4. LIQUIDAR: stock>0 AND vendió alguna vez pero NO en últ 90d
           5. ZOMBIE_CON_STOCK: stock>0 AND nunca vendió histórico (zombie acción)
@@ -4380,7 +4413,16 @@ class DuckDBMetricsRepo:
         from math import ceil
 
         rows = self._query(f"""
-            WITH compras_tot AS (
+            WITH ventas_validas AS (
+                SELECT d.*
+                FROM silver_fact_ventas_detalle d
+                LEFT JOIN silver_fact_ventas h
+                  ON h.num_documento = d.num_documento
+                 AND h.cod_clase = d.cod_clase
+                 AND h.business_date = d.business_date
+                WHERE COALESCE(h.estado_documento, '') != 'A'
+            ),
+            compras_tot AS (
                 SELECT cod_producto, SUM(cantidad) AS comprado_total
                 FROM silver_fact_compras_detalle
                 WHERE business_date <= CURRENT_DATE
@@ -4388,7 +4430,7 @@ class DuckDBMetricsRepo:
             ),
             ventas_tot AS (
                 SELECT cod_producto, SUM(cantidad) AS vendido_total
-                FROM silver_fact_ventas_detalle
+                FROM ventas_validas
                 WHERE business_date <= CURRENT_DATE
                 GROUP BY cod_producto
             ),
@@ -4396,25 +4438,19 @@ class DuckDBMetricsRepo:
                 SELECT d.cod_producto,
                        SUM(d.cantidad) AS uds_90d,
                        SUM(d.total_detalle) AS rev_90d
-                FROM silver_fact_ventas_detalle d
-                JOIN silver_fact_ventas h ON h.num_documento = d.num_documento AND h.cod_clase = d.cod_clase
+                FROM ventas_validas d
                 WHERE d.business_date >= CURRENT_DATE - INTERVAL '90 days'
-                  AND h.estado_documento != 'A'
                 GROUP BY d.cod_producto
             ),
             v180 AS (
                 SELECT d.cod_producto, SUM(d.cantidad) AS uds_180d
-                FROM silver_fact_ventas_detalle d
-                JOIN silver_fact_ventas h ON h.num_documento = d.num_documento AND h.cod_clase = d.cod_clase
+                FROM ventas_validas d
                 WHERE d.business_date >= CURRENT_DATE - INTERVAL '180 days'
-                  AND h.estado_documento != 'A'
                 GROUP BY d.cod_producto
             ),
             v_global AS (
                 SELECT d.cod_producto, MAX(d.business_date) AS ultima_venta_global
-                FROM silver_fact_ventas_detalle d
-                JOIN silver_fact_ventas h ON h.num_documento = d.num_documento AND h.cod_clase = d.cod_clase
-                WHERE h.estado_documento != 'A'
+                FROM ventas_validas d
                 GROUP BY d.cod_producto
             ),
             uc AS (
@@ -4501,7 +4537,7 @@ class DuckDBMetricsRepo:
             es_servicio = "SERVICIO" in str(r.get("nombre_producto", "")).upper()
             if stock <= 0 and uds_90d > 0:
                 accion = "comprar_ya"
-            elif stock > 0 and cobertura_dias is not None and cobertura_dias < lead_time_dias:
+            elif stock > 0 and sugerido > 0:
                 accion = "comprar_pronto"
             elif stock > 0 and cobertura_dias is not None and cobertura_dias > umbral_sobrestock_dias:
                 accion = "sobrestock"
