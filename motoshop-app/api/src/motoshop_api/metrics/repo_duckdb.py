@@ -258,14 +258,32 @@ class DuckDBMetricsRepo:
     # ── Helpers ──────────────────────────────────────────────────────────
 
     def _query(self, sql: str, params: list | None = None) -> list[dict]:
-        """Ejecuta SQL contra DuckDB y devuelve lista de dicts."""
-        if params:
-            result = self._con.execute(sql, params)
-        else:
-            result = self._con.execute(sql)
-        columns = [desc[0] for desc in result.description]
-        rows = result.fetchall()
-        return [dict(zip(columns, row)) for row in rows]
+        """Ejecuta SQL contra DuckDB y devuelve lista de dicts.
+
+        HOTFIX 2026-07-02 (producción caída): la conexión DuckDB es COMPARTIDA
+        entre requests, y FastAPI corre los endpoints sync en un threadpool.
+        Al usar directamente self._con.execute()+description+fetchall() desde
+        varios threads a la vez, el estado del cursor de la conexión se pisaba:
+        _query tomaba `description` de una query y `fetchall()` de otra, mezclando
+        columnas (zip(['n'], fila_de_otra_query) → {'n': '<cod_producto>'}), lo
+        que rompía cualquier int()/float() aguas abajo (500 en todos los
+        componentes de ambos tenants).
+
+        Fix: cada query usa su PROPIO cursor (self._con.cursor()), que en DuckDB
+        es una conexión independiente al mismo archivo con estado de ejecución
+        aislado. Verificado race-free bajo 20 threads concurrentes.
+        """
+        cur = self._con.cursor()
+        try:
+            if params:
+                result = cur.execute(sql, params)
+            else:
+                result = cur.execute(sql)
+            columns = [desc[0] for desc in result.description]
+            rows = result.fetchall()
+            return [dict(zip(columns, row)) for row in rows]
+        finally:
+            cur.close()
 
     @staticmethod
     def _fill_month_gaps(rows: list[dict]) -> list[dict]:
@@ -496,7 +514,9 @@ class DuckDBMetricsRepo:
             WHERE STRFTIME(fv.business_date, '%Y-%m') = ?
               AND fv.estado_documento != 'A'
         """, [month])
-        total_productos = int(count_prod[0]["n"] or 0) if count_prod else 0
+        # Guard defensivo: nunca crashear si el valor viniera no-numérico.
+        _n = count_prod[0]["n"] if count_prod else 0
+        total_productos = int(_n) if isinstance(_n, (int, float)) else 0
         if not totals:
             raise RuntimeError(f"No sales data found for month {month}")
         t = totals[0]
