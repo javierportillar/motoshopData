@@ -72,9 +72,10 @@ set search_path = public
 as $$
 declare
     v_lot public.app_inventory_lots;
-    v_existing_lot public.app_inventory_lots;
-    v_existing_movement_type text;
-    v_existing_fingerprint text;
+    -- NOTE: a single generic `record` holds the replayed lot (as jsonb) plus the
+    -- movement scalars. PL/pgSQL forbids a row-typed variable in a multi-item
+    -- INTO list (ERROR 42601), so we never SELECT a whole row into it directly.
+    v_existing record;
 begin
     if p_tenant <> 'masvital' then
         raise exception 'expiry lots are available only for masvital' using errcode = '42501';
@@ -83,19 +84,20 @@ begin
         raise exception 'received quantity must be greater than zero' using errcode = '22023';
     end if;
 
-    select l, m.movement_type, m.request_fingerprint
-    into v_existing_lot, v_existing_movement_type, v_existing_fingerprint
+    select to_jsonb(l) as lot_json, l.id as lot_id,
+           m.movement_type as movement_type, m.request_fingerprint as request_fingerprint
+    into v_existing
     from public.app_inventory_lot_movements m
     join public.app_inventory_lots l on l.id = m.lot_id
     where m.tenant = p_tenant and m.idempotency_key = p_idempotency_key;
     if found then
-        if v_existing_movement_type <> 'receipt' then
+        if v_existing.movement_type <> 'receipt' then
             raise exception 'idempotency key was already used for another operation' using errcode = '22023';
         end if;
-        if v_existing_fingerprint <> p_request_fingerprint then
+        if v_existing.request_fingerprint <> p_request_fingerprint then
             raise exception 'idempotency key was reused with a different request' using errcode = '22023';
         end if;
-        return jsonb_build_object('replayed', true, 'lot', to_jsonb(v_existing_lot));
+        return jsonb_build_object('replayed', true, 'lot', v_existing.lot_json);
     end if;
 
     insert into public.app_inventory_lots (
@@ -117,19 +119,20 @@ begin
 
     return jsonb_build_object('replayed', false, 'lot', to_jsonb(v_lot));
 exception when unique_violation then
-    select l, m.movement_type, m.request_fingerprint
-    into v_existing_lot, v_existing_movement_type, v_existing_fingerprint
+    select to_jsonb(l) as lot_json, l.id as lot_id,
+           m.movement_type as movement_type, m.request_fingerprint as request_fingerprint
+    into v_existing
     from public.app_inventory_lot_movements m
     join public.app_inventory_lots l on l.id = m.lot_id
     where m.tenant = p_tenant and m.idempotency_key = p_idempotency_key;
     if found then
-        if v_existing_movement_type <> 'receipt' then
+        if v_existing.movement_type <> 'receipt' then
             raise exception 'idempotency key was already used for another operation' using errcode = '22023';
         end if;
-        if v_existing_fingerprint <> p_request_fingerprint then
+        if v_existing.request_fingerprint <> p_request_fingerprint then
             raise exception 'idempotency key was reused with a different request' using errcode = '22023';
         end if;
-        return jsonb_build_object('replayed', true, 'lot', to_jsonb(v_existing_lot));
+        return jsonb_build_object('replayed', true, 'lot', v_existing.lot_json);
     end if;
     raise;
 end;
@@ -150,9 +153,9 @@ set search_path = public
 as $$
 declare
     v_lot public.app_inventory_lots;
-    v_existing_lot public.app_inventory_lots;
-    v_existing_movement_type text;
-    v_existing_fingerprint text;
+    -- See note in app_inventory_lot_receipt: generic record, never a row var in
+    -- a multi-item INTO list.
+    v_existing record;
     v_remaining numeric(14, 3);
 begin
     if p_tenant <> 'masvital' then
@@ -162,22 +165,23 @@ begin
         raise exception 'adjustment quantity must not be zero' using errcode = '22023';
     end if;
 
-    select l, m.movement_type, m.request_fingerprint
-    into v_existing_lot, v_existing_movement_type, v_existing_fingerprint
+    select to_jsonb(l) as lot_json, l.id as lot_id,
+           m.movement_type as movement_type, m.request_fingerprint as request_fingerprint
+    into v_existing
     from public.app_inventory_lot_movements m
     join public.app_inventory_lots l on l.id = m.lot_id
     where m.tenant = p_tenant and m.idempotency_key = p_idempotency_key;
     if found then
-        if v_existing_movement_type <> 'adjustment' then
+        if v_existing.movement_type <> 'adjustment' then
             raise exception 'idempotency key was already used for another operation' using errcode = '22023';
         end if;
-        if v_existing_fingerprint <> p_request_fingerprint then
+        if v_existing.request_fingerprint <> p_request_fingerprint then
             raise exception 'idempotency key was reused with a different request' using errcode = '22023';
         end if;
-        if v_existing_lot.id <> p_lot_id then
+        if v_existing.lot_id <> p_lot_id then
             raise exception 'idempotency key was already used for a different lot' using errcode = '22023';
         end if;
-        return jsonb_build_object('replayed', true, 'lot', to_jsonb(v_existing_lot));
+        return jsonb_build_object('replayed', true, 'lot', v_existing.lot_json);
     end if;
 
     select * into v_lot
@@ -208,19 +212,20 @@ begin
 
     return jsonb_build_object('replayed', false, 'lot', to_jsonb(v_lot));
 exception when unique_violation then
-    select l, m.movement_type, m.request_fingerprint
-    into v_existing_lot, v_existing_movement_type, v_existing_fingerprint
+    select to_jsonb(l) as lot_json, l.id as lot_id,
+           m.movement_type as movement_type, m.request_fingerprint as request_fingerprint
+    into v_existing
     from public.app_inventory_lot_movements m
     join public.app_inventory_lots l on l.id = m.lot_id
     where m.tenant = p_tenant and m.idempotency_key = p_idempotency_key;
     if found then
-        if v_existing_movement_type <> 'adjustment' then
+        if v_existing.movement_type <> 'adjustment' then
             raise exception 'idempotency key was already used for another operation' using errcode = '22023';
         end if;
-        if v_existing_fingerprint <> p_request_fingerprint then
+        if v_existing.request_fingerprint <> p_request_fingerprint then
             raise exception 'idempotency key was reused with a different request' using errcode = '22023';
         end if;
-        return jsonb_build_object('replayed', true, 'lot', to_jsonb(v_existing_lot));
+        return jsonb_build_object('replayed', true, 'lot', v_existing.lot_json);
     end if;
     raise;
 end;
