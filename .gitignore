@@ -92,3 +92,6 @@ _staging/
 # ─── Logs de dumps automáticos ────────────────────────────
 logs/
 .vercel
+
+# Supabase schema migrations are release artifacts and must be versioned.
+!infra/supabase/migrations/*.sql

@@ -38,6 +38,7 @@ from motoshop_api.alerts.router import router as alerts_router
 from motoshop_api.app_writes.router import router as app_writes_router
 from motoshop_api.purchase_plans.router import router as purchase_plans_router
 from motoshop_api.gastos.router import router as gastos_router
+from motoshop_api.expiry.router import router as expiry_router
 
 
 def _is_localhost() -> bool:
@@ -155,6 +156,7 @@ app.include_router(alerts_router, prefix="/api")
 app.include_router(app_writes_router, prefix="/api")
 app.include_router(purchase_plans_router, prefix="/api")
 app.include_router(gastos_router)  # ya tiene prefix=/api/gastos
+app.include_router(expiry_router, prefix="/api")
 
 
 class HealthResponse(BaseModel):

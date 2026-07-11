@@ -51,5 +51,6 @@ tenants:
       - inventario
       - chat-ia
       - pipeline-observability
+      - expiry-lots
     briefing:
       activo: false
