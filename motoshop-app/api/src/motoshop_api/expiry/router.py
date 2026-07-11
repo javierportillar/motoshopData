@@ -18,6 +18,7 @@ from motoshop_api.expiry.schemas import (
     ExpiryLotListResponse,
     ExpiryLotResponse,
     LotAdjustmentCreate,
+    LotUpdate,
     MutationLotResponse,
     ReceiptCreate,
 )
@@ -110,6 +111,26 @@ def create_receipt(
         content=body.model_dump_json(),
         media_type="application/json",
         status_code=status.HTTP_200_OK if body.replayed else status.HTTP_201_CREATED,
+    )
+
+
+@router.patch("/lots/{lot_id}", response_model=MutationLotResponse)
+def update_lot(
+    lot_id: UUID,
+    payload: LotUpdate,
+    _user: User = Depends(require_role("admin", "gerente")),
+    tenant: str = Depends(get_masvital_tenant),
+    repo: ExpiryLotsRepo = Depends(get_expiry_lots_repo),
+) -> MutationLotResponse:
+    """Edit a lot's metadata (product, invoice, dates, quantity, notes).
+
+    This corrects the caducidad record itself; it never touches the system
+    inventory (ETL/DuckDB). Restricted to MasVital and privileged roles.
+    """
+    result = repo.update_lot(tenant=tenant, lot_id=lot_id, payload=payload)
+    return MutationLotResponse(
+        lot=ExpiryLotResponse.model_validate(result["lot"]),
+        replayed=False,
     )
 
 

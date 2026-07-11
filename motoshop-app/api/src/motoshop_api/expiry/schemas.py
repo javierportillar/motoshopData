@@ -106,6 +106,59 @@ class LotAdjustmentCreate(BaseModel):
         return value
 
 
+class LotUpdate(BaseModel):
+    """Partial edit of an existing expiry lot (metadata correction).
+
+    Every field is optional — only the ones present in the request are changed.
+    This is a metadata edit, not a stock movement: it does NOT touch the system
+    inventory (ETL/DuckDB). When ``received_quantity`` is edited, the lot's
+    ``remaining_quantity`` is set to the same value, since this registry does not
+    track per-lot consumption separately.
+    """
+
+    product_sku: str | None = Field(default=None, min_length=1, max_length=128)
+    purchase_order_ref: str | None = Field(default=None, min_length=1, max_length=128)
+    lot_code: str | None = Field(default=None, min_length=1, max_length=128)
+    expires_on: date | None = None
+    received_on: date | None = None
+    received_quantity: Decimal | None = Field(
+        default=None, gt=0, max_digits=14, decimal_places=3
+    )
+    supplier: str | None = Field(default=None, max_length=255)
+    notes: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("product_sku", "purchase_order_ref", "lot_code")
+    @classmethod
+    def strip_required_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be blank")
+        return value
+
+    @field_validator("supplier", "notes")
+    @classmethod
+    def strip_optional_text(cls, value: str | None) -> str | None:
+        return value.strip() if value else None
+
+    def to_patch_body(self) -> dict[str, str | None]:
+        """Serialize only the fields the caller actually set, for a PostgREST PATCH."""
+        data = self.model_dump(exclude_unset=True)
+        body: dict[str, str | None] = {}
+        for key, value in data.items():
+            if isinstance(value, date):
+                body[key] = value.isoformat()
+            elif isinstance(value, Decimal):
+                body[key] = str(value)
+            else:
+                body[key] = value
+        # No separate consumption tracking: editing the quantity resets the remainder.
+        if "received_quantity" in body:
+            body["remaining_quantity"] = body["received_quantity"]
+        return body
+
+
 class MutationLotResponse(BaseModel):
     """Lot mutation response; replayed signals idempotent retry."""
 

@@ -19,7 +19,7 @@ from motoshop_api.expiry.repo import (
     get_expiry_lots_repo,
     idempotency_fingerprint,
 )
-from motoshop_api.expiry.schemas import LotAdjustmentCreate, ReceiptCreate
+from motoshop_api.expiry.schemas import LotAdjustmentCreate, LotUpdate, ReceiptCreate
 from motoshop_api.main import app
 from motoshop_api.tenants import Tenant, _tenants_cache
 
@@ -169,6 +169,24 @@ class FakeExpiryLotsRepo:
         lot["remaining_quantity"] = remaining
         lot["updated_at"] = datetime.now(UTC)
         self.idempotency[(tenant, idempotency_key)] = ("adjustment", fingerprint, lot)
+        return {"lot": lot, "replayed": False}
+
+    def update_lot(self, *, tenant: str, lot_id: UUID, payload: LotUpdate) -> dict:
+        self.last_tenant = tenant
+        patch = payload.to_patch_body()
+        if not patch:
+            raise HTTPException(status_code=422, detail="No hay cambios para aplicar.")
+        lot = self.lots.get(lot_id)
+        if lot is None or lot["tenant"] != tenant:
+            raise HTTPException(status_code=404, detail="Lot not found")
+        for key, value in patch.items():
+            if key in {"expires_on", "received_on"}:
+                lot[key] = date.fromisoformat(value)
+            elif key in {"received_quantity", "remaining_quantity"}:
+                lot[key] = type(lot["received_quantity"])(value)
+            else:
+                lot[key] = value
+        lot["updated_at"] = datetime.now(UTC)
         return {"lot": lot, "replayed": False}
 
 
@@ -402,6 +420,53 @@ def test_list_returns_explicitly_nullable_product_name(client: TestClient) -> No
     response = client.get("/api/expiry/lots", headers=_headers(token))
     assert response.status_code == 200
     assert response.json()["items"][0]["product_name"] is None
+
+
+def test_update_edits_metadata_and_resets_remaining_on_quantity_change(
+    client: TestClient,
+) -> None:
+    token = _token(client, "admin", "admin123")
+    receipt = client.post(
+        "/api/expiry/receipts", json=_receipt_payload(), headers=_headers(token, uuid4())
+    )
+    lot_id = receipt.json()["lot"]["id"]
+
+    response = client.patch(
+        f"/api/expiry/lots/{lot_id}",
+        json={"product_sku": "MV-999", "received_quantity": 3},
+        headers=_headers(token),
+    )
+    assert response.status_code == 200
+    lot = response.json()["lot"]
+    assert lot["product_sku"] == "MV-999"
+    # Editing the quantity resets the remainder — no separate consumption tracking.
+    assert float(lot["received_quantity"]) == 3
+    assert float(lot["remaining_quantity"]) == 3
+
+
+def test_update_requires_privileged_role(client: TestClient) -> None:
+    admin = _token(client, "admin", "admin123")
+    receipt = client.post(
+        "/api/expiry/receipts", json=_receipt_payload(), headers=_headers(admin, uuid4())
+    )
+    lot_id = receipt.json()["lot"]["id"]
+    vendedor = _token(client, "vendedor", "vend123")
+    response = client.patch(
+        f"/api/expiry/lots/{lot_id}",
+        json={"lot_code": "L-EDIT"},
+        headers=_headers(vendedor),
+    )
+    assert response.status_code == 403
+
+
+def test_update_missing_lot_returns_404(client: TestClient) -> None:
+    token = _token(client, "admin", "admin123")
+    response = client.patch(
+        f"/api/expiry/lots/{uuid4()}",
+        json={"lot_code": "L-EDIT"},
+        headers=_headers(token),
+    )
+    assert response.status_code == 404
 
 
 def test_receipt_rejects_invalid_idempotency_key(client: TestClient) -> None:

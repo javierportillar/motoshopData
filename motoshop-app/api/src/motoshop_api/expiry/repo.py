@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 from contextlib import suppress
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -14,7 +14,7 @@ import httpx
 from fastapi import HTTPException, status
 
 from motoshop_api.config import settings
-from motoshop_api.expiry.schemas import LotAdjustmentCreate, ReceiptCreate
+from motoshop_api.expiry.schemas import LotAdjustmentCreate, LotUpdate, ReceiptCreate
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,14 @@ class ExpiryLotsRepo(Protocol):
         actor: str,
         payload: LotAdjustmentCreate,
         idempotency_key: UUID,
+    ) -> dict[str, Any]: ...
+
+    def update_lot(
+        self,
+        *,
+        tenant: str,
+        lot_id: UUID,
+        payload: LotUpdate,
     ) -> dict[str, Any]: ...
 
 
@@ -195,6 +203,34 @@ class SupabaseExpiryLotsRepo:
         }
         body["p_request_fingerprint"] = idempotency_fingerprint("adjustment", body)
         return self._rpc("app_inventory_lot_adjustment", body, "adjust_lot")
+
+    def update_lot(
+        self,
+        *,
+        tenant: str,
+        lot_id: UUID,
+        payload: LotUpdate,
+    ) -> dict[str, Any]:
+        """Patch editable metadata of a lot via PostgREST, scoped to the tenant.
+
+        This is an idempotent metadata correction, not a stock movement, so it
+        does not go through the RPC/movement ledger. The tenant predicate is
+        always sent so a lot from another tenant can never be reached.
+        """
+        patch = payload.to_patch_body()
+        if not patch:
+            raise HTTPException(status_code=422, detail="No hay cambios para aplicar.")
+        patch["updated_at"] = datetime.now(timezone.utc).isoformat()
+        params = {"id": f"eq.{lot_id}", "tenant": f"eq.{tenant}"}
+        with _client() as client:
+            response = client.patch(f"/{_TABLE}", params=params, json=patch)
+        _raise_for_response(response, "update_lot")
+        rows = response.json()
+        if not isinstance(rows, list) or not rows:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Lote de inventario no encontrado."
+            )
+        return {"lot": rows[0]}
 
     @staticmethod
     def _rpc(function: str, body: dict[str, Any], action: str) -> dict[str, Any]:
