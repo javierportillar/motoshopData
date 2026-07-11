@@ -98,6 +98,31 @@ def _databricks_freshness() -> dict:
         return {"status": "ERROR", "backend": "databricks", "error": str(exc)}
 
 
+@router.get("/health/ready")
+def readiness(tenant: str = "motoshop") -> dict:
+    """Readiness pública (sin auth) para que el frontend muestre un estado
+    'servidor cargando' durante la ventana de re-descarga del DuckDB tras un
+    deploy. `ready=false` significa que el archivo aún no está disponible.
+
+    Dispara el bootstrap desde R2 para arrancar la descarga cuanto antes.
+    Chequeo barato (existencia de archivo), no bloquea en la descarga.
+    """
+    from motoshop_api.metrics.repo_duckdb import _bootstrap_duckdb_from_r2, _make_db_path
+
+    safe_tenant = tenant if tenant in {"motoshop", "masvital"} else "motoshop"
+    db_path = settings.duckdb_path and Path(settings.duckdb_path) or _make_db_path(safe_tenant)
+    try:
+        _bootstrap_duckdb_from_r2(db_path, safe_tenant)
+    except Exception:
+        pass  # no romper readiness si el bootstrap falla; ready=false igual sirve
+    ready = db_path.exists()
+    return {
+        "ready": ready,
+        "tenant": safe_tenant,
+        "status": "ready" if ready else "loading",
+    }
+
+
 @router.get("/health/data-freshness")
 def data_freshness() -> dict:
     """Devuelve frescura de datos según el backend activo.

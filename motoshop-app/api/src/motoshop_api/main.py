@@ -30,6 +30,7 @@ from motoshop_api.stock.router import router as stock_router
 from motoshop_api.data_catalog.router import catalog_router
 from motoshop_api.health.router import router as health_router
 from motoshop_api.metrics.router import router as metrics_router
+from motoshop_api.metrics.repo_duckdb import DuckDBNotReadyError
 from motoshop_api.llm.router import router as llm_router
 from motoshop_api.push.router import router as push_router
 from motoshop_api.forecast.router import router as forecast_router
@@ -107,6 +108,25 @@ app = FastAPI(
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# ── DuckDB re-descargando desde R2 → 503 'loading' (no 500) ──────────
+# Tras cada deploy/reinicio, Render borra el disco efímero y {tenant}_gold.duckdb
+# se re-descarga de R2 (~1 min). Durante esa ventana devolvemos 503 'loading'
+# para que el frontend muestre "servidor cargando" y reintente, en vez de crashear.
+@app.exception_handler(DuckDBNotReadyError)
+async def duckdb_not_ready_handler(request: Request, _exc: DuckDBNotReadyError) -> JSONResponse:
+    logger = structlog.get_logger("motoshop")
+    logger.warning("duckdb_not_ready", path=str(request.url.path))
+    return JSONResponse(
+        status_code=503,
+        headers={"Retry-After": "5"},
+        content={
+            "detail": "El servidor está terminando de cargar los datos. Reintentá en unos segundos.",
+            "status": "loading",
+            "retry_after_seconds": 5,
+        },
+    )
+
 
 # ── MySQL offline → 503 graceful (mitigación SPOF Windows, F6-D) ──────
 @app.exception_handler(sqlalchemy.exc.OperationalError)

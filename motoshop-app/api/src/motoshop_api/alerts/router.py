@@ -6,6 +6,7 @@ dias_hasta_quiebre ASC.
 
 from __future__ import annotations
 
+from pathlib import Path
 from time import time
 
 from fastapi import APIRouter, Depends, Query
@@ -67,6 +68,11 @@ def get_repo(tenant: str = Depends(get_tenant)) -> AlertsRepoProtocol:
     """Inyección de dependencias: DuckDB si DATA_BACKEND=duckdb, Databricks si no."""
     if settings.data_backend == "duckdb":
         db_path = settings.duckdb_path or str(_make_db_path(tenant))
+        # Trigger the R2 bootstrap here too so alerts also kick off the download
+        # after a restart (metrics already do). If the file isn't ready,
+        # DuckDBAlertsRepo → get_shared_connection raises DuckDBNotReadyError → 503.
+        from motoshop_api.metrics.repo_duckdb import _bootstrap_duckdb_from_r2
+        _bootstrap_duckdb_from_r2(Path(db_path), tenant)
         return DuckDBAlertsRepo(db_path)
     if settings.env != "test":
         w = _get_workspace()

@@ -66,18 +66,38 @@ _shared_connections: dict[str, duckdb.DuckDBPyConnection] = {}
 _shared_connections_lock = threading.Lock()
 
 
+class DuckDBNotReadyError(Exception):
+    """The tenant's DuckDB file is not available yet.
+
+    Happens for ~1 min after every deploy/restart: Render wipes the ephemeral
+    disk, so {tenant}_gold.duckdb has to be re-downloaded from R2 before any
+    read can succeed. Instead of a 500 (which read as "todo caído"), the API
+    maps this to a graceful 503 'loading' so the frontend can show a
+    "servidor cargando" state and retry until the download finishes.
+    """
+
+
 def get_shared_connection(db_path: str | Path) -> duckdb.DuckDBPyConnection:
     """Return a shared DuckDB read-only connection for *db_path*.
 
     Creates one on first access, reuses on subsequent calls.
     Thread-safe: the first caller creates the connection, all others share it.
+
+    Raises DuckDBNotReadyError if the file is still being downloaded from R2
+    (IOException "database does not exist"), so callers surface a 503 instead
+    of crashing.
     """
     key = str(Path(db_path).resolve())
     if key not in _shared_connections:
         with _shared_connections_lock:
             # Double-check inside lock
             if key not in _shared_connections:
-                _shared_connections[key] = duckdb.connect(key, read_only=True)
+                try:
+                    _shared_connections[key] = duckdb.connect(key, read_only=True)
+                except duckdb.IOException as exc:
+                    raise DuckDBNotReadyError(
+                        f"DuckDB no disponible aún en {key} (descargando desde R2)"
+                    ) from exc
     return _shared_connections[key]
 
 
@@ -234,9 +254,10 @@ class DuckDBMetricsRepo:
         self._path = Path(db_path)
         _bootstrap_duckdb_from_r2(self._path, tenant)
         if not self._path.exists():
-            raise FileNotFoundError(
-                f"DuckDB file not found at {self._path}. "
-                "Run 'python pipeline/run_all.py' first, or set DUCKDB_PATH."
+            # Post-deploy R2 download window: surface as 503 loading, not 500.
+            raise DuckDBNotReadyError(
+                f"DuckDB aún no disponible en {self._path} "
+                "(descargando desde R2 tras el reinicio, reintentá en unos segundos)."
             )
         logger.info("DuckDBMetricsRepo connected to %s", self._path)
 
