@@ -139,6 +139,53 @@ def delete_gasto(tenant: str, gasto_id: int) -> None:
         _handle_response(r, "delete_gasto")
 
 
+def copy_gastos(
+    tenant: str,
+    mes_origen: str,
+    mes_destino: str,
+    created_by: str | None,
+    ids: list[int] | None = None,
+) -> list[dict]:
+    """Copia los gastos del mes origen al mes destino (tenant-scopeado).
+
+    - Si `ids` viene, sólo copia esos gastos del origen.
+    - Omite duplicados: no recrea un gasto cuya (categoria, descripcion, monto)
+      ya existe en el mes destino. Así reintentar la copia es idempotente.
+    Devuelve sólo los gastos efectivamente creados.
+    """
+    origen = list_gastos(tenant=tenant, mes=mes_origen)
+    if ids is not None:
+        id_set = set(ids)
+        origen = [g for g in origen if g["id"] in id_set]
+    if not origen:
+        return []
+
+    existentes = list_gastos(tenant=tenant, mes=mes_destino)
+    ya = {
+        (e["categoria"], (e.get("descripcion") or "").strip(), float(e["monto"]))
+        for e in existentes
+    }
+
+    creados: list[dict] = []
+    for g in origen:
+        clave = (g["categoria"], (g.get("descripcion") or "").strip(), float(g["monto"]))
+        if clave in ya:
+            continue
+        creado = create_gasto(
+            tenant=tenant,
+            payload={
+                "mes": mes_destino,
+                "categoria": g["categoria"],
+                "monto": g["monto"],
+                "descripcion": g.get("descripcion"),
+            },
+            created_by=created_by,
+        )
+        creados.append(creado)
+        ya.add(clave)  # evita duplicar si el origen trae dos gastos idénticos
+    return creados
+
+
 # ── Helpers de prorrateo (para balance) ─────────────────────────────────────
 
 

@@ -80,6 +80,23 @@ class GastoUpdate(BaseModel):
         return v_lower
 
 
+class CopiarGastosRequest(BaseModel):
+    """Copia gastos de un mes a otro. Si `ids` viene, sólo copia esos."""
+
+    mes_origen: str = Field(..., description="YYYY-MM")
+    mes_destino: str = Field(..., description="YYYY-MM")
+    ids: list[int] | None = Field(
+        default=None, description="Subconjunto de gastos del mes origen a copiar; None = todos"
+    )
+
+    @field_validator("mes_origen", "mes_destino")
+    @classmethod
+    def validar_mes(cls, v: str) -> str:
+        if not re.match(r"^\d{4}-\d{2}$", v):
+            raise ValueError("mes debe tener formato YYYY-MM")
+        return v
+
+
 class GastoResponse(GastoBase):
     id: int
     tenant: str

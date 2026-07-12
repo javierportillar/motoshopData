@@ -18,12 +18,14 @@ from motoshop_api.auth.users import User
 from motoshop_api.gastos.schemas import (
     CATEGORIAS_VALIDAS,
     CategoriasResponse,
+    CopiarGastosRequest,
     GastoCreate,
     GastoResponse,
     GastoUpdate,
     GastosListResponse,
 )
 from motoshop_api.gastos.supabase_client import (
+    copy_gastos,
     create_gasto,
     delete_gasto,
     list_gastos,
@@ -77,6 +79,31 @@ def post_gasto(
         created_by=user.username,
     )
     return GastoResponse(**created)
+
+
+@router.post("/copiar", response_model=GastosListResponse, status_code=201)
+def copiar_gastos(
+    payload: CopiarGastosRequest,
+    user: User = Depends(require_role("admin", "gerente")),
+    tenant: str = Depends(get_tenant),
+) -> GastosListResponse:
+    """Copia los gastos de un mes a otro. Solo admin/gerente.
+
+    Omite duplicados ya presentes en el mes destino. Devuelve los creados.
+    """
+    if payload.mes_origen == payload.mes_destino:
+        raise HTTPException(status_code=400, detail="El mes origen y destino no pueden ser iguales")
+    creados = copy_gastos(
+        tenant=tenant,
+        mes_origen=payload.mes_origen,
+        mes_destino=payload.mes_destino,
+        created_by=user.username,
+        ids=payload.ids,
+    )
+    return GastosListResponse(
+        items=[GastoResponse(**g) for g in creados],
+        total=len(creados),
+    )
 
 
 @router.patch("/{gasto_id}", response_model=GastoResponse)
