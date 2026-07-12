@@ -40,6 +40,7 @@ from motoshop_api.app_writes.router import router as app_writes_router
 from motoshop_api.purchase_plans.router import router as purchase_plans_router
 from motoshop_api.gastos.router import router as gastos_router
 from motoshop_api.expiry.router import router as expiry_router
+from motoshop_api.users.router import router as users_router
 
 
 def _is_localhost() -> bool:
@@ -77,6 +78,13 @@ async def lifespan(app: FastAPI):
         log.info("users_loaded", count=len(users))
     else:
         log.warning("users_file_not_found", path=str(users_path))
+
+    # ── Superponer usuarios gestionados en Supabase (RBAC) ───────────
+    # Híbrido: los usuarios de YAML siguen funcionando; Supabase gana por username.
+    # Degrada en silencio si Supabase no está configurado.
+    from motoshop_api.users.service import sync_users_from_supabase
+    supa_count = sync_users_from_supabase()
+    log.info("supabase_users_synced", count=supa_count)
 
     # ── Cargar tenants ──────────────────────────────────────────────
     tenants_path = Path(settings.tenants_file_path)
@@ -177,6 +185,7 @@ app.include_router(app_writes_router, prefix="/api")
 app.include_router(purchase_plans_router, prefix="/api")
 app.include_router(gastos_router)  # ya tiene prefix=/api/gastos
 app.include_router(expiry_router, prefix="/api")
+app.include_router(users_router)  # ya tiene prefix=/api/admin/users
 
 
 class HealthResponse(BaseModel):

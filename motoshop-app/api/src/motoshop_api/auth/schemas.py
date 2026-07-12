@@ -34,3 +34,8 @@ class UserMeResponse(BaseModel):
     tenants_allowed: list[str] = []
     current_tenant: str = "motoshop"
     enabled_features: list[str] = []
+    # Módulos permitidos del usuario: None = sin restricción (YAML heredado / admin).
+    allowed_modules: list[str] | None = None
+    # Módulos efectivos = intersección de enabled_features (tenant) con allowed_modules.
+    # El front usa esto para filtrar la navegación. Admin ve todo.
+    effective_modules: list[str] = []

@@ -14,6 +14,12 @@ class User(BaseModel):
     email: str
     role: str
     tenants_allowed: list[str] = []
+    # None = sin restricción de módulos (usuarios YAML heredados y admin). Una lista
+    # (incl. vacía) restringe la navegación a esos módulos. Sólo la ponen los
+    # usuarios gestionados en Supabase.
+    allowed_modules: list[str] | None = None
+    # Un usuario inactivo no puede loguear ni pasar get_current_user.
+    active: bool = True
 
 
 _users_cache: dict[str, User] = {}

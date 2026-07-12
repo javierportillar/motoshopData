@@ -45,6 +45,12 @@ async def login(request: Request, body: LoginRequest) -> TokenPair:
             detail="Credenciales incorrectas",
         )
 
+    if not user.active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Usuario inactivo. Contactá al administrador.",
+        )
+
     access = create_access_token(subject=user.username, role=user.role, tenants_allowed=user.tenants_allowed)
     refresh = create_refresh_token(subject=user.username)
 
@@ -90,13 +96,24 @@ async def get_me(
     user: User = Depends(get_current_user),
     tenant: str = Depends(get_tenant),
 ) -> UserMeResponse:
-    """Retorna información del usuario autenticado, el tenant activo y sus features habilitadas."""
+    """Retorna información del usuario autenticado, el tenant activo, sus features
+    habilitadas y los módulos efectivos que puede ver."""
     config = get_tenant_config(tenant)
+    enabled = config.enabled_features if config else []
+    # admin o allowed_modules=None → sin restricción: ve todo lo del tenant.
+    # Si tiene una lista de módulos → sólo la intersección con lo del tenant.
+    if user.role == "admin" or user.allowed_modules is None:
+        effective = list(enabled)
+    else:
+        allowed = set(user.allowed_modules)
+        effective = [f for f in enabled if f in allowed]
     return UserMeResponse(
         username=user.username,
         email=user.email,
         role=user.role,
         tenants_allowed=user.tenants_allowed,
         current_tenant=tenant,
-        enabled_features=config.enabled_features if config else [],
+        enabled_features=enabled,
+        allowed_modules=user.allowed_modules,
+        effective_modules=effective,
     )

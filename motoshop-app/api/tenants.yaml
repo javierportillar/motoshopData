@@ -16,6 +16,8 @@ tenants:
       - ventas-daily
       - ventas-monthly
       - inventario
+      - decisiones
+      - analisis
       - abc
       - dormidos
       - cohortes
@@ -49,6 +51,8 @@ tenants:
       - ventas-summary
       - ventas-daily
       - inventario
+      - decisiones
+      - analisis
       - chat-ia
       - pipeline-observability
       - expiry-lots
