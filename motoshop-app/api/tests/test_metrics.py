@@ -5,6 +5,21 @@ import pytest
 from fastapi.testclient import TestClient
 
 from motoshop_api.main import app
+from motoshop_api.tenants import Tenant, _tenants_cache
+
+
+@pytest.fixture(autouse=True)
+def configured_default_tenant() -> None:
+    """Keep metrics tests independent from tenant-cache ordering."""
+    _tenants_cache.clear()
+    _tenants_cache["motoshop"] = Tenant(
+        id="motoshop",
+        nombre="MotoShop",
+        r2_object_key="motoshop_gold.duckdb",
+        local_db_path="/tmp/motoshop_gold.duckdb",
+    )
+    yield
+    _tenants_cache.clear()
 
 
 @pytest.fixture()
@@ -15,7 +30,7 @@ def client():
 @pytest.fixture()
 def admin_token(client) -> str:
     from motoshop_api.auth.hash import hash_password
-    from motoshop_api.auth.users import _users_cache, User
+    from motoshop_api.auth.users import User, _users_cache
 
     _users_cache.clear()
     _users_cache["admin"] = User(
@@ -51,6 +66,72 @@ class TestMetricsUnauthenticated:
 
 
 class TestMetricsAuthenticated:
+    def test_primary_surfaces_enforce_their_modules(self, client: TestClient) -> None:
+        from motoshop_api.auth.hash import hash_password
+        from motoshop_api.auth.users import User, _users_cache
+        from motoshop_api.tenants import Tenant, _tenants_cache
+
+        _tenants_cache.clear()
+        _tenants_cache["motoshop"] = Tenant(
+            id="motoshop",
+            nombre="MotoShop",
+            r2_object_key="motoshop_gold.duckdb",
+            local_db_path="/tmp/motoshop_gold.duckdb",
+        )
+        _users_cache.clear()
+        _users_cache["no-modules"] = User(
+            username="no-modules",
+            hashed_password=hash_password("secret123"),
+            email="inventory@test.com",
+            role="gerente",
+            tenants_allowed=["motoshop"],
+            allowed_modules=[],
+            source="supabase",
+        )
+        login = client.post(
+            "/api/auth/login",
+            json={"username": "no-modules", "password": "secret123"},
+        )
+        headers = {
+            "Authorization": f"Bearer {login.json()['access_token']}",
+            "X-Tenant": "motoshop",
+        }
+        endpoints = [
+            "/api/metrics/sales-summary",
+            "/api/metrics/sales-summary-v2",
+            "/api/metrics/sales-daily-month?month=2026-01",
+            "/api/metrics/sales-daily?date=2026-01-01",
+            "/api/metrics/sales-monthly?month=2026-01",
+            "/api/metrics/sales-day-detail?date=2026-01-01",
+            "/api/metrics/sales-month-detail?month=2026-01",
+            "/api/metrics/sales-day-invoices?date=2026-01-01",
+            "/api/metrics/cash-closure?date=2026-01-01",
+            "/api/metrics/sales-historical",
+            "/api/metrics/compras-overview?month=2026-01",
+            "/api/metrics/compras-historico",
+            "/api/metrics/purchases-day-grouped?date=2026-01-01",
+            "/api/metrics/inventory-summary",
+            "/api/metrics/inventory-detail",
+            "/api/metrics/inventory-overview",
+            "/api/metrics/inventario-overview",
+            "/api/metrics/analisis-balance?fecha_inicio=2026-01-01&fecha_fin=2026-01-31",
+            "/api/metrics/horas-pico?fecha_inicio=2026-01-01&fecha_fin=2026-01-31",
+            "/api/metrics/analisis-productos?fecha_inicio=2026-01-01&fecha_fin=2026-01-31",
+            "/api/metrics/analisis-proveedores?fecha_inicio=2026-01-01&fecha_fin=2026-01-31",
+            "/api/metrics/recommendations",
+            "/api/metrics/plan-compras",
+            "/api/metrics/sales-forecast-monthly",
+            "/api/admin/data/status",
+        ]
+        responses = [(endpoint, client.get(endpoint, headers=headers)) for endpoint in endpoints]
+        _users_cache.clear()
+        _tenants_cache.clear()
+
+        assert all(response.status_code == 403 for _, response in responses), [
+            (endpoint, response.status_code, response.text)
+            for endpoint, response in responses
+        ]
+
     def test_sales_summary_shape(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(
             "/api/metrics/sales-summary",
