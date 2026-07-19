@@ -77,6 +77,48 @@ class SalesDailyResponse(BaseModel):
     productos_vendidos: list[SalesDailyItem]
 
 
+class SalesDailyMonthDay(BaseModel):
+    date: date
+    day: int
+    sales: float
+    invoices: int
+    avg_ticket: float
+    accumulated: float
+
+
+class SalesDailyMonthResponse(BaseModel):
+    month: str
+    days: list[SalesDailyMonthDay]
+    total_days_with_sales: int
+    as_of_business_date: date | None
+
+
+class SalesSummaryV2PreviousWindow(BaseModel):
+    from_date: date | None = Field(alias="from")
+    to: date | None
+    amount: float
+    delta_pct: float | None
+
+
+class SalesSummaryV2PreviousYear(BaseModel):
+    year: int
+    same_day_window_amount: float
+    full_month_amount: float
+    delta_same_window_pct: float | None
+
+
+class SalesSummaryV2Response(BaseModel):
+    business_month: str | None
+    max_sales_date: date | None
+    as_of_business_date: date | None
+    current_month_accumulated: float
+    current_month_days_with_sales: int
+    previous_month_same_window: SalesSummaryV2PreviousWindow
+    same_month_previous_years: list[SalesSummaryV2PreviousYear]
+    ticket_promedio: float
+    num_facturas: int
+
+
 # ── Sales Day Detail (V1.9 — popup detallado por día) ─────────────────────
 
 class SalesHourBucket(BaseModel):
@@ -296,6 +338,54 @@ class SalesHistoricalResponse(BaseModel):
     total_facturas: int
     meses: list[SalesTrendItem]
     fecha_primera_venta: str | None = None
+
+
+# ── Stable monthly sales forecast ────────────────────────────────────────
+
+class SalesForecastCurrentMonth(BaseModel):
+    month: str
+    observed_amount: float
+    projected_amount: float
+    daily_rate: float
+    days_observed: int
+    days_total: int
+    confidence: Literal["high", "medium", "low"]
+
+
+class SalesForecastNextMonth(BaseModel):
+    month: str
+    projected_amount: float
+    days_total: int
+    last_year_same_month: float
+    confidence: Literal["high", "medium", "low"]
+
+
+class SalesForecastHistoryItem(BaseModel):
+    month: str
+    actual_amount: float
+    projected_amount: float
+    error_pct: float | None
+    days_total: int
+
+
+class SalesForecastRateWindow(BaseModel):
+    start: str
+    end: str
+    days_with_sales: int
+
+
+class SalesForecastMonthlyResponse(BaseModel):
+    current_month: SalesForecastCurrentMonth
+    next_month: SalesForecastNextMonth
+    history: list[SalesForecastHistoryItem]
+    rate_basis: Literal[
+        "rolling_90d_complete",
+        "previous_month_complete",
+        "current_month_run_rate",
+    ]
+    rate_window: SalesForecastRateWindow | None
+    model_version: str
+    drivers: list[str]
 
 
 # ── Response models ──────────────────────────────────────────────────────
