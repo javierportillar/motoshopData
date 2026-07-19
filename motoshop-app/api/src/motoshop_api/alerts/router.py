@@ -24,12 +24,13 @@ from motoshop_api.auth.tenant_dep import get_tenant
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
 from motoshop_api.metrics.repo_duckdb import _make_db_path
+from motoshop_api.metrics.snapshot import get_snapshot_generation
 
 router = APIRouter(tags=["alerts"])
 
 
 _CACHE_TTL = 300  # 5 minutos
-_cache: dict[str, tuple[float, object]] = {}
+_cache: dict[tuple[int, str], tuple[float, object]] = {}
 _workspace_client = None
 _workspace_created_at: float = 0.0
 _WORKSPACE_TTL = 3600
@@ -49,14 +50,15 @@ def _get_workspace():
     return _workspace_client
 
 
-def _cached_or_fetch(key: str, fetch_fn, ttl: int = _CACHE_TTL):
+def _cached_or_fetch(tenant: str, key: str, fetch_fn, ttl: int = _CACHE_TTL):
+    versioned_key = (get_snapshot_generation(tenant), key)
     now = time()
-    if key in _cache:
-        ts, val = _cache[key]
+    if versioned_key in _cache:
+        ts, val = _cache[versioned_key]
         if now - ts < ttl:
             return val
     val = fetch_fn()
-    _cache[key] = (now, val)
+    _cache[versioned_key] = (now, val)
     return val
 
 
@@ -86,6 +88,7 @@ def stockout_alerts(
     urgencia: str | None = Query(default=None, description="Filtrar por urgencia: alta, media, baja"),
     repo: AlertsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ) -> AlertsResponse:
     """Alertas de quiebre de stock, ordenadas por urgencia (alta → baja) y días hasta quiebre ASC.
 
@@ -102,7 +105,7 @@ def stockout_alerts(
         )
 
     cache_key = f"alerts:stockout:{urgencia or 'all'}"
-    result = _cached_or_fetch(cache_key, lambda: repo.get_stockout_alerts(urgencia))
+    result = _cached_or_fetch(tenant, cache_key, lambda: repo.get_stockout_alerts(urgencia))
     return result
 
 
