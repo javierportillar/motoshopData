@@ -6,6 +6,7 @@ from pathlib import Path
 
 import duckdb
 
+from motoshop_api.main import app
 from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo, close_all_shared_connections
 
 
@@ -43,3 +44,14 @@ def test_next_month_compares_with_that_month_last_year(tmp_path: Path) -> None:
     previous = next(item for item in result["history"] if item["month"] == "2026-06")
     assert "projected_amount" in previous
     assert previous["projected_amount"] >= 0
+
+
+def test_monthly_forecast_endpoint_has_a_response_model() -> None:
+    route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/api/metrics/sales-forecast-monthly"
+    )
+
+    assert route.response_model is not None
+    assert route.response_model.__name__ == "SalesForecastMonthlyResponse"
