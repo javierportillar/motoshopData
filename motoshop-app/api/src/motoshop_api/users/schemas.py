@@ -6,7 +6,7 @@ import re
 
 from pydantic import BaseModel, Field, field_validator
 
-from motoshop_api.users.service import VALID_ROLES
+from motoshop_api.users.service import VALID_ROLES, validate_modules, validate_tenants
 
 _USERNAME_RE = re.compile(r"^[a-zA-Z0-9._-]{3,64}$")
 
@@ -16,8 +16,12 @@ class UserCreate(BaseModel):
     password: str = Field(..., min_length=4, max_length=128)
     email: str = Field(default="", max_length=255)
     role: str
-    tenants_allowed: list[str] = Field(default_factory=list)
+    tenants_allowed: list[str] = Field(..., min_length=1)
     allowed_modules: list[str] = Field(default_factory=list)
+    migrate_legacy: bool = Field(
+        default=False,
+        description="Explicitly replace a users.yaml identity with a managed Supabase row",
+    )
 
     @field_validator("username")
     @classmethod
@@ -33,6 +37,16 @@ class UserCreate(BaseModel):
         if v not in VALID_ROLES:
             raise ValueError(f"role inválido. Válidos: {', '.join(VALID_ROLES)}")
         return v
+
+    @field_validator("tenants_allowed")
+    @classmethod
+    def validar_tenants(cls, v: list[str]) -> list[str]:
+        return validate_tenants(v)
+
+    @field_validator("allowed_modules")
+    @classmethod
+    def validar_modulos(cls, v: list[str]) -> list[str]:
+        return validate_modules(v)
 
 
 class UserUpdate(BaseModel):
@@ -52,6 +66,16 @@ class UserUpdate(BaseModel):
             raise ValueError(f"role inválido. Válidos: {', '.join(VALID_ROLES)}")
         return v
 
+    @field_validator("tenants_allowed")
+    @classmethod
+    def validar_tenants(cls, v: list[str] | None) -> list[str] | None:
+        return validate_tenants(v) if v is not None else None
+
+    @field_validator("allowed_modules")
+    @classmethod
+    def validar_modulos(cls, v: list[str] | None) -> list[str] | None:
+        return validate_modules(v) if v is not None else None
+
 
 class UserPublic(BaseModel):
     username: str
@@ -60,6 +84,8 @@ class UserPublic(BaseModel):
     tenants_allowed: list[str]
     allowed_modules: list[str]
     active: bool
+    source: str
+    manageable: bool
     created_by: str | None = None
     created_at: str | None = None
     updated_at: str | None = None

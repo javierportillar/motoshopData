@@ -1,14 +1,14 @@
 """CRUD de usuarios (RBAC). Sólo admin. Respaldado en Supabase (app_users).
 
-Los módulos definen VISIBILIDAD en el front; la escritura la sigue gateando
-require_role en cada endpoint. Este router no expone hashes de contraseña.
+Los módulos definen visibilidad en el frontend y autorización en las superficies
+principales del backend. Este router no expone hashes de contraseña.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 
 from motoshop_api.auth.deps import require_role
 from motoshop_api.auth.hash import hash_password
@@ -26,9 +26,9 @@ from motoshop_api.users.service import (
     MANAGEABLE_MODULES,
     VALID_ROLES,
     count_active_admins,
+    merge_public_users,
     public_view,
     sync_users_from_supabase,
-    valid_modules,
 )
 
 router = APIRouter(prefix="/api/admin/users", tags=["admin-users"])
@@ -45,11 +45,12 @@ def get_modules(_admin: User = Depends(require_role("admin"))) -> ModulesRespons
 
 @router.get("", response_model=UsersListResponse)
 def list_users(_admin: User = Depends(require_role("admin"))) -> UsersListResponse:
-    """Lista los usuarios gestionados en Supabase (sin hashes)."""
+    """List managed users plus visible, read-only legacy YAML identities."""
     rows = supabase_repo.list_users()
+    views = merge_public_users(rows)
     return UsersListResponse(
-        items=[UserPublic(**public_view(r)) for r in rows],
-        total=len(rows),
+        items=[UserPublic(**view) for view in views],
+        total=len(views),
     )
 
 
@@ -58,18 +59,33 @@ def create_user(
     payload: UserCreate,
     admin: User = Depends(require_role("admin")),
 ) -> UserPublic:
-    """Crea un usuario. El username debe ser único (incl. usuarios YAML heredados)."""
-    if get_user_by_username(payload.username) is not None or supabase_repo.get_user(payload.username):
+    """Create a managed identity, optionally replacing an explicit legacy one."""
+    if supabase_repo.get_user(payload.username) is not None:
         raise HTTPException(status_code=409, detail="Ya existe un usuario con ese nombre")
+    cached_user = get_user_by_username(payload.username)
+    migrating_legacy = cached_user is not None and cached_user.source == "legacy"
+    if cached_user is not None and not (migrating_legacy and payload.migrate_legacy):
+        detail: str | dict[str, str] = "Ya existe un usuario con ese nombre"
+        if migrating_legacy:
+            detail = {
+                "code": "legacy_user_requires_explicit_migration",
+                "message": (
+                    "El usuario existe en users.yaml. Repetí la creación con "
+                    "migrate_legacy=true y una contraseña nueva para gestionarlo en Supabase."
+                ),
+            }
+        raise HTTPException(status_code=409, detail=detail)
     row = {
         "username": payload.username,
         "hashed_password": hash_password(payload.password),
         "email": payload.email.strip(),
         "role": payload.role,
         "tenants_allowed": payload.tenants_allowed,
-        "allowed_modules": valid_modules(payload.allowed_modules),
+        "allowed_modules": payload.allowed_modules,
         "active": True,
-        "created_by": admin.username,
+        "created_by": (
+            f"{admin.username}:legacy-migration" if migrating_legacy else admin.username
+        ),
     }
     created = supabase_repo.create_user(row)
     sync_users_from_supabase()
@@ -88,7 +104,10 @@ def update_user(
     if existing is None:
         raise HTTPException(
             status_code=404,
-            detail="Usuario no gestionable (no está en Supabase). Recrealo desde acá para editarlo.",
+            detail=(
+                "Usuario no gestionable (no está en Supabase). "
+                "Recrealo desde acá para editarlo."
+            ),
         )
 
     patch: dict = {}
@@ -99,7 +118,7 @@ def update_user(
     if payload.tenants_allowed is not None:
         patch["tenants_allowed"] = payload.tenants_allowed
     if payload.allowed_modules is not None:
-        patch["allowed_modules"] = valid_modules(payload.allowed_modules)
+        patch["allowed_modules"] = payload.allowed_modules
     if payload.active is not None:
         patch["active"] = payload.active
     if payload.password:
