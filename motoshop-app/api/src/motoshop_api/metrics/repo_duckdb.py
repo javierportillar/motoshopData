@@ -10,8 +10,13 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
+import threading
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
+from uuid import uuid4
 
 import duckdb
 
@@ -58,11 +63,25 @@ logger = logging.getLogger(__name__)
 # colchón. En ese rango debe pedir reabastecimiento, no mostrarse saludable.
 REORDER_COVERAGE_DAYS = 21
 
-import threading
 
-# Shared DuckDB connection pool: key = resolved file path, value = connection
-# Prevents OOM by ensuring at most ONE connection per DuckDB file across all endpoints.
-_shared_connections: dict[str, duckdb.DuckDBPyConnection] = {}
+@dataclass(eq=False)
+class _ConnectionSlot:
+    """One physical DuckDB snapshot and its active query leases."""
+
+    logical_key: str
+    physical_path: Path
+    connection: duckdb.DuckDBPyConnection
+    delete_on_close: bool = False
+    active_readers: int = 0
+    retired: bool = False
+    closed: bool = False
+
+
+# Current slot per logical database path. A stable proxy is returned to callers,
+# so repositories that retain it automatically acquire the latest slot per query.
+_shared_connections: dict[str, _ConnectionSlot] = {}
+_connection_proxies: dict[str, SharedDuckDBConnection] = {}
+_retired_connections: list[_ConnectionSlot] = []
 _shared_connections_lock = threading.Lock()
 
 
@@ -77,38 +96,205 @@ class DuckDBNotReadyError(Exception):
     """
 
 
-def get_shared_connection(db_path: str | Path) -> duckdb.DuckDBPyConnection:
-    """Return a shared DuckDB read-only connection for *db_path*.
+def _open_connection(physical_path: Path, logical_key: str) -> duckdb.DuckDBPyConnection:
+    try:
+        return duckdb.connect(str(physical_path), read_only=True)
+    except duckdb.IOException as exc:
+        raise DuckDBNotReadyError(
+            f"DuckDB no disponible aún en {logical_key} (descargando desde R2)"
+        ) from exc
 
-    Creates one on first access, reuses on subsequent calls.
-    Thread-safe: the first caller creates the connection, all others share it.
 
-    Raises DuckDBNotReadyError if the file is still being downloaded from R2
-    (IOException "database does not exist"), so callers surface a 503 instead
-    of crashing.
-    """
+def _ensure_current_slot_locked(key: str) -> _ConnectionSlot:
+    slot = _shared_connections.get(key)
+    if slot is None:
+        physical_path = Path(key)
+        slot = _ConnectionSlot(
+            logical_key=key,
+            physical_path=physical_path,
+            connection=_open_connection(physical_path, key),
+        )
+        _shared_connections[key] = slot
+    return slot
+
+
+def _acquire_current_slot(key: str) -> _ConnectionSlot:
+    with _shared_connections_lock:
+        slot = _ensure_current_slot_locked(key)
+        slot.active_readers += 1
+        return slot
+
+
+def _close_slot_locked(slot: _ConnectionSlot) -> None:
+    if slot.closed or slot.active_readers > 0:
+        return
+    try:
+        slot.connection.close()
+    except Exception:
+        logger.warning("Error closing retired DuckDB connection for %s", slot.physical_path)
+    finally:
+        slot.closed = True
+        if slot in _retired_connections:
+            _retired_connections.remove(slot)
+        if slot.delete_on_close:
+            try:
+                slot.physical_path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("Error deleting retired DuckDB snapshot %s", slot.physical_path)
+
+
+def _retire_slot_locked(slot: _ConnectionSlot) -> None:
+    if slot.retired:
+        return
+    slot.retired = True
+    _retired_connections.append(slot)
+    _close_slot_locked(slot)
+
+
+def _release_slot(slot: _ConnectionSlot) -> None:
+    with _shared_connections_lock:
+        if slot.active_readers <= 0:
+            return
+        slot.active_readers -= 1
+        if slot.retired:
+            _close_slot_locked(slot)
+
+
+class _LeasedCursor:
+    """Cursor wrapper that releases its snapshot lease exactly once."""
+
+    def __init__(self, slot: _ConnectionSlot, cursor: duckdb.DuckDBPyConnection) -> None:
+        self._slot = slot
+        self._cursor = cursor
+        self._closed = False
+
+    @property
+    def description(self):
+        return self._cursor.description
+
+    def execute(self, query: str, parameters: Any = None) -> _LeasedCursor:
+        if parameters is None:
+            self._cursor.execute(query)
+        else:
+            self._cursor.execute(query, parameters)
+        return self
+
+    def fetchone(self):
+        try:
+            return self._cursor.fetchone()
+        finally:
+            self.close()
+
+    def fetchall(self):
+        try:
+            return self._cursor.fetchall()
+        finally:
+            self.close()
+
+    def fetchmany(self, size: int | None = None):
+        try:
+            return self._cursor.fetchmany() if size is None else self._cursor.fetchmany(size)
+        finally:
+            self.close()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._cursor.close()
+        finally:
+            _release_slot(self._slot)
+
+    def __enter__(self) -> _LeasedCursor:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        self.close()
+
+
+class SharedDuckDBConnection:
+    """Stable logical connection whose queries lease the current snapshot."""
+
+    def __init__(self, logical_key: str) -> None:
+        self._logical_key = logical_key
+
+    def cursor(self) -> _LeasedCursor:
+        slot = _acquire_current_slot(self._logical_key)
+        try:
+            cursor = slot.connection.cursor()
+        except Exception:
+            _release_slot(slot)
+            raise
+        return _LeasedCursor(slot, cursor)
+
+    def execute(self, query: str, parameters: Any = None) -> _LeasedCursor:
+        cursor = self.cursor()
+        try:
+            return cursor.execute(query, parameters)
+        except Exception:
+            cursor.close()
+            raise
+
+    def close(self) -> None:
+        """No-op: lifecycle belongs to the synchronized global pool."""
+
+
+def get_shared_connection(db_path: str | Path) -> SharedDuckDBConnection:
+    """Return a stable query-leasing proxy for a logical DuckDB path."""
     key = str(Path(db_path).resolve())
-    if key not in _shared_connections:
-        with _shared_connections_lock:
-            # Double-check inside lock
-            if key not in _shared_connections:
-                try:
-                    _shared_connections[key] = duckdb.connect(key, read_only=True)
-                except duckdb.IOException as exc:
-                    raise DuckDBNotReadyError(
-                        f"DuckDB no disponible aún en {key} (descargando desde R2)"
-                    ) from exc
-    return _shared_connections[key]
+    with _shared_connections_lock:
+        _ensure_current_slot_locked(key)
+        proxy = _connection_proxies.get(key)
+        if proxy is None:
+            proxy = SharedDuckDBConnection(key)
+            _connection_proxies[key] = proxy
+        return proxy
+
+
+def publish_duckdb_snapshot(tmp_path: Path, db_path: Path) -> None:
+    """Publish a new physical snapshot without closing active readers.
+
+    This is the public publication boundary for every replaceable DuckDB file;
+    callers must not mutate the connection pool directly.
+    """
+    key = str(db_path.resolve())
+    with _shared_connections_lock:
+        tmp_path.replace(db_path)
+        version_path = db_path.with_name(
+            f".{db_path.stem}.snapshot-{uuid4().hex}{db_path.suffix}"
+        )
+        try:
+            try:
+                os.link(db_path, version_path)
+            except OSError:
+                shutil.copy2(db_path, version_path)
+            new_connection = _open_connection(version_path, key)
+        except Exception:
+            version_path.unlink(missing_ok=True)
+            raise
+
+        old_slot = _shared_connections.get(key)
+        _shared_connections[key] = _ConnectionSlot(
+            logical_key=key,
+            physical_path=version_path,
+            connection=new_connection,
+            delete_on_close=True,
+        )
+        if old_slot is not None:
+            _retire_slot_locked(old_slot)
 
 
 def close_all_shared_connections() -> None:
-    """Close every pooled connection. Call on application shutdown."""
-    for path, con in _shared_connections.items():
-        try:
-            con.close()
-        except Exception:
-            logger.warning("Error closing shared DuckDB connection for %s", path)
-    _shared_connections.clear()
+    """Retire all current slots; active readers close them when they drain."""
+    with _shared_connections_lock:
+        current_slots = list(_shared_connections.values())
+        _shared_connections.clear()
+        for slot in current_slots:
+            _retire_slot_locked(slot)
 
 
 def _make_db_path(tenant: str) -> Path:
@@ -221,21 +407,21 @@ def _bootstrap_duckdb_from_r2(db_path: Path, tenant: str = "motoshop") -> None:
                     r2_mtime = head['LastModified'].timestamp()
                 except Exception:
                     r2_mtime = time()  # fallback al wall clock
-            # V1.12.1: REMOVER la conexion vieja del pool sin cerrarla.
-            # Antes haciamos con.close() inmediato, pero eso rompia queries
-            # concurrentes con "No open result set". Al solo pop()-earla, el
-            # proximo request abre una conexion nueva al archivo nuevo, y las
-            # queries en vuelo siguen leyendo del inode viejo (replace es
-            # atomico en Linux y el FD viejo sigue valido hasta que se libere).
-            # Python GC cierra la conexion vieja cuando nadie la referencia.
+            # Publish file + pool eviction/close as one critical section. Replacing
+            # after eviction left a window where another request could open and
+            # pool the old inode indefinitely.
             try:
-                key = str(db_path.resolve())
-                with _shared_connections_lock:
-                    _shared_connections.pop(key, None)
+                publish_duckdb_snapshot(tmp_path, db_path)
             except Exception as exc:
-                logger.warning("Could not evict old connection for %s: %s", db_path, exc)
-            tmp_path.replace(db_path)
+                logger.warning("Could not publish DuckDB snapshot for %s: %s", db_path, exc)
+                raise
             _R2_DOWNLOADED_MTIME[tenant] = r2_mtime
+            # Publish only after the atomic replace. A monotonic generation
+            # prevents an old in-flight query from making stale data visible if
+            # it finishes after physical caches have been cleared.
+            from motoshop_api.metrics.snapshot import publish_snapshot
+
+            publish_snapshot(tenant)
             logger.info("DuckDB refreshed to %s (r2_mtime=%.0f)", db_path, r2_mtime)
     except Exception as exc:
         logger.warning("Failed to download DuckDB from R2: %s", exc)
@@ -443,38 +629,36 @@ class DuckDBMetricsRepo:
     # ── Sales Daily ──────────────────────────────────────────────────────
 
     def get_sales_daily(self, date: str) -> SalesDailyResponse:
-        max_date_rows = self._query("""
-            SELECT MAX(business_date) AS max_date
-            FROM gold_mart_ventas_diarias_sku
-            WHERE business_date <= ?
-        """, [date])
-        effective_date = date
-        if max_date_rows and max_date_rows[0].get("max_date"):
-            effective_date = str(max_date_rows[0]["max_date"])
-
         productos = self._query("""
             SELECT
-                cod_producto AS sku,
-                nom_producto AS nombre,
-                ROUND(SUM(cantidad_total), 2) AS cantidad,
-                ROUND(SUM(valor_total), 2) AS valor
-            FROM gold_mart_ventas_diarias_sku
-            WHERE business_date = ?
-            GROUP BY cod_producto, nom_producto
+                d.cod_producto AS sku,
+                COALESCE(p.nombre_producto, 'SIN NOMBRE') AS nombre,
+                ROUND(SUM(d.cantidad), 2) AS cantidad,
+                ROUND(SUM(d.total_detalle), 2) AS valor
+            FROM silver_fact_ventas_detalle d
+            INNER JOIN silver_fact_ventas v
+                ON d.num_documento = v.num_documento
+                AND d.cod_clase = v.cod_clase
+                AND d.business_date = v.business_date
+            LEFT JOIN silver_dim_producto p ON p.cod_producto = d.cod_producto
+            WHERE v.business_date = ?
+              AND v.estado_documento != 'A'
+            GROUP BY d.cod_producto, p.nombre_producto
             ORDER BY valor DESC
-        """, [effective_date])
+        """, [date])
         totals = self._query("""
             SELECT
-                ROUND(COALESCE(SUM(valor_total), 0), 2) AS total_ventas,
-                COALESCE(SUM(num_facturas), 0) AS total_facturas
-            FROM gold_mart_ventas_diarias_sku
+                ROUND(COALESCE(SUM(total_factura), 0), 2) AS total_ventas,
+                COUNT(*) AS total_facturas
+            FROM silver_fact_ventas
             WHERE business_date = ?
-        """, [effective_date])
+              AND estado_documento != 'A'
+        """, [date])
         if not totals:
-            return SalesDailyResponse(date=effective_date, total_ventas=0.0, total_facturas=0, productos_vendidos=[])
+            return SalesDailyResponse(date=date, total_ventas=0.0, total_facturas=0, productos_vendidos=[])
         t = totals[0]
         return SalesDailyResponse(
-            date=effective_date,
+            date=date,
             total_ventas=float(t["total_ventas"] or 0.0),
             total_facturas=int(t["total_facturas"] or 0),
             productos_vendidos=[SalesDailyItem(**r) for r in productos],
@@ -1445,13 +1629,28 @@ class DuckDBMetricsRepo:
         silver_fact_ventas por misma razón que get_sales_daily_month — el gold
         se quedó sin data de Jun 2026.
         """
-        from datetime import date
-
         # Max date from silver (siempre actualizada)
         max_d = self._con.execute(
             "SELECT MAX(business_date) FROM silver_fact_ventas WHERE estado_documento != 'A'"
         ).fetchone()[0]
-        max_date = max_d if max_d else date.today()
+        if max_d is None:
+            return {
+                "business_month": None,
+                "max_sales_date": None,
+                "as_of_business_date": None,
+                "current_month_accumulated": 0.0,
+                "current_month_days_with_sales": 0,
+                "previous_month_same_window": {
+                    "from": None,
+                    "to": None,
+                    "amount": 0.0,
+                    "delta_pct": None,
+                },
+                "same_month_previous_years": [],
+                "ticket_promedio": 0.0,
+                "num_facturas": 0,
+            }
+        max_date = max_d
         max_date_str = str(max_date)
         current_month = max_date.strftime("%Y-%m")
         day_num = max_date.day
@@ -1517,6 +1716,7 @@ class DuckDBMetricsRepo:
         return {
             "business_month": current_month,
             "max_sales_date": max_date_str,
+            "as_of_business_date": max_date_str,
             "current_month_accumulated": va_curr,
             "current_month_days_with_sales": int(curr[3] or 0),
             "previous_month_same_window": {
@@ -1541,6 +1741,9 @@ class DuckDBMetricsRepo:
         actualizado porque la pipeline exporta las silver primero. El gold se
         quedó sin data de Jun 2026 y nadie corrió la pipeline.
         """
+        max_d = self._con.execute(
+            "SELECT MAX(business_date) FROM silver_fact_ventas WHERE estado_documento != 'A'"
+        ).fetchone()[0]
         rows = self._con.execute("""
             SELECT business_date,
                    ROUND(COALESCE(SUM(total_factura), 0), 2) AS ventas,
@@ -1566,12 +1769,17 @@ class DuckDBMetricsRepo:
                 "avg_ticket": float(r[3] or 0),
                 "accumulated": round(accum, 2),
             })
-        return {"month": month, "days": days, "total_days_with_sales": len(days)}
+        return {
+            "month": month,
+            "days": days,
+            "total_days_with_sales": len(days),
+            "as_of_business_date": str(max_d) if max_d else None,
+        }
 
 
     # ── Sales Forecast Monthly (V1.8) ─────────────────────────────────
 
-    def get_sales_forecast_monthly(self, horizon: int = 2) -> dict:
+    def get_sales_forecast_monthly(self) -> dict:
         """Proyección run-rate estable: mes actual + siguiente.
 
         V1.23 (2026-06-30): el daily_rate ahora se calcula sobre los últimos
@@ -1656,8 +1864,9 @@ class DuckDBMetricsRepo:
         next_month_str = f"{next_year}-{next_month_num:02d}"
         next_total_days = (date(next_year, next_month_num, 1) + timedelta(days=32)).replace(day=1) - timedelta(days=1)
 
-        # Mes mismo año pasado (sólo metadato/contexto)
-        ly_month = f"{max_date.year - 1}-{max_date.month:02d}"
+        # El mismo mes que se proyecta, un año atrás (sólo contexto).
+        # Para Jul -> Ago debe comparar Ago del año anterior, no Jul.
+        ly_month = f"{next_year - 1}-{next_month_num:02d}"
         ly_sales = self._con.execute("""
             SELECT ROUND(COALESCE(SUM(total_factura),0),2)
             FROM silver_fact_ventas WHERE STRFTIME(business_date,'%Y-%m') = ?
