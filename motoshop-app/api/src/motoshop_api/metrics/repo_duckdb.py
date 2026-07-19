@@ -221,21 +221,21 @@ def _bootstrap_duckdb_from_r2(db_path: Path, tenant: str = "motoshop") -> None:
                     r2_mtime = head['LastModified'].timestamp()
                 except Exception:
                     r2_mtime = time()  # fallback al wall clock
-            # Publish file + pool eviction/close as one critical section. Replacing
-            # after eviction left a window where another request could open and
-            # pool the old inode indefinitely.
+            # V1.12.1: REMOVER la conexion vieja del pool sin cerrarla.
+            # Antes haciamos con.close() inmediato, pero eso rompia queries
+            # concurrentes con "No open result set". Al solo pop()-earla, el
+            # proximo request abre una conexion nueva al archivo nuevo, y las
+            # queries en vuelo siguen leyendo del inode viejo (replace es
+            # atomico en Linux y el FD viejo sigue valido hasta que se libere).
+            # Python GC cierra la conexion vieja cuando nadie la referencia.
             try:
-                publish_duckdb_snapshot(tmp_path, db_path)
+                key = str(db_path.resolve())
+                with _shared_connections_lock:
+                    _shared_connections.pop(key, None)
             except Exception as exc:
-                logger.warning("Could not publish DuckDB snapshot for %s: %s", db_path, exc)
-                raise
+                logger.warning("Could not evict old connection for %s: %s", db_path, exc)
+            tmp_path.replace(db_path)
             _R2_DOWNLOADED_MTIME[tenant] = r2_mtime
-            # Publish only after the atomic replace. A monotonic generation
-            # prevents an old in-flight query from making stale data visible if
-            # it finishes after physical caches have been cleared.
-            from motoshop_api.metrics.snapshot import publish_snapshot
-
-            publish_snapshot(tenant)
             logger.info("DuckDB refreshed to %s (r2_mtime=%.0f)", db_path, r2_mtime)
     except Exception as exc:
         logger.warning("Failed to download DuckDB from R2: %s", exc)
@@ -1583,12 +1583,17 @@ class DuckDBMetricsRepo:
                 "avg_ticket": float(r[3] or 0),
                 "accumulated": round(accum, 2),
             })
-        return {"month": month, "days": days, "total_days_with_sales": len(days)}
+        return {
+            "month": month,
+            "days": days,
+            "total_days_with_sales": len(days),
+            "as_of_business_date": str(max_d) if max_d else None,
+        }
 
 
     # ── Sales Forecast Monthly (V1.8) ─────────────────────────────────
 
-    def get_sales_forecast_monthly(self, horizon: int = 2) -> dict:
+    def get_sales_forecast_monthly(self) -> dict:
         """Proyección run-rate estable: mes actual + siguiente.
 
         V1.23 (2026-06-30): el daily_rate ahora se calcula sobre los últimos
