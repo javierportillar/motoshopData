@@ -1678,8 +1678,9 @@ class DuckDBMetricsRepo:
         next_month_str = f"{next_year}-{next_month_num:02d}"
         next_total_days = (date(next_year, next_month_num, 1) + timedelta(days=32)).replace(day=1) - timedelta(days=1)
 
-        # Mes mismo año pasado (sólo metadato/contexto)
-        ly_month = f"{max_date.year - 1}-{max_date.month:02d}"
+        # El mismo mes que se proyecta, un año atrás (sólo contexto).
+        # Para Jul -> Ago debe comparar Ago del año anterior, no Jul.
+        ly_month = f"{next_year - 1}-{next_month_num:02d}"
         ly_sales = self._con.execute("""
             SELECT ROUND(COALESCE(SUM(total_factura),0),2)
             FROM silver_fact_ventas WHERE STRFTIME(business_date,'%Y-%m') = ?
