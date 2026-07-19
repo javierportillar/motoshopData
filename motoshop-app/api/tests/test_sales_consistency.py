@@ -2,18 +2,27 @@
 
 from __future__ import annotations
 
+import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event, Thread
+from types import SimpleNamespace
 
 import duckdb
 
 from motoshop_api.metrics.repo_duckdb import (
+    _R2_DOWNLOADED_MTIME,
+    _R2_LAST_CHECK,
     DuckDBMetricsRepo,
+    _bootstrap_duckdb_from_r2,
     _retired_connections,
     close_all_shared_connections,
     get_shared_connection,
     publish_duckdb_snapshot,
 )
+from motoshop_api.metrics.router import _cache, _cached_or_fetch
+from motoshop_api.metrics.snapshot import advance_snapshot_generation
+
 
 def _create_sales_db(path: Path) -> None:
     connection = duckdb.connect(str(path))
@@ -131,6 +140,47 @@ def test_empty_sales_dataset_has_null_business_cutoff(tmp_path: Path) -> None:
     assert calendar["as_of_business_date"] is None
 
 
+def test_r2_replacement_invalidates_metrics_cache(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db_path = tmp_path / "tenant_gold.duckdb"
+    db_path.write_bytes(b"old")
+
+    class FakeS3:
+        def head_object(self, **_kwargs):
+            return {"LastModified": datetime(2026, 7, 18, tzinfo=UTC)}
+
+        def download_file(self, _bucket: str, _key: str, target: str) -> None:
+            connection = duckdb.connect(target)
+            try:
+                connection.execute("CREATE TABLE snapshot_marker (value VARCHAR)")
+                connection.execute("INSERT INTO snapshot_marker VALUES ('new')")
+            finally:
+                connection.close()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "boto3",
+        SimpleNamespace(client=lambda *_args, **_kwargs: FakeS3()),
+    )
+    monkeypatch.setenv("R2_ENDPOINT", "https://r2.test")
+    monkeypatch.setenv("R2_ACCESS_KEY_ID", "key")
+    monkeypatch.setenv("R2_SECRET_ACCESS_KEY", "secret")
+    tenant = "cache-test"
+    _R2_LAST_CHECK.pop(tenant, None)
+    _R2_DOWNLOADED_MTIME[tenant] = 0
+    _cache[(0, "cache-test:sales-summary-v2")] = (0, {"stale": True})
+
+    _bootstrap_duckdb_from_r2(db_path, tenant=tenant)
+
+    try:
+        assert get_shared_connection(db_path).execute(
+            "SELECT value FROM snapshot_marker"
+        ).fetchone() == ("new",)
+        assert _cache == {}
+    finally:
+        close_all_shared_connections()
+
 
 def test_snapshot_publication_cannot_pool_connection_to_old_inode(
     tmp_path: Path, monkeypatch
@@ -232,3 +282,29 @@ def test_active_query_finishes_on_old_snapshot_before_retired_connection_closes(
     finally:
         old_result.close()
         close_all_shared_connections()
+
+
+def test_old_in_flight_fetch_cannot_repopulate_visible_generation() -> None:
+    tenant = "generation-race-test"
+    key = f"{tenant}:sales-summary-v2"
+    started = Event()
+    release_old = Event()
+    result: list[dict[str, str]] = []
+
+    def fetch_old() -> dict[str, str]:
+        started.set()
+        assert release_old.wait(timeout=2)
+        return {"snapshot": "old"}
+
+    worker = Thread(target=lambda: result.append(_cached_or_fetch(key, fetch_old)))
+    worker.start()
+    assert started.wait(timeout=2)
+
+    advance_snapshot_generation(tenant)
+    current = _cached_or_fetch(key, lambda: {"snapshot": "new"})
+    release_old.set()
+    worker.join(timeout=2)
+
+    assert result == [{"snapshot": "old"}]
+    assert current == {"snapshot": "new"}
+    assert _cached_or_fetch(key, lambda: {"snapshot": "wrong"}) == {"snapshot": "new"}
