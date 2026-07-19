@@ -7,7 +7,6 @@ from motoshop_api.auth.deps import get_current_user
 from motoshop_api.auth.users import User
 from motoshop_api.tenants import get_tenant_config
 
-
 _DEFAULT_TENANT = "motoshop"
 
 
@@ -22,7 +21,11 @@ async def get_tenant(
     """
     tenant = request.headers.get("X-Tenant", _DEFAULT_TENANT)
 
-    if user.tenants_allowed and tenant not in user.tenants_allowed:
+    # Only legacy YAML identities retain the old empty-list = unrestricted
+    # behavior. A managed user with no tenant is denied instead of becoming
+    # accidentally global.
+    legacy_unrestricted = user.source == "legacy" and not user.tenants_allowed
+    if not legacy_unrestricted and tenant not in user.tenants_allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Usuario no tiene acceso al tenant '{tenant}'",
