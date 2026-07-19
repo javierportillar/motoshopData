@@ -13,9 +13,8 @@ from pathlib import Path
 import duckdb
 
 from motoshop_api.metrics.repo_duckdb import (
-    _shared_connections,
-    _shared_connections_lock,
     get_shared_connection,
+    publish_duckdb_snapshot,
 )
 
 logger = logging.getLogger(__name__)
@@ -176,16 +175,13 @@ def _bootstrap_pipeline_db_from_r2(db_path: Path, tenant: str = "motoshop") -> N
                     r2_mtime = head['LastModified'].timestamp()
                 except Exception:
                     r2_mtime = time()
-            # V1.12.1: solo evict del pool, NO cerrar (evita race con queries
-            # en vuelo concurrentes que tirarian "No open result set").
-            # Ver explicacion completa en metrics/repo_duckdb.py
+            # Use the shared lease-aware publisher. Active readers finish on
+            # the old snapshot; subsequent queries acquire the new generation.
             try:
-                key = str(db_path.resolve())
-                with _shared_connections_lock:
-                    _shared_connections.pop(key, None)
+                publish_duckdb_snapshot(tmp_path, db_path)
             except Exception as exc:
-                logger.warning("Could not evict old pipeline_runs connection: %s", exc)
-            tmp_path.replace(db_path)
+                logger.warning("Could not publish pipeline_runs snapshot: %s", exc)
+                raise
             _PIPELINE_R2_DOWNLOADED_MTIME[tenant] = r2_mtime
             logger.info("pipeline_runs.duckdb refreshed to %s (r2_mtime=%.0f)", db_path, r2_mtime)
     except Exception as exc:
