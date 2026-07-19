@@ -221,21 +221,21 @@ def _bootstrap_duckdb_from_r2(db_path: Path, tenant: str = "motoshop") -> None:
                     r2_mtime = head['LastModified'].timestamp()
                 except Exception:
                     r2_mtime = time()  # fallback al wall clock
-            # V1.12.1: REMOVER la conexion vieja del pool sin cerrarla.
-            # Antes haciamos con.close() inmediato, pero eso rompia queries
-            # concurrentes con "No open result set". Al solo pop()-earla, el
-            # proximo request abre una conexion nueva al archivo nuevo, y las
-            # queries en vuelo siguen leyendo del inode viejo (replace es
-            # atomico en Linux y el FD viejo sigue valido hasta que se libere).
-            # Python GC cierra la conexion vieja cuando nadie la referencia.
+            # Publish file + pool eviction/close as one critical section. Replacing
+            # after eviction left a window where another request could open and
+            # pool the old inode indefinitely.
             try:
-                key = str(db_path.resolve())
-                with _shared_connections_lock:
-                    _shared_connections.pop(key, None)
+                publish_duckdb_snapshot(tmp_path, db_path)
             except Exception as exc:
-                logger.warning("Could not evict old connection for %s: %s", db_path, exc)
-            tmp_path.replace(db_path)
+                logger.warning("Could not publish DuckDB snapshot for %s: %s", db_path, exc)
+                raise
             _R2_DOWNLOADED_MTIME[tenant] = r2_mtime
+            # Publish only after the atomic replace. A monotonic generation
+            # prevents an old in-flight query from making stale data visible if
+            # it finishes after physical caches have been cleared.
+            from motoshop_api.metrics.snapshot import publish_snapshot
+
+            publish_snapshot(tenant)
             logger.info("DuckDB refreshed to %s (r2_mtime=%.0f)", db_path, r2_mtime)
     except Exception as exc:
         logger.warning("Failed to download DuckDB from R2: %s", exc)
@@ -443,38 +443,36 @@ class DuckDBMetricsRepo:
     # ── Sales Daily ──────────────────────────────────────────────────────
 
     def get_sales_daily(self, date: str) -> SalesDailyResponse:
-        max_date_rows = self._query("""
-            SELECT MAX(business_date) AS max_date
-            FROM gold_mart_ventas_diarias_sku
-            WHERE business_date <= ?
-        """, [date])
-        effective_date = date
-        if max_date_rows and max_date_rows[0].get("max_date"):
-            effective_date = str(max_date_rows[0]["max_date"])
-
         productos = self._query("""
             SELECT
-                cod_producto AS sku,
-                nom_producto AS nombre,
-                ROUND(SUM(cantidad_total), 2) AS cantidad,
-                ROUND(SUM(valor_total), 2) AS valor
-            FROM gold_mart_ventas_diarias_sku
-            WHERE business_date = ?
-            GROUP BY cod_producto, nom_producto
+                d.cod_producto AS sku,
+                COALESCE(p.nombre_producto, 'SIN NOMBRE') AS nombre,
+                ROUND(SUM(d.cantidad), 2) AS cantidad,
+                ROUND(SUM(d.total_detalle), 2) AS valor
+            FROM silver_fact_ventas_detalle d
+            INNER JOIN silver_fact_ventas v
+                ON d.num_documento = v.num_documento
+                AND d.cod_clase = v.cod_clase
+                AND d.business_date = v.business_date
+            LEFT JOIN silver_dim_producto p ON p.cod_producto = d.cod_producto
+            WHERE v.business_date = ?
+              AND v.estado_documento != 'A'
+            GROUP BY d.cod_producto, p.nombre_producto
             ORDER BY valor DESC
-        """, [effective_date])
+        """, [date])
         totals = self._query("""
             SELECT
-                ROUND(COALESCE(SUM(valor_total), 0), 2) AS total_ventas,
-                COALESCE(SUM(num_facturas), 0) AS total_facturas
-            FROM gold_mart_ventas_diarias_sku
+                ROUND(COALESCE(SUM(total_factura), 0), 2) AS total_ventas,
+                COUNT(*) AS total_facturas
+            FROM silver_fact_ventas
             WHERE business_date = ?
-        """, [effective_date])
+              AND estado_documento != 'A'
+        """, [date])
         if not totals:
-            return SalesDailyResponse(date=effective_date, total_ventas=0.0, total_facturas=0, productos_vendidos=[])
+            return SalesDailyResponse(date=date, total_ventas=0.0, total_facturas=0, productos_vendidos=[])
         t = totals[0]
         return SalesDailyResponse(
-            date=effective_date,
+            date=date,
             total_ventas=float(t["total_ventas"] or 0.0),
             total_facturas=int(t["total_facturas"] or 0),
             productos_vendidos=[SalesDailyItem(**r) for r in productos],
@@ -1445,13 +1443,28 @@ class DuckDBMetricsRepo:
         silver_fact_ventas por misma razón que get_sales_daily_month — el gold
         se quedó sin data de Jun 2026.
         """
-        from datetime import date
-
         # Max date from silver (siempre actualizada)
         max_d = self._con.execute(
             "SELECT MAX(business_date) FROM silver_fact_ventas WHERE estado_documento != 'A'"
         ).fetchone()[0]
-        max_date = max_d if max_d else date.today()
+        if max_d is None:
+            return {
+                "business_month": None,
+                "max_sales_date": None,
+                "as_of_business_date": None,
+                "current_month_accumulated": 0.0,
+                "current_month_days_with_sales": 0,
+                "previous_month_same_window": {
+                    "from": None,
+                    "to": None,
+                    "amount": 0.0,
+                    "delta_pct": None,
+                },
+                "same_month_previous_years": [],
+                "ticket_promedio": 0.0,
+                "num_facturas": 0,
+            }
+        max_date = max_d
         max_date_str = str(max_date)
         current_month = max_date.strftime("%Y-%m")
         day_num = max_date.day
@@ -1517,6 +1530,7 @@ class DuckDBMetricsRepo:
         return {
             "business_month": current_month,
             "max_sales_date": max_date_str,
+            "as_of_business_date": max_date_str,
             "current_month_accumulated": va_curr,
             "current_month_days_with_sales": int(curr[3] or 0),
             "previous_month_same_window": {
@@ -1541,6 +1555,9 @@ class DuckDBMetricsRepo:
         actualizado porque la pipeline exporta las silver primero. El gold se
         quedó sin data de Jun 2026 y nadie corrió la pipeline.
         """
+        max_d = self._con.execute(
+            "SELECT MAX(business_date) FROM silver_fact_ventas WHERE estado_documento != 'A'"
+        ).fetchone()[0]
         rows = self._con.execute("""
             SELECT business_date,
                    ROUND(COALESCE(SUM(total_factura), 0), 2) AS ventas,

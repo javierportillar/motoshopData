@@ -9,10 +9,10 @@ devuelve datos realistas de demo.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel
-
+from pydantic import BaseModel, Field
 
 # ── Shared ────────────────────────────────────────────────────────────────
 
