@@ -16,9 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from starlette.requests import Request as StarletteRequest
-
-from motoshop_api.auth.deps import get_current_user, require_role
+from motoshop_api.auth.deps import get_current_user, require_module, require_role
 from motoshop_api.auth.tenant_dep import get_tenant
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
@@ -27,17 +25,18 @@ from motoshop_api.metrics.repo import (
     RealMetricsRepo,
 )
 from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
+from motoshop_api.metrics.snapshot import get_snapshot_generation, publish_snapshot
 from motoshop_api.metrics.schemas import (
     AbcDetalleResponse,
     AbcSegmentation,
+    ActionRecommendationItem,
+    ActionRecommendationsResponse,
+    BalanceResponse,
     CashClosureResponse,
     CohortesDetailResponse,
     CohortesResponse,
     DormidosResponse,
     DriftSummaryResponse,
-    ActionRecommendationItem,
-    ActionRecommendationsResponse,
-    BalanceResponse,
     ForecastCategoriaResponse,
     HoraPicoResponse,
     InventorySummary,
@@ -45,14 +44,16 @@ from motoshop_api.metrics.schemas import (
     PlanComprasResponse,
     PurchasesDayDetailResponse,
     SalesDailyResponse,
+    SalesDailyMonthResponse,
     SalesDayDetailResponse,
     SalesDayInvoicesResponse,
+    SalesForecastMonthlyResponse,
     SalesHistoricalResponse,
     SalesMonthDetailResponse,
     SalesMonthlyResponse,
     SalesSummary,
+    SalesSummaryV2Response,
     SalesTrendResponse,
-    VendedoresSummaryResponse,
 )
 
 router = APIRouter(tags=["metrics"])
@@ -68,7 +69,7 @@ def _rate_limit_key(request: Request) -> str:
 limiter = Limiter(key_func=_rate_limit_key)
 
 _CACHE_TTL = 300  # 5 minutos
-_cache: dict[str, tuple[float, object]] = {}
+_cache: dict[tuple[int, str], tuple[float, object]] = {}
 _workspace_client = None  # lazy singleton
 _workspace_created_at: float = 0.0
 _WORKSPACE_TTL = 3600  # Refresh workspace client hourly
@@ -104,13 +105,17 @@ def _get_real_metrics_repo() -> RealMetricsRepo:
 
 
 def _cached_or_fetch(key: str, fetch_fn, ttl: int = _CACHE_TTL):
+    tenant = key.partition(":")[0]
+    versioned_key = (get_snapshot_generation(tenant), key)
     now = time()
-    if key in _cache:
-        ts, val = _cache[key]
+    if versioned_key in _cache:
+        ts, val = _cache[versioned_key]
         if now - ts < ttl:
             return val
     val = fetch_fn()
-    _cache[key] = (now, val)
+    # Store under the generation captured before the fetch. A concurrent R2
+    # replacement advances the generation, making this value unreachable.
+    _cache[versioned_key] = (now, val)
     return val
 
 
@@ -136,7 +141,11 @@ def get_repo(tenant: str = Depends(get_tenant)) -> MetricsRepoProtocol:
     return FakeMetricsRepo()
 
 
-@router.get("/metrics/sales-summary", response_model=SalesSummary)
+@router.get(
+    "/metrics/sales-summary",
+    response_model=SalesSummary,
+    dependencies=[Depends(require_module("ventas-summary"))],
+)
 @limiter.limit("30/minute")
 def sales_summary(
     request: Request,
@@ -150,7 +159,11 @@ def sales_summary(
 
 # ── Sales Summary V2 (V1.8) ──────────────────────────────────────────────
 
-@router.get("/metrics/sales-summary-v2")
+@router.get(
+    "/metrics/sales-summary-v2",
+    response_model=SalesSummaryV2Response,
+    dependencies=[Depends(require_module("ventas-summary"))],
+)
 @limiter.limit("30/minute")
 def sales_summary_v2(
     request: Request,
@@ -164,7 +177,11 @@ def sales_summary_v2(
 
 # ── Sales Daily Month (V1.8) ─────────────────────────────────────────────
 
-@router.get("/metrics/sales-daily-month")
+@router.get(
+    "/metrics/sales-daily-month",
+    response_model=SalesDailyMonthResponse,
+    dependencies=[Depends(require_module("ventas-summary"))],
+)
 @limiter.limit("30/minute")
 def sales_daily_month(
     request: Request,
@@ -179,7 +196,10 @@ def sales_daily_month(
 
 # ── Inventory Detail + Discrepancies (V1.8) ──────────────────────────────
 
-@router.get("/metrics/inventory-detail")
+@router.get(
+    "/metrics/inventory-detail",
+    dependencies=[Depends(require_module("inventario"))],
+)
 @limiter.limit("30/minute")
 def inventory_detail(
     request: Request,
@@ -214,20 +234,35 @@ def inventory_discrepancies(
     """SKUs con diferencias de stock entre inventario y dormidos + invariante SQL."""
     return _cached_or_fetch(f"{tenant}:inv-discrepancies", repo.get_inventory_discrepancies, ttl=300)
 
-@router.get("/metrics/sales-forecast-monthly")
+@router.get(
+    "/metrics/sales-forecast-monthly",
+    response_model=SalesForecastMonthlyResponse,
+    dependencies=[Depends(require_module("forecast"))],
+)
 @limiter.limit("10/minute")
 def sales_forecast_monthly(
     request: Request,
-    horizon: int = Query(default=2, ge=1, le=3),
+    horizon: Literal[2] = Query(
+        default=2,
+        description="Only the implemented current+next month horizon is supported",
+    ),
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
     tenant: str = Depends(get_tenant),
-):
+) -> SalesForecastMonthlyResponse:
     """Proyección de ventas (run-rate) para mes actual y siguiente. Sin LLM."""
-    return _cached_or_fetch(f"{tenant}:sales-forecast:{horizon}", lambda: repo.get_sales_forecast_monthly(horizon))
+    payload = _cached_or_fetch(
+        f"{tenant}:sales-forecast:2",
+        repo.get_sales_forecast_monthly,
+    )
+    return SalesForecastMonthlyResponse(**payload)
 
 
-@router.get("/metrics/sales-daily", response_model=SalesDailyResponse)
+@router.get(
+    "/metrics/sales-daily",
+    response_model=SalesDailyResponse,
+    dependencies=[Depends(require_module("ventas-summary"))],
+)
 @limiter.limit("30/minute")
 def sales_daily(
     request: Request,
@@ -243,7 +278,11 @@ def sales_daily(
     return _cached_or_fetch(f"{tenant}:sales-daily:{date}", lambda: repo.get_sales_daily(date))
 
 
-@router.get("/metrics/sales-monthly", response_model=SalesMonthlyResponse)
+@router.get(
+    "/metrics/sales-monthly",
+    response_model=SalesMonthlyResponse,
+    dependencies=[Depends(require_module("ventas-summary"))],
+)
 @limiter.limit("30/minute")
 def sales_monthly(
     request: Request,
@@ -282,7 +321,11 @@ def sales_historical_products(
     )
 
 
-@router.get("/metrics/sales-day-detail", response_model=SalesDayDetailResponse)
+@router.get(
+    "/metrics/sales-day-detail",
+    response_model=SalesDayDetailResponse,
+    dependencies=[Depends(require_module("ventas-summary"))],
+)
 @limiter.limit("30/minute")
 def sales_day_detail(
     request: Request,
@@ -299,7 +342,11 @@ def sales_day_detail(
     )
 
 
-@router.get("/metrics/sales-month-detail", response_model=SalesMonthDetailResponse)
+@router.get(
+    "/metrics/sales-month-detail",
+    response_model=SalesMonthDetailResponse,
+    dependencies=[Depends(require_module("ventas-summary"))],
+)
 @limiter.limit("30/minute")
 def sales_month_detail(
     request: Request,
@@ -319,7 +366,11 @@ def sales_month_detail(
     )
 
 
-@router.get("/metrics/sales-day-invoices", response_model=SalesDayInvoicesResponse)
+@router.get(
+    "/metrics/sales-day-invoices",
+    response_model=SalesDayInvoicesResponse,
+    dependencies=[Depends(require_module("ventas-summary"))],
+)
 @limiter.limit("30/minute")
 def sales_day_invoices(
     request: Request,
@@ -337,7 +388,11 @@ def sales_day_invoices(
     )
 
 
-@router.get("/metrics/cash-closure", response_model=CashClosureResponse)
+@router.get(
+    "/metrics/cash-closure",
+    response_model=CashClosureResponse,
+    dependencies=[Depends(require_module("ventas-summary"))],
+)
 @limiter.limit("30/minute")
 def cash_closure(
     request: Request,
@@ -388,7 +443,11 @@ def purchases_day_detail(
     )
 
 
-@router.get("/metrics/sales-historical", response_model=SalesHistoricalResponse)
+@router.get(
+    "/metrics/sales-historical",
+    response_model=SalesHistoricalResponse,
+    dependencies=[Depends(require_module("ventas-summary"))],
+)
 @limiter.limit("30/minute")
 def sales_historical(
     request: Request,
@@ -400,7 +459,11 @@ def sales_historical(
     return _cached_or_fetch(f"{tenant}:sales-historical", repo.get_sales_historical)
 
 
-@router.get("/metrics/inventory-summary", response_model=InventorySummary)
+@router.get(
+    "/metrics/inventory-summary",
+    response_model=InventorySummary,
+    dependencies=[Depends(require_module("inventario"))],
+)
 @limiter.limit("30/minute")
 def inventory_summary(
     request: Request,
@@ -414,7 +477,10 @@ def inventory_summary(
 
 # ── Analítica de productos / inventario (V1.10) ──────────────────────────
 
-@router.get("/metrics/inventory-overview")
+@router.get(
+    "/metrics/inventory-overview",
+    dependencies=[Depends(require_module("inventario"))],
+)
 @limiter.limit("30/minute")
 def inventory_overview(
     request: Request,
@@ -644,7 +710,11 @@ def drift_summary(
     return _cached_or_fetch(f"{tenant}:drift-summary", repo.get_drift_summary)
 
 
-@router.get("/metrics/plan-compras", response_model=PlanComprasResponse)
+@router.get(
+    "/metrics/plan-compras",
+    response_model=PlanComprasResponse,
+    dependencies=[Depends(require_module("decisiones"))],
+)
 @limiter.limit("30/minute")
 def plan_compras(
     request: Request,
@@ -671,13 +741,18 @@ def forecast_categoria(
 @router.post("/metrics/cache/clear")
 def clear_metrics_cache(
     _user: User = Depends(require_role("admin", "gerente")),
+    tenant: str = Depends(get_tenant),
 ) -> dict:
     """Invalidar cache de métricas manualmente."""
-    _clear_metrics_cache()
+    publish_snapshot(tenant)
     return {"status": "ok", "message": "Cache cleared"}
 
 
-@router.get("/metrics/recommendations", response_model=ActionRecommendationsResponse)
+@router.get(
+    "/metrics/recommendations",
+    response_model=ActionRecommendationsResponse,
+    dependencies=[Depends(require_module("decisiones", "acciones"))],
+)
 @limiter.limit("30/minute")
 def action_recommendations(
     request: Request,
@@ -752,7 +827,11 @@ def _validate_date_range(fecha_inicio: str, fecha_fin: str) -> None:
         raise HTTPException(status_code=400, detail="fecha_inicio debe ser <= fecha_fin.")
 
 
-@router.get("/metrics/horas-pico", response_model=HoraPicoResponse)
+@router.get(
+    "/metrics/horas-pico",
+    response_model=HoraPicoResponse,
+    dependencies=[Depends(require_module("analisis"))],
+)
 @limiter.limit("30/minute")
 def horas_pico(
     request: Request,
@@ -772,7 +851,11 @@ def horas_pico(
     )
 
 
-@router.get("/metrics/analisis-balance", response_model=BalanceResponse)
+@router.get(
+    "/metrics/analisis-balance",
+    response_model=BalanceResponse,
+    dependencies=[Depends(require_module("analisis"))],
+)
 @limiter.limit("30/minute")
 def analisis_balance(
     request: Request,
@@ -890,7 +973,10 @@ def vendor_data_flag(
 
 # ── V1.17: Inventario inteligente (refactor /dashboards/inventario) ──
 
-@router.get("/metrics/inventario-overview")
+@router.get(
+    "/metrics/inventario-overview",
+    dependencies=[Depends(require_module("inventario"))],
+)
 @limiter.limit("30/minute")
 def inventario_overview(
     request: Request,
@@ -921,7 +1007,10 @@ def inventario_overview(
 
 # ── V1.19: Compras refactor (overview mensual + histórico + por proveedor) ──
 
-@router.get("/metrics/compras-overview")
+@router.get(
+    "/metrics/compras-overview",
+    dependencies=[Depends(require_module("ventas-summary"))],
+)
 @limiter.limit("30/minute")
 def compras_overview(
     request: Request,
@@ -939,7 +1028,10 @@ def compras_overview(
     )
 
 
-@router.get("/metrics/compras-historico")
+@router.get(
+    "/metrics/compras-historico",
+    dependencies=[Depends(require_module("ventas-summary"))],
+)
 @limiter.limit("30/minute")
 def compras_historico(
     request: Request,
@@ -978,7 +1070,10 @@ def compras_por_proveedor(
 
 # ── V1.20: Compras enriquecidas (popup día + proveedor detalle) ──────────
 
-@router.get("/metrics/purchases-day-grouped")
+@router.get(
+    "/metrics/purchases-day-grouped",
+    dependencies=[Depends(require_module("ventas-summary"))],
+)
 @limiter.limit("30/minute")
 def purchases_day_grouped(
     request: Request,
@@ -1021,7 +1116,10 @@ def compras_proveedor_detalle(
 
 # ── V1.21: Análisis de productos y proveedores ──────────────────────────
 
-@router.get("/metrics/analisis-productos")
+@router.get(
+    "/metrics/analisis-productos",
+    dependencies=[Depends(require_module("analisis"))],
+)
 @limiter.limit("30/minute")
 def analisis_productos(
     request: Request,
@@ -1042,7 +1140,10 @@ def analisis_productos(
     )
 
 
-@router.get("/metrics/analisis-proveedores")
+@router.get(
+    "/metrics/analisis-proveedores",
+    dependencies=[Depends(require_module("analisis"))],
+)
 @limiter.limit("30/minute")
 def analisis_proveedores(
     request: Request,
