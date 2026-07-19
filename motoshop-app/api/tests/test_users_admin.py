@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from motoshop_api.auth.hash import hash_password
 from motoshop_api.auth.users import _users_cache
+from motoshop_api.tenants import Tenant, _tenants_cache
 from motoshop_api.users import router as users_router
 from motoshop_api.users import supabase_repo
 
@@ -42,6 +43,21 @@ def fake_store(monkeypatch):
     yield store
 
 
+@pytest.fixture(autouse=True)
+def configured_tenants() -> None:
+    """Expose the same tenant registry the admin API validates in production."""
+    _tenants_cache.clear()
+    for tenant_id in ("motoshop", "masvital"):
+        _tenants_cache[tenant_id] = Tenant(
+            id=tenant_id,
+            nombre=tenant_id.title(),
+            r2_object_key=f"{tenant_id}_gold.duckdb",
+            local_db_path=f"/tmp/{tenant_id}_gold.duckdb",
+        )
+    yield
+    _tenants_cache.clear()
+
+
 def _admin_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}", "X-Tenant": "motoshop"}
 
@@ -60,18 +76,17 @@ def test_create_user_hides_hash_and_appears_in_list(client, admin_token, fake_st
             "email": "g@test.com",
             "role": "gerente",
             "tenants_allowed": ["motoshop"],
-            "allowed_modules": ["inventario", "analisis", "no-existe"],
+            "allowed_modules": ["inventario", "analisis", "forecast"],
         },
         headers=_admin_headers(admin_token),
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert "hashed_password" not in body
-    # módulos inválidos se filtran
-    assert body["allowed_modules"] == ["inventario", "analisis"]
+    assert body["allowed_modules"] == ["inventario", "analisis", "forecast"]
     # queda en la cache en memoria tras el sync
     assert "gerencia1" in _users_cache
-    assert _users_cache["gerencia1"].allowed_modules == ["inventario", "analisis"]
+    assert _users_cache["gerencia1"].allowed_modules == ["inventario", "analisis", "forecast"]
 
     lst = client.get("/api/admin/users", headers=_admin_headers(admin_token))
     assert any(u["username"] == "gerencia1" for u in lst.json()["items"])
@@ -81,16 +96,132 @@ def test_create_duplicate_is_conflict(client, admin_token, fake_store) -> None:
     # 'admin' ya existe en la cache (fixture fake_users)
     resp = client.post(
         "/api/admin/users",
-        json={"username": "admin", "password": "x1234", "role": "admin"},
+        json={
+            "username": "admin",
+            "password": "x1234",
+            "role": "admin",
+            "tenants_allowed": ["motoshop"],
+        },
         headers=_admin_headers(admin_token),
     )
     assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "legacy_user_requires_explicit_migration"
+
+
+def test_explicit_legacy_migration_creates_managed_supabase_identity(
+    client, admin_token, fake_store
+) -> None:
+    response = client.post(
+        "/api/admin/users",
+        json={
+            "username": "admin",
+            "password": "a-new-password",
+            "email": "managed-admin@test.com",
+            "role": "admin",
+            "tenants_allowed": ["motoshop"],
+            "allowed_modules": [],
+            "migrate_legacy": True,
+        },
+        headers=_admin_headers(admin_token),
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["source"] == "supabase"
+    assert response.json()["manageable"] is True
+    assert fake_store.rows["admin"]["created_by"] == "admin:legacy-migration"
+    assert _users_cache["admin"].source == "supabase"
+
+
+def test_empty_supabase_table_still_lists_legacy_admin(
+    client, admin_token, fake_store
+) -> None:
+    response = client.get("/api/admin/users", headers=_admin_headers(admin_token))
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    admin = next(item for item in body["items"] if item["username"] == "admin")
+    assert admin == {
+        "username": "admin",
+        "email": "admin@test.com",
+        "role": "admin",
+        "tenants_allowed": [],
+        "allowed_modules": [],
+        "active": True,
+        "source": "legacy",
+        "manageable": False,
+        "created_by": None,
+        "created_at": None,
+        "updated_at": None,
+    }
+    assert body["total"] == len(body["items"])
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_fragment"),
+    [
+        (
+            {
+                "username": "badtenant",
+                "password": "clave123",
+                "role": "vendedor",
+                "tenants_allowed": ["unknown"],
+                "allowed_modules": ["inventario"],
+            },
+            "tenant",
+        ),
+        (
+            {
+                "username": "badmodule",
+                "password": "clave123",
+                "role": "vendedor",
+                "tenants_allowed": ["motoshop"],
+                "allowed_modules": ["inventario", "root-shell"],
+            },
+            "módulo",
+        ),
+        (
+            {
+                "username": "notenant",
+                "password": "clave123",
+                "role": "vendedor",
+                "tenants_allowed": [],
+                "allowed_modules": ["inventario"],
+            },
+            "tenant",
+        ),
+        (
+            {
+                "username": "missingtenant",
+                "password": "clave123",
+                "role": "vendedor",
+                "allowed_modules": ["inventario"],
+            },
+            "tenant",
+        ),
+    ],
+)
+def test_create_rejects_invalid_scope(
+    client, admin_token, fake_store, payload: dict, expected_fragment: str
+) -> None:
+    response = client.post(
+        "/api/admin/users",
+        json=payload,
+        headers=_admin_headers(admin_token),
+    )
+
+    assert response.status_code == 422, response.text
+    assert expected_fragment in response.text.lower()
 
 
 def test_deactivated_user_cannot_login(client, admin_token, fake_store) -> None:
     client.post(
         "/api/admin/users",
-        json={"username": "empleado1", "password": "clave123", "role": "vendedor"},
+        json={
+            "username": "empleado1",
+            "password": "clave123",
+            "role": "vendedor",
+            "tenants_allowed": ["motoshop"],
+        },
         headers=_admin_headers(admin_token),
     )
     # login ok mientras activo
@@ -123,7 +254,13 @@ def test_cannot_deactivate_self(client, admin_token, fake_store) -> None:
 def test_update_changes_modules_and_role(client, admin_token, fake_store) -> None:
     client.post(
         "/api/admin/users",
-        json={"username": "user1", "password": "clave123", "role": "vendedor", "allowed_modules": ["alerts"]},
+        json={
+            "username": "user1",
+            "password": "clave123",
+            "role": "vendedor",
+            "tenants_allowed": ["motoshop"],
+            "allowed_modules": ["alerts"],
+        },
         headers=_admin_headers(admin_token),
     )
     resp = client.patch(

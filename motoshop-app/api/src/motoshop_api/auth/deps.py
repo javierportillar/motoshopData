@@ -69,6 +69,44 @@ def require_role(*roles: str):
     return _check
 
 
+def require_module(*modules: str):
+    """Authorize a user for at least one feature module.
+
+    Administrators bypass module checks. Legacy YAML identities whose
+    ``allowed_modules`` is ``None`` retain their historical unrestricted
+    behavior; managed Supabase identities always carry an explicit list.
+    """
+    if not modules:
+        raise ValueError("require_module necesita al menos un módulo")
+
+    async def _check(user: User = Depends(get_current_user)) -> User:
+        return authorize_modules(user, modules)
+
+    return _check
+
+
+def authorize_modules(user: User, modules: tuple[str, ...]) -> User:
+    """Apply the shared module policy to an already-authenticated user.
+
+    This function is intentionally separate from FastAPI's dependency factory so
+    route-level policies can be driven by the central route/module matrix and unit
+    tested without constructing a request.
+    """
+    if user.role == "admin":
+        return user
+    # Explicit compatibility rule: identities still sourced from users.yaml did
+    # not historically have module scopes. Managed identities never use None.
+    if user.source == "legacy" and user.allowed_modules is None:
+        return user
+    granted = set(user.allowed_modules or [])
+    if not granted.intersection(modules):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Usuario no tiene acceso al módulo requerido: " + " o ".join(modules),
+        )
+    return user
+
+
 async def require_refresh_token_or_admin(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> bool:

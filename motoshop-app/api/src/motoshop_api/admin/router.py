@@ -10,12 +10,12 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from motoshop_api.auth.deps import get_current_user, require_refresh_token_or_admin, require_role
+from motoshop_api.auth.deps import require_module, require_refresh_token_or_admin, require_role
 from motoshop_api.auth.tenant_dep import get_tenant
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
@@ -220,7 +220,11 @@ class DataStatusResponse(BaseModel):
     duckdb_backend: str = "duckdb"
 
 
-@router.get("/data/status", response_model=DataStatusResponse)
+@router.get(
+    "/data/status",
+    response_model=DataStatusResponse,
+    dependencies=[Depends(require_module("pipeline-observability"))],
+)
 async def data_status(
     request: Request,
     tenant: str = Depends(get_tenant),

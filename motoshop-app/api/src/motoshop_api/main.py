@@ -9,7 +9,7 @@ from pathlib import Path
 
 import sqlalchemy.exc
 import structlog
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
@@ -20,6 +20,7 @@ from slowapi.util import get_remote_address
 from motoshop_api import __version__
 from motoshop_api.auth.router import router as auth_router
 from motoshop_api.auth.users import load_users
+from motoshop_api.auth.module_access import require_route_module
 from motoshop_api.config import settings
 from motoshop_api.logging import RequestIDMiddleware, setup_logging
 from motoshop_api.pipeline_runs.router import router as pipeline_runs_router
@@ -169,22 +170,23 @@ app.add_middleware(RequestIDMiddleware)
 
 # Routers — todos bajo /api (estándar REST)
 app.include_router(auth_router, prefix="/api")
-app.include_router(pipeline_runs_router, prefix="/api")
-app.include_router(products_router, prefix="/api")
-app.include_router(stock_router, prefix="/api")
-app.include_router(sales_router, prefix="/api")
-app.include_router(catalog_router, prefix="/api")
+module_access = [Depends(require_route_module)]
+app.include_router(pipeline_runs_router, prefix="/api", dependencies=module_access)
+app.include_router(products_router, prefix="/api", dependencies=module_access)
+app.include_router(stock_router, prefix="/api", dependencies=module_access)
+app.include_router(sales_router, prefix="/api", dependencies=module_access)
+app.include_router(catalog_router, prefix="/api", dependencies=module_access)
 app.include_router(health_router, prefix="/api")
-app.include_router(llm_router, prefix="/api")
-app.include_router(metrics_router, prefix="/api")
-app.include_router(push_router, prefix="/api")
-app.include_router(forecast_router, prefix="/api")
+app.include_router(llm_router, prefix="/api", dependencies=module_access)
+app.include_router(metrics_router, prefix="/api", dependencies=module_access)
+app.include_router(push_router, prefix="/api", dependencies=module_access)
+app.include_router(forecast_router, prefix="/api", dependencies=module_access)
 app.include_router(admin_router, prefix="/api")
-app.include_router(alerts_router, prefix="/api")
-app.include_router(app_writes_router, prefix="/api")
-app.include_router(purchase_plans_router, prefix="/api")
-app.include_router(gastos_router)  # ya tiene prefix=/api/gastos
-app.include_router(expiry_router, prefix="/api")
+app.include_router(alerts_router, prefix="/api", dependencies=module_access)
+app.include_router(app_writes_router, prefix="/api", dependencies=module_access)
+app.include_router(purchase_plans_router, prefix="/api", dependencies=module_access)
+app.include_router(gastos_router, dependencies=module_access)  # ya tiene prefix=/api/gastos
+app.include_router(expiry_router, prefix="/api", dependencies=module_access)
 app.include_router(users_router)  # ya tiene prefix=/api/admin/users
 
 
