@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import logging
 
-from motoshop_api.auth.users import User, _users_cache
+from motoshop_api.auth.users import User, _users_cache, get_all_users
+from motoshop_api.tenants import get_all_tenants
 from motoshop_api.users import supabase_repo
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,7 @@ MANAGEABLE_MODULES: list[dict[str, str]] = [
     {"key": "inventario", "label": "Inventario"},
     {"key": "decisiones", "label": "Decisiones"},
     {"key": "analisis", "label": "Análisis (gastos, balance)"},
+    {"key": "forecast", "label": "Proyección"},
     {"key": "alerts", "label": "Alertas"},
     {"key": "acciones", "label": "Acciones"},
     {"key": "cohortes", "label": "Cohortes"},
@@ -42,6 +44,26 @@ def valid_modules(modules: list[str]) -> list[str]:
     return [m["key"] for m in MANAGEABLE_MODULES if m["key"] in requested]
 
 
+def validate_modules(modules: list[str]) -> list[str]:
+    """Validate module keys instead of silently widening/narrowing permissions."""
+    unknown = sorted(set(modules) - _VALID_MODULE_KEYS)
+    if unknown:
+        raise ValueError(f"módulo(s) inválido(s): {', '.join(unknown)}")
+    return valid_modules(modules)
+
+
+def validate_tenants(tenant_ids: list[str]) -> list[str]:
+    """Require at least one configured tenant for every managed user."""
+    if not tenant_ids:
+        raise ValueError("tenants_allowed debe incluir al menos un tenant")
+    known = set(get_all_tenants())
+    unknown = sorted(set(tenant_ids) - known)
+    if unknown:
+        raise ValueError(f"tenant(s) inválido(s): {', '.join(unknown)}")
+    # Deduplicate without changing the order selected by the administrator.
+    return list(dict.fromkeys(tenant_ids))
+
+
 def row_to_user(row: dict) -> User:
     """Construye un User de dominio desde una fila de app_users."""
     return User(
@@ -52,6 +74,7 @@ def row_to_user(row: dict) -> User:
         tenants_allowed=list(row.get("tenants_allowed") or []),
         allowed_modules=list(row.get("allowed_modules") or []),
         active=bool(row.get("active", True)),
+        source="supabase",
     )
 
 
@@ -64,10 +87,41 @@ def public_view(row: dict) -> dict:
         "tenants_allowed": list(row.get("tenants_allowed") or []),
         "allowed_modules": list(row.get("allowed_modules") or []),
         "active": bool(row.get("active", True)),
+        "source": "supabase",
+        "manageable": True,
         "created_by": row.get("created_by"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
     }
+
+
+def legacy_public_view(user: User) -> dict:
+    """Represent a YAML user without pretending it can be edited in Supabase."""
+    return {
+        "username": user.username,
+        "email": user.email,
+        "role": user.role,
+        "tenants_allowed": list(user.tenants_allowed),
+        "allowed_modules": list(user.allowed_modules or []),
+        "active": user.active,
+        "source": "legacy",
+        "manageable": False,
+        "created_by": None,
+        "created_at": None,
+        "updated_at": None,
+    }
+
+
+def merge_public_users(rows: list[dict]) -> list[dict]:
+    """Merge Supabase-managed rows with non-overridden legacy YAML identities."""
+    managed_usernames = {row["username"] for row in rows}
+    views = [public_view(row) for row in rows]
+    views.extend(
+        legacy_public_view(user)
+        for username, user in get_all_users().items()
+        if username not in managed_usernames and user.source == "legacy"
+    )
+    return sorted(views, key=lambda item: item["username"].casefold())
 
 
 def sync_users_from_supabase() -> int:

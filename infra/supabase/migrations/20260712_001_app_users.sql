@@ -8,7 +8,8 @@ create table if not exists public.app_users (
     hashed_password text not null check (length(trim(hashed_password)) > 0),
     email text not null default '',
     role text not null check (role in ('admin', 'gerente', 'vendedor')),
-    -- Tenants the user may switch to. Empty array = no restriction (all tenants).
+    -- Tenants the user may switch to. The API requires at least one tenant for
+    -- every managed user; empty arrays are reserved for legacy YAML compatibility.
     tenants_allowed jsonb not null default '[]'::jsonb,
     -- Feature/module keys the user may see. Empty array = no modules (admins bypass).
     allowed_modules jsonb not null default '[]'::jsonb,
@@ -28,17 +29,5 @@ alter table public.app_users force row level security;
 revoke all on table public.app_users from anon, authenticated;
 grant select, insert, update, delete on table public.app_users to service_role;
 
--- Seed the existing admin so it can be managed from the app too. bcrypt hash of
--- the current password (FG28). on conflict do nothing: never clobber an edited admin.
-insert into public.app_users (username, hashed_password, email, role, tenants_allowed, allowed_modules, active, created_by)
-values (
-    'admin',
-    '$2b$12$pfNJ1ebNx.YDbTMBgHjFU.GJaK2TReoB1Hn06//4hOtNqt/8zSdcS',
-    'admin@fragloesja.uk',
-    'admin',
-    '["motoshop", "masvital"]'::jsonb,
-    '[]'::jsonb,
-    true,
-    'migration'
-)
-on conflict (username) do nothing;
+-- Deliberately no user seed here. Bootstrap/import must receive a password hash
+-- through an operator-controlled secret channel; migrations never carry credentials.

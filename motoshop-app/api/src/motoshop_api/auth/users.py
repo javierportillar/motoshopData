@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class User(BaseModel):
@@ -13,13 +14,16 @@ class User(BaseModel):
     hashed_password: str
     email: str
     role: str
-    tenants_allowed: list[str] = []
+    tenants_allowed: list[str] = Field(default_factory=list)
     # None = sin restricción de módulos (usuarios YAML heredados y admin). Una lista
     # (incl. vacía) restringe la navegación a esos módulos. Sólo la ponen los
     # usuarios gestionados en Supabase.
     allowed_modules: list[str] | None = None
     # Un usuario inactivo no puede loguear ni pasar get_current_user.
     active: bool = True
+    # Only legacy YAML users may keep the historical empty-list = unrestricted
+    # tenant behavior. Managed Supabase users are always explicitly scoped.
+    source: Literal["legacy", "supabase"] = "legacy"
 
 
 _users_cache: dict[str, User] = {}
