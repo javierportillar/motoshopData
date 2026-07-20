@@ -11,6 +11,7 @@ import logging
 import re
 from contextlib import suppress
 from datetime import UTC, date, timedelta
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -47,12 +48,15 @@ class BriefingGenerator:
         tenant: str = "motoshop",
         company_name: str | None = None,
     ):
-        import duckdb
+        from motoshop_api.metrics.repo_duckdb import (
+            _bootstrap_duckdb_from_r2,
+            _make_db_path,
+            _open_connection,
+        )
 
-        from motoshop_api.metrics.repo_duckdb import _make_db_path
-
-        path = duckdb_path or str(_make_db_path(tenant))
-        self._con = duckdb.connect(path, read_only=True)
+        path = Path(duckdb_path) if duckdb_path else _make_db_path(tenant)
+        _bootstrap_duckdb_from_r2(path, tenant)
+        self._con = _open_connection(path, f"briefing:{tenant}:{path}")
         self._company_name = company_name or ("MotoShop" if tenant == "motoshop" else tenant)
 
     def build_context(self) -> dict:

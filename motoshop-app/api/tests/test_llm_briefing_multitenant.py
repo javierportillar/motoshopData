@@ -143,6 +143,77 @@ def test_missing_tenant_destination_fails_closed(monkeypatch: pytest.MonkeyPatch
     assert "masvital" in exc_info.value.detail
 
 
+@pytest.mark.parametrize("tenant", ["motoshop", "masvital"])
+@pytest.mark.parametrize("endpoint", ["generate", "send"])
+def test_briefing_bootstraps_missing_tenant_snapshot_before_opening(
+    briefing_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    tenant: str,
+    endpoint: str,
+) -> None:
+    paths = {
+        tenant_id: tmp_path / f"{tenant_id}_gold.duckdb" for tenant_id in ("motoshop", "masvital")
+    }
+    bootstrap_calls: list[tuple[Path, str]] = []
+
+    def bootstrap(path: Path, tenant_id: str) -> None:
+        assert path == paths[tenant_id]
+        assert not path.exists()
+        bootstrap_calls.append((path, tenant_id))
+        _create_briefing_db(path, 101.0 if tenant_id == "motoshop" else 202.0)
+
+    monkeypatch.setattr(repo_duckdb, "_make_db_path", lambda tenant_id: paths[tenant_id])
+    monkeypatch.setattr(repo_duckdb, "_bootstrap_duckdb_from_r2", bootstrap)
+    monkeypatch.setattr(
+        BriefingGenerator,
+        "generate",
+        lambda _self, context: _result(f"{context['empresa']}:{context['ventas_ayer']}"),
+    )
+    monkeypatch.setattr(llm_router, "_send_telegram", lambda _text, _tenant: 1)
+
+    response = briefing_client.post(f"/api/llm/briefing/{endpoint}", headers={"X-Tenant": tenant})
+
+    assert response.status_code == 200
+    assert bootstrap_calls == [(paths[tenant], tenant)]
+    assert paths[tenant].exists()
+
+
+@pytest.mark.parametrize("tenant", ["motoshop", "masvital"])
+@pytest.mark.parametrize("endpoint", ["generate", "send"])
+def test_briefing_returns_controlled_503_when_tenant_snapshot_stays_unavailable(
+    briefing_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    tenant: str,
+    endpoint: str,
+) -> None:
+    paths = {
+        tenant_id: tmp_path / f"{tenant_id}_gold.duckdb" for tenant_id in ("motoshop", "masvital")
+    }
+    bootstrap_calls: list[tuple[Path, str]] = []
+
+    monkeypatch.setattr(repo_duckdb, "_make_db_path", lambda tenant_id: paths[tenant_id])
+    monkeypatch.setattr(
+        repo_duckdb,
+        "_bootstrap_duckdb_from_r2",
+        lambda path, tenant_id: bootstrap_calls.append((path, tenant_id)),
+    )
+    monkeypatch.setattr(llm_router, "_send_telegram", lambda _text, _tenant: 1)
+
+    response = briefing_client.post(f"/api/llm/briefing/{endpoint}", headers={"X-Tenant": tenant})
+
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "5"
+    assert response.json() == {
+        "detail": "El servidor está terminando de cargar los datos. Reintentá en unos segundos.",
+        "status": "loading",
+        "retry_after_seconds": 5,
+    }
+    assert bootstrap_calls == [(paths[tenant], tenant)]
+    assert not paths[tenant].exists()
+
+
 def test_tenant_failure_does_not_duplicate_another_send(
     briefing_client: TestClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
