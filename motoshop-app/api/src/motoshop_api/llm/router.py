@@ -10,20 +10,20 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime
-from time import time
-
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from motoshop_api.auth.deps import get_current_user, require_role
+from motoshop_api.auth.tenant_dep import get_tenant
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
 from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
+from motoshop_api.tenants import get_tenant_config
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,6 @@ router = APIRouter(prefix="/llm", tags=["llm"])
 limiter = Limiter(key_func=get_remote_address)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_GERENTE_CHAT_ID", "")
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────
@@ -76,41 +75,66 @@ class LLMCostResponse(BaseModel):
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
-def _get_db_path() -> str:
+def _get_db_path(tenant: str) -> str:
     from motoshop_api.metrics.repo_duckdb import _make_db_path
 
-    return settings.duckdb_path or str(_make_db_path("motoshop"))
+    # A legacy DUCKDB_PATH override is global and therefore unsafe here: each
+    # briefing must resolve through the tenant-aware snapshot path.
+    return str(_make_db_path(tenant))
 
 
-def _generate_briefing() -> dict:
+def _generate_briefing(tenant: str) -> dict:
     from motoshop_api.llm.briefing import BriefingGenerator
 
-    gen = BriefingGenerator(duckdb_path=_get_db_path())
+    tenant_config = get_tenant_config(tenant)
+    if tenant_config is None:
+        raise HTTPException(status_code=404, detail=f"Tenant '{tenant}' no configurado")
+    gen = BriefingGenerator(duckdb_path=_get_db_path(tenant), tenant=tenant)
     try:
         context = gen.build_context()
+        context["empresa"] = tenant_config.nombre
         if not context.get("ventas_ayer"):
-            raise HTTPException(status_code=404, detail="No hay datos del día anterior para generar briefing")
+            raise HTTPException(
+                status_code=404,
+                detail="No hay datos del día anterior para generar briefing",
+            )
         result = gen.generate(context)
         return result
     finally:
         gen.close()
 
 
-def _send_telegram(text: str) -> int:
+def _tenant_message(tenant: str, text: str) -> str:
+    tenant_config = get_tenant_config(tenant)
+    company_name = tenant_config.nombre if tenant_config else tenant
+    return f"[{company_name}]\n{text}"
+
+
+def _send_telegram(text: str, tenant: str) -> int:
     """Envía mensaje al chat del gerente vía Telegram Bot API. Retorna message_id."""
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        raise HTTPException(status_code=503, detail="Telegram no configurado. Setear TELEGRAM_BOT_TOKEN y TELEGRAM_GERENTE_CHAT_ID")
+    chat_env = f"TELEGRAM_CHAT_ID_{tenant.upper().replace('-', '_')}"
+    chat_id = os.environ.get(chat_env, "")
+    if not TELEGRAM_TOKEN or not chat_id:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Destino de Telegram no configurado para el tenant '{tenant}'",
+        )
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    resp = httpx.post(url, json={
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-    }, timeout=30)
+    try:
+        resp = httpx.post(url, json={
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }, timeout=30)
+    except httpx.HTTPError:
+        # Do not log the exception: httpx may include the token-bearing URL.
+        logger.error("Telegram request failed for tenant=%s", tenant)
+        raise HTTPException(status_code=502, detail="No se pudo contactar Telegram") from None
 
     if resp.status_code != 200:
-        logger.error("Telegram send failed: %d %s", resp.status_code, resp.text)
+        logger.error("Telegram send failed: tenant=%s status=%d", tenant, resp.status_code)
         raise HTTPException(status_code=502, detail=f"Telegram API error: {resp.status_code}")
 
     data = resp.json()
@@ -128,9 +152,11 @@ def _send_telegram(text: str) -> int:
 async def briefing_generate(
     request: Request,
     user: User = Depends(require_role("admin")),
+    tenant: str = Depends(get_tenant),
 ) -> BriefingGenerateResponse:
     """Genera el briefing diario (no lo envía). Admin-only."""
-    result = _generate_briefing()
+    result = _generate_briefing(tenant)
+    result["briefing_text"] = _tenant_message(tenant, result["briefing_text"])
     return BriefingGenerateResponse(**result)
 
 
@@ -139,20 +165,27 @@ async def briefing_generate(
 async def briefing_send(
     request: Request,
     user: User = Depends(require_role("admin")),
+    tenant: str = Depends(get_tenant),
 ) -> BriefingSendResponse:
     """Genera el briefing diario y lo envía al gerente vía Telegram. Admin-only."""
-    result = _generate_briefing()
-    text = result["briefing_text"]
+    result = _generate_briefing(tenant)
+    text = _tenant_message(tenant, result["briefing_text"])
 
     try:
-        msg_id = _send_telegram(text)
+        msg_id = _send_telegram(text, tenant)
     except HTTPException:
         raise
     except Exception as exc:
-        logger.exception("Telegram delivery failed")
-        raise HTTPException(status_code=502, detail=f"Error enviando a Telegram: {exc}")
+        logger.error("Unexpected Telegram delivery failure for tenant=%s", tenant)
+        raise HTTPException(status_code=502, detail="Error inesperado enviando a Telegram") from exc
 
-    logger.info("briefing_sent: msg_id=%d tokens=%d model=%s", msg_id, result["tokens_used"], result["model"])
+    logger.info(
+        "briefing_sent: tenant=%s msg_id=%d tokens=%d model=%s",
+        tenant,
+        msg_id,
+        result["tokens_used"],
+        result["model"],
+    )
 
     return BriefingSendResponse(
         status="sent",
@@ -182,10 +215,10 @@ async def forecast_explain(
     Genera un texto en español colombiano que explica el estado del forecast:
     WAPE, cobertura, categorías con mejor/peor desempeño, y recomendación.
     """
-    from motoshop_api.llm.forecast_explainer import ForecastExplainer
     from motoshop_api.llm.client import get_llm_client
+    from motoshop_api.llm.forecast_explainer import ForecastExplainer
 
-    db_path = _get_db_path()
+    db_path = str(settings.duckdb_path) if settings.duckdb_path else _get_db_path("motoshop")
     repo = DuckDBMetricsRepo(db_path=db_path)
     llm = get_llm_client()
     explainer = ForecastExplainer(repo, llm)

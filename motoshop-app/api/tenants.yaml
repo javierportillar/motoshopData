@@ -7,7 +7,7 @@ tenants:
     r2_object_key: "motoshop_gold.duckdb"
     local_db_path: "/tmp/motoshop_gold.duckdb"
     mysql_source: "sgHermes"
-    telegram_chat_id_gerente: "816016329"
+    telegram_chat_id_gerente: null  # delivery uses TELEGRAM_CHAT_ID_MOTOSHOP
     enabled_features:
       - products
       - stock
@@ -43,7 +43,7 @@ tenants:
     r2_object_key: "masvital_gold.duckdb"
     local_db_path: "/tmp/masvital_gold.duckdb"
     mysql_source: "masvital_pos"
-    telegram_chat_id_gerente: null
+    telegram_chat_id_gerente: null  # delivery uses TELEGRAM_CHAT_ID_MASVITAL
     enabled_features:
       - products
       - stock
@@ -54,7 +54,9 @@ tenants:
       - decisiones
       - analisis
       - chat-ia
+      - briefing-diario
       - pipeline-observability
       - expiry-lots
     briefing:
-      activo: false
+      activo: true
+      hora_cron_utc: "0 11 * * *"

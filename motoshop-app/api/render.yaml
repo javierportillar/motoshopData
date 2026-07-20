@@ -41,3 +41,9 @@ services:
         value: motoshop-gold
       - key: R2_ENDPOINT
         value: https://4bd1502b7fa3f33d1d3c45ae2d252cfd.r2.cloudflarestorage.com
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID_MOTOSHOP
+        sync: false
+      - key: TELEGRAM_CHAT_ID_MASVITAL
+        sync: false
