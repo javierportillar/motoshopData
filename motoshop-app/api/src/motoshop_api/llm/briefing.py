@@ -9,25 +9,29 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import date, timedelta
+from contextlib import suppress
+from datetime import UTC, date, timedelta
 
 logger = logging.getLogger(__name__)
 
 # ── Prompt template ────────────────────────────────────────────────────────
 
-BRIEFING_SYSTEM = """Sos un asistente que le hace al gerente de MotoShop (tienda de motopartes en Cali, Colombia) un briefing diario corto y útil.
+BRIEFING_SYSTEM_TEMPLATE = """Sos un asistente que prepara para la gerencia de
+{company_name} un briefing diario corto y útil.
 
 Reglas:
 - Tono colombiano natural, directo, sin emojis cursis ni saludos protocolares largos
 - Máximo 8 oraciones
-- Usás SOLO las cifras del CONTEXTO. Si una cifra no está, no la inventés — directamente no la menciones
-- Empezá con "Buen día, gerente." SEGUIDO INMEDIATAMENTE de la fecha del briefing usando el campo "fecha" del contexto. Ejemplo: "Buen día, gerente. Briefing del 10 de junio de 2026."
+- Usás SOLO las cifras del CONTEXTO. Si una cifra no está, no la inventés
+- Empezá con "Buen día, gerente." y enseguida indicá la fecha del briefing
+- Usá el campo "fecha" del contexto; por ejemplo: "Briefing del 10 de junio de 2026."
 - Los valores monetarios se expresan en pesos colombianos (COP)
 - Si hay alertas críticas, mencioná las más importantes
 - Si no hay datos para un rubro (ej: no hay dormidos recuperados), simplemente no lo mencionés
 - No uses formato markdown, solo texto plano"""
 
-BRIEFING_PROMPT = """CONTEXTO (datos reales del día de hoy y comparativas). El campo "fecha" es la fecha del briefing, DEBE aparecer al inicio:
+BRIEFING_PROMPT = """CONTEXTO (datos reales del día de hoy y comparativas).
+El campo "fecha" es la fecha del briefing y DEBE aparecer al inicio:
 
 {context_json}
 
@@ -37,12 +41,19 @@ Generá el briefing en español colombiano."""
 class BriefingGenerator:
     """Genera briefing diario para el gerente vía LLM."""
 
-    def __init__(self, duckdb_path: str | None = None, tenant: str = "motoshop"):
+    def __init__(
+        self,
+        duckdb_path: str | None = None,
+        tenant: str = "motoshop",
+        company_name: str | None = None,
+    ):
         import duckdb
+
         from motoshop_api.metrics.repo_duckdb import _make_db_path
 
         path = duckdb_path or str(_make_db_path(tenant))
         self._con = duckdb.connect(path, read_only=True)
+        self._company_name = company_name or ("MotoShop" if tenant == "motoshop" else tenant)
 
     def build_context(self) -> dict:
         """Consulta DuckDB y arma un dict compacto con los KPIs del día anterior.
@@ -66,7 +77,11 @@ class BriefingGenerator:
             SELECT
                 ROUND(COALESCE(SUM(valor_total), 0.0), 2) AS ventas,
                 COALESCE(SUM(num_facturas), 0) AS facturas,
-                ROUND(COALESCE(SUM(valor_total), 0.0) / NULLIF(COALESCE(SUM(num_facturas), 0), 0), 2) AS ticket_promedio
+                ROUND(
+                    COALESCE(SUM(valor_total), 0.0)
+                    / NULLIF(COALESCE(SUM(num_facturas), 0), 0),
+                    2
+                ) AS ticket_promedio
             FROM gold_mart_ventas_diarias_sku
             WHERE business_date = ?
         """, [ayer.isoformat()]).fetchone()
@@ -124,13 +139,20 @@ class BriefingGenerator:
             LIMIT 5
         """).fetchall()
         ctx["alertas_criticas"] = [
-            {"sku": r[0], "nombre": r[1], "stock": float(r[2]), "demanda": float(r[3]), "dias": int(r[4])}
+            {
+                "sku": r[0],
+                "nombre": r[1],
+                "stock": float(r[2]),
+                "demanda": float(r[3]),
+                "dias": int(r[4]),
+            }
             for r in alerts
         ]
 
         # ── Dormidos recuperados ───────────────────────────────────────────
         dormidos = self._con.execute("""
-            SELECT d.cod_producto, d.nom_producto, d.dias_sin_venta, ROUND(SUM(v.valor_total), 2) AS ventas
+            SELECT d.cod_producto, d.nom_producto, d.dias_sin_venta,
+                   ROUND(SUM(v.valor_total), 2) AS ventas
             FROM gold_mart_productos_dormidos d
             INNER JOIN gold_mart_ventas_diarias_sku v
                 ON d.cod_producto = v.cod_producto AND v.business_date = ?
@@ -155,16 +177,24 @@ class BriefingGenerator:
             LIMIT 1
         """, [ayer.isoformat()]).fetchone()
         if top_v:
-            ctx["vendedor_top"] = {"nombre": top_v[1], "facturas": int(top_v[2]), "total": float(top_v[3])}
+            ctx["vendedor_top"] = {
+                "nombre": top_v[1],
+                "facturas": int(top_v[2]),
+                "total": float(top_v[3]),
+            }
 
-        logger.info("build_context: ventas_ayer=%.2f facturas=%d", ctx["ventas_ayer"], ctx["facturas_ayer"])
+        logger.info(
+            "build_context: ventas_ayer=%.2f facturas=%d",
+            ctx["ventas_ayer"],
+            ctx["facturas_ayer"],
+        )
         return ctx
 
     def generate(self, context: dict) -> dict:
         """Llama al LLM con el contexto y devuelve {briefing_text, tokens_used, model, cost_usd}."""
-        from motoshop_api.llm.client import get_llm_client
-
         import json as _json
+
+        from motoshop_api.llm.client import get_llm_client
         context_str = _json.dumps(context, ensure_ascii=False, indent=2)
         prompt = BRIEFING_PROMPT.format(context_json=context_str)
 
@@ -174,7 +204,7 @@ class BriefingGenerator:
         client = get_llm_client()
         result = client.complete(
             prompt=prompt,
-            system=BRIEFING_SYSTEM,
+            system=BRIEFING_SYSTEM_TEMPLATE.format(company_name=self._company_name),
         )
 
         text = result["text"].strip()
@@ -205,19 +235,15 @@ class BriefingGenerator:
         numbers_in_text = set()
         for match in re.finditer(r'[\d,]+\.?\d*', text):
             num = match.group().replace(",", "")
-            try:
+            with suppress(ValueError):
                 numbers_in_text.add(float(num))
-            except ValueError:
-                pass
 
         # Extraer todos los números del contexto
         numbers_in_context = set()
         for match in re.finditer(r'[\d,]+\.?\d*', context_str):
             num = match.group().replace(",", "")
-            try:
+            with suppress(ValueError):
                 numbers_in_context.add(float(num))
-            except ValueError:
-                pass
 
         # Verificar que cada número del texto aparezca en el contexto (±0.01 para floats)
         for num in numbers_in_text:
@@ -241,9 +267,9 @@ def _log_cost(model: str, tokens_input: int, tokens_output: int) -> None:
     """Log de uso a JSONL en /tmp/. Best-effort, nunca bloquea."""
     try:
         import json as _json
-        from datetime import datetime, timezone
+        from datetime import datetime
         entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "endpoint": "briefing",
             "model": model,
             "tokens_input": tokens_input,
