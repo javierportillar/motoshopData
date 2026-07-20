@@ -89,7 +89,11 @@ def _generate_briefing(tenant: str) -> dict:
     tenant_config = get_tenant_config(tenant)
     if tenant_config is None:
         raise HTTPException(status_code=404, detail=f"Tenant '{tenant}' no configurado")
-    gen = BriefingGenerator(duckdb_path=_get_db_path(tenant), tenant=tenant)
+    gen = BriefingGenerator(
+        duckdb_path=_get_db_path(tenant),
+        tenant=tenant,
+        company_name=tenant_config.nombre,
+    )
     try:
         context = gen.build_context()
         context["empresa"] = tenant_config.nombre
