@@ -6,9 +6,6 @@ Strict TDD mode: tests first, then implementation.
 from __future__ import annotations
 
 import os
-from pathlib import Path
-
-import pytest
 
 
 def test_make_db_path_prod() -> None:
@@ -42,15 +39,18 @@ def test_make_db_path_dev() -> None:
         os.environ["ENV"] = "dev"
 
 
-def test_make_db_path_respects_env_override() -> None:
-    """_make_db_path debe respetar DUCKDB_PATH si está seteado."""
+def test_make_db_path_ignores_global_override_for_tenant_isolation() -> None:
+    """A global DUCKDB_PATH must never collapse distinct tenant paths."""
     from motoshop_api.metrics.repo_duckdb import _make_db_path
 
     os.environ["DUCKDB_PATH"] = "/custom/path/test.duckdb"
     os.environ["ENV"] = "prod"
     try:
-        path = _make_db_path("motoshop")
-        assert str(path) == "/custom/path/test.duckdb"
+        motoshop_path = _make_db_path("motoshop")
+        masvital_path = _make_db_path("masvital")
+        assert str(motoshop_path) == "/tmp/motoshop_gold.duckdb"
+        assert str(masvital_path) == "/tmp/masvital_gold.duckdb"
+        assert motoshop_path != masvital_path
     finally:
         os.environ.pop("DUCKDB_PATH", None)
         os.environ["ENV"] = "dev"
@@ -58,12 +58,12 @@ def test_make_db_path_respects_env_override() -> None:
 
 def test_duckdb_repo_accepts_tenant() -> None:
     """DuckDBMetricsRepo.__init__ debe aceptar tenant y construir path."""
-    from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
-
     # Just verify the constructor signature accepts it.
     # We cannot actually connect without a real DuckDB file, but we
     # verify the parameter is accepted by checking the __init__ signature.
     import inspect
+
+    from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
 
     sig = inspect.signature(DuckDBMetricsRepo.__init__)
     params = sig.parameters
@@ -73,9 +73,9 @@ def test_duckdb_repo_accepts_tenant() -> None:
 
 def test_get_duckdb_repo_accepts_tenant() -> None:
     """get_duckdb_repo factory debe aceptar tenant."""
-    from motoshop_api.metrics.repo_duckdb import get_duckdb_repo
-
     import inspect
+
+    from motoshop_api.metrics.repo_duckdb import get_duckdb_repo
 
     sig = inspect.signature(get_duckdb_repo)
     params = sig.parameters
