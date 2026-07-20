@@ -1,37 +1,79 @@
-name: MotoShop briefing diario
+name: Briefing diario multiempresa
 on:
   schedule:
     - cron: "0 11 * * *"   # 06:00 COL = 11:00 UTC
-  workflow_dispatch:        # disparo manual desde GitHub UI
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   send-briefing:
+    name: Enviar briefing · ${{ matrix.tenant }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tenant:
+          - motoshop
+          - masvital
     steps:
-      - name: Login admin
-        id: auth
+      - name: Autenticar y enviar briefing aislado
+        env:
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          TENANT: ${{ matrix.tenant }}
         run: |
-          TOKEN=$(curl -sS -X POST https://api.fragloesja.uk/api/auth/login \
-            -H 'Content-Type: application/json' \
-            -d '{"username":"admin","password":"${{ secrets.ADMIN_PASSWORD }}"}' \
-            | jq -r .access_token)
-          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-            echo "Login failed"
-            exit 1
-          fi
-          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          TMP_DIR="$(mktemp -d)"
+          trap 'rm -rf "$TMP_DIR"' EXIT
 
-      - name: Generate and send briefing
-        run: |
-          RESPONSE=$(curl -sS -X POST https://api.fragloesja.uk/api/llm/briefing/send \
-            -H "Authorization: Bearer ${{ steps.auth.outputs.token }}" \
-            -w "\nHTTP:%{http_code}")
-          HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP:" | cut -d: -f2)
-          BODY=$(echo "$RESPONSE" | grep -v "HTTP:")
-          echo "HTTP status: $HTTP_CODE"
-          echo "$BODY" | jq .
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "Briefing send failed"
+          set +e
+          LOGIN_STATUS=$(curl -sS -o "$TMP_DIR/login.body" -w "%{http_code}" \
+            -X POST https://api.fragloesja.uk/api/auth/login \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -nc --arg password "$ADMIN_PASSWORD" \
+              '{username: "admin", password: $password}')")
+          LOGIN_EXIT=$?
+          set -e
+          if [ "$LOGIN_EXIT" -ne 0 ]; then
+            echo "::error title=Briefing $TENANT::tenant=$TENANT http=000 category=network_error"
             exit 1
           fi
-          echo "Briefing sent successfully"
+          if [ "$LOGIN_STATUS" != "200" ]; then
+            CATEGORY="json_response"
+            jq -e . "$TMP_DIR/login.body" >/dev/null 2>&1 || CATEGORY="non_json_response"
+            echo "::error title=Briefing $TENANT::tenant=$TENANT http=$LOGIN_STATUS category=auth_$CATEGORY"
+            exit 1
+          fi
+          if ! jq -e . "$TMP_DIR/login.body" >/dev/null 2>&1; then
+            echo "::error title=Briefing $TENANT::tenant=$TENANT http=200 category=auth_non_json_response"
+            exit 1
+          fi
+          TOKEN=$(jq -er '.access_token | strings | select(length > 0)' \
+            "$TMP_DIR/login.body" 2>/dev/null) || {
+            echo "::error title=Briefing $TENANT::tenant=$TENANT http=200 category=missing_access_token"
+            exit 1
+          }
+
+          set +e
+          SEND_STATUS=$(curl -sS -o "$TMP_DIR/send.body" -w "%{http_code}" \
+            -X POST https://api.fragloesja.uk/api/llm/briefing/send \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "X-Tenant: $TENANT")
+          SEND_EXIT=$?
+          set -e
+          if [ "$SEND_EXIT" -ne 0 ]; then
+            echo "::error title=Briefing $TENANT::tenant=$TENANT http=000 category=network_error"
+            exit 1
+          fi
+          if [ "$SEND_STATUS" != "200" ]; then
+            CATEGORY="json_response"
+            jq -e . "$TMP_DIR/send.body" >/dev/null 2>&1 || CATEGORY="non_json_response"
+            echo "::error title=Briefing $TENANT::tenant=$TENANT http=$SEND_STATUS category=$CATEGORY"
+            exit 1
+          fi
+          if ! jq -e '.status == "sent"' "$TMP_DIR/send.body" >/dev/null 2>&1; then
+            echo "::error title=Briefing $TENANT::tenant=$TENANT http=200 category=invalid_success_response"
+            exit 1
+          fi
+          echo "Briefing enviado correctamente para $TENANT"

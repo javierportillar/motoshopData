@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from fastapi import Depends, HTTPException, Request, status
+from starlette.routing import Match
 
 from motoshop_api.auth.deps import authorize_modules, get_current_user
 from motoshop_api.auth.users import User
@@ -166,6 +167,61 @@ def route_modules(method: str, route_template: str) -> tuple[str, ...] | None:
     return ROUTE_MODULES.get((method.upper(), route_template))
 
 
+def _route_path(route: object) -> str | None:
+    """Read the canonical template exposed by Starlette/FastAPI route objects."""
+    for attribute in ("path_format", "path"):
+        value = getattr(route, attribute, None)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _with_root_path(root_path: str, route_path: str) -> str:
+    if not root_path:
+        return route_path
+    return f"/{root_path.strip('/')}/{route_path.lstrip('/')}"
+
+
+def request_route_template(request: Request) -> str:
+    """Resolve one canonical route template from an active request.
+
+    ``scope['route']`` is not a stable source across every FastAPI/Starlette
+    combination: an included-router dependency can observe the router-local
+    template (``/metrics/...``) while the application policy uses the final
+    prefixed template (``/api/metrics/...``). Prefer any already-classified
+    scope template, then match the concrete request against the application's
+    final route table. This also recovers dynamic templates without converting
+    concrete IDs into policy keys.
+    """
+    method = request.method.upper()
+    root_path = request.scope.get("root_path", "")
+    scope_route_path = _route_path(request.scope.get("route"))
+
+    if scope_route_path:
+        for candidate in (scope_route_path, _with_root_path(root_path, scope_route_path)):
+            if route_modules(method, candidate) is not None:
+                return candidate
+
+    for app_route in getattr(request.app, "routes", ()):
+        methods = getattr(app_route, "methods", None)
+        if methods and method not in methods:
+            continue
+        match, _child_scope = app_route.matches(request.scope)
+        if match is not Match.FULL:
+            continue
+        matched_path = _route_path(app_route)
+        if matched_path:
+            rooted_path = _with_root_path(root_path, matched_path)
+            if route_modules(method, rooted_path) is not None:
+                return rooted_path
+            return matched_path
+
+    concrete_path = request.scope.get("path") or request.url.path
+    if route_modules(method, concrete_path) is not None:
+        return concrete_path
+    return scope_route_path or concrete_path
+
+
 async def require_route_module(
     request: Request,
     user: User = Depends(get_current_user),
@@ -174,8 +230,7 @@ async def require_route_module(
 
     Missing policy is a server configuration error, not an implicit allow.
     """
-    route = request.scope.get("route")
-    route_template = getattr(route, "path", request.url.path)
+    route_template = request_route_template(request)
     modules = route_modules(request.method, route_template)
     if modules is None:
         raise HTTPException(
