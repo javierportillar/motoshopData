@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+
 import pytest
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
 from motoshop_api.auth.deps import get_current_user, require_module
@@ -120,3 +123,73 @@ def test_central_route_policy_denies_managed_user_before_repository_access() -> 
         production_app.dependency_overrides.pop(get_current_user, None)
 
     assert response.status_code == 403
+
+
+
+def _request(method: str, path: str, local_template: str) -> Request:
+    route = SimpleNamespace(path=local_template, path_format=local_template)
+    return Request({
+        "type": "http", "method": method, "path": path, "root_path": "",
+        "query_string": b"", "headers": [], "app": production_app, "route": route,
+    })
+
+
+@pytest.mark.parametrize(
+    ("path", "local_template", "module"),
+    [
+        ("/api/metrics/sales-summary-v2", "/metrics/sales-summary-v2", "ventas-summary"),
+        ("/api/products/SKU-123/movements", "/products/{sku}/movements", "inventario"),
+    ],
+)
+def test_route_policy_recovers_prefix_and_dynamic_template(
+    path: str, local_template: str, module: str,
+) -> None:
+    authorized = asyncio.run(
+        require_route_module(_request("GET", path, local_template), _user(allowed_modules=[module]))
+    )
+    assert authorized.username == "managed"
+
+
+def test_route_policy_remains_fail_closed_for_unknown_request() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(require_route_module(
+            _request("GET", "/api/not-classified", "/not-classified"),
+            _user(allowed_modules=["inventario", "ventas-summary", "analisis"]),
+        ))
+    assert (exc_info.value.status_code, exc_info.value.detail) == (
+        500, "La ruta no tiene una política de módulos configurada",
+    )
+
+
+def test_sales_summary_v2_reaches_handler_instead_of_missing_policy() -> None:
+    from motoshop_api.auth.tenant_dep import get_tenant
+    from motoshop_api.metrics.router import _clear_metrics_cache, get_repo
+
+    class Repo:
+        @staticmethod
+        def get_sales_summary_v2() -> dict[str, object]:
+            return {
+                "business_month": "2026-07", "max_sales_date": "2026-07-20",
+                "as_of_business_date": "2026-07-20", "current_month_accumulated": 100.0,
+                "current_month_days_with_sales": 1,
+                "previous_month_same_window": {
+                    "from": "2026-06-01", "to": "2026-06-20", "amount": 90.0,
+                    "delta_pct": 11.1,
+                },
+                "same_month_previous_years": [], "ticket_promedio": 50.0, "num_facturas": 2,
+            }
+
+    overrides = {get_current_user: lambda: _user(role="admin"),
+                 get_tenant: lambda: "motoshop", get_repo: Repo}
+    production_app.dependency_overrides.update(overrides)
+    _clear_metrics_cache()
+    try:
+        response = TestClient(production_app, raise_server_exceptions=False).get(
+            "/api/metrics/sales-summary-v2", headers={"X-Tenant": "motoshop"},
+        )
+    finally:
+        for dependency in overrides:
+            production_app.dependency_overrides.pop(dependency, None)
+        _clear_metrics_cache()
+    assert response.status_code == 200
+    assert response.json()["as_of_business_date"] == "2026-07-20"
