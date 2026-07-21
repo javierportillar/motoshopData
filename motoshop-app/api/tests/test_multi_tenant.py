@@ -12,7 +12,6 @@ from motoshop_api.auth.hash import hash_password
 from motoshop_api.auth.users import User, _users_cache
 from motoshop_api.tenants import Tenant, _tenants_cache
 
-
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 def _populate_tenants() -> None:
@@ -59,6 +58,15 @@ def _populate_users() -> dict[str, User]:
             email="vendedor1@test.com",
             role="vendedor",
             tenants_allowed=["motoshop"],
+        ),
+        "masvital1": User(
+            username="masvital1",
+            hashed_password=hash_password("masvital123"),
+            email="masvital1@test.com",
+            role="vendedor",
+            tenants_allowed=["masvital"],
+            allowed_modules=["ventas-summary"],
+            source="supabase",
         ),
     }
     _users_cache.update(users)
@@ -160,6 +168,24 @@ class TestMultiTenantMe:
         assert data["current_tenant"] == "motoshop"
         # Debe tener features de motoshop
         assert len(data["enabled_features"]) > 10
+
+    def test_me_infers_masvital_for_managed_single_tenant_user(
+        self, client: TestClient
+    ) -> None:
+        """A MasVital-only managed user can bootstrap before a tenant cookie exists."""
+        token = _login_as(client, "masvital1", "masvital123")
+
+        resp = client.get(
+            "/api/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert resp.status_code == 200, f"Got {resp.status_code}: {resp.text}"
+        data = resp.json()
+        assert data["current_tenant"] == "masvital"
+        assert data["tenants_allowed"] == ["masvital"]
+        assert data["allowed_modules"] == ["ventas-summary"]
+        assert data["effective_modules"] == ["ventas-summary"]
 
     def test_me_with_masvital_works_even_without_duckdb(
         self, client: TestClient
