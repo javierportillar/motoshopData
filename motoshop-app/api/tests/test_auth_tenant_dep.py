@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
@@ -11,7 +9,7 @@ from fastapi.testclient import TestClient
 from motoshop_api.auth.deps import get_current_user
 from motoshop_api.auth.tenant_dep import get_tenant
 from motoshop_api.auth.users import User
-from motoshop_api.tenants import Tenant, TenantBriefing, _tenants_cache
+from motoshop_api.tenants import Tenant, _tenants_cache
 
 
 def _populate_tenants() -> None:
@@ -89,6 +87,25 @@ class TestGetTenant:
         resp = client.get("/test-tenant")
         assert resp.status_code == 200
         assert resp.json()["tenant"] == "motoshop"
+
+    def test_infers_only_allowed_tenant_when_header_absent(self) -> None:
+        """A single-tenant user should not be forced through MotoShop first."""
+        user = User(
+            username="masvital-only",
+            hashed_password="hash",
+            email="masvital-only@test.com",
+            role="vendedor",
+            tenants_allowed=["masvital"],
+            allowed_modules=["ventas-summary"],
+            source="supabase",
+        )
+        app = _make_app(user)
+        client = TestClient(app)
+
+        resp = client.get("/test-tenant")
+
+        assert resp.status_code == 200
+        assert resp.json()["tenant"] == "masvital"
 
     def test_returns_403_when_user_not_allowed(self) -> None:
         """Debe retornar 403 si el usuario no tiene acceso al tenant."""

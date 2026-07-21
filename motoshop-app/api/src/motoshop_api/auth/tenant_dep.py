@@ -15,11 +15,19 @@ async def get_tenant(
     user: User = Depends(get_current_user),
 ) -> str:
     """Resuelve el tenant activo:
-    1. Lee header X-Tenant (default: 'motoshop')
-    2. Valida que el usuario tenga ese tenant en tenants_allowed
-    3. Retorna el tenant ID
+    1. Lee header X-Tenant
+    2. Sin header, infiere el único tenant permitido; si hay varios conserva
+       el default histórico 'motoshop'
+    3. Valida que el usuario tenga ese tenant en tenants_allowed
+    4. Retorna el tenant ID
     """
-    tenant = request.headers.get("X-Tenant", _DEFAULT_TENANT)
+    requested_tenant = request.headers.get("X-Tenant")
+    if requested_tenant:
+        tenant = requested_tenant
+    elif len(user.tenants_allowed) == 1:
+        tenant = user.tenants_allowed[0]
+    else:
+        tenant = _DEFAULT_TENANT
 
     # Only legacy YAML identities retain the old empty-list = unrestricted
     # behavior. A managed user with no tenant is denied instead of becoming
