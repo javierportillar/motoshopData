@@ -92,7 +92,7 @@ def list_expiry_alerts(
 def create_receipt(
     payload: ReceiptCreate,
     idempotency_key: Annotated[UUID, Header(alias="Idempotency-Key")],
-    user: User = Depends(require_role("admin", "gerente")),
+    user: User = Depends(require_role("admin", "gerente", "vendedor")),
     tenant: str = Depends(get_masvital_tenant),
     repo: ExpiryLotsRepo = Depends(get_expiry_lots_repo),
 ) -> Response:
@@ -132,6 +132,18 @@ def update_lot(
         lot=ExpiryLotResponse.model_validate(result["lot"]),
         replayed=False,
     )
+
+
+@router.delete("/lots/{lot_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_lot(
+    lot_id: UUID,
+    _user: User = Depends(require_role("admin", "gerente")),
+    tenant: str = Depends(get_masvital_tenant),
+    repo: ExpiryLotsRepo = Depends(get_expiry_lots_repo),
+) -> Response:
+    """Delete an expiry-lot registration. Restricted to MasVital privileged roles."""
+    repo.delete_lot(tenant=tenant, lot_id=lot_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(

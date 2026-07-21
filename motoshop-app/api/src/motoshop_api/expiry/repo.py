@@ -63,6 +63,8 @@ class ExpiryLotsRepo(Protocol):
         payload: LotUpdate,
     ) -> dict[str, Any]: ...
 
+    def delete_lot(self, *, tenant: str, lot_id: UUID) -> None: ...
+
 
 def idempotency_fingerprint(operation: str, data: dict[str, Any]) -> str:
     """Hash normalized immutable request data before it reaches Supabase.
@@ -223,14 +225,37 @@ class SupabaseExpiryLotsRepo:
         patch["updated_at"] = datetime.now(timezone.utc).isoformat()
         params = {"id": f"eq.{lot_id}", "tenant": f"eq.{tenant}"}
         with _client() as client:
-            response = client.patch(f"/{_TABLE}", params=params, json=patch)
+            response = client.patch(
+                f"/{_TABLE}",
+                params=params,
+                json=patch,
+                headers={"Prefer": "return=representation"},
+            )
         _raise_for_response(response, "update_lot")
-        rows = response.json()
+        try:
+            rows = response.json()
+        except (TypeError, ValueError, json.JSONDecodeError):
+            logger.error("supabase_expiry_update_lot_invalid_json")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Supabase devolvió una respuesta inválida para caducidad.",
+            ) from None
         if not isinstance(rows, list) or not rows:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Lote de inventario no encontrado."
             )
         return {"lot": rows[0]}
+
+    def delete_lot(self, *, tenant: str, lot_id: UUID) -> None:
+        """Delete a lot and its local movement history through one DB transaction."""
+        body = {"p_tenant": tenant, "p_lot_id": str(lot_id)}
+        data = self._rpc("app_inventory_lot_delete", body, "delete_lot")
+        if data.get("deleted") is not True:
+            logger.error("supabase_expiry_delete_lot_invalid_response")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Supabase devolvió una respuesta inválida para caducidad.",
+            )
 
     @staticmethod
     def _rpc(function: str, body: dict[str, Any], action: str) -> dict[str, Any]:
@@ -238,7 +263,13 @@ class SupabaseExpiryLotsRepo:
             response = client.post(f"/rpc/{function}", json=body)
         _raise_for_response(response, action)
         data = response.json()
-        if not isinstance(data, dict) or "lot" not in data:
+        if not isinstance(data, dict):
+            logger.error("supabase_expiry_%s_invalid_response", action)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Supabase devolvió una respuesta inválida para caducidad.",
+            )
+        if action != "delete_lot" and "lot" not in data:
             logger.error("supabase_expiry_%s_invalid_response", action)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,

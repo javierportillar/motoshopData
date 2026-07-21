@@ -60,6 +60,7 @@ ROUTE_MODULES: dict[RouteKey, tuple[str, ...]] = {
     ),
     ("POST", "/api/expiry/receipts"): ("inventario",),
     ("PATCH", "/api/expiry/lots/{lot_id}"): ("inventario",),
+    ("DELETE", "/api/expiry/lots/{lot_id}"): ("inventario",),
     ("POST", "/api/expiry/lots/{lot_id}/adjustments"): ("inventario",),
     # Movements: sales and purchases share the same UI surface.
     **_routes(

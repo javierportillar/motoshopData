@@ -189,6 +189,13 @@ class FakeExpiryLotsRepo:
         lot["updated_at"] = datetime.now(UTC)
         return {"lot": lot, "replayed": False}
 
+    def delete_lot(self, *, tenant: str, lot_id: UUID) -> None:
+        self.last_tenant = tenant
+        lot = self.lots.get(lot_id)
+        if lot is None or lot["tenant"] != tenant:
+            raise HTTPException(status_code=404, detail="Lot not found")
+        del self.lots[lot_id]
+
 
 @pytest.fixture(autouse=True)
 def expiry_test_setup() -> FakeExpiryLotsRepo:
@@ -209,6 +216,13 @@ def expiry_test_setup() -> FakeExpiryLotsRepo:
                 hashed_password=hash_password("vend123"),
                 email="vend@test.com",
                 role="vendedor",
+                tenants_allowed=["masvital"],
+            ),
+            "auxiliar": User(
+                username="auxiliar",
+                hashed_password=hash_password("aux123"),
+                email="aux@test.com",
+                role="auxiliar",
                 tenants_allowed=["masvital"],
             ),
         }
@@ -262,8 +276,19 @@ def test_motoshop_cannot_access_expiry_module(client: TestClient) -> None:
     assert response.status_code == 404
 
 
-def test_receipt_requires_privileged_role(client: TestClient) -> None:
+def test_receipt_allows_vendedor_to_create_expiry_alert(client: TestClient) -> None:
     token = _token(client, "vendedor", "vend123")
+    response = client.post(
+        "/api/expiry/receipts",
+        json=_receipt_payload(),
+        headers=_headers(token, uuid4()),
+    )
+    assert response.status_code == 201
+    assert response.json()["lot"]["created_by"] == "vendedor"
+
+
+def test_receipt_rejects_unapproved_role(client: TestClient) -> None:
+    token = _token(client, "auxiliar", "aux123")
     response = client.post(
         "/api/expiry/receipts",
         json=_receipt_payload(),
@@ -444,6 +469,54 @@ def test_update_edits_metadata_and_resets_remaining_on_quantity_change(
     assert float(lot["remaining_quantity"]) == 3
 
 
+def test_update_lot_requests_postgrest_representation(monkeypatch: pytest.MonkeyPatch) -> None:
+    from motoshop_api.expiry import repo as expiry_repo
+
+    observed: dict[str, object] = {}
+
+    class FakeClient:
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def patch(self, path: str, **kwargs: object) -> httpx.Response:
+            observed["path"] = path
+            observed.update(kwargs)
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": str(uuid4()),
+                        "tenant": "masvital",
+                        "product_sku": "MV-001",
+                        "purchase_order_ref": "OC-2026-001",
+                        "lot_code": "L-EDIT",
+                        "expires_on": date.today().isoformat(),
+                        "received_on": date.today().isoformat(),
+                        "received_quantity": "10",
+                        "remaining_quantity": "10",
+                        "supplier": None,
+                        "notes": None,
+                        "created_by": "admin",
+                        "created_at": datetime.now(UTC).isoformat(),
+                        "updated_at": datetime.now(UTC).isoformat(),
+                    }
+                ],
+                request=httpx.Request("PATCH", "https://example.test/rest/v1/app_inventory_lots"),
+            )
+
+    monkeypatch.setattr(expiry_repo, "_client", lambda: FakeClient())
+
+    result = expiry_repo.SupabaseExpiryLotsRepo().update_lot(
+        tenant="masvital", lot_id=uuid4(), payload=LotUpdate(lot_code="L-EDIT")
+    )
+
+    assert result["lot"]["lot_code"] == "L-EDIT"
+    assert observed["headers"] == {"Prefer": "return=representation"}
+
+
 def test_update_requires_privileged_role(client: TestClient) -> None:
     admin = _token(client, "admin", "admin123")
     receipt = client.post(
@@ -466,6 +539,40 @@ def test_update_missing_lot_returns_404(client: TestClient) -> None:
         json={"lot_code": "L-EDIT"},
         headers=_headers(token),
     )
+    assert response.status_code == 404
+
+
+def test_delete_lot_requires_privileged_role(client: TestClient) -> None:
+    admin = _token(client, "admin", "admin123")
+    receipt = client.post(
+        "/api/expiry/receipts", json=_receipt_payload(), headers=_headers(admin, uuid4())
+    )
+    lot_id = receipt.json()["lot"]["id"]
+    vendedor = _token(client, "vendedor", "vend123")
+
+    response = client.delete(f"/api/expiry/lots/{lot_id}", headers=_headers(vendedor))
+
+    assert response.status_code == 403
+
+
+def test_delete_lot_removes_registration_for_admin(client: TestClient) -> None:
+    token = _token(client, "admin", "admin123")
+    receipt = client.post(
+        "/api/expiry/receipts", json=_receipt_payload(), headers=_headers(token, uuid4())
+    )
+    lot_id = receipt.json()["lot"]["id"]
+
+    deleted = client.delete(f"/api/expiry/lots/{lot_id}", headers=_headers(token))
+    assert deleted.status_code == 204
+
+    listing = client.get("/api/expiry/lots", headers=_headers(token))
+    assert listing.status_code == 200
+    assert listing.json()["items"] == []
+
+
+def test_delete_missing_lot_returns_404(client: TestClient) -> None:
+    token = _token(client, "admin", "admin123")
+    response = client.delete(f"/api/expiry/lots/{uuid4()}", headers=_headers(token))
     assert response.status_code == 404
 
 
