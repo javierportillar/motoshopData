@@ -7,8 +7,9 @@ import json
 import logging
 from contextlib import suppress
 from datetime import date, datetime, timezone
-from typing import Any, Protocol
-from uuid import UUID
+from decimal import Decimal
+from typing import Any, Literal, Protocol
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import httpx
 from fastapi import HTTPException, status
@@ -32,6 +33,7 @@ class ExpiryLotsRepo(Protocol):
         expires_before: date | None,
         limit: int,
         offset: int,
+        status_filter: Literal["active", "depleted", "all"],
     ) -> tuple[list[dict[str, Any]], int]: ...
 
     def list_alerts(self, *, tenant: str, expires_before: date) -> list[dict[str, Any]]: ...
@@ -63,7 +65,7 @@ class ExpiryLotsRepo(Protocol):
         payload: LotUpdate,
     ) -> dict[str, Any]: ...
 
-    def delete_lot(self, *, tenant: str, lot_id: UUID) -> None: ...
+    def delete_lot(self, *, tenant: str, lot_id: UUID, actor: str) -> None: ...
 
 
 def idempotency_fingerprint(operation: str, data: dict[str, Any]) -> str:
@@ -128,6 +130,7 @@ class SupabaseExpiryLotsRepo:
         expires_before: date | None,
         limit: int,
         offset: int,
+        status_filter: Literal["active", "depleted", "all"],
     ) -> tuple[list[dict[str, Any]], int]:
         params: dict[str, str] = {
             "tenant": f"eq.{tenant}",
@@ -139,6 +142,10 @@ class SupabaseExpiryLotsRepo:
             params["product_sku"] = f"eq.{product_sku}"
         if expires_before:
             params["expires_on"] = f"lte.{expires_before.isoformat()}"
+        if status_filter == "active":
+            params["remaining_quantity"] = "gt.0"
+        elif status_filter == "depleted":
+            params["remaining_quantity"] = "eq.0"
 
         with _client() as client:
             response = client.get(f"/{_TABLE}", params=params, headers={"Prefer": "count=exact"})
@@ -246,16 +253,40 @@ class SupabaseExpiryLotsRepo:
             )
         return {"lot": rows[0]}
 
-    def delete_lot(self, *, tenant: str, lot_id: UUID) -> None:
-        """Delete a lot and its local movement history through one DB transaction."""
-        body = {"p_tenant": tenant, "p_lot_id": str(lot_id)}
-        data = self._rpc("app_inventory_lot_delete", body, "delete_lot")
-        if data.get("deleted") is not True:
-            logger.error("supabase_expiry_delete_lot_invalid_response")
+    def delete_lot(self, *, tenant: str, lot_id: UUID, actor: str) -> None:
+        """Mark a lot as depleted instead of physically deleting audit history."""
+        params = {"id": f"eq.{lot_id}", "tenant": f"eq.{tenant}", "select": "remaining_quantity"}
+        with _client() as client:
+            response = client.get(f"/{_TABLE}", params=params)
+        _raise_for_response(response, "delete_lot_lookup")
+        try:
+            rows = response.json()
+        except (TypeError, ValueError, json.JSONDecodeError):
+            logger.error("supabase_expiry_delete_lot_lookup_invalid_json")
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Supabase devolvió una respuesta inválida para caducidad.",
+            ) from None
+        if not isinstance(rows, list) or not rows:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Lote de inventario no encontrado."
             )
+
+        remaining = Decimal(str(rows[0].get("remaining_quantity", "0")))
+        if remaining <= 0:
+            return
+
+        idempotency_key = uuid5(NAMESPACE_URL, f"expiry-lot-deplete:{tenant}:{lot_id}")
+        self.adjust_lot(
+            tenant=tenant,
+            lot_id=lot_id,
+            actor=actor,
+            payload=LotAdjustmentCreate(
+                quantity_delta=-remaining,
+                reason="Baja manual desde caducidades",
+            ),
+            idempotency_key=idempotency_key,
+        )
 
     @staticmethod
     def _rpc(function: str, body: dict[str, Any], action: str) -> dict[str, Any]:

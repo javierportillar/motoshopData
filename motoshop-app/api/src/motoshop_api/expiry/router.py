@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
@@ -47,6 +47,7 @@ def list_lots(
     expires_before: date | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    lot_status: Literal["active", "depleted", "all"] = Query(default="active", alias="status"),
     _user: User = Depends(get_current_user),
     tenant: str = Depends(get_masvital_tenant),
     repo: ExpiryLotsRepo = Depends(get_expiry_lots_repo),
@@ -58,6 +59,7 @@ def list_lots(
         expires_before=expires_before,
         limit=limit,
         offset=offset,
+        status_filter=lot_status,
     )
     return ExpiryLotListResponse(
         items=[ExpiryLotResponse.model_validate(item) for item in items],
@@ -137,12 +139,12 @@ def update_lot(
 @router.delete("/lots/{lot_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_lot(
     lot_id: UUID,
-    _user: User = Depends(require_role("admin", "gerente")),
+    user: User = Depends(require_role("admin", "gerente")),
     tenant: str = Depends(get_masvital_tenant),
     repo: ExpiryLotsRepo = Depends(get_expiry_lots_repo),
 ) -> Response:
-    """Delete an expiry-lot registration. Restricted to MasVital privileged roles."""
-    repo.delete_lot(tenant=tenant, lot_id=lot_id)
+    """Mark an expiry-lot registration as depleted while preserving audit history."""
+    repo.delete_lot(tenant=tenant, lot_id=lot_id, actor=user.username)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

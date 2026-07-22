@@ -5,7 +5,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from threading import Lock
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import httpx
 import pytest
@@ -46,6 +46,7 @@ class FakeExpiryLotsRepo:
         expires_before: date | None,
         limit: int,
         offset: int,
+        status_filter: str = "active",
     ) -> tuple[list[dict], int]:
         self.last_tenant = tenant
         rows = [lot for lot in self.lots.values() if lot["tenant"] == tenant]
@@ -53,6 +54,10 @@ class FakeExpiryLotsRepo:
             rows = [lot for lot in rows if lot["product_sku"] == product_sku]
         if expires_before:
             rows = [lot for lot in rows if lot["expires_on"] <= expires_before]
+        if status_filter == "active":
+            rows = [lot for lot in rows if lot["remaining_quantity"] > 0]
+        elif status_filter == "depleted":
+            rows = [lot for lot in rows if lot["remaining_quantity"] == 0]
         rows.sort(key=lambda lot: (lot["expires_on"], str(lot["id"])))
         return rows[offset : offset + limit], len(rows)
 
@@ -189,12 +194,24 @@ class FakeExpiryLotsRepo:
         lot["updated_at"] = datetime.now(UTC)
         return {"lot": lot, "replayed": False}
 
-    def delete_lot(self, *, tenant: str, lot_id: UUID) -> None:
+    def delete_lot(self, *, tenant: str, lot_id: UUID, actor: str) -> None:
         self.last_tenant = tenant
         lot = self.lots.get(lot_id)
         if lot is None or lot["tenant"] != tenant:
             raise HTTPException(status_code=404, detail="Lot not found")
-        del self.lots[lot_id]
+        remaining = lot["remaining_quantity"]
+        if remaining <= 0:
+            return
+        self.adjust_lot(
+            tenant=tenant,
+            lot_id=lot_id,
+            actor=actor,
+            payload=LotAdjustmentCreate(
+                quantity_delta=-remaining,
+                reason="Baja manual desde caducidades",
+            ),
+            idempotency_key=uuid5(NAMESPACE_URL, f"expiry-lot-deplete:{tenant}:{lot_id}"),
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -555,7 +572,7 @@ def test_delete_lot_requires_privileged_role(client: TestClient) -> None:
     assert response.status_code == 403
 
 
-def test_delete_lot_removes_registration_for_admin(client: TestClient) -> None:
+def test_delete_lot_depletes_registration_for_admin(client: TestClient) -> None:
     token = _token(client, "admin", "admin123")
     receipt = client.post(
         "/api/expiry/receipts", json=_receipt_payload(), headers=_headers(token, uuid4())
@@ -565,9 +582,35 @@ def test_delete_lot_removes_registration_for_admin(client: TestClient) -> None:
     deleted = client.delete(f"/api/expiry/lots/{lot_id}", headers=_headers(token))
     assert deleted.status_code == 204
 
-    listing = client.get("/api/expiry/lots", headers=_headers(token))
-    assert listing.status_code == 200
-    assert listing.json()["items"] == []
+    active_listing = client.get("/api/expiry/lots", headers=_headers(token))
+    assert active_listing.status_code == 200
+    assert active_listing.json()["items"] == []
+
+    depleted_listing = client.get("/api/expiry/lots?status=depleted", headers=_headers(token))
+    assert depleted_listing.status_code == 200
+    depleted = depleted_listing.json()["items"]
+    assert len(depleted) == 1
+    assert depleted[0]["id"] == lot_id
+    assert float(depleted[0]["remaining_quantity"]) == 0
+
+
+def test_lots_status_filter_separates_active_depleted_and_all(client: TestClient) -> None:
+    token = _token(client, "admin", "admin123")
+    receipt = client.post(
+        "/api/expiry/receipts", json=_receipt_payload(), headers=_headers(token, uuid4())
+    )
+    lot_id = receipt.json()["lot"]["id"]
+    deleted = client.delete(f"/api/expiry/lots/{lot_id}", headers=_headers(token))
+    assert deleted.status_code == 204
+
+    active = client.get("/api/expiry/lots?status=active", headers=_headers(token))
+    depleted = client.get("/api/expiry/lots?status=depleted", headers=_headers(token))
+    all_lots = client.get("/api/expiry/lots?status=all", headers=_headers(token))
+
+    assert active.status_code == depleted.status_code == all_lots.status_code == 200
+    assert active.json()["items"] == []
+    assert [item["id"] for item in depleted.json()["items"]] == [lot_id]
+    assert [item["id"] for item in all_lots.json()["items"]] == [lot_id]
 
 
 def test_delete_missing_lot_returns_404(client: TestClient) -> None:
