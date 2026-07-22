@@ -135,17 +135,18 @@ def _request(method: str, path: str, local_template: str) -> Request:
 
 
 @pytest.mark.parametrize(
-    ("path", "local_template", "module"),
+    ("method", "path", "local_template", "module"),
     [
-        ("/api/metrics/sales-summary-v2", "/metrics/sales-summary-v2", "ventas-summary"),
-        ("/api/products/SKU-123/movements", "/products/{sku}/movements", "inventario"),
+        ("GET", "/api/metrics/sales-summary-v2", "/metrics/sales-summary-v2", "ventas-summary"),
+        ("GET", "/api/products/SKU-123/movements", "/products/{sku}/movements", "inventario"),
+        ("DELETE", "/api/expiry/lots/00000000-0000-4000-8000-000000000000", "/expiry/lots/{lot_id}", "inventario"),
     ],
 )
 def test_route_policy_recovers_prefix_and_dynamic_template(
-    path: str, local_template: str, module: str,
+    method: str, path: str, local_template: str, module: str,
 ) -> None:
     authorized = asyncio.run(
-        require_route_module(_request("GET", path, local_template), _user(allowed_modules=[module]))
+        require_route_module(_request(method, path, local_template), _user(allowed_modules=[module]))
     )
     assert authorized.username == "managed"
 

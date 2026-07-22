@@ -197,7 +197,10 @@ def request_route_template(request: Request) -> str:
     scope_route_path = _route_path(request.scope.get("route"))
 
     if scope_route_path:
-        for candidate in (scope_route_path, _with_root_path(root_path, scope_route_path)):
+        candidates = [scope_route_path, _with_root_path(root_path, scope_route_path)]
+        if scope_route_path.startswith("/") and not scope_route_path.startswith("/api/"):
+            candidates.append(f"/api{scope_route_path}")
+        for candidate in candidates:
             if route_modules(method, candidate) is not None:
                 return candidate
 
