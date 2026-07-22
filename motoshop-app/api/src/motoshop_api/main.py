@@ -32,7 +32,7 @@ from motoshop_api.data_catalog.router import catalog_router
 from motoshop_api.health.router import router as health_router
 from motoshop_api.metrics.router import router as metrics_router
 from motoshop_api.metrics.repo_duckdb import DuckDBNotReadyError
-from motoshop_api.llm.router import router as llm_router
+from motoshop_api.llm.router import briefing_router, router as llm_router
 from motoshop_api.push.router import router as push_router
 from motoshop_api.forecast.router import router as forecast_router
 from motoshop_api.admin.router import router as admin_router
@@ -177,6 +177,7 @@ app.include_router(stock_router, prefix="/api", dependencies=module_access)
 app.include_router(sales_router, prefix="/api", dependencies=module_access)
 app.include_router(catalog_router, prefix="/api", dependencies=module_access)
 app.include_router(health_router, prefix="/api")
+app.include_router(briefing_router, prefix="/api")
 app.include_router(llm_router, prefix="/api", dependencies=module_access)
 app.include_router(metrics_router, prefix="/api", dependencies=module_access)
 app.include_router(push_router, prefix="/api", dependencies=module_access)

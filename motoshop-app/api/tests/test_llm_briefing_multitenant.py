@@ -9,10 +9,11 @@ from pathlib import Path
 import duckdb
 import pytest
 import yaml
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 
-from motoshop_api.auth.deps import get_current_user
+from motoshop_api.auth.deps import get_current_user, require_refresh_token_or_admin
+from motoshop_api.auth.tenant_dep import get_tenant_for_admin_or_machine
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
 from motoshop_api.llm import router as llm_router
@@ -79,14 +80,36 @@ def briefing_client() -> TestClient:
         username="admin", hashed_password="hash", email="admin@test.com", role="admin",
         tenants_allowed=["motoshop", "masvital"], allowed_modules=[], source="supabase",
     )
+    def resolve_test_tenant(request: Request) -> str:
+        return request.headers.get("X-Tenant", "motoshop")
+
     app.dependency_overrides[get_current_user] = lambda: admin
+    app.dependency_overrides[require_refresh_token_or_admin] = lambda: True
+    app.dependency_overrides[get_tenant_for_admin_or_machine] = resolve_test_tenant
     try:
         yield TestClient(app, raise_server_exceptions=False)
     finally:
         app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(require_refresh_token_or_admin, None)
+        app.dependency_overrides.pop(get_tenant_for_admin_or_machine, None)
         _tenants_cache.clear()
         storage.storage.clear()
 
+
+@pytest.fixture()
+def machine_briefing_client() -> TestClient:
+    storage = llm_router.limiter._storage
+    storage.storage.clear()
+    _tenants_cache.clear()
+    _tenants_cache.update({
+        "motoshop": _tenant("motoshop", "MotoShop"),
+        "masvital": _tenant("masvital", "MasVital"),
+    })
+    try:
+        yield TestClient(app, raise_server_exceptions=False)
+    finally:
+        _tenants_cache.clear()
+        storage.storage.clear()
 
 def test_briefing_uses_isolated_db_and_explicit_destination_per_tenant(
     briefing_client: TestClient,
@@ -214,6 +237,36 @@ def test_briefing_returns_controlled_503_when_tenant_snapshot_stays_unavailable(
     assert not paths[tenant].exists()
 
 
+def test_briefing_send_accepts_machine_refresh_token(
+    machine_briefing_client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REFRESH_TOKEN", "machine-token")
+    monkeypatch.setattr(llm_router, "_generate_briefing", lambda tenant: _result(tenant))
+    monkeypatch.setattr(llm_router, "_send_telegram", lambda _text, _tenant: 1)
+
+    response = machine_briefing_client.post(
+        "/api/llm/briefing/send",
+        headers={"Authorization": "Bearer machine-token", "X-Tenant": "motoshop"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "sent"
+
+
+def test_briefing_send_rejects_wrong_machine_token(
+    machine_briefing_client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REFRESH_TOKEN", "machine-token")
+    monkeypatch.setattr(llm_router, "_generate_briefing", lambda tenant: _result(tenant))
+
+    response = machine_briefing_client.post(
+        "/api/llm/briefing/send",
+        headers={"Authorization": "Bearer wrong-token", "X-Tenant": "motoshop"},
+    )
+
+    assert response.status_code == 401
+
+
 def test_tenant_failure_does_not_duplicate_another_send(
     briefing_client: TestClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -250,17 +303,17 @@ while [ "$#" -gt 0 ]; do
     *) shift ;;
   esac
 done
-if [[ "$url" == */api/auth/login ]]; then
-  printf '{"access_token":"fake-token"}' > "$out"; printf '200'
-else
+if [[ "$url" == */api/llm/briefing/send ]]; then
   printf '<html>temporarily unavailable</html>' > "$out"; printf '503'
+else
+  printf 'unexpected url' > "$out"; printf '404'
 fi
 """)
     fake_curl.chmod(0o755)
     env = {
         **os.environ,
         "PATH": f"{fake_bin}:{os.environ['PATH']}",
-        "ADMIN_PASSWORD": "unused-test-value",
+        "BRIEFING_REFRESH_TOKEN": "fake-machine-token",
         "TENANT": "masvital",
     }
 
@@ -270,4 +323,18 @@ fi
     assert result.returncode == 1
     assert "tenant=masvital http=503 category=non_json_response" in output
     assert "temporarily unavailable" not in output
-    assert "fake-token" not in output
+    assert "fake-machine-token" not in output
+
+
+def test_workflow_fails_closed_when_machine_token_secret_missing(tmp_path: Path) -> None:
+    workflow_path = Path(__file__).parents[3] / ".github/workflows/briefing-daily.yml"
+    workflow = yaml.load(workflow_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    script = workflow["jobs"]["send-briefing"]["steps"][0]["run"]
+    env = {**os.environ, "TENANT": "motoshop"}
+    env.pop("BRIEFING_REFRESH_TOKEN", None)
+
+    result = subprocess.run(["bash", "-c", script], env=env, text=True, capture_output=True)
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 1
+    assert "tenant=motoshop http=000 category=missing_machine_token" in output

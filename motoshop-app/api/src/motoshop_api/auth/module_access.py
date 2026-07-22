@@ -134,10 +134,6 @@ ROUTE_MODULES: dict[RouteKey, tuple[str, ...]] = {
         "/api/admin/data/catalog/{table_name}",
         "/api/admin/data/lineage",
     ),
-    # Admin-only LLM operations still have a module classification. Admin bypass
-    # remains the deciding authorization rule because the endpoints require admin.
-    ("POST", "/api/llm/briefing/generate"): ("analisis",),
-    ("POST", "/api/llm/briefing/send"): ("analisis",),
     ("POST", "/api/llm/forecast/explain"): ("forecast",),
     # Admin-only metrics cache invalidation.
     ("POST", "/api/metrics/cache/clear"): ("pipeline-observability",),
@@ -154,6 +150,8 @@ ROUTE_MODULE_EXCEPTIONS: Mapping[RouteKey, str] = {
     ("GET", "/api/health/data-freshness"): "public data freshness probe",
     ("POST", "/api/admin/data/refresh"): "admin JWT or machine refresh token",
     ("POST", "/api/admin/pipeline/refresh"): "admin JWT or machine refresh token",
+    ("POST", "/api/llm/briefing/generate"): "admin JWT or machine refresh token",
+    ("POST", "/api/llm/briefing/send"): "admin JWT or machine refresh token",
     ("GET", "/api/admin/llm-cost"): "admin-only operational accounting",
     ("GET", "/api/admin/users/modules"): "admin-only RBAC administration",
     ("GET", "/api/admin/users"): "admin-only RBAC administration",

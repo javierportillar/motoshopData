@@ -18,8 +18,8 @@ from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from motoshop_api.auth.deps import get_current_user, require_role
-from motoshop_api.auth.tenant_dep import get_tenant
+from motoshop_api.auth.deps import get_current_user, require_refresh_token_or_admin, require_role
+from motoshop_api.auth.tenant_dep import get_tenant, get_tenant_for_admin_or_machine
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
 from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
@@ -28,6 +28,7 @@ from motoshop_api.tenants import get_tenant_config
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/llm", tags=["llm"])
+briefing_router = APIRouter(prefix="/llm", tags=["llm"])
 limiter = Limiter(key_func=get_remote_address)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -151,27 +152,27 @@ def _send_telegram(text: str, tenant: str) -> int:
 # ── Endpoints ──────────────────────────────────────────────────────────────
 
 
-@router.post("/briefing/generate", response_model=BriefingGenerateResponse)
+@briefing_router.post("/briefing/generate", response_model=BriefingGenerateResponse)
 @limiter.limit("5/minute")
 async def briefing_generate(
     request: Request,
-    user: User = Depends(require_role("admin")),
-    tenant: str = Depends(get_tenant),
+    _authorized: bool = Depends(require_refresh_token_or_admin),
+    tenant: str = Depends(get_tenant_for_admin_or_machine),
 ) -> BriefingGenerateResponse:
-    """Genera el briefing diario (no lo envía). Admin-only."""
+    """Genera el briefing diario (no lo envía). Admin JWT or machine token only."""
     result = _generate_briefing(tenant)
     result["briefing_text"] = _tenant_message(tenant, result["briefing_text"])
     return BriefingGenerateResponse(**result)
 
 
-@router.post("/briefing/send", response_model=BriefingSendResponse)
+@briefing_router.post("/briefing/send", response_model=BriefingSendResponse)
 @limiter.limit("3/minute")
 async def briefing_send(
     request: Request,
-    user: User = Depends(require_role("admin")),
-    tenant: str = Depends(get_tenant),
+    _authorized: bool = Depends(require_refresh_token_or_admin),
+    tenant: str = Depends(get_tenant_for_admin_or_machine),
 ) -> BriefingSendResponse:
-    """Genera el briefing diario y lo envía al gerente vía Telegram. Admin-only."""
+    """Genera el briefing diario y lo envía al gerente vía Telegram. Admin JWT or machine token only."""
     result = _generate_briefing(tenant)
     text = _tenant_message(tenant, result["briefing_text"])
 

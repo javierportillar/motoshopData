@@ -18,47 +18,24 @@ jobs:
           - motoshop
           - masvital
     steps:
-      - name: Autenticar y enviar briefing aislado
+      - name: Enviar briefing aislado con token de máquina
         env:
-          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          BRIEFING_REFRESH_TOKEN: ${{ secrets.BRIEFING_REFRESH_TOKEN }}
           TENANT: ${{ matrix.tenant }}
         run: |
           set -euo pipefail
           TMP_DIR="$(mktemp -d)"
           trap 'rm -rf "$TMP_DIR"' EXIT
 
-          set +e
-          LOGIN_STATUS=$(curl -sS -o "$TMP_DIR/login.body" -w "%{http_code}" \
-            -X POST https://api.fragloesja.uk/api/auth/login \
-            -H 'Content-Type: application/json' \
-            --data "$(jq -nc --arg password "$ADMIN_PASSWORD" \
-              '{username: "admin", password: $password}')")
-          LOGIN_EXIT=$?
-          set -e
-          if [ "$LOGIN_EXIT" -ne 0 ]; then
-            echo "::error title=Briefing $TENANT::tenant=$TENANT http=000 category=network_error"
+          if [ -z "${BRIEFING_REFRESH_TOKEN:-}" ]; then
+            echo "::error title=Briefing $TENANT::tenant=$TENANT http=000 category=missing_machine_token"
             exit 1
           fi
-          if [ "$LOGIN_STATUS" != "200" ]; then
-            CATEGORY="json_response"
-            jq -e . "$TMP_DIR/login.body" >/dev/null 2>&1 || CATEGORY="non_json_response"
-            echo "::error title=Briefing $TENANT::tenant=$TENANT http=$LOGIN_STATUS category=auth_$CATEGORY"
-            exit 1
-          fi
-          if ! jq -e . "$TMP_DIR/login.body" >/dev/null 2>&1; then
-            echo "::error title=Briefing $TENANT::tenant=$TENANT http=200 category=auth_non_json_response"
-            exit 1
-          fi
-          TOKEN=$(jq -er '.access_token | strings | select(length > 0)' \
-            "$TMP_DIR/login.body" 2>/dev/null) || {
-            echo "::error title=Briefing $TENANT::tenant=$TENANT http=200 category=missing_access_token"
-            exit 1
-          }
 
           set +e
           SEND_STATUS=$(curl -sS -o "$TMP_DIR/send.body" -w "%{http_code}" \
             -X POST https://api.fragloesja.uk/api/llm/briefing/send \
-            -H "Authorization: Bearer $TOKEN" \
+            -H "Authorization: Bearer $BRIEFING_REFRESH_TOKEN" \
             -H "X-Tenant: $TENANT")
           SEND_EXIT=$?
           set -e

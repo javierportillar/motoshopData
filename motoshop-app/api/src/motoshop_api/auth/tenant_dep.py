@@ -1,26 +1,30 @@
 """Dependencia FastAPI para resolver el tenant activo desde X-Tenant header + JWT."""
 from __future__ import annotations
 
+import os
+
 from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from motoshop_api.auth.deps import get_current_user
 from motoshop_api.auth.users import User
 from motoshop_api.tenants import get_tenant_config
 
 _DEFAULT_TENANT = "motoshop"
+_bearer = HTTPBearer(auto_error=False)
 
 
-async def get_tenant(
-    request: Request,
-    user: User = Depends(get_current_user),
-) -> str:
-    """Resuelve el tenant activo:
-    1. Lee header X-Tenant
-    2. Sin header, infiere el único tenant permitido; si hay varios conserva
-       el default histórico 'motoshop'
-    3. Valida que el usuario tenga ese tenant en tenants_allowed
-    4. Retorna el tenant ID
-    """
+def _validate_configured_tenant(tenant: str) -> str:
+    config = get_tenant_config(tenant)
+    if config is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tenant '{tenant}' no encontrado en la configuración",
+        )
+    return tenant
+
+
+def _resolve_user_tenant(request: Request, user: User) -> str:
     requested_tenant = request.headers.get("X-Tenant")
     if requested_tenant:
         tenant = requested_tenant
@@ -39,12 +43,42 @@ async def get_tenant(
             detail=f"Usuario no tiene acceso al tenant '{tenant}'",
         )
 
-    # Verify tenant exists in config
-    config = get_tenant_config(tenant)
-    if config is None:
+    return _validate_configured_tenant(tenant)
+
+
+async def get_tenant(
+    request: Request,
+    user: User = Depends(get_current_user),
+) -> str:
+    """Resolve the active tenant from X-Tenant header plus an authenticated user."""
+    return _resolve_user_tenant(request, user)
+
+
+async def get_tenant_for_admin_or_machine(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> str:
+    """Resolve tenant for endpoints that accept either admin JWT or machine token.
+
+    Machine-token calls must send X-Tenant explicitly so scheduled jobs cannot
+    fall back to the historical MotoShop default by accident.
+    """
+    if credentials is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Tenant '{tenant}' no encontrado en la configuración",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token de autenticación requerido",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return tenant
+    refresh_token = os.environ.get("REFRESH_TOKEN", "")
+    if refresh_token and credentials.credentials == refresh_token:
+        tenant = request.headers.get("X-Tenant")
+        if not tenant:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="X-Tenant requerido para token de máquina",
+            )
+        return _validate_configured_tenant(tenant)
+
+    user = await get_current_user(credentials)
+    return _resolve_user_tenant(request, user)
