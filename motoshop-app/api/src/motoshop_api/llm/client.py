@@ -9,7 +9,6 @@ Si el modelo primario falla, intenta el fallback con su propia API/key.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 
@@ -32,6 +31,18 @@ ZEN_MAX_TOKENS = int(os.environ.get("ZEN_MAX_TOKENS", "8000"))
 TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "120"))
 
 _client_singleton: LLMClient | None = None
+
+
+class LLMDependencyError(RuntimeError):
+    """Base error for failures returned by configured LLM providers."""
+
+
+class TransientLLMError(LLMDependencyError):
+    """A retryable provider timeout, network error, rate limit, or 5xx response."""
+
+
+class PermanentLLMError(LLMDependencyError):
+    """A non-retryable provider configuration, request, or response failure."""
 
 
 def get_llm_client() -> LLMClient:
@@ -75,12 +86,28 @@ class LLMClient:
         messages.append({"role": "user", "content": prompt})
         return self._call(messages, max_tokens)
 
-    def complete_with_tools(self, messages: list[dict], tools: list[dict], *, max_tokens: int | None = None) -> dict:
-        """Chat completion con function calling. Retorna {text, tool_calls, tokens_used, model, ...}."""
+    def complete_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        max_tokens: int | None = None,
+    ) -> dict:
+        """Complete a chat request that may return tool calls."""
         return self._call(messages, max_tokens, tools=tools)
 
-    def _call(self, messages: list[dict], max_tokens: int | None = None, tools: list[dict] | None = None) -> dict:
-        last_error = None
+    def _call(
+        self,
+        messages: list[dict],
+        max_tokens: int | None = None,
+        tools: list[dict] | None = None,
+    ) -> dict:
+        if not self._backends:
+            raise PermanentLLMError("No LLM providers are configured")
+
+        failures: list[str] = []
+        last_cause: Exception | None = None
+        saw_transient_failure = False
 
         for backend in self._backends:
             try:
@@ -104,29 +131,59 @@ class LLMClient:
                     },
                 )
 
-                if resp.status_code in (401, 403):
-                    logger.warning("LLM %d from %s/%s", resp.status_code, backend["name"], backend["model"])
-                    last_error = f"{resp.status_code}"
+                if resp.status_code in (408, 425, 429) or 500 <= resp.status_code <= 599:
+                    logger.warning(
+                        "LLM transient HTTP %d from %s/%s",
+                        resp.status_code, backend["name"], backend["model"],
+                    )
+                    failures.append(f"{backend['name']}:{resp.status_code}")
+                    saw_transient_failure = True
                     continue
-                if resp.status_code >= 500:
-                    logger.warning("LLM %d from %s/%s", resp.status_code, backend["name"], backend["model"])
-                    last_error = f"{resp.status_code}"
+                if not 200 <= resp.status_code < 300:
+                    logger.warning(
+                        "LLM permanent HTTP %d from %s/%s",
+                        resp.status_code, backend["name"], backend["model"],
+                    )
+                    failures.append(f"{backend['name']}:{resp.status_code}")
                     continue
 
-                resp.raise_for_status()
-                data = resp.json()
+                try:
+                    data = resp.json()
+                    if not isinstance(data, dict):
+                        raise TypeError("response must be a JSON object")
+                except (TypeError, ValueError) as exc:
+                    logger.warning(
+                        "LLM malformed response from %s/%s",
+                        backend["name"], backend["model"],
+                    )
+                    failures.append(f"{backend['name']}:malformed_response")
+                    last_cause = exc
+                    continue
 
                 if "error" in data:
-                    err_msg = data["error"].get("message", str(data["error"]))
-                    logger.warning("LLM API error %s/%s: %s", backend["name"], backend["model"], err_msg)
-                    last_error = err_msg
+                    logger.warning(
+                        "LLM error payload from %s/%s",
+                        backend["name"], backend["model"],
+                    )
+                    failures.append(f"{backend['name']}:error_payload")
                     continue
 
-                choice = data["choices"][0]
-                msg = choice["message"]
-                text = msg.get("content") or msg.get("reasoning_content") or ""
-                tool_calls = msg.get("tool_calls", [])
-                usage = data.get("usage", {})
+                try:
+                    choice = data["choices"][0]
+                    msg = choice["message"]
+                    text = msg.get("content") or msg.get("reasoning_content") or ""
+                    tool_calls = msg.get("tool_calls", [])
+                    usage = data.get("usage", {})
+                    if not isinstance(msg, dict) or not isinstance(usage, dict):
+                        raise TypeError("invalid completion response shape")
+                except (AttributeError, IndexError, KeyError, TypeError) as exc:
+                    logger.warning(
+                        "LLM malformed completion from %s/%s",
+                        backend["name"], backend["model"],
+                    )
+                    failures.append(f"{backend['name']}:malformed_completion")
+                    last_cause = exc
+                    continue
 
                 logger.info(
                     "llm_ok: backend=%s model=%s tokens_in=%d tokens_out=%d cost=$0",
@@ -145,14 +202,33 @@ class LLMClient:
                     "cost_usd": 0.0,
                 }
 
-            except httpx.TimeoutException:
+            except httpx.TimeoutException as exc:
                 logger.warning("LLM timeout %s/%s", backend["name"], backend["model"])
-                last_error = f"timeout after {TIMEOUT}s"
+                failures.append(f"{backend['name']}:timeout")
+                saw_transient_failure = True
+                last_cause = exc
+            except (httpx.InvalidURL, httpx.LocalProtocolError, httpx.UnsupportedProtocol) as exc:
+                logger.warning(
+                    "LLM provider configuration error %s/%s",
+                    backend["name"], backend["model"],
+                )
+                failures.append(f"{backend['name']}:provider_configuration")
+                last_cause = exc
+            except httpx.TransportError as exc:
+                logger.warning("LLM network error %s/%s", backend["name"], backend["model"])
+                failures.append(f"{backend['name']}:network_error")
+                saw_transient_failure = True
+                last_cause = exc
             except Exception as exc:
-                logger.warning("LLM error %s/%s: %s", backend["name"], backend["model"], exc)
-                last_error = str(exc)
+                logger.warning("LLM invalid response %s/%s", backend["name"], backend["model"])
+                failures.append(f"{backend['name']}:invalid_response")
+                last_cause = exc
 
-        raise RuntimeError(f"LLM call failed after trying {len(self._backends)} backends: {last_error}")
+        summary = ", ".join(failures)
+        message = f"LLM call failed after trying {len(self._backends)} backends: {summary}"
+        if saw_transient_failure:
+            raise TransientLLMError(message) from last_cause
+        raise PermanentLLMError(message) from last_cause
 
     def close(self):
         self._http.close()

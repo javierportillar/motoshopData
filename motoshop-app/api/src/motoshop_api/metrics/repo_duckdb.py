@@ -3557,6 +3557,7 @@ class DuckDBMetricsRepo:
         sort: str = "revenue_win",
         order: str = "desc",
         preset: str | None = None,
+        rotacion: str | None = None,
     ) -> dict:
         """Tabla rica de productos con filtros, búsqueda, orden y paginación."""
         cte = self._product_metrics_cte(window_days)
@@ -3585,6 +3586,15 @@ class DuckDBMetricsRepo:
         # V1.31: preset scopeado — inyecta el WHERE exacto de la card de origen
         if preset and preset in self._ANALYTICS_PRESETS:
             where.append(f"({self._ANALYTICS_PRESETS[preset]})")
+        
+        # Filtro de Rotación (Más rotados, Menos rotados, Sin rotación)
+        if rotacion == "mas_rotados":
+            where.append("rotacion_anual >= 4")
+        elif rotacion == "menos_rotados":
+            where.append("rotacion_anual > 0 AND rotacion_anual < 4")
+        elif rotacion == "sin_rotacion":
+            where.append("(rotacion_anual IS NULL OR rotacion_anual = 0)")
+
         where_sql = " AND ".join(where)
 
         sort_cols = {

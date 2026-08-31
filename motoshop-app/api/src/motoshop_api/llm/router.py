@@ -17,11 +17,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+from starlette.concurrency import run_in_threadpool
 
 from motoshop_api.auth.deps import get_current_user, require_refresh_token_or_admin, require_role
-from motoshop_api.auth.tenant_dep import get_tenant, get_tenant_for_admin_or_machine
+from motoshop_api.auth.tenant_dep import get_tenant_for_admin_or_machine
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
+from motoshop_api.llm.client import PermanentLLMError, TransientLLMError
 from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
 from motoshop_api.tenants import get_tenant_config
 
@@ -109,6 +111,39 @@ def _generate_briefing(tenant: str) -> dict:
         gen.close()
 
 
+def _briefing_dependency_http_error(
+    exc: PermanentLLMError | TransientLLMError,
+) -> HTTPException:
+    if isinstance(exc, TransientLLMError):
+        return HTTPException(
+            status_code=503,
+            detail="El proveedor de lenguaje no está disponible temporalmente.",
+            headers={"Retry-After": "30"},
+        )
+    return HTTPException(
+        status_code=502,
+        detail="El proveedor de lenguaje rechazó la generación del briefing.",
+    )
+
+
+def _generate_briefing_for_delivery(tenant: str) -> dict:
+    """Retry one transient generation failure before any Telegram side effect."""
+    for attempt in range(2):
+        try:
+            return _generate_briefing(tenant)
+        except PermanentLLMError as exc:
+            logger.error("Permanent briefing generation failure tenant=%s", tenant)
+            raise _briefing_dependency_http_error(exc) from exc
+        except TransientLLMError as exc:
+            if attempt == 0:
+                logger.warning("Briefing generation failed; retrying tenant=%s", tenant)
+                continue
+            logger.error("Briefing generation failed after retry tenant=%s", tenant)
+            raise _briefing_dependency_http_error(exc) from exc
+
+    raise AssertionError("unreachable")
+
+
 def _tenant_message(tenant: str, text: str) -> str:
     tenant_config = get_tenant_config(tenant)
     company_name = tenant_config.nombre if tenant_config else tenant
@@ -160,7 +195,11 @@ async def briefing_generate(
     tenant: str = Depends(get_tenant_for_admin_or_machine),
 ) -> BriefingGenerateResponse:
     """Genera el briefing diario (no lo envía). Admin JWT or machine token only."""
-    result = _generate_briefing(tenant)
+    try:
+        result = await run_in_threadpool(_generate_briefing, tenant)
+    except (PermanentLLMError, TransientLLMError) as exc:
+        logger.error("Briefing generation dependency failure tenant=%s", tenant)
+        raise _briefing_dependency_http_error(exc) from exc
     result["briefing_text"] = _tenant_message(tenant, result["briefing_text"])
     return BriefingGenerateResponse(**result)
 
@@ -172,12 +211,12 @@ async def briefing_send(
     _authorized: bool = Depends(require_refresh_token_or_admin),
     tenant: str = Depends(get_tenant_for_admin_or_machine),
 ) -> BriefingSendResponse:
-    """Genera el briefing diario y lo envía al gerente vía Telegram. Admin JWT or machine token only."""
-    result = _generate_briefing(tenant)
+    """Generate and send the tenant briefing with admin or machine-token authorization."""
+    result = await run_in_threadpool(_generate_briefing_for_delivery, tenant)
     text = _tenant_message(tenant, result["briefing_text"])
 
     try:
-        msg_id = _send_telegram(text, tenant)
+        msg_id = await run_in_threadpool(_send_telegram, text, tenant)
     except HTTPException:
         raise
     except Exception as exc:

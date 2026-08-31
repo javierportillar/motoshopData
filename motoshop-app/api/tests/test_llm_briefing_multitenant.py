@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
+import threading
 from pathlib import Path
 
 import duckdb
+import httpx
 import pytest
 import yaml
 from fastapi import HTTPException, Request
@@ -18,6 +21,7 @@ from motoshop_api.auth.users import User
 from motoshop_api.config import settings
 from motoshop_api.llm import router as llm_router
 from motoshop_api.llm.briefing import BriefingGenerator
+from motoshop_api.llm.client import LLMClient, PermanentLLMError, TransientLLMError
 from motoshop_api.main import app
 from motoshop_api.metrics import repo_duckdb
 from motoshop_api.tenants import Tenant, TenantBriefing, _tenants_cache
@@ -251,6 +255,303 @@ def test_briefing_send_accepts_machine_refresh_token(
 
     assert response.status_code == 200
     assert response.json()["status"] == "sent"
+
+
+def test_briefing_send_retries_transient_generation_failure_before_delivery(
+    briefing_client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generation_attempts: list[str] = []
+    delivered: list[str] = []
+
+    def generate(tenant: str) -> dict[str, object]:
+        generation_attempts.append(tenant)
+        if len(generation_attempts) == 1:
+            raise TransientLLMError("transient LLM failure")
+        return _result(tenant)
+
+    monkeypatch.setattr(llm_router, "_generate_briefing", generate)
+    monkeypatch.setattr(
+        llm_router,
+        "_send_telegram",
+        lambda _text, tenant: delivered.append(tenant) or 1,
+    )
+
+    response = briefing_client.post(
+        "/api/llm/briefing/send", headers={"X-Tenant": "motoshop"},
+    )
+
+    assert response.status_code == 200
+    assert generation_attempts == ["motoshop", "motoshop"]
+    assert delivered == ["motoshop"]
+
+
+def test_briefing_send_reports_persistent_generation_failure_without_delivery(
+    briefing_client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generation_attempts: list[str] = []
+    delivered: list[str] = []
+
+    def generate(tenant: str) -> dict[str, object]:
+        generation_attempts.append(tenant)
+        raise TransientLLMError("persistent LLM failure")
+
+    monkeypatch.setattr(llm_router, "_generate_briefing", generate)
+    monkeypatch.setattr(
+        llm_router,
+        "_send_telegram",
+        lambda _text, tenant: delivered.append(tenant) or 1,
+    )
+
+    response = briefing_client.post(
+        "/api/llm/briefing/send", headers={"X-Tenant": "motoshop"},
+    )
+
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "30"
+    assert response.json() == {
+        "detail": "El proveedor de lenguaje no está disponible temporalmente.",
+    }
+    assert generation_attempts == ["motoshop", "motoshop"]
+    assert delivered == []
+
+
+def test_briefing_send_does_not_retry_permanent_generation_failure(
+    briefing_client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generation_attempts: list[str] = []
+    delivered: list[str] = []
+
+    def generate(tenant: str) -> dict[str, object]:
+        generation_attempts.append(tenant)
+        raise PermanentLLMError("provider rejected configuration")
+
+    monkeypatch.setattr(llm_router, "_generate_briefing", generate)
+    monkeypatch.setattr(
+        llm_router,
+        "_send_telegram",
+        lambda _text, tenant: delivered.append(tenant) or 1,
+    )
+
+    response = briefing_client.post(
+        "/api/llm/briefing/send", headers={"X-Tenant": "motoshop"},
+    )
+
+    assert response.status_code == 502
+    assert response.json() == {
+        "detail": "El proveedor de lenguaje rechazó la generación del briefing.",
+    }
+    assert generation_attempts == ["motoshop"]
+    assert delivered == []
+
+
+@pytest.mark.parametrize(
+    ("error_type", "expected_status", "expected_detail", "retry_after"),
+    [
+        (
+            TransientLLMError,
+            503,
+            "El proveedor de lenguaje no está disponible temporalmente.",
+            "30",
+        ),
+        (
+            PermanentLLMError,
+            502,
+            "El proveedor de lenguaje rechazó la generación del briefing.",
+            None,
+        ),
+    ],
+)
+def test_briefing_generate_maps_dependency_failures_without_retry(
+    briefing_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[PermanentLLMError] | type[TransientLLMError],
+    expected_status: int,
+    expected_detail: str,
+    retry_after: str | None,
+) -> None:
+    generation_attempts: list[str] = []
+
+    def generate(tenant: str) -> dict[str, object]:
+        generation_attempts.append(tenant)
+        raise error_type("provider failure")
+
+    monkeypatch.setattr(llm_router, "_generate_briefing", generate)
+
+    response = briefing_client.post(
+        "/api/llm/briefing/generate", headers={"X-Tenant": "motoshop"},
+    )
+
+    assert response.status_code == expected_status
+    assert response.json() == {"detail": expected_detail}
+    assert response.headers.get("Retry-After") == retry_after
+    assert generation_attempts == ["motoshop"]
+
+
+@pytest.mark.parametrize(
+    "error_type",
+    [httpx.UnsupportedProtocol, httpx.DecodingError, httpx.TooManyRedirects],
+)
+def test_briefing_send_non_transport_provider_error_is_permanent_and_not_retried(
+    briefing_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[httpx.RequestError],
+) -> None:
+    generation_attempts: list[str] = []
+    delivered: list[str] = []
+
+    def generate(tenant: str) -> dict[str, object]:
+        generation_attempts.append(tenant)
+        request = httpx.Request("POST", "ftp://invalid-provider.test")
+        client = _stub_llm_client(error_type("provider request failed", request=request))
+        return client.complete("test")
+
+    monkeypatch.setattr(llm_router, "_generate_briefing", generate)
+    monkeypatch.setattr(
+        llm_router,
+        "_send_telegram",
+        lambda _text, tenant: delivered.append(tenant) or 1,
+    )
+
+    response = briefing_client.post(
+        "/api/llm/briefing/send", headers={"X-Tenant": "motoshop"},
+    )
+
+    assert response.status_code == 502
+    assert generation_attempts == ["motoshop"]
+    assert delivered == []
+
+
+def test_briefing_send_offloads_blocking_work_and_keeps_tenants_isolated(
+    briefing_client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generation_barrier = threading.Barrier(2, timeout=2)
+    delivery_barrier = threading.Barrier(2, timeout=2)
+    generated: list[str] = []
+    delivered: list[str] = []
+
+    def generate(tenant: str) -> dict[str, object]:
+        generated.append(tenant)
+        generation_barrier.wait()
+        return _result(tenant)
+
+    def deliver(_text: str, tenant: str) -> int:
+        delivered.append(tenant)
+        delivery_barrier.wait()
+        return len(delivered)
+
+    monkeypatch.setattr(llm_router, "_generate_briefing", generate)
+    monkeypatch.setattr(llm_router, "_send_telegram", deliver)
+
+    async def send_both() -> list[httpx.Response]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await asyncio.gather(*(
+                client.post("/api/llm/briefing/send", headers={"X-Tenant": tenant})
+                for tenant in ("motoshop", "masvital")
+            ))
+
+    responses = asyncio.run(send_both())
+
+    assert [response.status_code for response in responses] == [200, 200]
+    assert {response.json()["briefing_text"] for response in responses} == {
+        "[MotoShop]\nmotoshop", "[MasVital]\nmasvital",
+    }
+    assert set(generated) == {"motoshop", "masvital"}
+    assert set(delivered) == {"motoshop", "masvital"}
+
+
+class _StubLLMResponse:
+    def __init__(self, status_code: int, *, malformed: bool = False) -> None:
+        self.status_code = status_code
+        self._malformed = malformed
+
+    def json(self) -> dict[str, object]:
+        if self._malformed:
+            raise ValueError("malformed JSON")
+        return {
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {},
+        }
+
+
+class _StubLLMHttp:
+    def __init__(self, result: _StubLLMResponse | Exception) -> None:
+        self._result = result
+
+    def post(self, *_args: object, **_kwargs: object) -> _StubLLMResponse:
+        if isinstance(self._result, Exception):
+            raise self._result
+        return self._result
+
+
+def _stub_llm_client(result: _StubLLMResponse | Exception) -> LLMClient:
+    client = object.__new__(LLMClient)
+    client._backends = [{
+        "name": "test", "base": "https://provider.test", "key": "test-key",
+        "model": "test-model", "max_tokens": 10,
+    }]
+    client._http = _StubLLMHttp(result)  # type: ignore[assignment]
+    return client
+
+
+@pytest.mark.parametrize("status_code", [429, 500, 503])
+def test_llm_client_classifies_retryable_http_statuses_as_transient(status_code: int) -> None:
+    client = _stub_llm_client(_StubLLMResponse(status_code))
+
+    with pytest.raises(TransientLLMError):
+        client.complete("test")
+
+
+@pytest.mark.parametrize("error_type", [httpx.ConnectError, httpx.ReadTimeout])
+def test_llm_client_classifies_network_and_timeout_errors_as_transient(
+    error_type: type[httpx.RequestError],
+) -> None:
+    request = httpx.Request("POST", "https://provider.test/chat/completions")
+    error = error_type("provider unavailable", request=request)
+    client = _stub_llm_client(error)
+
+    with pytest.raises(TransientLLMError) as exc_info:
+        client.complete("test")
+
+    assert exc_info.value.__cause__ is error
+
+
+@pytest.mark.parametrize(
+    "error_type",
+    [
+        httpx.InvalidURL,
+        httpx.UnsupportedProtocol,
+        httpx.DecodingError,
+        httpx.TooManyRedirects,
+    ],
+)
+def test_llm_client_classifies_non_transport_provider_failures_as_permanent(
+    error_type: type[Exception],
+) -> None:
+    request = httpx.Request("POST", "https://provider.test/chat/completions")
+    if issubclass(error_type, httpx.RequestError):
+        error = error_type("bad provider URL", request=request)
+    else:
+        error = error_type("bad provider URL")
+    client = _stub_llm_client(error)
+
+    with pytest.raises(PermanentLLMError) as exc_info:
+        client.complete("test")
+
+    assert exc_info.value.__cause__ is error
+
+
+@pytest.mark.parametrize(
+    "response",
+    [_StubLLMResponse(401), _StubLLMResponse(400), _StubLLMResponse(200, malformed=True)],
+)
+def test_llm_client_classifies_permanent_or_malformed_failures_without_retry(
+    response: _StubLLMResponse,
+) -> None:
+    client = _stub_llm_client(response)
+
+    with pytest.raises(PermanentLLMError):
+        client.complete("test")
 
 
 def test_briefing_send_rejects_wrong_machine_token(
