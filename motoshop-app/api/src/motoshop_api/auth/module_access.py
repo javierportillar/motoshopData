@@ -18,6 +18,22 @@ from motoshop_api.auth.users import User
 
 RouteKey = tuple[str, str]
 
+ASSISTANT_DOMAIN_MODULES: dict[str, str] = {
+    "sales": "ventas-summary", "purchases": "ventas-summary", "inventory": "inventario",
+    "abc": "abc", "dormant_products": "dormidos", "alerts": "alerts", "forecasts": "forecast",
+    "analyses": "analisis", "expenses": "analisis", "expiry": "expiry-lots",
+}
+
+
+def assistant_domains_for_user(user: User, enabled_features: list[str]) -> set[str]:
+    configured = {
+        domain for domain, module in ASSISTANT_DOMAIN_MODULES.items() if module in enabled_features
+    }
+    if user.role == "admin" or (user.source == "legacy" and user.allowed_modules is None):
+        return configured
+    granted = set(user.allowed_modules or [])
+    return {domain for domain in configured if ASSISTANT_DOMAIN_MODULES[domain] in granted}
+
 
 def _routes(module: str, *paths: str) -> dict[RouteKey, tuple[str, ...]]:
     return {("GET", path): (module,) for path in paths}
