@@ -14,8 +14,10 @@ from motoshop_api.llm.contracts import SourceEvidence, redact_sensitive
 class SourceUnavailable(RuntimeError):
     """A source failed without exposing provider or credential details."""
 class DuckDBSourceAdapter:
-    def __init__(self, context: TenantContext, *, connection: Any) -> None:
-        self.context, self.connection = context, connection
+    def __init__(self, context: TenantContext, *, connection: Any | None = None) -> None:
+        from motoshop_api.metrics.repo_duckdb import _make_db_path, get_shared_connection
+        self.context = context
+        self.connection = connection or get_shared_connection(_make_db_path(context.tenant_id))
 
     def read(self, domain: str, args: dict[str, object]) -> tuple[list[dict[str, Any]], SourceEvidence]:
         if not self.context.allows(domain):
