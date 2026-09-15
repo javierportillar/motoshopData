@@ -36,6 +36,10 @@ create table if not exists public.agent_messages (
 drop index if exists public.agent_messages_request_idx;
 create unique index agent_messages_request_idx on public.agent_messages (conversation_id, request_id, role);
 create index if not exists agent_messages_owner_idx on public.agent_messages (tenant_id, user_id, conversation_id, created_at);
+alter table public.agent_messages add column if not exists evidence jsonb not null default '[]'::jsonb;
+alter table public.agent_messages add column if not exists freshness jsonb not null default '[]'::jsonb;
+alter table public.agent_messages add column if not exists entity_refs jsonb not null default '[]'::jsonb;
+alter table public.agent_messages add column if not exists attachments jsonb not null default '[]'::jsonb;
 
 create table if not exists public.rag_documents (
   id uuid primary key default gen_random_uuid(),

@@ -7,6 +7,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass
+from contextlib import suppress
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -87,14 +88,23 @@ class ReportStorage:
         if not re.fullmatch(r"rep_[0-9a-f]{12}", report_id):
             return None
         rec = self._index.get(report_id)
-        if rec and rec.file_path.exists():
+        if rec and rec.file_path.exists() and not self._expired(rec):
             return rec
+        if rec and rec.file_path.exists():
+            with suppress(OSError):
+                rec.file_path.unlink()
+            self._index.pop(report_id, None)
+            return None
         # Fallback: buscar en disco si se reinició el servidor
         matches = list(self.base_dir.glob(f"{report_id}__*")) or list(
             self.base_dir.glob(f"{report_id}_*")
         )
         if matches:
             fp = matches[0]
+            if time.time() - fp.stat().st_mtime > REPORT_TTL_SECONDS:
+                with suppress(OSError):
+                    fp.unlink()
+                return None
             rest = fp.name[len(report_id) + 2 :] if "__" in fp.name else fp.name[len(report_id) + 1 :]
             # Formato nuevo: {report_id}__{tenant}__{filename} → tenant recuperable
             if "__" in fp.name:
@@ -124,9 +134,18 @@ class ReportStorage:
             return rec
         return None
 
+    @staticmethod
+    def _expired(record: ReportRecord) -> bool:
+        """Use the earliest creation/file timestamp after a restart or copy."""
+        try:
+            created_at = min(record.created_at, record.file_path.stat().st_mtime)
+        except OSError:
+            return True
+        return time.time() - created_at > REPORT_TTL_SECONDS
+
     def cleanup(self, max_age: int = REPORT_TTL_SECONDS) -> None:
         now = time.time()
-        to_delete = [k for k, v in self._index.items() if now - v.created_at > max_age]
+        to_delete = [k for k, v in self._index.items() if self._expired(v) or now - v.created_at > max_age]
         for k in to_delete:
             rec = self._index.pop(k, None)
             if rec and rec.file_path.exists():

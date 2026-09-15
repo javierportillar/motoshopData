@@ -52,6 +52,9 @@ class ConversationRepository(Protocol):
         request_id: str | None = None,
         tools_used: list[str] | None = None,
         sources: list[dict[str, Any]] | None = None,
+        freshness: list[dict[str, Any]] | None = None,
+        entity_refs: list[dict[str, Any]] | None = None,
+        attachments: list[dict[str, Any]] | None = None,
         model: str | None = None,
         provider: str | None = None,
         tokens_input: int = 0,
@@ -175,6 +178,9 @@ class InMemoryConversationRepository:
                     "request_id": request_id,
                     "tools_used": metadata.get("tools_used", []),
                     "sources": metadata.get("sources", []),
+                    "freshness": metadata.get("freshness", []),
+                    "entity_refs": metadata.get("entity_refs", []),
+                    "attachments": metadata.get("attachments", []),
                     "model": metadata.get("model"),
                     "provider": metadata.get("provider"),
                     "tokens_input": metadata.get("tokens_input", 0),
@@ -236,11 +242,21 @@ class SQLiteConversationRepository:
                     model TEXT, provider TEXT, tokens_input INTEGER NOT NULL,
                     tokens_output INTEGER NOT NULL, latency_ms INTEGER NOT NULL,
                     status TEXT NOT NULL, error_code TEXT, created_at TEXT NOT NULL,
+                    evidence TEXT NOT NULL DEFAULT '[]', freshness TEXT NOT NULL DEFAULT '[]',
+                    entity_refs TEXT NOT NULL DEFAULT '[]', attachments TEXT NOT NULL DEFAULT '[]',
                     FOREIGN KEY(conversation_id) REFERENCES agent_conversations(id)
                         ON DELETE CASCADE,
                     UNIQUE(conversation_id, request_id, role)
                 );
             """)
+            for column in ("evidence", "freshness", "entity_refs", "attachments"):
+                try:
+                    con.execute(
+                        f"ALTER TABLE agent_messages ADD COLUMN {column} TEXT NOT NULL DEFAULT '[]'"
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column" not in str(exc).lower():
+                        raise
 
     def _connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(self.path, timeout=5)
@@ -257,6 +273,9 @@ class SQLiteConversationRepository:
         result = dict(row)
         result["tools_used"] = json.loads(result.get("tools_used") or "[]")
         result["sources"] = json.loads(result.get("sources") or "[]")
+        result["freshness"] = json.loads(result.get("freshness") or "[]")
+        result["entity_refs"] = json.loads(result.get("entity_refs") or "[]")
+        result["attachments"] = json.loads(result.get("attachments") or "[]")
         return result
 
     def list_conversations(
@@ -340,7 +359,8 @@ class SQLiteConversationRepository:
             if owner is None:
                 raise PermissionError("conversation_not_owned")
             con.execute(
-                "INSERT OR IGNORE INTO agent_messages VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT OR IGNORE INTO agent_messages VALUES "
+                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     str(uuid4()),
                     *common[:3],
@@ -357,10 +377,15 @@ class SQLiteConversationRepository:
                     "success",
                     None,
                     now,
+                    "[]",
+                    "[]",
+                    "[]",
+                    "[]",
                 ),
             )
             con.execute(
-                "INSERT OR IGNORE INTO agent_messages VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT OR IGNORE INTO agent_messages VALUES "
+                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     str(uuid4()),
                     *common[:3],
@@ -377,6 +402,10 @@ class SQLiteConversationRepository:
                     metadata.get("status", "success"),
                     metadata.get("error_code"),
                     assistant_at,
+                    json.dumps(metadata.get("sources", [])),
+                    json.dumps(metadata.get("freshness", [])),
+                    json.dumps(metadata.get("entity_refs", [])),
+                    json.dumps(metadata.get("attachments", [])),
                 ),
             )
             count = con.execute(
@@ -542,6 +571,10 @@ class SupabaseConversationRepository:
                 "request_id": request_id,
                 "tools_used": metadata.get("tools_used", []),
                 "sources": metadata.get("sources", []),
+                "evidence": metadata.get("sources", []),
+                "freshness": metadata.get("freshness", []),
+                "entity_refs": metadata.get("entity_refs", []),
+                "attachments": metadata.get("attachments", []),
                 "model": metadata.get("model"),
                 "provider": metadata.get("provider"),
                 "tokens_input": metadata.get("tokens_input", 0),

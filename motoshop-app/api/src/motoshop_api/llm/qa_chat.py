@@ -6,14 +6,20 @@ import json as _json
 import logging
 import time
 from contextlib import suppress
+from datetime import UTC, datetime
+from typing import Any
 
+from motoshop_api.auth.tenant_dep import TenantContext
 from motoshop_api.llm.client import LLMDependencyError
+from motoshop_api.llm.contracts import AssistantEnvelope, Attachment, Freshness, SourceEvidence
+from motoshop_api.llm.registry import resolve_entity_ref
 from motoshop_api.tenants import get_tenant_config
 
 logger = logging.getLogger(__name__)
 CONVERSATION_TTL = 30 * 60
 MAX_TURNS = 20
 MAX_TOOL_ITERATIONS = 5
+_FILE_INTENT = ("excel", "pdf", "word", "export", "download", "descarg", "archivo", "planilla")
 
 
 def build_qa_system(tenant_id: str, latest_date: str | None = None) -> str:
@@ -85,6 +91,77 @@ class ConversationManager:
 _conversation_mgr = ConversationManager()
 
 
+def _explicit_file_request(message: str) -> bool:
+    return any(term in message.lower() for term in _FILE_INTENT)
+
+
+def _observed_at() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _source_evidence(value: Any, index: int, tool_name: str) -> dict[str, Any]:
+    if isinstance(value, dict) and "source_id" in value:
+        return SourceEvidence.model_validate(value).model_dump()
+    citation = str(value.get("source", tool_name)) if isinstance(value, dict) else tool_name
+    return SourceEvidence(
+        source_id=f"source-{index}", domain=tool_name, kind="document", citation=citation,
+        observed_at=_observed_at(), status="used",
+    ).model_dump()
+
+
+def _freshness(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    return Freshness.model_validate(value).model_dump()
+
+
+def _entity_references(value: Any, tenant_id: str, user_id: str) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    for item in value if isinstance(value, list) else []:
+        if not isinstance(item, dict) or "route_key" not in item:
+            continue
+        try:
+            ref = resolve_entity_ref(
+                TenantContext(tenant_id, user_id, "", True, frozenset({item["domain"]})),
+                entity_type=item["entity_type"], entity_id=item["entity_id"],
+                label=item["label"], domain=item["domain"], route_key=item["route_key"],
+            )
+        except (KeyError, PermissionError, ValueError):
+            continue
+        refs.append(ref.model_dump())
+    return refs
+
+
+def _attachment(value: dict[str, Any]) -> dict[str, Any]:
+    expires_at = value.get("expires_at")
+    state = "available"
+    if expires_at:
+        with suppress(ValueError, TypeError):
+            if datetime.fromisoformat(str(expires_at).replace("Z", "+00:00")) <= datetime.now(UTC):
+                state = "expired"
+    return Attachment(
+        format=value.get("format", "excel"), filename=value.get("filename", "reporte"),
+        download_url=value["download_url"], state=state, expires_at=expires_at,
+        date_from=value.get("date_from"), date_to=value.get("date_to"),
+        period_label=value.get("period_label"),
+    ).model_dump()
+
+
+def _persisted_envelope(
+    row: dict[str, Any], conversation_id: str, turn_count: int
+) -> dict[str, Any]:
+    return AssistantEnvelope(
+        status=row.get("status", "complete") if row.get("status") in {
+            "complete", "partial", "empty", "needs_clarification", "unavailable"
+        } else "complete",
+        tenant_id=row.get("tenant_id", ""), text=row.get("content", ""),
+        conversation_id=conversation_id, turn_count=turn_count,
+        tools_used=row.get("tools_used", []), sources=row.get("sources", []),
+        freshness=row.get("freshness", []), entity_refs=row.get("entity_refs", []),
+        attachments=row.get("attachments", []),
+    ).model_dump()
+
+
 def get_qa_chat(tenant: str = "motoshop", user_id: str = "anonymous", repository=None):
     from motoshop_api.llm.client import get_llm_client
     from motoshop_api.llm.conversations.repository import get_conversation_repository
@@ -146,13 +223,11 @@ class QAChat:
         self, message: str, conversation_id: str | None = None, request_id: str | None = None
     ) -> dict:
         if len(message) > 500:
-            return {
-                "text": "La pregunta es muy larga. Intentá con menos de 500 caracteres.",
-                "conversation_id": conversation_id or "",
-                "turn_count": 0,
-                "tools_used": [],
-                "sources": [],
-            }
+            return AssistantEnvelope(
+                status="needs_clarification", tenant_id=self.tenant_id,
+                text="La pregunta es muy larga. Intentá con menos de 500 caracteres.",
+                conversation_id=conversation_id or "", turn_count=0, tools_used=[]
+            ).model_dump()
         self.cm.gc()
         try:
             cid, conversation, history = self._conversation(conversation_id)
@@ -168,25 +243,14 @@ class QAChat:
                 None,
             )
             if previous:
-                return {
-                    "text": previous["content"],
-                    "conversation_id": cid,
-                    "turn_count": len(history) // 2,
-                    "tools_used": previous.get("tools_used", []),
-                    "sources": previous.get("sources", []),
-                    "data_as_of": None,
-                }
+                return _persisted_envelope(previous, cid, len(history) // 2)
         if int(conversation.get("message_count", 0)) // 2 >= MAX_TURNS:
-            return {
-                "text": (
+            return AssistantEnvelope(
+                status="needs_clarification", tenant_id=self.tenant_id, text=(
                     "Has alcanzado el límite de 20 turnos en esta sesión. "
                     "Iniciá una nueva conversación."
-                ),
-                "conversation_id": cid,
-                "turn_count": MAX_TURNS,
-                "tools_used": [],
-                "sources": [],
-            }
+                ), conversation_id=cid, turn_count=MAX_TURNS, tools_used=[]
+            ).model_dump()
 
         key = f"{self.tenant_id}:{self.user_id}:{cid}"
         session = self.cm.get_or_create(key)
@@ -195,7 +259,10 @@ class QAChat:
         if callable(freshness_fn):
             with suppress(Exception):
                 latest_date = freshness_fn().get("fecha_maxima")
-        messages = [{"role": "system", "content": build_qa_system(self.tenant_id, latest_date=latest_date)}]
+        messages = [{
+            "role": "system",
+            "content": build_qa_system(self.tenant_id, latest_date=latest_date),
+        }]
         messages.extend(
             {"role": row["role"], "content": row["content"]}
             for row in history[-30:]
@@ -207,7 +274,10 @@ class QAChat:
 
         tool_calls_used: list[str] = []
         sources: list[dict] = []
+        freshness: list[dict] = []
+        entity_refs: list[dict] = []
         attachments: list[dict] = []
+        response_status = "complete"
         final_text = ""
         result: dict = {}
         provider_failure: LLMDependencyError | None = None
@@ -240,24 +310,32 @@ class QAChat:
                         args = _json.loads(fn.get("arguments", "{}"))
                     except _json.JSONDecodeError:
                         args = {}
-                    tool_result = self.executor.run(name, args)
+                    if name == "generate_report" and not _explicit_file_request(message):
+                        tool_result = {
+                            "status": "needs_clarification",
+                            "text": "¿En qué formato querés el archivo: Excel, PDF o Word?",
+                        }
+                    else:
+                        tool_result = self.executor.run(name, args)
                     tool_calls_used.append(name)
                     if isinstance(tool_result, dict):
-                        sources.extend(tool_result.get("sources", []))
-                        if tool_result.get("download_url"):
-                            attachments.append(
-                                {
-                                    "type": "report",
-                                    "format": tool_result.get("format", "excel"),
-                                    "filename": tool_result.get("filename", "reporte"),
-                                    "download_url": tool_result["download_url"],
-                                    "file_size_kb": tool_result.get("file_size_kb"),
-                                    "date_from": tool_result.get("date_from"),
-                                    "date_to": tool_result.get("date_to"),
-                                    "period_label": tool_result.get("period_label"),
-                                    "expires_at": tool_result.get("expires_at"),
-                                }
-                            )
+                        if tool_result.get("status") in {
+                            "partial", "empty", "needs_clarification", "unavailable"
+                        }:
+                            response_status = tool_result["status"]
+                        for index, source in enumerate(
+                            tool_result.get("sources", []), start=len(sources)
+                        ):
+                            sources.append(_source_evidence(source, index, name))
+                        for item in tool_result.get("freshness", []):
+                            normalized = _freshness(item)
+                            if normalized:
+                                freshness.append(normalized)
+                        entity_refs.extend(_entity_references(
+                            tool_result.get("entity_refs"), self.tenant_id, self.user_id
+                        ))
+                        if tool_result.get("download_url") and _explicit_file_request(message):
+                            attachments.append(_attachment(tool_result))
                     messages.append(
                         {
                             "role": "tool",
@@ -293,12 +371,15 @@ class QAChat:
             request_id=request_id,
             tools_used=tool_calls_used,
             sources=sources,
+            freshness=freshness,
+            entity_refs=entity_refs,
+            attachments=attachments,
             model=result.get("model"),
             provider=result.get("backend"),
             tokens_input=result.get("tokens_input", 0),
             tokens_output=result.get("tokens_output", 0),
             latency_ms=latency_ms,
-            status="error" if provider_failure else "success",
+            status=response_status if not provider_failure else "unavailable",
             error_code=type(provider_failure).__name__ if provider_failure else None,
         )
         _log_qa_cost(
@@ -311,27 +392,12 @@ class QAChat:
         if provider_failure:
             raise provider_failure
         turn_count = len(history) // 2 + 1
-        freshness = None
-        for item in messages:
-            if item.get("role") == "tool":
-                with suppress(Exception):
-                    freshness = freshness or _json.loads(item["content"]).get("fecha_maxima")
-        for att in attachments:
-            url = att.get("download_url", "")
-            fname = att.get("filename", "reporte")
-            # El link queda en el texto como vehículo de persistencia del
-            # historial (la UI lo extrae y NO lo muestra como texto crudo).
-            if url and url not in final_text:
-                final_text = f"{final_text.rstrip()}\n\n[{fname}]({url})"
-        return {
-            "text": final_text,
-            "conversation_id": cid,
-            "turn_count": turn_count,
-            "tools_used": tool_calls_used,
-            "sources": sources,
-            "data_as_of": freshness or latest_date,
-            "attachments": attachments,
-        }
+        return AssistantEnvelope(
+            status=response_status, tenant_id=self.tenant_id, text=final_text,
+            conversation_id=cid, turn_count=turn_count, tools_used=tool_calls_used,
+            sources=sources, freshness=freshness, entity_refs=entity_refs,
+            attachments=attachments,
+        ).model_dump()
 
 
 def _log_qa_cost(

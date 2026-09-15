@@ -162,6 +162,7 @@ ROUTE_MODULES: dict[RouteKey, tuple[str, ...]] = {
 # Routes intentionally outside module RBAC. They remain protected by the stated
 # independent policy. This is exported so the CI coverage test audits the list.
 ROUTE_MODULE_EXCEPTIONS: Mapping[RouteKey, str] = {
+    ("GET", "/api/reports/download/{report_id}"): "report route rechecks bearer, tenant, and user ownership",
     ("POST", "/api/auth/login"): "public credential exchange",
     ("POST", "/api/auth/refresh"): "public refresh-token exchange",
     ("GET", "/api/auth/me"): "authenticated session/module bootstrap",

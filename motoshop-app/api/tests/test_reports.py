@@ -287,3 +287,12 @@ def test_download_missing_report_404(tmp_path, monkeypatch, tenant_users):
         "/api/reports/download/rep_000000000000", headers={"Authorization": f"Bearer {token}"}
     )
     assert resp.status_code == 404
+def test_storage_does_not_serve_an_expired_indexed_report(tmp_path):
+    storage = ReportStorage(base_dir=tmp_path)
+    rec = storage.save_report(b"expired", "expired.xlsx", "application/pdf", "motoshop", "u1")
+    old = time.time() - (86400 + 60)
+    import os
+
+    os.utime(rec.file_path, (old, old))
+
+    assert storage.get_report(rec.report_id) is None

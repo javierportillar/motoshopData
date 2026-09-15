@@ -23,6 +23,7 @@ from motoshop_api.auth.tenant_dep import get_tenant, get_tenant_for_admin_or_mac
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
 from motoshop_api.llm.client import PermanentLLMError, TransientLLMError
+from motoshop_api.llm.contracts import AssistantEnvelope, AssistantRequest, problem_response
 from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
 from motoshop_api.tenants import get_tenant_config
 
@@ -281,20 +282,8 @@ async def forecast_explain(
 # ── Q&A Chat ────────────────────────────────────────────────────────────────
 
 
-class QAChatRequest(BaseModel):
-    message: str = Field(..., min_length=1, max_length=500)
-    conversation_id: str | None = None
-    request_id: str | None = Field(default=None, max_length=80)
-
-
-class QAChatResponse(BaseModel):
-    text: str
-    conversation_id: str
-    turn_count: int
-    tools_used: list[str]
-    sources: list[dict] = []
-    data_as_of: str | None = None
-    attachments: list[dict] = Field(default_factory=list)
+QAChatRequest = AssistantRequest
+QAChatResponse = AssistantEnvelope
 
 
 class ConversationResponse(BaseModel):
@@ -328,7 +317,7 @@ class ConversationPatch(BaseModel):
 @limiter.limit("60/minute")
 async def qa_chat(
     request: Request,
-    body: QAChatRequest,
+    body: AssistantRequest,
     user: User = Depends(get_current_user),
     tenant: str = Depends(get_tenant),
 ) -> QAChatResponse:
@@ -346,18 +335,27 @@ async def qa_chat(
         )
     except PermissionError:
         raise HTTPException(status_code=404, detail="Conversación no encontrada") from None
-    except TransientLLMError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="El proveedor de inteligencia no está disponible temporalmente.",
-            headers={"Retry-After": "30"},
-        ) from exc
-    except PermanentLLMError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail="El proveedor de inteligencia no está configurado o rechazó la consulta.",
-        ) from exc
-    return QAChatResponse(**result)
+    except TransientLLMError:
+        response = problem_response(
+            503, "https://api.motoshop/errors/provider-unavailable",
+            "El proveedor de inteligencia no está disponible temporalmente.",
+            body.request_id or request.headers.get("X-Request-ID", "unknown"),
+        )
+        response.headers["Retry-After"] = "30"
+        return response
+    except PermanentLLMError:
+        return problem_response(
+            502, "https://api.motoshop/errors/provider-rejected",
+            "El proveedor de inteligencia rechazó la consulta.",
+            body.request_id or request.headers.get("X-Request-ID", "unknown"),
+        )
+    return AssistantEnvelope(
+        status=result.get("status", "complete"), tenant_id=result.get("tenant_id", tenant),
+        text=result.get("text", ""), conversation_id=result.get("conversation_id", ""),
+        turn_count=result.get("turn_count", 0), tools_used=result.get("tools_used", []),
+        sources=result.get("sources", []), freshness=result.get("freshness", []),
+        entity_refs=result.get("entity_refs", []), attachments=result.get("attachments", []),
+    )
 
 
 @router.post("/chat/conversations", response_model=ConversationResponse)
