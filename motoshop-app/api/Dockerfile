@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11.16-slim-trixie
 
 WORKDIR /app
 
@@ -6,15 +6,18 @@ WORKDIR /app
 RUN pip install --no-cache-dir uv
 
 # Copy project files
-COPY pyproject.toml .
+COPY pyproject.toml uv.lock README.md ./
 COPY src/ src/
 COPY users.yaml .
+COPY tenants.yaml .
 
-# Install dependencies (uv reads pyproject.toml)
-RUN uv pip install --system --no-cache .
+# Reproducible install from the committed cross-platform lock file.
+RUN uv sync --frozen --no-dev
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Override path resolution: __file__ points to site-packages after pip install
 ENV USERS_FILE_PATH=/app/users.yaml
+ENV TENANTS_FILE_PATH=/app/tenants.yaml
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

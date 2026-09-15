@@ -122,7 +122,10 @@ ROUTE_MODULES: dict[RouteKey, tuple[str, ...]] = {
     ("POST", "/api/gastos/copiar"): ("analisis",),
     ("PATCH", "/api/gastos/{gasto_id}"): ("analisis",),
     ("DELETE", "/api/gastos/{gasto_id}"): ("analisis",),
-    ("POST", "/api/llm/qa/chat"): ("analisis",),
+    ("POST", "/api/llm/qa/chat"): ("chat-ia",),
+    **_routes("chat-ia", "/api/llm/chat/conversations", "/api/llm/chat/conversations/{conversation_id}/messages"),
+    ("POST", "/api/llm/chat/conversations"): ("chat-ia",),
+    ("PATCH", "/api/llm/chat/conversations/{conversation_id}"): ("chat-ia",),
     # Dedicated analysis surfaces
     **_routes("cohortes", "/api/metrics/cohortes", "/api/metrics/cohortes-detail"),
     **_routes("vendedores", "/api/metrics/vendedores-summary"),

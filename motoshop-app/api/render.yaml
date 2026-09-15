@@ -47,3 +47,19 @@ services:
         sync: false
       - key: TELEGRAM_CHAT_ID_MASVITAL
         sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: AGENT_CONVERSATION_BACKEND
+        value: supabase
+      - key: OPENCODE_API_KEY
+        sync: false
+      - key: OPENCODE_API_KEY_FALLBACK
+        sync: false
+      - key: EMBEDDING_API_BASE
+        sync: false
+      - key: EMBEDDING_API_KEY
+        sync: false
+      - key: EMBEDDING_MODEL
+        value: text-embedding-3-small

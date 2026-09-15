@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime
-from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -20,7 +19,7 @@ from slowapi.util import get_remote_address
 from starlette.concurrency import run_in_threadpool
 
 from motoshop_api.auth.deps import get_current_user, require_refresh_token_or_admin, require_role
-from motoshop_api.auth.tenant_dep import get_tenant_for_admin_or_machine
+from motoshop_api.auth.tenant_dep import get_tenant, get_tenant_for_admin_or_machine
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
 from motoshop_api.llm.client import PermanentLLMError, TransientLLMError
@@ -162,12 +161,16 @@ def _send_telegram(text: str, tenant: str) -> int:
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
-        resp = httpx.post(url, json={
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-        }, timeout=30)
+        resp = httpx.post(
+            url,
+            json={
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            },
+            timeout=30,
+        )
     except httpx.HTTPError:
         # Do not log the exception: httpx may include the token-bearing URL.
         logger.error("Telegram request failed for tenant=%s", tenant)
@@ -243,6 +246,7 @@ async def briefing_send(
 
 # ── Forecast explain ────────────────────────────────────────────────────────
 
+
 class ForecastExplainResponse(BaseModel):
     text: str
     generated_at: datetime
@@ -276,9 +280,11 @@ async def forecast_explain(
 
 # ── Q&A Chat ────────────────────────────────────────────────────────────────
 
+
 class QAChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=500)
-    conversation_id: str = Field(default_factory=lambda: str(uuid4()))
+    conversation_id: str | None = None
+    request_id: str | None = Field(default=None, max_length=80)
 
 
 class QAChatResponse(BaseModel):
@@ -286,6 +292,35 @@ class QAChatResponse(BaseModel):
     conversation_id: str
     turn_count: int
     tools_used: list[str]
+    sources: list[dict] = []
+    data_as_of: str | None = None
+
+
+class ConversationResponse(BaseModel):
+    id: str
+    tenant_id: str
+    user_id: str
+    title: str
+    status: str
+    created_at: str
+    updated_at: str
+    last_message_at: str
+    message_count: int = 0
+
+
+class MessageResponse(BaseModel):
+    id: str
+    conversation_id: str
+    role: str
+    content: str
+    created_at: str
+    tools_used: list[str] = []
+    sources: list[dict] = []
+
+
+class ConversationPatch(BaseModel):
+    title: str | None = Field(default=None, max_length=120)
+    archived: bool | None = None
 
 
 @router.post("/qa/chat", response_model=QAChatResponse)
@@ -294,6 +329,7 @@ async def qa_chat(
     request: Request,
     body: QAChatRequest,
     user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
 ) -> QAChatResponse:
     """Chat conversacional con tool use sobre DuckDB.
 
@@ -302,9 +338,88 @@ async def qa_chat(
     """
     from motoshop_api.llm.qa_chat import get_qa_chat
 
-    qa = get_qa_chat()
-    result = qa.chat(body.message, body.conversation_id)
+    qa = get_qa_chat(tenant=tenant, user_id=user.username)
+    try:
+        result = await run_in_threadpool(
+            qa.chat, body.message, body.conversation_id, body.request_id
+        )
+    except PermissionError:
+        raise HTTPException(status_code=404, detail="Conversación no encontrada") from None
+    except TransientLLMError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="El proveedor de inteligencia no está disponible temporalmente.",
+            headers={"Retry-After": "30"},
+        ) from exc
+    except PermanentLLMError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="El proveedor de inteligencia no está configurado o rechazó la consulta.",
+        ) from exc
     return QAChatResponse(**result)
+
+
+@router.post("/chat/conversations", response_model=ConversationResponse)
+async def create_chat_conversation(
+    user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+) -> ConversationResponse:
+    from motoshop_api.llm.conversations.repository import get_conversation_repository
+
+    repo = get_conversation_repository()
+    row = await run_in_threadpool(repo.create_conversation, tenant, user.username)
+    return ConversationResponse(**row)
+
+
+@router.get("/chat/conversations", response_model=list[ConversationResponse])
+async def list_chat_conversations(
+    user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+) -> list[ConversationResponse]:
+    from motoshop_api.llm.conversations.repository import get_conversation_repository
+
+    repo = get_conversation_repository()
+    rows = await run_in_threadpool(repo.list_conversations, tenant, user.username)
+    return [ConversationResponse(**row) for row in rows]
+
+
+@router.get("/chat/conversations/{conversation_id}/messages", response_model=list[MessageResponse])
+async def list_chat_messages(
+    conversation_id: str,
+    user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+) -> list[MessageResponse]:
+    from motoshop_api.llm.conversations.repository import get_conversation_repository
+
+    repo = get_conversation_repository()
+    owner = await run_in_threadpool(repo.get_conversation, tenant, user.username, conversation_id)
+    if owner is None:
+        raise HTTPException(status_code=404, detail="Conversación no encontrada")
+    rows = await run_in_threadpool(repo.list_messages, tenant, user.username, conversation_id)
+    return [MessageResponse(**row) for row in rows]
+
+
+@router.patch("/chat/conversations/{conversation_id}", response_model=ConversationResponse)
+async def patch_chat_conversation(
+    conversation_id: str,
+    body: ConversationPatch,
+    user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+) -> ConversationResponse:
+    from motoshop_api.llm.conversations.repository import get_conversation_repository
+
+    repo = get_conversation_repository()
+    row = await run_in_threadpool(repo.get_conversation, tenant, user.username, conversation_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Conversación no encontrada")
+    if body.archived:
+        await run_in_threadpool(repo.archive_conversation, tenant, user.username, conversation_id)
+    if body.title is not None and hasattr(repo, "rename_conversation"):
+        await run_in_threadpool(
+            repo.rename_conversation, tenant, user.username, conversation_id, body.title
+        )
+    updated = await run_in_threadpool(repo.get_conversation, tenant, user.username, conversation_id)
+    return ConversationResponse(**(updated or row))
 
 
 # ── Admin cost dashboard ────────────────────────────────────────────────────

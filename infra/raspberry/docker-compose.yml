@@ -1,0 +1,32 @@
+services:
+  api:
+    build:
+      context: ../../motoshop-app/api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ENV: prod
+      DATA_BACKEND: duckdb
+      USERS_FILE_PATH: /app/users.yaml
+      TENANTS_FILE_PATH: /app/tenants.yaml
+      AGENT_CONVERSATION_BACKEND: sqlite
+      AGENT_CONVERSATION_DB_PATH: /data/agent_chat.sqlite3
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - agent-chat:/data
+      - duckdb-cache:/tmp
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+
+volumes:
+  agent-chat:
+  duckdb-cache:
+

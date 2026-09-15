@@ -10,25 +10,26 @@ Si el modelo primario falla, intenta el fallback con su propia API/key.
 from __future__ import annotations
 
 import logging
-import os
 
 import httpx
+
+from motoshop_api.config import settings
 
 logger = logging.getLogger(__name__)
 
 # ── API endpoints ─────────────────────────────────────────────────────────
 
-GO_API_BASE = os.environ.get("GO_API_BASE", "https://opencode.ai/zen/go/v1")
-GO_API_KEY = os.environ.get("OPENCODE_API_KEY", "")
-GO_MODEL = os.environ.get("GO_MODEL", "qwen3.6-plus")
-GO_MAX_TOKENS = int(os.environ.get("GO_MAX_TOKENS", "800"))
+GO_API_BASE = settings.go_api_base
+GO_API_KEY = settings.opencode_api_key
+GO_MODEL = settings.go_model
+GO_MAX_TOKENS = settings.go_max_tokens
 
-ZEN_API_BASE = os.environ.get("ZEN_API_BASE", "https://opencode.ai/zen/v1")
-ZEN_API_KEY = os.environ.get("OPENCODE_API_KEY_FALLBACK", "")
-ZEN_MODEL = os.environ.get("ZEN_MODEL", "deepseek-v4-flash-free")
-ZEN_MAX_TOKENS = int(os.environ.get("ZEN_MAX_TOKENS", "8000"))
+ZEN_API_BASE = settings.zen_api_base
+ZEN_API_KEY = settings.opencode_api_key_fallback
+ZEN_MODEL = settings.zen_model
+ZEN_MAX_TOKENS = settings.zen_max_tokens
 
-TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "120"))
+TIMEOUT = settings.llm_timeout
 
 _client_singleton: LLMClient | None = None
 
@@ -58,33 +59,48 @@ class LLMClient:
     def __init__(self):
         self._backends = []
         if GO_API_KEY:
-            self._backends.append({
-                "name": "go",
-                "base": GO_API_BASE.rstrip("/"),
-                "key": GO_API_KEY,
-                "model": GO_MODEL,
-                "max_tokens": GO_MAX_TOKENS,
-            })
+            self._backends.append(
+                {
+                    "name": "go",
+                    "base": GO_API_BASE.rstrip("/"),
+                    "key": GO_API_KEY,
+                    "model": GO_MODEL,
+                    "max_tokens": GO_MAX_TOKENS,
+                }
+            )
         if ZEN_API_KEY:
-            self._backends.append({
-                "name": "zen",
-                "base": ZEN_API_BASE.rstrip("/"),
-                "key": ZEN_API_KEY,
-                "model": ZEN_MODEL,
-                "max_tokens": ZEN_MAX_TOKENS,
-            })
+            self._backends.append(
+                {
+                    "name": "zen",
+                    "base": ZEN_API_BASE.rstrip("/"),
+                    "key": ZEN_API_KEY,
+                    "model": ZEN_MODEL,
+                    "max_tokens": ZEN_MAX_TOKENS,
+                }
+            )
 
         self._http = httpx.Client(timeout=httpx.Timeout(TIMEOUT))
         if not self._backends:
             logger.warning("No API keys configured — LLM calls will fail")
 
-    def complete(self, prompt: str, *, max_tokens: int | None = None, system: str = "") -> dict:
+    @property
+    def configured_backends(self) -> tuple[str, ...]:
+        return tuple(backend["name"] for backend in self._backends)
+
+    def complete(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int | None = None,
+        system: str = "",
+        session_id: str | None = None,
+    ) -> dict:
         """Chat completion. Retorna {text, tokens_used, model, cost_usd, backend}."""
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
-        return self._call(messages, max_tokens)
+        return self._call(messages, max_tokens, session_id=session_id)
 
     def complete_with_tools(
         self,
@@ -92,15 +108,17 @@ class LLMClient:
         tools: list[dict],
         *,
         max_tokens: int | None = None,
+        session_id: str | None = None,
     ) -> dict:
         """Complete a chat request that may return tool calls."""
-        return self._call(messages, max_tokens, tools=tools)
+        return self._call(messages, max_tokens, tools=tools, session_id=session_id)
 
     def _call(
         self,
         messages: list[dict],
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
+        session_id: str | None = None,
     ) -> dict:
         if not self._backends:
             raise PermanentLLMError("No LLM providers are configured")
@@ -122,19 +140,25 @@ class LLMClient:
                     body["tools"] = tools
                     body["tool_choice"] = "auto"
 
+                headers = {
+                    "Authorization": f"Bearer {backend['key']}",
+                    "Content-Type": "application/json",
+                }
+                if backend["name"] == "go" or "opencode.ai" in backend.get("base", ""):
+                    headers["x-opencode-session"] = session_id or "session-motoshop-agent"
+
                 resp = self._http.post(
                     f"{backend['base']}/chat/completions",
                     json=body,
-                    headers={
-                        "Authorization": f"Bearer {backend['key']}",
-                        "Content-Type": "application/json",
-                    },
+                    headers=headers,
                 )
 
                 if resp.status_code in (408, 425, 429) or 500 <= resp.status_code <= 599:
                     logger.warning(
                         "LLM transient HTTP %d from %s/%s",
-                        resp.status_code, backend["name"], backend["model"],
+                        resp.status_code,
+                        backend["name"],
+                        backend["model"],
                     )
                     failures.append(f"{backend['name']}:{resp.status_code}")
                     saw_transient_failure = True
@@ -142,7 +166,9 @@ class LLMClient:
                 if not 200 <= resp.status_code < 300:
                     logger.warning(
                         "LLM permanent HTTP %d from %s/%s",
-                        resp.status_code, backend["name"], backend["model"],
+                        resp.status_code,
+                        backend["name"],
+                        backend["model"],
                     )
                     failures.append(f"{backend['name']}:{resp.status_code}")
                     continue
@@ -154,7 +180,8 @@ class LLMClient:
                 except (TypeError, ValueError) as exc:
                     logger.warning(
                         "LLM malformed response from %s/%s",
-                        backend["name"], backend["model"],
+                        backend["name"],
+                        backend["model"],
                     )
                     failures.append(f"{backend['name']}:malformed_response")
                     last_cause = exc
@@ -163,7 +190,8 @@ class LLMClient:
                 if "error" in data:
                     logger.warning(
                         "LLM error payload from %s/%s",
-                        backend["name"], backend["model"],
+                        backend["name"],
+                        backend["model"],
                     )
                     failures.append(f"{backend['name']}:error_payload")
                     continue
@@ -179,7 +207,8 @@ class LLMClient:
                 except (AttributeError, IndexError, KeyError, TypeError) as exc:
                     logger.warning(
                         "LLM malformed completion from %s/%s",
-                        backend["name"], backend["model"],
+                        backend["name"],
+                        backend["model"],
                     )
                     failures.append(f"{backend['name']}:malformed_completion")
                     last_cause = exc
@@ -187,8 +216,10 @@ class LLMClient:
 
                 logger.info(
                     "llm_ok: backend=%s model=%s tokens_in=%d tokens_out=%d cost=$0",
-                    backend["name"], backend["model"],
-                    usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0),
+                    backend["name"],
+                    backend["model"],
+                    usage.get("prompt_tokens", 0),
+                    usage.get("completion_tokens", 0),
                 )
 
                 return {
@@ -210,7 +241,8 @@ class LLMClient:
             except (httpx.InvalidURL, httpx.LocalProtocolError, httpx.UnsupportedProtocol) as exc:
                 logger.warning(
                     "LLM provider configuration error %s/%s",
-                    backend["name"], backend["model"],
+                    backend["name"],
+                    backend["model"],
                 )
                 failures.append(f"{backend['name']}:provider_configuration")
                 last_cause = exc

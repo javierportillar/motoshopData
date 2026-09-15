@@ -75,3 +75,6 @@ La API se ejecuta automáticamente via Task Scheduler:
 - `start_motoshop.ps1` — arranca API + túnel
 - `check_health.ps1` — verifica cada 5 min
 - Logs en `logs/`
+# Agente multi-tenant (MotoShop/MasVital)
+
+El chat autenticado usa `X-Tenant` y el módulo `chat-ia`. Las conversaciones se guardan en `agent_conversations`/`agent_messages`; el conocimiento documental se indexa en `rag_documents`/`rag_chunks` y se consulta con pgvector + FTS. Aplicá `infra/supabase/migrations/20260914_001_agent_chat.sql` y configurá `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` y, si se desea recuperación semántica, `EMBEDDING_API_BASE`, `EMBEDDING_API_KEY` y `EMBEDDING_MODEL`.

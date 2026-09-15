@@ -54,14 +54,49 @@ class Settings(BaseSettings):
     # default vacio (2026-06-15): cualquier valor no-vacio se aplica a TODOS los tenants
     # rompiendo el multi-tenant. Vacio fuerza a los callers a usar _make_db_path(tenant).
     # Si necesitas override explicito por dev local, setealo en .env.
-    duckdb_path: str = Field(default="", description="Path al archivo DuckDB local. Vacio → se usa _make_db_path(tenant) per-request.")
+    duckdb_path: str = Field(
+        default="",
+        description=(
+            "Path al archivo DuckDB local. Vacio → se usa _make_db_path(tenant) per-request."
+        ),
+    )
 
     # ─── Shared Refresh Token (V1.9) ───────────────────────────────────
-    refresh_token: str = Field(default="", description="Token compartido para refresh automático vía capture script")
+    refresh_token: str = Field(
+        default="", description="Token compartido para refresh automático vía capture script"
+    )
 
     # ─── Supabase (V1.11 — gastos operativos) ──────────────────────────
-    supabase_url: str = Field(default="", description="URL del proyecto Supabase (https://xxx.supabase.co)")
-    supabase_service_key: str = Field(default="", description="Service Role Key — bypassa RLS. Guardar como secreto.")
+    supabase_url: str = Field(
+        default="", description="URL del proyecto Supabase (https://xxx.supabase.co)"
+    )
+    supabase_service_key: str = Field(
+        default="", description="Service Role Key — bypassa RLS. Guardar como secreto."
+    )
+
+    # ─── Agentic RAG ─────────────────────────────────────────────────
+    embedding_api_base: str = Field(
+        default="", description="Endpoint OpenAI-compatible de embeddings"
+    )
+    embedding_api_key: str = Field(default="", description="API key del proveedor de embeddings")
+    embedding_model: str = Field(default="text-embedding-3-small")
+    agent_conversation_backend: str = Field(
+        default="auto", description="auto | supabase | sqlite | memory"
+    )
+    agent_conversation_db_path: str = Field(default="out/agent_chat.sqlite3")
+
+    # Provider OpenAI-compatible used by briefing and chat. Keeping these in
+    # Settings makes values from .env available even when they were not exported
+    # into the parent shell (common on Raspberry/systemd and local uvicorn).
+    go_api_base: str = Field(default="https://opencode.ai/zen/go/v1")
+    opencode_api_key: str = Field(default="")
+    go_model: str = Field(default="qwen3.6-plus")
+    go_max_tokens: int = Field(default=800)
+    zen_api_base: str = Field(default="https://opencode.ai/zen/v1")
+    opencode_api_key_fallback: str = Field(default="")
+    zen_model: str = Field(default="deepseek-v4-flash-free")
+    zen_max_tokens: int = Field(default=8000)
+    llm_timeout: int = Field(default=120)
 
     @field_validator("jwt_secret")
     @classmethod
