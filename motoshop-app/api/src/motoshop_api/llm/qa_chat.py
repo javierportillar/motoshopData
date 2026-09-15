@@ -229,6 +229,17 @@ class QAChat:
                 conversation_id=conversation_id or "", turn_count=0, tools_used=[]
             ).model_dump()
         self.cm.gc()
+        if request_id and not conversation_id:
+            find_duplicate = getattr(self.repository, "find_assistant_by_request_id", None)
+            previous = (
+                find_duplicate(self.tenant_id, self.user_id, request_id)
+                if callable(find_duplicate)
+                else None
+            )
+            if previous:
+                cid = previous["conversation_id"]
+                history = self.repository.list_messages(self.tenant_id, self.user_id, cid, limit=40)
+                return _persisted_envelope(previous, cid, len(history) // 2)
         try:
             cid, conversation, history = self._conversation(conversation_id)
         except PermissionError:
