@@ -8,8 +8,6 @@ from typing import Any, Literal
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-Status = Literal["complete", "partial", "empty", "needs_clarification", "unavailable"]
-
 
 class _Contract(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -62,7 +60,7 @@ class Attachment(_Contract):
             raise ValueError("download_url must be a server-issued route")
         return value
 class AssistantEnvelope(_Contract):
-    status: Status
+    status: Literal["complete", "partial", "empty", "needs_clarification", "unavailable"]
     tenant_id: str
     text: str
     conversation_id: str
