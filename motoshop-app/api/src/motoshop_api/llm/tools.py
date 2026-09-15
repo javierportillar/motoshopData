@@ -36,12 +36,13 @@ PUBLIC_TOOL_NAMES = {
 class ToolExecutor:
     """Ejecuta tools contra DuckDB."""
 
-    def __init__(self, duckdb_path: str | None = None, tenant: str = "motoshop"):
+    def __init__(self, duckdb_path: str | None = None, tenant: str = "motoshop", user_id: str = "agent"):
         from motoshop_api.metrics.repo_duckdb import _make_db_path
 
         # Nunca heredar DUCKDB_PATH global: en producción rompería el aislamiento.
         path = duckdb_path or str(_make_db_path(tenant))
         self.tenant = tenant
+        self.user_id = user_id
         self.duckdb_path = path
         self._con = get_shared_connection(path)
         from motoshop_api.tenants import get_tenant_config
@@ -316,14 +317,91 @@ class ToolExecutor:
 
         return get_hybrid_retriever().search(self.tenant, query, max(1, min(limit, 20)))
 
+    # Ventanas de análisis soportadas. 'custom' exige date_from explícito.
+    _PERIOD_DAYS = {
+        "day": 1,
+        "week": 7,
+        "month": 30,
+        "quarter": 90,
+        "year": 365,
+    }
+
+    def _resolve_report_window(
+        self,
+        period: str,
+        date_from: str | None,
+        date_to: str | None,
+        max_date: date,
+    ) -> tuple[date, date, str]:
+        """Resuelve el rango [desde, hasta] del análisis y su etiqueta legible.
+
+        DuckDB no acepta aritmética parametrizada de fechas, por lo que los
+        bounds se calculan SIEMPRE en Python y se pasan como ISO strings.
+        """
+        from datetime import datetime
+
+        period = str(period or "month").lower().strip()
+
+        def _parse(value: str | None, field: str) -> date | None:
+            if not value:
+                return None
+            try:
+                return datetime.fromisoformat(str(value).strip()).date()
+            except ValueError as exc:
+                raise ValueError(
+                    f"'{field}' debe ser una fecha ISO válida (YYYY-MM-DD); recibí '{value}'"
+                ) from exc
+
+        parsed_from = _parse(date_from, "date_from")
+        parsed_to = _parse(date_to, "date_to")
+        if parsed_from and parsed_to and parsed_from > parsed_to:
+            raise ValueError(
+                f"date_from ({parsed_from}) no puede ser posterior a date_to ({parsed_to})"
+            )
+
+        until = min(parsed_to, max_date) if parsed_to else max_date
+
+        if parsed_from:
+            since = parsed_from
+            label = f"{since.isoformat()} a {until.isoformat()}"
+            return since, until, label
+
+        if period == "all":
+            r = self._con.execute(
+                "SELECT MIN(business_date) FROM gold_mart_ventas_diarias_sku"
+            ).fetchone()
+            since = (r[0] if r and r[0] else max_date - timedelta(days=365 * 5))
+            label = f"{since.isoformat()} a {until.isoformat()} (histórico completo)"
+            return since, until, label
+
+        if period == "custom":
+            raise ValueError(
+                "period='custom' requiere date_from (YYYY-MM-DD). Sin fecha de inicio no puedo acotar el análisis."
+            )
+
+        days = self._PERIOD_DAYS.get(period)
+        if days is None:
+            days = self._PERIOD_DAYS["month"]
+        since = max_date - timedelta(days=days - 1) if days > 1 else max_date
+        label = f"{since.isoformat()} a {until.isoformat()} (últimos {days} día{'s' if days > 1 else ''})"
+        return since, until, label
+
     def generate_report(
         self,
         format: str = "excel",
         report_type: str = "ventas_resumen",
         limit: int = 25,
         period: str = "month",
+        date_from: str | None = None,
+        date_to: str | None = None,
     ) -> dict:
-        """Genera un archivo descargable profesional en Excel, PDF o Word con datos de DuckDB."""
+        """Genera un archivo descargable profesional en Excel, PDF o Word con datos de DuckDB.
+
+        El rango de fechas del análisis es explícito: presets (day/week/month/
+        quarter/year/all) o fechas exactas vía date_from/date_to (ISO YYYY-MM-DD).
+        El período resuelto se imprime en el documento y se devuelve en el
+        resultado para que el agente lo comunique al usuario.
+        """
         from datetime import datetime
         from motoshop_api.reports.generator import (
             ReportData,
@@ -349,37 +427,63 @@ class ToolExecutor:
         if fmt not in ("excel", "pdf", "word"):
             fmt = "excel"
 
+        report_type = str(report_type or "ventas_resumen").lower().strip()
+        if report_type not in ("ventas_resumen", "top_productos", "inventario_critico", "productos_dormidos"):
+            report_type = "top_productos"
+
+        # Solo los reportes de ventas tienen ventana temporal; los de
+        # inventario/dormidos son fotos al corte y no filtran por fechas.
+        applies_window = report_type in ("ventas_resumen", "top_productos")
+        period_label = f"foto al corte {date_str}"
+        since = until = max_date
+        if applies_window:
+            since, until, period_label = self._resolve_report_window(
+                period, date_from, date_to, max_date
+            )
+        since_str, until_str = since.isoformat(), until.isoformat()
+        generated_at = datetime.now().strftime("%d/%m/%Y %H:%M")
+
         summary_metrics: dict[str, str] = {}
 
         if report_type in ("ventas_resumen", "top_productos"):
             title = f"Reporte de Ventas y Productos Más Vendidos — {tenant_name}"
-            subtitle = f"Datos al corte {date_str} · Generado el {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+            subtitle = f"Período analizado: {period_label} · Generado el {generated_at}"
             columns = ["Código SKU", "Nombre del Producto", "Cantidad Vendida", "Total Facturado (COP)"]
-            
-            kpis = self.get_kpis_month()
+
+            kpis = self._con.execute(
+                """
+                SELECT ROUND(COALESCE(SUM(valor_total),0),2),
+                       COALESCE(SUM(num_facturas),0)
+                FROM gold_mart_ventas_diarias_sku
+                WHERE business_date >= ? AND business_date <= ?
+            """,
+                [since_str, until_str],
+            ).fetchone()
+            ventas_total = float(kpis[0] or 0)
+            facturas_total = int(kpis[1] or 0)
             summary_metrics = {
-                "Total Ventas Mes": f"${kpis.get('ventas', 0):,.0f} COP".replace(",", "."),
-                "Total Facturas": f"{kpis.get('facturas', 0):,}".replace(",", "."),
-                "Ticket Promedio": f"${kpis.get('ticket_promedio', 0):,.0f} COP".replace(",", "."),
-                "Fecha de Corte": date_str,
+                "Total Ventas Período": f"${ventas_total:,.0f} COP".replace(",", "."),
+                "Total Facturas": f"{facturas_total:,}".replace(",", "."),
+                "Ticket Promedio": f"${(ventas_total / facturas_total if facturas_total else 0):,.0f} COP".replace(",", "."),
+                "Período Analizado": period_label,
+                "Fecha de Corte de Datos": date_str,
             }
 
-            since_date = (max_date - timedelta(days=30)).isoformat()
             db_rows = self._con.execute(
                 """
                 SELECT cod_producto, nom_producto, ROUND(SUM(cantidad_total),2) AS cantidad, ROUND(SUM(valor_total),2) AS valor
                 FROM gold_mart_ventas_diarias_sku
-                WHERE business_date >= ?
+                WHERE business_date >= ? AND business_date <= ?
                 GROUP BY cod_producto, nom_producto
                 ORDER BY valor DESC LIMIT ?
             """,
-                [since_date, limit],
+                [since_str, until_str, limit],
             ).fetchall()
             rows = [[r[0], r[1], float(r[2] or 0), float(r[3] or 0)] for r in db_rows]
 
         elif report_type == "inventario_critico":
             title = f"Reporte de Inventario Crítico y Quiebre de Stock — {tenant_name}"
-            subtitle = f"Datos al corte {date_str} · Generado el {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+            subtitle = f"Foto al corte {date_str} (sin ventana temporal) · Generado el {generated_at}"
             columns = ["Código SKU", "Producto", "Stock Actual", "Demanda Predicha", "Días Quiebre", "Urgencia"]
             
             db_rows = self._con.execute(
@@ -401,7 +505,7 @@ class ToolExecutor:
 
         elif report_type == "productos_dormidos":
             title = f"Reporte de Productos Dormidos (Sin Venta) — {tenant_name}"
-            subtitle = f"Datos al corte {date_str} · Generado el {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+            subtitle = f"Foto al corte {date_str} (sin ventana temporal) · Generado el {generated_at}"
             columns = ["Código SKU", "Producto", "Stock Actual", "Días sin Venta"]
             
             db_rows = self._con.execute(
@@ -421,8 +525,6 @@ class ToolExecutor:
                 "Total Dormidos": str(len(rows)),
                 "Fecha de Corte": date_str,
             }
-        else:
-            return self.generate_report(format=fmt, report_type="top_productos", limit=limit)
 
         report_data = ReportData(
             title=title,
@@ -451,7 +553,7 @@ class ToolExecutor:
             mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
         storage = get_report_storage()
-        rec = storage.save_report(file_bytes, filename, mime_type, self.tenant, "user")
+        rec = storage.save_report(file_bytes, filename, mime_type, self.tenant, self.user_id)
 
         return {
             "status": "success",
@@ -460,7 +562,15 @@ class ToolExecutor:
             "download_url": rec.download_url,
             "file_size_kb": round(rec.file_size / 1024, 1),
             "records_count": len(rows),
-            "summary": f"Archivo {fmt.upper()} generado exitosamente: '{rec.filename}' ({round(rec.file_size / 1024, 1)} KB). Link de descarga listo.",
+            "date_from": since_str,
+            "date_to": until_str,
+            "period_label": period_label,
+            "expires_at": rec.expires_at_iso,
+            "summary": (
+                f"Archivo {fmt.upper()} generado exitosamente: '{rec.filename}' "
+                f"({round(rec.file_size / 1024, 1)} KB). Período analizado: {period_label}. "
+                f"Comunicá este período al usuario."
+            ),
         }
 
     def run(self, name: str, args: dict) -> dict:
@@ -629,7 +739,14 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "generate_report",
-            "description": "Genera y exporta un archivo descargable profesional en formato Excel (.xlsx), PDF (.pdf) o Word (.docx) con datos de ventas, productos o inventario para la empresa actual. Úsalo cuando el usuario pida un archivo, reporte, excel, pdf, word, planilla o exportar datos.",
+            "description": (
+                "Genera y exporta un archivo descargable profesional en formato Excel (.xlsx), "
+                "PDF (.pdf) o Word (.docx) con datos de ventas, productos o inventario para la "
+                "empresa actual. Úsalo cuando el usuario pida un archivo, reporte, excel, pdf, "
+                "word, planilla o exportar datos. El documento indica el período analizado; "
+                "comunicáselo siempre al usuario. Los reportes de inventario y dormidos son "
+                "fotos al corte y no filtran por fechas."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -642,6 +759,23 @@ TOOL_DEFINITIONS = [
                         "type": "string",
                         "enum": ["ventas_resumen", "top_productos", "inventario_critico", "productos_dormidos"],
                         "description": "Tipo de reporte: 'ventas_resumen', 'top_productos', 'inventario_critico' o 'productos_dormidos'.",
+                    },
+                    "period": {
+                        "type": "string",
+                        "enum": ["day", "week", "month", "quarter", "year", "all", "custom"],
+                        "description": (
+                            "Ventana temporal del análisis (solo reportes de ventas): 'day', 'week', "
+                            "'month', 'quarter', 'year', 'all' (histórico completo) o 'custom' "
+                            "(requiere date_from). Por defecto 'month'."
+                        ),
+                    },
+                    "date_from": {
+                        "type": "string",
+                        "description": "Fecha inicial del análisis en formato ISO YYYY-MM-DD. Usala cuando el usuario especifique 'desde' una fecha (ej. 'desde julio de 2024' → '2024-07-01'). Requiere period='custom' o reemplaza el preset.",
+                    },
+                    "date_to": {
+                        "type": "string",
+                        "description": "Fecha final del análisis en ISO YYYY-MM-DD. Si no se envía, se usa la última fecha con datos.",
                     },
                     "limit": {
                         "type": "integer",

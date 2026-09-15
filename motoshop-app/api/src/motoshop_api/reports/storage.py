@@ -30,12 +30,24 @@ class ReportRecord:
     def download_url(self) -> str:
         return f"/api/reports/download/{self.report_id}"
 
+    @property
+    def expires_at_iso(self) -> str:
+        from datetime import datetime, timedelta, timezone
+
+        expires = datetime.fromtimestamp(self.created_at, tz=timezone.utc) + timedelta(
+            seconds=REPORT_TTL_SECONDS
+        )
+        return expires.isoformat()
+
 
 class ReportStorage:
     def __init__(self, base_dir: Path | None = None):
         self.base_dir = (base_dir or REPORTS_DIR).resolve()
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self._index: dict[str, ReportRecord] = {}
+        # Startup sweep: borra reportes vencidos que quedaron en disco tras un
+        # reinicio (el índice en memoria se perdió, el archivo no).
+        self.sweep_expired_files()
 
     def save_report(
         self,
@@ -48,7 +60,9 @@ class ReportStorage:
         self.cleanup()
         report_id = f"rep_{uuid.uuid4().hex[:12]}"
         safe_name = "".join(c for c in filename if c.isalnum() or c in "._- ")
-        file_path = self.base_dir / f"{report_id}_{safe_name}"
+        # El tenant viaja en el nombre de archivo para que la validación de
+        # acceso sobreviva a reinicios del servidor (índice en memoria perdido).
+        file_path = self.base_dir / f"{report_id}__{tenant}__{safe_name}"
         file_path.write_bytes(data)
 
         rec = ReportRecord(
@@ -66,14 +80,28 @@ class ReportStorage:
         return rec
 
     def get_report(self, report_id: str) -> ReportRecord | None:
+        # report_id viene de la URL: solo aceptamos el formato exacto rep_ + 12
+        # hex para que no se pueda inyectar un patrón de glob (*, ?, /).
+        import re
+
+        if not re.fullmatch(r"rep_[0-9a-f]{12}", report_id):
+            return None
         rec = self._index.get(report_id)
         if rec and rec.file_path.exists():
             return rec
         # Fallback: buscar en disco si se reinició el servidor
-        matches = list(self.base_dir.glob(f"{report_id}_*"))
+        matches = list(self.base_dir.glob(f"{report_id}__*")) or list(
+            self.base_dir.glob(f"{report_id}_*")
+        )
         if matches:
             fp = matches[0]
-            orig_name = fp.name[len(report_id) + 1 :]
+            rest = fp.name[len(report_id) + 2 :] if "__" in fp.name else fp.name[len(report_id) + 1 :]
+            # Formato nuevo: {report_id}__{tenant}__{filename} → tenant recuperable
+            if "__" in fp.name:
+                parts = fp.name[len(report_id) + 2 :].split("__", 1)
+                tenant, orig_name = (parts + [""])[:2] if len(parts) == 2 else ("unknown", rest)
+            else:
+                tenant, orig_name = "unknown", rest
             ext = fp.suffix.lower()
             mime = "application/octet-stream"
             if ext == ".xlsx":
@@ -84,12 +112,12 @@ class ReportStorage:
                 mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             rec = ReportRecord(
                 report_id=report_id,
-                filename=orig_name,
+                filename=orig_name or fp.name,
                 file_path=fp,
                 mime_type=mime,
                 file_size=fp.stat().st_size,
                 created_at=fp.stat().st_mtime,
-                tenant="unknown",
+                tenant=tenant,
                 user_id="unknown",
             )
             self._index[report_id] = rec
@@ -106,6 +134,20 @@ class ReportStorage:
                     rec.file_path.unlink()
                 except OSError:
                     pass
+
+    def sweep_expired_files(self, max_age: int = REPORT_TTL_SECONDS) -> int:
+        """Borra del disco cualquier reporte vencido, esté o no en el índice."""
+        now = time.time()
+        removed = 0
+        for fp in self.base_dir.glob("rep_*"):
+            try:
+                if now - fp.stat().st_mtime > max_age:
+                    fp.unlink()
+                    self._index.pop(fp.name.split("__", 1)[0], None)
+                    removed += 1
+            except OSError:
+                continue
+        return removed
 
 
 _storage_singleton: ReportStorage | None = None
