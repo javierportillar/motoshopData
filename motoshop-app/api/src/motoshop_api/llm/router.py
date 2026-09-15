@@ -294,6 +294,7 @@ class QAChatResponse(BaseModel):
     tools_used: list[str]
     sources: list[dict] = []
     data_as_of: str | None = None
+    attachments: list[dict] = Field(default_factory=list)
 
 
 class ConversationResponse(BaseModel):

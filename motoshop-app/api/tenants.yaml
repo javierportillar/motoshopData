@@ -39,7 +39,7 @@ tenants:
       business_description: "Repuestos y accesorios para moto en Cali, Colombia"
       locale: "es-CO"
       currency: "COP"
-      enabled_tools: [get_kpis_today, get_kpis_month, get_top_skus, get_dormidos, get_alerts_by_urgency, get_vendedor_performance, get_inventory_value, compare_periods, get_abc_distribution, get_forecast_summary, get_data_freshness, search_business_knowledge]
+      enabled_tools: [get_kpis_today, get_kpis_month, get_top_skus, get_dormidos, get_alerts_by_urgency, get_vendedor_performance, get_inventory_value, compare_periods, get_abc_distribution, get_forecast_summary, get_data_freshness, search_business_knowledge, generate_report]
       knowledge_namespace: "motoshop"
 
   - id: masvital
@@ -72,5 +72,5 @@ tenants:
       business_description: "Operación comercial y control de inventario de MasVital"
       locale: "es-CO"
       currency: "COP"
-      enabled_tools: [get_kpis_today, get_kpis_month, get_top_skus, get_dormidos, get_inventory_value, get_data_freshness, search_business_knowledge]
+      enabled_tools: [get_kpis_today, get_kpis_month, get_top_skus, get_dormidos, get_inventory_value, get_data_freshness, search_business_knowledge, generate_report]
       knowledge_namespace: "masvital"

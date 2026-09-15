@@ -42,6 +42,7 @@ from motoshop_api.purchase_plans.router import router as purchase_plans_router
 from motoshop_api.gastos.router import router as gastos_router
 from motoshop_api.expiry.router import router as expiry_router
 from motoshop_api.users.router import router as users_router
+from motoshop_api.reports.router import router as reports_router
 
 
 def _is_localhost() -> bool:
@@ -189,6 +190,7 @@ app.include_router(purchase_plans_router, prefix="/api", dependencies=module_acc
 app.include_router(gastos_router, dependencies=module_access)  # ya tiene prefix=/api/gastos
 app.include_router(expiry_router, prefix="/api", dependencies=module_access)
 app.include_router(users_router)  # ya tiene prefix=/api/admin/users
+app.include_router(reports_router, prefix="/api")
 
 
 class HealthResponse(BaseModel):

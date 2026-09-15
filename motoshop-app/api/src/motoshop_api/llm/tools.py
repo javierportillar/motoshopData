@@ -26,6 +26,7 @@ PUBLIC_TOOL_NAMES = {
     "get_forecast_summary",
     "get_data_freshness",
     "search_business_knowledge",
+    "generate_report",
 }
 
 
@@ -315,6 +316,153 @@ class ToolExecutor:
 
         return get_hybrid_retriever().search(self.tenant, query, max(1, min(limit, 20)))
 
+    def generate_report(
+        self,
+        format: str = "excel",
+        report_type: str = "ventas_resumen",
+        limit: int = 25,
+        period: str = "month",
+    ) -> dict:
+        """Genera un archivo descargable profesional en Excel, PDF o Word con datos de DuckDB."""
+        from datetime import datetime
+        from motoshop_api.reports.generator import (
+            ReportData,
+            generate_excel,
+            generate_pdf,
+            generate_word,
+        )
+        from motoshop_api.reports.storage import get_report_storage
+        from motoshop_api.tenants import get_tenant_config
+
+        config = get_tenant_config(self.tenant)
+        tenant_name = config.nombre if config else self.tenant.capitalize()
+        brand_color = config.color_brand if config and config.color_brand else "#7B1818"
+        max_date = self._get_max_date()
+        date_str = max_date.isoformat()
+        limit = max(5, min(int(limit), 100))
+
+        fmt = str(format or "excel").lower().strip()
+        if fmt in ("xlsx", "xls"):
+            fmt = "excel"
+        elif fmt == "docx":
+            fmt = "word"
+        if fmt not in ("excel", "pdf", "word"):
+            fmt = "excel"
+
+        summary_metrics: dict[str, str] = {}
+
+        if report_type in ("ventas_resumen", "top_productos"):
+            title = f"Reporte de Ventas y Productos Más Vendidos — {tenant_name}"
+            subtitle = f"Datos al corte {date_str} · Generado el {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+            columns = ["Código SKU", "Nombre del Producto", "Cantidad Vendida", "Total Facturado (COP)"]
+            
+            kpis = self.get_kpis_month()
+            summary_metrics = {
+                "Total Ventas Mes": f"${kpis.get('ventas', 0):,.0f} COP".replace(",", "."),
+                "Total Facturas": f"{kpis.get('facturas', 0):,}".replace(",", "."),
+                "Ticket Promedio": f"${kpis.get('ticket_promedio', 0):,.0f} COP".replace(",", "."),
+                "Fecha de Corte": date_str,
+            }
+
+            since_date = (max_date - timedelta(days=30)).isoformat()
+            db_rows = self._con.execute(
+                """
+                SELECT cod_producto, nom_producto, ROUND(SUM(cantidad_total),2) AS cantidad, ROUND(SUM(valor_total),2) AS valor
+                FROM gold_mart_ventas_diarias_sku
+                WHERE business_date >= ?
+                GROUP BY cod_producto, nom_producto
+                ORDER BY valor DESC LIMIT ?
+            """,
+                [since_date, limit],
+            ).fetchall()
+            rows = [[r[0], r[1], float(r[2] or 0), float(r[3] or 0)] for r in db_rows]
+
+        elif report_type == "inventario_critico":
+            title = f"Reporte de Inventario Crítico y Quiebre de Stock — {tenant_name}"
+            subtitle = f"Datos al corte {date_str} · Generado el {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+            columns = ["Código SKU", "Producto", "Stock Actual", "Demanda Predicha", "Días Quiebre", "Urgencia"]
+            
+            db_rows = self._con.execute(
+                """
+                SELECT sku, nom_producto, stock_actual, demanda_predicha, dias_hasta_quiebre, urgencia
+                FROM gold_alertas_quiebre
+                ORDER BY dias_hasta_quiebre ASC LIMIT ?
+            """,
+                [limit],
+            ).fetchall()
+            rows = [
+                [r[0], r[1], float(r[2] or 0), float(r[3] or 0), int(r[4] or 0), str(r[5] or "MEDIA")]
+                for r in db_rows
+            ]
+            summary_metrics = {
+                "SKUs en Riesgo": str(len(rows)),
+                "Fecha de Corte": date_str,
+            }
+
+        elif report_type == "productos_dormidos":
+            title = f"Reporte de Productos Dormidos (Sin Venta) — {tenant_name}"
+            subtitle = f"Datos al corte {date_str} · Generado el {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+            columns = ["Código SKU", "Producto", "Stock Actual", "Días sin Venta"]
+            
+            db_rows = self._con.execute(
+                """
+                SELECT cod_producto, nom_producto, stock_actual, dias_sin_venta
+                FROM gold_mart_productos_dormidos
+                WHERE dias_sin_venta >= 60 AND dias_sin_venta < 5000
+                ORDER BY dias_sin_venta DESC LIMIT ?
+            """,
+                [limit],
+            ).fetchall()
+            rows = [
+                [r[0], r[1], float(r[2] or 0), int(r[3] or 0)]
+                for r in db_rows
+            ]
+            summary_metrics = {
+                "Total Dormidos": str(len(rows)),
+                "Fecha de Corte": date_str,
+            }
+        else:
+            return self.generate_report(format=fmt, report_type="top_productos", limit=limit)
+
+        report_data = ReportData(
+            title=title,
+            subtitle=subtitle,
+            tenant_name=tenant_name,
+            brand_color=brand_color,
+            columns=columns,
+            rows=rows,
+            summary_metrics=summary_metrics,
+        )
+
+        date_clean = date_str.replace("-", "_")
+        base_name = f"reporte_{report_type}_{self.tenant}_{date_clean}"
+
+        if fmt == "excel":
+            file_bytes = generate_excel(report_data)
+            filename = f"{base_name}.xlsx"
+            mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        elif fmt == "pdf":
+            file_bytes = generate_pdf(report_data)
+            filename = f"{base_name}.pdf"
+            mime_type = "application/pdf"
+        else:
+            file_bytes = generate_word(report_data)
+            filename = f"{base_name}.docx"
+            mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+        storage = get_report_storage()
+        rec = storage.save_report(file_bytes, filename, mime_type, self.tenant, "user")
+
+        return {
+            "status": "success",
+            "format": fmt,
+            "filename": rec.filename,
+            "download_url": rec.download_url,
+            "file_size_kb": round(rec.file_size / 1024, 1),
+            "records_count": len(rows),
+            "summary": f"Archivo {fmt.upper()} generado exitosamente: '{rec.filename}' ({round(rec.file_size / 1024, 1)} KB). Link de descarga listo.",
+        }
+
     def run(self, name: str, args: dict) -> dict:
         """Ejecuta una tool por nombre. Devuelve dict JSON."""
         if name not in self._allowed_tools:
@@ -474,6 +622,33 @@ TOOL_DEFINITIONS = [
                     "limit": {"type": "integer", "default": 5},
                 },
                 "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_report",
+            "description": "Genera y exporta un archivo descargable profesional en formato Excel (.xlsx), PDF (.pdf) o Word (.docx) con datos de ventas, productos o inventario para la empresa actual. Úsalo cuando el usuario pida un archivo, reporte, excel, pdf, word, planilla o exportar datos.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "format": {
+                        "type": "string",
+                        "enum": ["excel", "pdf", "word"],
+                        "description": "Formato del archivo a generar: 'excel' (.xlsx), 'pdf' (.pdf) o 'word' (.docx).",
+                    },
+                    "report_type": {
+                        "type": "string",
+                        "enum": ["ventas_resumen", "top_productos", "inventario_critico", "productos_dormidos"],
+                        "description": "Tipo de reporte: 'ventas_resumen', 'top_productos', 'inventario_critico' o 'productos_dormidos'.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Cantidad máxima de registros en la tabla (por defecto 25).",
+                    },
+                },
+                "required": ["format"],
             },
         },
     },

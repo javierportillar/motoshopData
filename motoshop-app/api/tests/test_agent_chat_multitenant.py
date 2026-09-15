@@ -41,6 +41,7 @@ def test_chat_tool_catalog_is_scoped_to_tenant(monkeypatch):
         "get_inventory_value",
         "get_data_freshness",
         "search_business_knowledge",
+        "generate_report",
     }
 
 
