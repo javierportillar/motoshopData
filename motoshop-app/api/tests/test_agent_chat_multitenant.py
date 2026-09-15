@@ -20,6 +20,27 @@ def test_agent_prompt_is_tenant_specific():
     assert "MasVital" in vital and "MotoShop" not in vital
 
 
+def test_agent_prompt_restricts_generate_report_to_explicit_file_requests():
+    """Una pregunta de datos ('cuáles son los productos bajos en stock?') NO debe
+    disparar la generación de archivos: generate_report solo ante pedido explícito."""
+    from motoshop_api.llm.qa_chat import build_qa_system
+
+    prompt = build_qa_system("motoshop")
+    assert "SOLO para cuando el usuario pida EXPLÍCITAMENTE" in prompt
+    assert "NUNCA generes un archivo si el usuario no lo pidió" in prompt
+    assert "respondé SIEMPRE en el chat" in prompt
+
+
+def test_generate_report_tool_description_demands_explicit_file_request():
+    """La spec de la tool también debe desincentivar el uso para preguntas de datos."""
+    from motoshop_api.llm.tools import TOOL_DEFINITIONS
+
+    spec = next(t for t in TOOL_DEFINITIONS if t["function"]["name"] == "generate_report")
+    description = spec["function"]["description"]
+    assert "SOLO cuando el usuario pida EXPLÍCITAMENTE" in description
+    assert "NO la uses para responder preguntas de datos" in description
+
+
 def test_chat_tool_catalog_is_scoped_to_tenant(monkeypatch):
     import motoshop_api.llm.qa_chat as qa_module
     from motoshop_api.llm.conversations.repository import InMemoryConversationRepository

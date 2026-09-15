@@ -740,10 +740,14 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "generate_report",
             "description": (
-                "Genera y exporta un archivo descargable profesional en formato Excel (.xlsx), "
-                "PDF (.pdf) o Word (.docx) con datos de ventas, productos o inventario para la "
-                "empresa actual. Úsalo cuando el usuario pida un archivo, reporte, excel, pdf, "
-                "word, planilla o exportar datos. El documento indica el período analizado; "
+                "Genera un archivo descargable en Excel (.xlsx), PDF (.pdf) o Word (.docx) "
+                "con datos de la empresa. Úsala SOLO cuando el usuario pida EXPLÍCITAMENTE "
+                "un archivo, exportación o descarga ('pasame un excel', 'exportame un pdf', "
+                "'descargame el reporte en word'). NO la uses para responder preguntas de "
+                "datos en el chat ('cuáles son los productos con stock bajo') — para eso usá "
+                "las tools de consulta como get_alerts_by_urgency, get_top_skus o get_dormidos. "
+                "Ante pedidos ambiguos, respondé en el chat con los datos y ofrecé la "
+                "exportación como opción. El documento indica el período analizado; "
                 "comunicáselo siempre al usuario. Los reportes de inventario y dormidos son "
                 "fotos al corte y no filtran por fechas."
             ),
