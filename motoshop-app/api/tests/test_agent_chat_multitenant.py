@@ -204,7 +204,7 @@ def test_sqlite_conversations_survive_repository_restart(tmp_path):
     assert restarted.get_conversation("masvital", "ana", conversation["id"]) is None
 
 
-def test_supabase_append_turn_uses_role_scoped_idempotency():
+def test_supabase_append_turn_inserts_user_and_assistant_separately():
     from motoshop_api.llm.conversations.repository import SupabaseConversationRepository
 
     conversation_id = str(uuid4())
@@ -227,11 +227,12 @@ def test_supabase_append_turn_uses_role_scoped_idempotency():
         request_id="request-1",
     )
 
-    message_call = next(call for call in calls if call[:2] == ("POST", "agent_messages"))
-    payload = message_call[2]
-    assert payload["params"]["on_conflict"] == "conversation_id,request_id,role"
-    assert [row["role"] for row in payload["json"]] == ["user", "assistant"]
-    assert payload["json"][0]["created_at"] < payload["json"][1]["created_at"]
+    message_calls = [call for call in calls if call[:2] == ("POST", "agent_messages")]
+    # Each message is inserted individually (PostgREST batch requires same keys)
+    assert len(message_calls) == 2
+    assert message_calls[0][2]["json"]["role"] == "user"
+    assert message_calls[1][2]["json"]["role"] == "assistant"
+    assert message_calls[0][2]["json"]["created_at"] < message_calls[1][2]["json"]["created_at"]
 
     update_call = next(call for call in calls if call[:2] == ("PATCH", "agent_conversations"))
     assert update_call[2]["json"]["message_count"] == 2

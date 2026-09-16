@@ -599,47 +599,45 @@ class SupabaseConversationRepository:
         request_id = metadata.get("request_id") or str(uuid4())
         now = _now()
         assistant_at = _after(now)
-        rows = [
-            {
-                "conversation_id": conversation_id,
-                "tenant_id": tenant_id,
-                "user_id": user_id,
-                "role": "user",
-                "content": user_message,
-                "request_id": request_id,
-                "created_at": now,
-            },
-            {
-                "conversation_id": conversation_id,
-                "tenant_id": tenant_id,
-                "user_id": user_id,
-                "role": "assistant",
-                "content": assistant_message,
-                "request_id": request_id,
-                "tools_used": metadata.get("tools_used", []),
-                "sources": metadata.get("sources", []),
-                "evidence": metadata.get("sources", []),
-                "freshness": metadata.get("freshness", []),
-                "entity_refs": metadata.get("entity_refs", []),
-                "attachments": metadata.get("attachments", []),
-                "model": metadata.get("model"),
-                "provider": metadata.get("provider"),
-                "tokens_input": metadata.get("tokens_input", 0),
-                "tokens_output": metadata.get("tokens_output", 0),
-                "latency_ms": metadata.get("latency_ms", 0),
-                "status": metadata.get("status", "success"),
-                "error_code": metadata.get("error_code"),
-                "created_at": assistant_at,
-            },
-        ]
+        user_row = {
+            "conversation_id": conversation_id,
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "role": "user",
+            "content": user_message,
+            "request_id": request_id,
+            "created_at": now,
+        }
+        assistant_row = {
+            "conversation_id": conversation_id,
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "role": "assistant",
+            "content": assistant_message,
+            "request_id": request_id,
+            "tools_used": metadata.get("tools_used", []),
+            "sources": metadata.get("sources", []),
+            "evidence": metadata.get("sources", []),
+            "freshness": metadata.get("freshness", []),
+            "entity_refs": metadata.get("entity_refs", []),
+            "attachments": metadata.get("attachments", []),
+            "model": metadata.get("model"),
+            "provider": metadata.get("provider"),
+            "tokens_input": metadata.get("tokens_input", 0),
+            "tokens_output": metadata.get("tokens_output", 0),
+            "latency_ms": metadata.get("latency_ms", 0),
+            "status": metadata.get("status", "success"),
+            "error_code": metadata.get("error_code"),
+            "created_at": assistant_at,
+        }
         try:
-            self._request(
-                "POST",
-                "agent_messages",
-                params={"on_conflict": "conversation_id,request_id,role"},
-                json=rows,
-                headers={"Prefer": "return=minimal,resolution=ignore-duplicates"},
-            )
+            for row in (user_row, assistant_row):
+                self._request(
+                    "POST",
+                    "agent_messages",
+                    json=row,
+                    headers={"Prefer": "return=minimal"},
+                )
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code not in (409,):
                 raise
