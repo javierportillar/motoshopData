@@ -78,6 +78,8 @@ async def get_tenant_context(
     from motoshop_api.auth.module_access import assistant_domains_for_user
 
     domains = assistant_domains_for_user(user, config.enabled_features)
+    if not domains:
+        raise HTTPException(status_code=403, detail="Usuario no tiene capacidades de asistente habilitadas")
     return TenantContext(
         tenant_id=tenant_id,
         user_id=user.username,

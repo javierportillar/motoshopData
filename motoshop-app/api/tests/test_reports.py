@@ -8,18 +8,12 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from motoshop_api.main import app
-from motoshop_api.reports.generator import (
-    ReportData,
-    generate_excel,
-    generate_pdf,
-    generate_word,
-)
-from motoshop_api.reports.storage import ReportStorage
-from motoshop_api.llm.tools import ToolExecutor
-
 from motoshop_api.auth.hash import hash_password
 from motoshop_api.auth.users import User, _users_cache
+from motoshop_api.llm.tools import ToolExecutor
+from motoshop_api.main import app
+from motoshop_api.reports.generator import ReportData, generate_excel, generate_pdf, generate_word
+from motoshop_api.reports.storage import ReportStorage
 
 
 @pytest.fixture()
@@ -31,6 +25,14 @@ def tenant_users():
             username="moto_user",
             hashed_password=hash_password("moto123"),
             email="moto@test.com",
+            role="gerente",
+            tenants_allowed=["motoshop"],
+            source="supabase",
+        ),
+        "other_moto_user": User(
+            username="other_moto_user",
+            hashed_password=hash_password("moto456"),
+            email="other-moto@test.com",
             role="gerente",
             tenants_allowed=["motoshop"],
             source="supabase",
@@ -149,6 +151,17 @@ def test_storage_sweeper_removes_expired_files(tmp_path):
     assert not rec.file_path.exists()
 
 
+def test_storage_does_not_serve_an_expired_indexed_report(tmp_path):
+    storage = ReportStorage(base_dir=tmp_path)
+    rec = storage.save_report(b"expired", "expired.xlsx", "application/pdf", "motoshop", "u1")
+    old = time.time() - (86400 + 60)
+    import os
+
+    os.utime(rec.file_path, (old, old))
+
+    assert storage.get_report(rec.report_id) is None
+
+
 # ── Tool generate_report: ventanas de fecha ────────────────────────────────────
 
 
@@ -176,7 +189,8 @@ def test_tool_generate_report_custom_date_range():
 def test_tool_generate_report_period_all():
     executor = ToolExecutor(tenant="motoshop")
     result = executor.run(
-        "generate_report", {"format": "pdf", "report_type": "top_productos", "period": "all", "limit": 5}
+        "generate_report",
+        {"format": "pdf", "report_type": "top_productos", "period": "all", "limit": 5},
     )
     assert result["status"] == "success"
     assert "histórico completo" in result["period_label"]
@@ -210,7 +224,9 @@ def test_tool_generate_report_custom_requires_date_from():
 def test_tool_executor_generate_report_all_formats():
     executor = ToolExecutor(tenant="motoshop")
     for fmt in ["excel", "pdf", "word"]:
-        result = executor.run("generate_report", {"format": fmt, "report_type": "top_productos", "limit": 5})
+        result = executor.run(
+            "generate_report", {"format": fmt, "report_type": "top_productos", "limit": 5}
+        )
         assert result["status"] == "success"
         assert result["format"] == fmt
         assert result["download_url"].startswith("/api/reports/download/")
@@ -218,10 +234,18 @@ def test_tool_executor_generate_report_all_formats():
         assert result["date_from"] and result["date_to"]
 
 
+def test_purchase_tools_are_not_registered_for_active_tenant():
+    executor = ToolExecutor(tenant="motoshop")
+    assert executor.run("get_ultima_compra", {}) == {"error": "Tool not allowed for this tenant"}
+    assert executor.run("get_compras_recientes", {}) == {
+        "error": "Tool not allowed for this tenant"
+    }
+
+
 # ── Endpoint de descarga: autenticación y aislamiento por tenant ──────────────
 
 
-def _save_report(tmp_path, monkeypatch, tenant="motoshop"):
+def _save_report(tmp_path, monkeypatch, tenant="motoshop", user_id="moto_user"):
     storage = ReportStorage(base_dir=tmp_path)
     monkeypatch.setattr("motoshop_api.reports.router.get_report_storage", lambda: storage)
     return storage.save_report(
@@ -229,7 +253,7 @@ def _save_report(tmp_path, monkeypatch, tenant="motoshop"):
         "reporte_test.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         tenant,
-        "moto_user",
+        user_id,
     )
 
 
@@ -243,7 +267,9 @@ def test_download_requires_token(tmp_path, monkeypatch, tenant_users):
 def test_download_rejects_invalid_token(tmp_path, monkeypatch, tenant_users):
     rec = _save_report(tmp_path, monkeypatch)
     client = TestClient(app)
-    resp = client.get(f"/api/reports/download/{rec.report_id}", headers={"Authorization": "Bearer no-es-un-jwt"})
+    resp = client.get(
+        f"/api/reports/download/{rec.report_id}", headers={"Authorization": "Bearer no-es-un-jwt"}
+    )
     assert resp.status_code == 401
 
 
@@ -270,9 +296,20 @@ def test_download_cross_tenant_forbidden(tmp_path, monkeypatch, tenant_users):
     assert resp.status_code == 403
 
 
+def test_download_same_tenant_different_user_forbidden(tmp_path, monkeypatch, tenant_users):
+    rec = _save_report(tmp_path, monkeypatch, tenant="motoshop")
+    client = TestClient(app)
+    token = _login(client, "other_moto_user", "moto456")
+    resp = client.get(
+        f"/api/reports/download/{rec.report_id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert resp.status_code == 403
+    assert resp.headers["content-type"] == "application/problem+json"
+
+
 def test_download_with_query_token(tmp_path, monkeypatch, tenant_users):
     """El fallback ?token= (descarga directa en navegador) también funciona."""
-    rec = _save_report(tmp_path, monkeypatch, tenant="masvital")
+    rec = _save_report(tmp_path, monkeypatch, tenant="masvital", user_id="vital_user")
     client = TestClient(app)
     token = _login(client, "vital_user", "vital123")
     resp = client.get(f"/api/reports/download/{rec.report_id}?token={token}")
@@ -287,12 +324,3 @@ def test_download_missing_report_404(tmp_path, monkeypatch, tenant_users):
         "/api/reports/download/rep_000000000000", headers={"Authorization": f"Bearer {token}"}
     )
     assert resp.status_code == 404
-def test_storage_does_not_serve_an_expired_indexed_report(tmp_path):
-    storage = ReportStorage(base_dir=tmp_path)
-    rec = storage.save_report(b"expired", "expired.xlsx", "application/pdf", "motoshop", "u1")
-    old = time.time() - (86400 + 60)
-    import os
-
-    os.utime(rec.file_path, (old, old))
-
-    assert storage.get_report(rec.report_id) is None

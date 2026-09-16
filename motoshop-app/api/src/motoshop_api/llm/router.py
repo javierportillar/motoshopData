@@ -19,7 +19,12 @@ from slowapi.util import get_remote_address
 from starlette.concurrency import run_in_threadpool
 
 from motoshop_api.auth.deps import get_current_user, require_refresh_token_or_admin, require_role
-from motoshop_api.auth.tenant_dep import get_tenant, get_tenant_for_admin_or_machine
+from motoshop_api.auth.tenant_dep import (
+    TenantContext,
+    get_tenant,
+    get_tenant_context,
+    get_tenant_for_admin_or_machine,
+)
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
 from motoshop_api.llm.client import PermanentLLMError, TransientLLMError
@@ -301,11 +306,17 @@ class ConversationResponse(BaseModel):
 class MessageResponse(BaseModel):
     id: str
     conversation_id: str
+    tenant_id: str
+    user_id: str
     role: str
     content: str
     created_at: str
-    tools_used: list[str] = []
-    sources: list[dict] = []
+    status: str = "success"
+    tools_used: list[str] = Field(default_factory=list)
+    sources: list[dict] = Field(default_factory=list)
+    freshness: list[dict] = Field(default_factory=list)
+    entity_refs: list[dict] = Field(default_factory=list)
+    attachments: list[dict] = Field(default_factory=list)
 
 
 class ConversationPatch(BaseModel):
@@ -319,7 +330,7 @@ async def qa_chat(
     request: Request,
     body: AssistantRequest,
     user: User = Depends(get_current_user),
-    tenant: str = Depends(get_tenant),
+    tenant_context: TenantContext = Depends(get_tenant_context),
 ) -> QAChatResponse:
     """Chat conversacional con tool use sobre DuckDB.
 
@@ -328,16 +339,24 @@ async def qa_chat(
     """
     from motoshop_api.llm.qa_chat import get_qa_chat
 
-    qa = get_qa_chat(tenant=tenant, user_id=user.username)
+    qa = get_qa_chat(
+        tenant=tenant_context.tenant_id,
+        user_id=tenant_context.user_id,
+        tenant_context=tenant_context,
+    )
     try:
         result = await run_in_threadpool(
             qa.chat, body.message, body.conversation_id, body.request_id
         )
     except PermissionError:
-        raise HTTPException(status_code=404, detail="Conversación no encontrada") from None
+        return problem_response(
+            404, "https://api.motoshop/errors/conversation-not-found",
+            "Conversación no encontrada", body.request_id or request.headers.get("X-Request-ID", "unknown"),
+        )
     except TransientLLMError:
         response = problem_response(
-            503, "https://api.motoshop/errors/provider-unavailable",
+            503,
+            "https://api.motoshop/errors/provider-unavailable",
             "El proveedor de inteligencia no está disponible temporalmente.",
             body.request_id or request.headers.get("X-Request-ID", "unknown"),
         )
@@ -345,16 +364,22 @@ async def qa_chat(
         return response
     except PermanentLLMError:
         return problem_response(
-            502, "https://api.motoshop/errors/provider-rejected",
+            502,
+            "https://api.motoshop/errors/provider-rejected",
             "El proveedor de inteligencia rechazó la consulta.",
             body.request_id or request.headers.get("X-Request-ID", "unknown"),
         )
     return AssistantEnvelope(
-        status=result.get("status", "complete"), tenant_id=result.get("tenant_id", tenant),
-        text=result.get("text", ""), conversation_id=result.get("conversation_id", ""),
-        turn_count=result.get("turn_count", 0), tools_used=result.get("tools_used", []),
-        sources=result.get("sources", []), freshness=result.get("freshness", []),
-        entity_refs=result.get("entity_refs", []), attachments=result.get("attachments", []),
+        status=result.get("status", "complete"),
+        tenant_id=result.get("tenant_id", tenant_context.tenant_id),
+        text=result.get("text", ""),
+        conversation_id=result.get("conversation_id", ""),
+        turn_count=result.get("turn_count", 0),
+        tools_used=result.get("tools_used", []),
+        sources=result.get("sources", []),
+        freshness=result.get("freshness", []),
+        entity_refs=result.get("entity_refs", []),
+        attachments=result.get("attachments", []),
     )
 
 

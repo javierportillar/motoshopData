@@ -41,6 +41,10 @@ class ConversationRepository(Protocol):
         self, tenant_id: str, user_id: str, conversation_id: str, limit: int = 40
     ) -> list[dict[str, Any]]: ...
 
+    def find_assistant_by_request_id(
+        self, tenant_id: str, user_id: str, request_id: str
+    ) -> dict[str, Any] | None: ...
+
     def append_turn(
         self,
         tenant_id: str,
@@ -135,6 +139,17 @@ class InMemoryConversationRepository:
     ) -> list[dict[str, Any]]:
         rows = self._messages.get((tenant_id, user_id, conversation_id), [])
         return rows[-limit:]
+
+    def find_assistant_by_request_id(
+        self, tenant_id: str, user_id: str, request_id: str
+    ) -> dict[str, Any] | None:
+        for (tenant, user, _), messages in reversed(tuple(self._messages.items())):
+            if tenant != tenant_id or user != user_id:
+                continue
+            for row in reversed(messages):
+                if row.get("role") == "assistant" and row.get("request_id") == request_id:
+                    return row
+        return None
 
     def append_turn(
         self,
@@ -337,6 +352,20 @@ class SQLiteConversationRepository:
             ).fetchall()
         return [self._message(row) for row in rows]
 
+    def find_assistant_by_request_id(
+        self, tenant_id: str, user_id: str, request_id: str
+    ) -> dict[str, Any] | None:
+        with self._connect() as con:
+            row = con.execute(
+                "SELECT m.* FROM agent_messages AS m "
+                "JOIN agent_conversations AS c ON c.id=m.conversation_id "
+                "WHERE m.tenant_id=? AND m.user_id=? AND c.tenant_id=? AND c.user_id=? "
+                "AND m.role='assistant' AND m.request_id=? "
+                "ORDER BY m.created_at DESC LIMIT 1",
+                (tenant_id, user_id, tenant_id, user_id, request_id),
+            ).fetchone()
+        return self._message(row) if row else None
+
     def append_turn(
         self,
         tenant_id: str,
@@ -536,6 +565,24 @@ class SupabaseConversationRepository:
                 "limit": str(limit),
             },
         )
+
+    def find_assistant_by_request_id(
+        self, tenant_id: str, user_id: str, request_id: str
+    ) -> dict[str, Any] | None:
+        rows = self._request(
+            "GET",
+            "agent_messages",
+            params={
+                "tenant_id": f"eq.{tenant_id}",
+                "user_id": f"eq.{user_id}",
+                "role": "eq.assistant",
+                "request_id": f"eq.{request_id}",
+                "select": "*",
+                "order": "created_at.desc",
+                "limit": "1",
+            },
+        )
+        return rows[0] if rows else None
 
     def append_turn(
         self,

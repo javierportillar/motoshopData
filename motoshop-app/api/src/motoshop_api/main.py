@@ -9,7 +9,8 @@ from pathlib import Path
 
 import sqlalchemy.exc
 import structlog
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
@@ -18,31 +19,33 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from motoshop_api import __version__
-from motoshop_api.auth.router import router as auth_router
-from motoshop_api.auth.users import load_users
-from motoshop_api.auth.module_access import require_route_module
-from motoshop_api.config import settings
-from motoshop_api.logging import RequestIDMiddleware, setup_logging
-from motoshop_api.pipeline_runs.router import router as pipeline_runs_router
-from motoshop_api.tenants import load_tenants as load_tenants
-from motoshop_api.products.router import router as products_router
-from motoshop_api.sales.router import router as sales_router
-from motoshop_api.stock.router import router as stock_router
-from motoshop_api.data_catalog.router import catalog_router
-from motoshop_api.health.router import router as health_router
-from motoshop_api.metrics.router import router as metrics_router
-from motoshop_api.metrics.repo_duckdb import DuckDBNotReadyError
-from motoshop_api.llm.router import briefing_router, router as llm_router
-from motoshop_api.push.router import router as push_router
-from motoshop_api.forecast.router import router as forecast_router
 from motoshop_api.admin.router import router as admin_router
 from motoshop_api.alerts.router import router as alerts_router
 from motoshop_api.app_writes.router import router as app_writes_router
-from motoshop_api.purchase_plans.router import router as purchase_plans_router
-from motoshop_api.gastos.router import router as gastos_router
+from motoshop_api.auth.module_access import require_route_module
+from motoshop_api.auth.router import router as auth_router
+from motoshop_api.auth.users import load_users
+from motoshop_api.config import settings
+from motoshop_api.data_catalog.router import catalog_router
 from motoshop_api.expiry.router import router as expiry_router
-from motoshop_api.users.router import router as users_router
+from motoshop_api.forecast.router import router as forecast_router
+from motoshop_api.gastos.router import router as gastos_router
+from motoshop_api.health.router import router as health_router
+from motoshop_api.llm.contracts import problem_response
+from motoshop_api.llm.router import briefing_router
+from motoshop_api.llm.router import router as llm_router
+from motoshop_api.logging import RequestIDMiddleware, setup_logging
+from motoshop_api.metrics.repo_duckdb import DuckDBNotReadyError
+from motoshop_api.metrics.router import router as metrics_router
+from motoshop_api.pipeline_runs.router import router as pipeline_runs_router
+from motoshop_api.products.router import router as products_router
+from motoshop_api.purchase_plans.router import router as purchase_plans_router
+from motoshop_api.push.router import router as push_router
 from motoshop_api.reports.router import router as reports_router
+from motoshop_api.sales.router import router as sales_router
+from motoshop_api.stock.router import router as stock_router
+from motoshop_api.tenants import load_tenants as load_tenants
+from motoshop_api.users.router import router as users_router
 
 
 def _is_localhost() -> bool:
@@ -119,6 +122,38 @@ limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
+def _assistant_request_id(request: Request) -> str:
+    return getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID", "unknown")
+
+
+def _assistant_path(request: Request) -> bool:
+    return request.url.path.startswith(("/api/llm/qa/", "/api/llm/chat/", "/api/reports/"))
+
+
+@app.exception_handler(RequestValidationError)
+async def assistant_validation_handler(request: Request, _exc: RequestValidationError):
+    if not _assistant_path(request):
+        return JSONResponse(status_code=422, content={"detail": "Invalid request"})
+    return problem_response(
+        422, "https://api.motoshop/errors/validation", "Request validation failed.",
+        _assistant_request_id(request),
+    )
+
+
+@app.exception_handler(HTTPException)
+async def assistant_http_exception_handler(request: Request, exc: HTTPException):
+    if not _assistant_path(request):
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers)
+    detail = exc.detail if isinstance(exc.detail, str) else "Request rejected."
+    response = problem_response(
+        exc.status_code, f"https://api.motoshop/errors/http-{exc.status_code}", detail,
+        _assistant_request_id(request),
+    )
+    if exc.headers:
+        response.headers.update(exc.headers)
+    return response
+
 # ── DuckDB re-descargando desde R2 → 503 'loading' (no 500) ──────────
 # Tras cada deploy/reinicio, Render borra el disco efímero y {tenant}_gold.duckdb
 # se re-descarga de R2 (~1 min). Durante esa ventana devolvemos 503 'loading'
@@ -127,6 +162,15 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 async def duckdb_not_ready_handler(request: Request, _exc: DuckDBNotReadyError) -> JSONResponse:
     logger = structlog.get_logger("motoshop")
     logger.warning("duckdb_not_ready", path=str(request.url.path))
+    if _assistant_path(request):
+        response = problem_response(
+            503,
+            "https://api.motoshop/errors/dependency-unavailable",
+            "Los datos del tenant todavía se están cargando. Reintentá en unos segundos.",
+            _assistant_request_id(request),
+        )
+        response.headers["Retry-After"] = "5"
+        return response
     return JSONResponse(
         status_code=503,
         headers={"Retry-After": "5"},
@@ -144,6 +188,13 @@ async def mysql_offline_handler(request: Request, _exc: sqlalchemy.exc.Operation
     """Endpoints que dependen de MySQL devuelven 503 elegante cuando la PC está apagada."""
     logger = structlog.get_logger("motoshop")
     logger.warning("mysql_unavailable", path=str(request.url.path))
+    if _assistant_path(request):
+        return problem_response(
+            503,
+            "https://api.motoshop/errors/dependency-unavailable",
+            "La fuente de datos no está disponible temporalmente.",
+            _assistant_request_id(request),
+        )
     return JSONResponse(
         status_code=503,
         content={

@@ -96,7 +96,7 @@ class Settings(BaseSettings):
     opencode_api_key_fallback: str = Field(default="")
     zen_model: str = Field(default="deepseek-v4-flash-free")
     zen_max_tokens: int = Field(default=8000)
-    llm_timeout: int = Field(default=120)
+    llm_timeout: int = Field(default=30, ge=1, le=30)
 
     @field_validator("jwt_secret")
     @classmethod

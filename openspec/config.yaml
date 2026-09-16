@@ -1,62 +1,128 @@
 schema: spec-driven
 
 context: |
-  MotoShop: multi-tenant FastAPI backend for motorcycle spare parts retail analytics.
-  Tech stack: Python 3.13, FastAPI, DuckDB (embedded OLAP), Pydantic v2, structlog,
-  slowapi, PyJWT+bcrypt, SQLAlchemy+aiosqlite, cachetools, PyYAML, httpx, boto3 (R2),
-  uvicorn. Multi-repo: single repo with `motoshop-app/api/` as main backend.
-  ETL pipeline (Windows, Python) builds DuckDB gold marts, uploaded to Cloudflare R2.
-  API downloads DuckDB at cold-start, serves 24+ metrics endpoints, hybrid search
-  (embeddings+synonyms+keyword), LLM briefing+chat (OpenCode Zen), Telegram bot,
-  Web Push notifications. 15 module routers under /api. SQLite for app writes.
+  MotoShop is a multi-tenant analytics platform for motorcycle-parts retail.
+  This repository owns the Python ETL/pipeline, FastAPI backend, Windows infra, and SDD artifacts.
+  Backend stack: Python 3.11+, FastAPI, Pydantic v2, DuckDB, SQLite/SQLAlchemy, pytest, and Ruff.
+  Data flows read-only from legacy MySQL 5.0 through bronze/silver/gold marts and Cloudflare R2.
+  Production code follows router/schema/repository boundaries with explicit tenant isolation.
+  The Next.js 14/React 18/TypeScript PWA lives in the separate sibling repository ../frontfambus.
+  Changes spanning API and UI require separately reviewable work units and contract coordination.
+  Never modify sgHermes data, add dependencies without an ADR, or version credentials.
+
+workflow:
+  execution_mode: interactive
+  artifact_store: openspec
+  project_memory_key: dataempresas
+  chained_pr_strategy: ask-always
+  review_budget_lines: 400
+  repository_boundaries:
+    backend:
+      repository: motoshopData
+      path: .
+      owns:
+        - motoshop-app/api
+        - pipeline
+        - notebooks
+        - infra
+        - openspec
+    frontend:
+      repository: frontfambus
+      path: ../frontfambus
+      separate_git_repository: true
 
 rules:
   proposal:
-    - Include rollback plan for risky changes
-    - Distinguish between tenant-specific and platform-wide changes
+    - Include a rollback plan for risky changes
+    - Distinguish tenant-specific, platform-wide, backend-only, frontend-only, and cross-repository scope
+    - Ask before choosing a chained-PR strategy for every change
   specs:
     - Use Given/When/Then for scenarios
     - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
-    - Include tenant isolation constraints
+    - Include tenant-isolation constraints and API contract behavior where applicable
   design:
     - Include sequence diagrams for complex flows
-    - Document architecture decisions with rationale
-    - Consider cold-start impact (DuckDB download from R2)
+    - Document architecture decisions and dependency additions with rationale
+    - Consider DuckDB/R2 cold-start behavior and repository ownership
   tasks:
-    - Group by phase, use hierarchical numbering
+    - Group by phase and use hierarchical numbering
     - Keep tasks completable in one session
+    - Keep review units within 400 changed lines; ask before splitting into chained PRs
+    - Separate backend and frontend tasks when a change spans both repositories
   apply:
-    - Follow existing router/repo/schemas module pattern
+    checks:
+      - Follow existing router/schema/repository and tenant-isolation patterns
+      - Preserve unrelated working-tree changes
+      - Run the nearest targeted test before the full repository suite
     tdd: true
-    test_command: "pytest"
+    test_command: 'uv run pytest && (cd motoshop-app/api && uv run pytest)'
   verify:
-    test_command: "pytest"
-    build_command: ""
+    test_command: 'uv run pytest && (cd motoshop-app/api && uv run pytest)'
+    build_command: ''
     coverage_threshold: 0
+    checks:
+      - Verify frontend work in ../frontfambus with npm run test:unit, npx playwright test, npm run typecheck, and npm run build
   archive:
     - Warn before merging destructive deltas
+    - Preserve archived changes as an immutable audit trail
 
 testing:
   strict_tdd: true
-  detected: "2026-06-13"
-  runner:
-    command: "pytest"
-    config: "pyproject.toml [tool.pytest.ini_options]"
-    framework: "pytest"
-  layers:
-    unit:
-      available: true
-      tool: "pytest + FastAPI TestClient"
-    integration:
-      available: true
-      tool: "pytest + FastAPI TestClient (httpx)"
-    e2e:
+  strict_tdd_source: existing OpenSpec marker confirmed by detected test runners
+  detected: '2026-09-15'
+  backend:
+    root_pipeline:
+      working_directory: .
+      runner:
+        framework: pytest
+        command: uv run pytest
+        config: pyproject.toml [tool.pytest.ini_options]
+      layers:
+        unit: { available: true, tool: pytest }
+        integration: { available: true, tool: pytest with DuckDB/PySpark test fixtures }
+        e2e: { available: false, tool: null }
+      coverage:
+        available: true
+        command: uv run pytest --cov=src
+    api:
+      working_directory: motoshop-app/api
+      runner:
+        framework: pytest
+        command: uv run pytest
+        unit_command: 'uv run pytest -m "not integration"'
+        config: motoshop-app/api/pyproject.toml [tool.pytest.ini_options]
+      layers:
+        unit: { available: true, tool: pytest with dependency overrides and fakes }
+        integration: { available: true, tool: FastAPI TestClient/httpx with DuckDB and SQLite fixtures }
+        e2e: { available: false, tool: null }
+      coverage:
+        available: true
+        command: uv run pytest --cov=motoshop_api
+    quality:
+      linter: { available: true, command: uv run ruff check . }
+      type_checker: { available: false, command: null }
+      formatter: { available: true, command: uv run ruff format --check . }
+  frontend:
+    repository: ../frontfambus
+    separate_git_repository: true
+    runner:
+      unit_framework: Vitest
+      unit_command: npm run test:unit
+      e2e_framework: Playwright
+      e2e_command: npx playwright test
+    layers:
+      unit: { available: true, tool: Vitest }
+      integration: { available: true, tool: Vitest route and middleware tests }
+      e2e: { available: true, tool: Playwright }
+    coverage:
       available: false
-      tool: "—"
-  coverage:
-    available: true
-    command: "pytest --cov=motoshop_api"
-  quality:
-    linter: { available: true, command: "ruff check" }
-    type_checker: { available: false, command: "—" }
-    formatter: { available: true, command: "ruff format" }
+      command: null
+      note: No project coverage script or configured provider was detected
+    quality:
+      linter: { available: true, command: npm run lint }
+      type_checker: { available: true, command: npm run typecheck }
+      formatter: { available: true, command: npx prettier --check . }
+      build: { available: true, command: npm run build }
+  ci:
+    automated_test_workflow: false
+    note: The detected GitHub Actions workflow sends scheduled briefings but does not run test or quality gates

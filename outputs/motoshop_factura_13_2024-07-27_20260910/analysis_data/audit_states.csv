@@ -1,0 +1,8 @@
+estado_auditoria,skus,costo_factura,stock_actual,valor_stock_a_costo_factura
+"Con stock, sin ventas 365d",142,3679394.0,645.0,2146144.0
+Sin stock actual,196,2947899.0,0.0,0.0
+Sin ventas desde compra,150,2451697.0,813.0,2569197.0
+Rotación media,36,779470.0,185.0,330936.0
+Rotación baja,38,779395.0,519.0,592495.0
+Compra absorbida; stock repuesto,11,597262.0,386.0,3153739.0
+Stock negativo,5,32780.0,-9.0,0.0

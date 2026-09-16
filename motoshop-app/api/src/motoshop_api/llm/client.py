@@ -10,6 +10,7 @@ Si el modelo primario falla, intenta el fallback con su propia API/key.
 from __future__ import annotations
 
 import logging
+import time
 
 import httpx
 
@@ -29,7 +30,8 @@ ZEN_API_KEY = settings.opencode_api_key_fallback
 ZEN_MODEL = settings.zen_model
 ZEN_MAX_TOKENS = settings.zen_max_tokens
 
-TIMEOUT = settings.llm_timeout
+LLM_REQUEST_DEADLINE_SECONDS = 30
+TIMEOUT = min(settings.llm_timeout, LLM_REQUEST_DEADLINE_SECONDS)
 
 _client_singleton: LLMClient | None = None
 
@@ -94,13 +96,14 @@ class LLMClient:
         max_tokens: int | None = None,
         system: str = "",
         session_id: str | None = None,
+        deadline: float | None = None,
     ) -> dict:
         """Chat completion. Retorna {text, tokens_used, model, cost_usd, backend}."""
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
-        return self._call(messages, max_tokens, session_id=session_id)
+        return self._call(messages, max_tokens, session_id=session_id, deadline=deadline)
 
     def complete_with_tools(
         self,
@@ -109,9 +112,10 @@ class LLMClient:
         *,
         max_tokens: int | None = None,
         session_id: str | None = None,
+        deadline: float | None = None,
     ) -> dict:
         """Complete a chat request that may return tool calls."""
-        return self._call(messages, max_tokens, tools=tools, session_id=session_id)
+        return self._call(messages, max_tokens, tools=tools, session_id=session_id, deadline=deadline)
 
     def _call(
         self,
@@ -119,6 +123,7 @@ class LLMClient:
         max_tokens: int | None = None,
         tools: list[dict] | None = None,
         session_id: str | None = None,
+        deadline: float | None = None,
     ) -> dict:
         if not self._backends:
             raise PermanentLLMError("No LLM providers are configured")
@@ -126,8 +131,18 @@ class LLMClient:
         failures: list[str] = []
         last_cause: Exception | None = None
         saw_transient_failure = False
+        now = time.monotonic()
+        request_deadline = min(
+            deadline if deadline is not None else now + LLM_REQUEST_DEADLINE_SECONDS,
+            now + LLM_REQUEST_DEADLINE_SECONDS,
+        )
 
         for backend in self._backends:
+            remaining = request_deadline - time.monotonic()
+            if remaining <= 0:
+                saw_transient_failure = True
+                failures.append("deadline_exceeded")
+                break
             try:
                 mt = max_tokens if max_tokens is not None else backend["max_tokens"]
                 body = {
@@ -151,6 +166,7 @@ class LLMClient:
                     f"{backend['base']}/chat/completions",
                     json=body,
                     headers=headers,
+                    timeout=min(TIMEOUT, remaining),
                 )
 
                 if resp.status_code in (408, 425, 429) or 500 <= resp.status_code <= 599:

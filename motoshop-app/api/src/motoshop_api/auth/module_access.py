@@ -24,15 +24,47 @@ ASSISTANT_DOMAIN_MODULES: dict[str, str] = {
     "analyses": "analisis", "expenses": "analisis", "expiry": "expiry-lots",
 }
 
+ASSISTANT_TOOL_DOMAINS: dict[str, frozenset[str]] = {
+    "get_kpis_today": frozenset({"sales"}),
+    "get_kpis_month": frozenset({"sales"}),
+    "get_top_skus": frozenset({"sales"}),
+    "get_dormidos": frozenset({"dormant_products"}),
+    "get_alerts_by_urgency": frozenset({"alerts"}),
+    "get_vendedor_performance": frozenset({"analyses"}),
+    "get_inventory_value": frozenset({"inventory"}),
+    "compare_periods": frozenset({"sales"}),
+    "get_abc_distribution": frozenset({"abc"}),
+    "get_forecast_summary": frozenset({"forecasts"}),
+    "get_data_freshness": frozenset(ASSISTANT_DOMAIN_MODULES),
+    "get_ultima_compra": frozenset({"purchases"}),
+    "get_compras_recientes": frozenset({"purchases"}),
+    "search_business_knowledge": frozenset({"analyses"}),
+    "generate_report": frozenset({"sales", "inventory", "dormant_products", "alerts"}),
+}
+
+
+def assistant_tool_allowed(tool_name: str, allowed_domains: set[str] | frozenset[str]) -> bool:
+    """Return whether an authenticated assistant context may invoke a tool."""
+    return bool(ASSISTANT_TOOL_DOMAINS.get(tool_name, frozenset()) & set(allowed_domains))
+
 
 def assistant_domains_for_user(user: User, enabled_features: list[str]) -> set[str]:
     configured = {
-        domain for domain, module in ASSISTANT_DOMAIN_MODULES.items() if module in enabled_features
+        domain
+        for domain, module in ASSISTANT_DOMAIN_MODULES.items()
+        if module in enabled_features
+        or (domain in {"sales", "purchases"} and "sales" in enabled_features)
+        or (domain == "inventory" and "stock" in enabled_features)
     }
     if user.role == "admin" or (user.source == "legacy" and user.allowed_modules is None):
         return configured
     granted = set(user.allowed_modules or [])
-    return {domain for domain in configured if ASSISTANT_DOMAIN_MODULES[domain] in granted}
+    return {
+        domain
+        for domain in configured
+        if ASSISTANT_DOMAIN_MODULES[domain] in granted
+        or (domain in {"sales", "purchases"} and "sales" in granted)
+    }
 
 
 def _routes(module: str, *paths: str) -> dict[RouteKey, tuple[str, ...]]:
