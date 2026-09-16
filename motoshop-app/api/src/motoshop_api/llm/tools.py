@@ -35,6 +35,8 @@ PUBLIC_TOOL_NAMES = {
     "get_abc_xyz_distribution",
     "get_cohortes_clientes",
     "get_drift_alerts",
+    "buscar_compras_por_proveedor",
+    "get_producto_detalle",
     "generate_report",
 }
 
@@ -455,6 +457,235 @@ class ToolExecutor:
             "count": len(rows),
         }
         return {**result, **self._purchase_metadata(rows[0][0])}
+
+    def buscar_compras_por_proveedor(self, query: str, limit: int = 10) -> dict:
+        """Busca compras por nombre de proveedor (búsqueda parcial, case-insensitive)."""
+        limit = max(1, min(int(limit), 50))
+        rows = self._con.execute(
+            """
+            SELECT business_date, num_documento, cod_clase, nombre_proveedor,
+                   nit_proveedor, total_factura, estado_documento
+            FROM silver_fact_compras
+            WHERE nombre_proveedor ILIKE ?
+              AND COALESCE(estado_documento, '') != 'A'
+            ORDER BY business_date DESC,
+                     TRY_CAST(num_documento AS BIGINT) DESC NULLS LAST,
+                     num_documento DESC
+            LIMIT ?
+        """,
+            [f"%{query}%", limit],
+        ).fetchall()
+        if not rows:
+            return {
+                "mensaje": f"No se encontraron compras para proveedores que coincidan con '{query}'.",
+                **self._purchase_metadata(None),
+            }
+        result = {
+            "compras": [
+                {
+                    "fecha": r[0].isoformat(),
+                    "num_documento": r[1],
+                    "proveedor": r[3],
+                    "nit_proveedor": r[4],
+                    "total_factura": float(r[5] or 0),
+                    "estado_documento": str(r[6] or "").strip(),
+                }
+                for r in rows
+            ],
+            "count": len(rows),
+            "busqueda": query,
+        }
+        return {**result, **self._purchase_metadata(rows[0][0])}
+
+    def get_producto_detalle(self, codigo: str) -> dict:
+        """Detalle completo de un producto: ficha, historial de compras, ventas, stock y movimientos."""
+
+        # 1. Ficha técnica del producto
+        prod = self._con.execute(
+            """
+            SELECT cod_producto, nombre_producto, codigo_barras, presentacion,
+                   existencia, costo_producto, costo_ultima_compra,
+                   precio_venta_sin_iva, precio_venta_con_iva,
+                   estado_producto, cod_grupo, nit_proveedor,
+                   stock_minimo, stock_maximo, fecha_actualizacion
+            FROM silver_dim_producto
+            WHERE cod_producto = ?
+            """,
+            [codigo],
+        ).fetchone()
+        if not prod:
+            return {"error": f"Producto '{codigo}' no encontrado en el catálogo."}
+
+        # 2. Nombre del proveedor (por NIT o por última compra directa)
+        proveedor_nombre = proveedor_nombre = prod[11]  # NIT por defecto
+        if prod[11]:
+            proveedor_row = self._con.execute(
+                "SELECT nombre_proveedor FROM silver_fact_compras WHERE nit_proveedor = ? AND nombre_proveedor != '' LIMIT 1",
+                [prod[11]],
+            ).fetchone()
+            if proveedor_row:
+                proveedor_nombre = proveedor_row[0]
+
+        # 3. Última compra del producto (via detalle)
+        ultima_compra = self._con.execute(
+            """
+            SELECT c.business_date, c.num_documento, c.nombre_proveedor, c.total_factura
+            FROM silver_fact_compras c
+            INNER JOIN silver_fact_compras_detalle d
+              ON d.num_documento = c.num_documento AND d.cod_clase = c.cod_clase
+            WHERE d.cod_producto = ? AND COALESCE(c.estado_documento, '') != 'A'
+            ORDER BY c.business_date DESC LIMIT 1
+            """,
+            [codigo],
+        ).fetchone()
+
+        # 4. Última venta
+        ultima_venta = self._con.execute(
+            """
+            SELECT v.business_date, v.num_documento, v.nombre_cliente,
+                   d.total_detalle, d.cantidad
+            FROM silver_fact_ventas_detalle d
+            JOIN silver_fact_ventas v ON d.num_documento = v.num_documento AND d.cod_clase = v.cod_clase
+            WHERE d.cod_producto = ?
+            ORDER BY v.business_date DESC LIMIT 1
+            """,
+            [codigo],
+        ).fetchone()
+
+        # 5. Resumen de compras (totales)
+        compras_resumen = self._con.execute(
+            """
+            SELECT COUNT(*) as num_compras,
+                   SUM(d.cantidad) as total_unidades,
+                   SUM(d.total_detalle) as total_valor
+            FROM silver_fact_compras_detalle d
+            JOIN silver_fact_compras c ON d.num_documento = c.num_documento AND d.cod_clase = c.cod_clase
+            WHERE d.cod_producto = ? AND COALESCE(c.estado_documento, '') != 'A'
+            """,
+            [codigo],
+        ).fetchone()
+
+        # 6. Resumen de ventas (totales)
+        ventas_resumen = self._con.execute(
+            """
+            SELECT COUNT(*) as num_ventas,
+                   SUM(d.cantidad) as total_unidades,
+                   SUM(d.total_detalle) as total_valor
+            FROM silver_fact_ventas_detalle d
+            JOIN silver_fact_ventas v ON d.num_documento = v.num_documento AND d.cod_clase = v.cod_clase
+            WHERE d.cod_producto = ? AND COALESCE(v.estado_documento, '') != 'A'
+            """,
+            [codigo],
+        ).fetchone()
+
+        # 7. Movimiento mensual — últimos meses con actividad
+        movimientos = self._con.execute(
+            """
+            SELECT
+              strftime(c.business_date, '%Y-%m') as mes,
+              SUM(CASE WHEN c.tipo = 'compra' THEN c.cantidad ELSE 0 END) as comprado_u,
+              SUM(CASE WHEN c.tipo = 'compra' THEN c.total ELSE 0 END) as comprado_valor,
+              SUM(CASE WHEN c.tipo = 'venta' THEN c.cantidad ELSE 0 END) as vendido_u,
+              SUM(CASE WHEN c.tipo = 'venta' THEN c.total ELSE 0 END) as vendido_valor
+            FROM (
+              SELECT d.cod_producto, c.business_date, 'compra' as tipo,
+                     d.cantidad, d.total_detalle as total
+              FROM silver_fact_compras_detalle d
+              JOIN silver_fact_compras c ON d.num_documento = c.num_documento AND d.cod_clase = c.cod_clase
+              WHERE d.cod_producto = ? AND COALESCE(c.estado_documento, '') != 'A'
+              UNION ALL
+              SELECT d.cod_producto, v.business_date, 'venta' as tipo,
+                     d.cantidad, d.total_detalle as total
+              FROM silver_fact_ventas_detalle d
+              JOIN silver_fact_ventas v ON d.num_documento = v.num_documento AND d.cod_clase = v.cod_clase
+              WHERE d.cod_producto = ? AND COALESCE(v.estado_documento, '') != 'A'
+            ) c
+            GROUP BY mes
+            ORDER BY mes DESC
+            LIMIT 12
+            """,
+            [codigo, codigo],
+        ).fetchall()
+
+        movimientos_lista = [
+            {
+                "mes": m[0],
+                "comprado_u": float(m[1]),
+                "comprado_valor": float(m[2]),
+                "vendido_u": float(m[3]),
+                "vendido_valor": float(m[4]),
+            }
+            for m in movimientos
+        ]
+
+        # 8. Valor inventario actual
+        inv_valor = self._con.execute(
+            """
+            SELECT COALESCE(SUM(valor_costo * cantidad), 0)
+            FROM silver_fact_inventario
+            WHERE cod_producto = ? AND business_date = (SELECT MAX(business_date) FROM silver_fact_inventario)
+            """,
+            [codigo],
+        ).fetchone()
+
+        existencia = float(prod[4] or 0)
+        costo = float(prod[5] or 0)
+        precio = float(prod[7] or 0)
+        margen_unit = precio - costo if precio and costo else 0
+        margen_pct = (margen_unit / precio * 100) if precio else 0
+
+        resultado = {
+            "ficha": {
+                "codigo": prod[0],
+                "nombre": prod[1],
+                "codigo_barras": prod[2],
+                "presentacion": prod[3],
+                "estado": prod[9],
+                "grupo": prod[10],
+            },
+            "stock": {
+                "actual": existencia,
+                "minimo": float(prod[12] or 0),
+                "maximo": float(prod[13] or 0),
+                "valor_inventario": float(inv_valor[0]) if inv_valor else 0,
+                "sin_stock": existencia == 0,
+            },
+            "precios": {
+                "precio_venta": precio,
+                "costo": costo,
+                "costo_ultima_compra": float(prod[6] or 0),
+                "margen_unitario": margen_unit,
+                "margen_porcentaje": round(margen_pct, 1),
+            },
+            "proveedor": {
+                "nit": prod[11],
+                "nombre": proveedor_nombre,
+            },
+            "compras": {
+                "total_transacciones": int(compras_resumen[0] or 0),
+                "total_unidades": float(compras_resumen[1] or 0),
+                "total_valor": float(compras_resumen[2] or 0),
+                "ultima_compra": {
+                    "fecha": ultima_compra[0].isoformat() if ultima_compra else None,
+                    "documento": ultima_compra[1] if ultima_compra else None,
+                    "proveedor": ultima_compra[2] if ultima_compra else None,
+                    "total": float(ultima_compra[3]) if ultima_compra else None,
+                } if ultima_compra else None,
+            },
+            "ventas": {
+                "total_transacciones": int(ventas_resumen[0] or 0),
+                "total_unidades": float(ventas_resumen[1] or 0),
+                "total_valor": float(ventas_resumen[2] or 0),
+                "ultima_venta": {
+                    "fecha": ultima_venta[0].isoformat() if ultima_venta else None,
+                    "documento": ultima_venta[1] if ultima_venta else None,
+                    "cliente": ultima_venta[2] if ultima_venta else None,
+                    "total": float(ultima_venta[3]) if ultima_venta else None,
+                } if ultima_venta else None,
+            },
+            "movimiento_mensual": movimientos_lista,
+        }
+        return resultado
 
     @staticmethod
     def _purchase_metadata(cutoff: date | None) -> dict:
@@ -1240,6 +1471,56 @@ TOOL_DEFINITIONS = [
                     }
                 },
                 "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "buscar_compras_por_proveedor",
+            "description": (
+                "Busca compras por nombre de proveedor (búsqueda parcial, case-insensitive). "
+                "Devuelve todas las compras encontradas con fecha, documento, NIT, total y estado. "
+                "Usala cuando el usuario pregunte por compras de un proveedor específico, "
+                "por ejemplo '¿compramos a Karol Burgos?', '¿qué compras hicimos con Reprefil?'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Nombre del proveedor a buscar (parcial, ej: 'Karol', 'Reprefil', 'Atmopel').",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Cantidad máxima de resultados, entre 1 y 50.",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_producto_detalle",
+            "description": (
+                "Detalle completo de un producto: ficha técnica, stock, precios, margen, "
+                "proveedor, historial de compras, historial de ventas y movimiento mensual. "
+                "Usala cuando el usuario pida detalles de un producto específico, "
+                "por ejemplo '¿cómo está el producto 06-108?', 'detalles del comando derecho', "
+                "'¿cuánto se vendió de este producto?', '¿cuándo se compró por última vez?'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "codigo": {
+                        "type": "string",
+                        "description": "Código del producto (ej: '06-108', '04-001').",
+                    },
+                },
+                "required": ["codigo"],
             },
         },
     },

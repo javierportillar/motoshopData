@@ -44,8 +44,8 @@ def build_qa_system(tenant_id: str, latest_date: str | None = None) -> str:
 Capacidades:
 - Ventas: KPIs, top productos, comparación de períodos, performance de vendedores, mejores clientes.
 - Inventario: valor de inventario, alertas de quiebre de stock, productos dormidos, distribución ABC, clasificación ABC/XYZ, inventario por bodega.
-- Compras: última compra realizada, historial de compras recientes, proveedores, montos y productos comprados.
-- Productos: búsqueda en catálogo por nombre, código SKU o proveedor (precio, costo, stock, estado).
+- Compras: última compra realizada, historial de compras recientes, búsqueda de compras por nombre de proveedor, montos y productos comprados.
+- Productos: búsqueda en catálogo por nombre, código SKU o proveedor (precio, costo, stock, estado). Detalle completo de un producto: ficha técnica, stock, precios, margen, proveedor, historial de compras/ventas y movimiento mensual.
 - Clientes: top clientes por facturación, cohortes de retención.
 - Forecast: resumen de demanda, alertas de drift por categoría.
 - Reportes: generación de archivos Excel, PDF o Word cuando el usuario lo pida explícitamente.
