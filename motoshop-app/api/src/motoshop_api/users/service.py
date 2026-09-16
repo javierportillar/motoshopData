@@ -9,6 +9,7 @@ cada mutación se re-sincroniza la cache desde Supabase.
 from __future__ import annotations
 
 import logging
+import os
 
 from motoshop_api.auth.users import User, _users_cache, get_all_users
 from motoshop_api.tenants import get_all_tenants
@@ -129,7 +130,12 @@ def sync_users_from_supabase() -> int:
 
     Degrada en silencio: si Supabase no está configurado o falla, no toca la
     cache (queda lo cargado de YAML). Se llama al arrancar y tras cada mutación.
+
+    Env var SUPABASE_USERS_OVERRIDE=false desactiva la superposición para
+    permitir recovery de credenciales YAML sin perder la capacidad de sync.
     """
+    if os.getenv("SUPABASE_USERS_OVERRIDE", "true").lower() == "false":
+        return 0
     if not supabase_repo.is_configured():
         return 0
     try:

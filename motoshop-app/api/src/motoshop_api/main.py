@@ -91,21 +91,6 @@ async def lifespan(app: FastAPI):
     supa_count = sync_users_from_supabase()
     log.info("supabase_users_synced", count=supa_count)
 
-    # ── Recovery temporal de contraseña admin ────────────────────────
-    # Se dispara solo si RESET_ADMIN_PASSWORD está seteado. Útil para
-    # recuperar acceso cuando Supabase es la fuente de verdad y la
-    # contraseña se perdió. Remover después de usar.
-    reset_password = os.getenv("RESET_ADMIN_PASSWORD")
-    if reset_password:
-        try:
-            import bcrypt
-            from motoshop_api.users import supabase_repo
-            hashed = bcrypt.hashpw(reset_password.encode(), bcrypt.gensalt()).decode()
-            supabase_repo.update_user("admin", {"hashed_password": hashed})
-            log.info("admin_password_reset_via_env", username="admin")
-        except Exception as exc:  # noqa: BLE001
-            log.warning("admin_password_reset_failed", error=str(exc))
-
     # ── Cargar tenants ──────────────────────────────────────────────
     tenants_path = Path(settings.tenants_file_path)
     if not tenants_path.is_absolute():

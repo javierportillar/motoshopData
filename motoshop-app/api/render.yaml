@@ -41,9 +41,10 @@ services:
         value: motoshop-gold
       - key: R2_ENDPOINT
         value: https://4bd1502b7fa3f33d1d3c45ae2d252cfd.r2.cloudflarestorage.com
-      # Recovery: remove after admin login works again.
-      - key: RESET_ADMIN_PASSWORD
-        value: MotoShop2026!
+      # Recovery: skip Supabase user override so YAML credentials work.
+      # Remove after resetting the admin password via Supabase dashboard.
+      - key: SUPABASE_USERS_OVERRIDE
+        value: "false"
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID_MOTOSHOP
