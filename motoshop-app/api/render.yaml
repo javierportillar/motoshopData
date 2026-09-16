@@ -68,8 +68,8 @@ services:
       - key: EMBEDDING_MODEL
         value: text-embedding-3-small
       - key: ZEN_API_BASE
-        value: https://router.huggingface.co/v1
+        value: https://opencode.ai/zen/v1
       - key: ZEN_MODEL
-        value: XiaomiMiMo/MiMo-V2.5-Pro
+        value: mimo-v2.5-free
       - key: ZEN_MAX_TOKENS
         value: "8000"

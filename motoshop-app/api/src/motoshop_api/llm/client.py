@@ -169,7 +169,7 @@ class LLMClient:
                     timeout=min(TIMEOUT, remaining),
                 )
 
-                if resp.status_code in (408, 425, 429) or 500 <= resp.status_code <= 599:
+                if resp.status_code in (402, 403, 408, 425, 429) or 500 <= resp.status_code <= 599:
                     logger.warning(
                         "LLM transient HTTP %d from %s/%s",
                         resp.status_code,
