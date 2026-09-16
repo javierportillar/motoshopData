@@ -41,7 +41,9 @@ services:
         value: motoshop-gold
       - key: R2_ENDPOINT
         value: https://4bd1502b7fa3f33d1d3c45ae2d252cfd.r2.cloudflarestorage.com
-      # Deploy trigger bump: 2026-09-16
+      # Recovery: remove after admin login works again.
+      - key: RESET_ADMIN_PASSWORD
+        value: MotoShop2026!
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID_MOTOSHOP
