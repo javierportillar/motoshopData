@@ -5,7 +5,7 @@
 
 users:
   - username: admin
-    hashed_password: "$2b$12$DhXE6QI9vTTWTGQMeReKj.U1THsvV5M4Xmy8ngcC0sxUrXr8KX8Ri"
+    hashed_password: "$2b$12$YPcNMv4sO0WyIzMhfXyW3OzqbrskNe8AwFqkm9a7XElRaoGadRQr6"
     email: admin@motoshop.local
     role: admin
     tenants_allowed: [motoshop, masvital]
