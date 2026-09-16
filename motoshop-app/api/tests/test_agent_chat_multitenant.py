@@ -280,7 +280,7 @@ def test_chat_passes_authenticated_capability_context_to_executor(client, monkey
     app.dependency_overrides[get_current_user] = lambda: restricted
     monkeypatch.setattr("motoshop_api.llm.qa_chat.get_qa_chat", fake_factory)
     try:
-        response = client.post(
+        client.post(
             "/api/llm/qa/chat",
             headers={"X-Tenant": "motoshop"},
             json={"message": "¿Cómo van las ventas?"},
