@@ -1,9 +1,9 @@
-"""LLMClient — dual-API wrapper (OpenCode GO + Zen).
+"""LLMClient — dual-API wrapper (OpenCode GO + HuggingFace).
 
 GO: https://opencode.ai/zen/go/v1 (primario, qwen3.6-plus, sin reasoning)
-Zen: https://opencode.ai/zen/v1 (fallback, deepseek-v4-flash-free, necesita max_tokens alto)
+HF: https://router.huggingface.co/v1 (fallback, Qwen2.5-72B-Instruct)
 
-Dual-key: OPENCODE_API_KEY (GO) + OPENCODE_API_KEY_FALLBACK (Zen).
+Dual-key: OPENCODE_API_KEY (GO) + OPENCODE_API_KEY_FALLBACK (HF).
 Si el modelo primario falla, intenta el fallback con su propia API/key.
 """
 

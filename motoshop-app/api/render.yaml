@@ -68,8 +68,8 @@ services:
       - key: EMBEDDING_MODEL
         value: text-embedding-3-small
       - key: ZEN_API_BASE
-        value: https://opencode.ai/zen/v1
+        value: https://router.huggingface.co/v1
       - key: ZEN_MODEL
-        value: mimo-v2.5-free
+        value: Qwen/Qwen2.5-72B-Instruct
       - key: ZEN_MAX_TOKENS
         value: "8000"

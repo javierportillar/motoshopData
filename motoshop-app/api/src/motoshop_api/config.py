@@ -92,9 +92,9 @@ class Settings(BaseSettings):
     opencode_api_key: str = Field(default="")
     go_model: str = Field(default="qwen3.6-plus")
     go_max_tokens: int = Field(default=800)
-    zen_api_base: str = Field(default="https://opencode.ai/zen/v1")
+    zen_api_base: str = Field(default="https://router.huggingface.co/v1")
     opencode_api_key_fallback: str = Field(default="")
-    zen_model: str = Field(default="mimo-v2.5-free")
+    zen_model: str = Field(default="Qwen/Qwen2.5-72B-Instruct")
     zen_max_tokens: int = Field(default=8000)
     llm_timeout: int = Field(default=60, ge=1, le=120)
 
