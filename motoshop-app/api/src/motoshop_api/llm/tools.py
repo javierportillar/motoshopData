@@ -459,21 +459,27 @@ class ToolExecutor:
         return {**result, **self._purchase_metadata(rows[0][0])}
 
     def buscar_compras_por_proveedor(self, query: str, limit: int = 10) -> dict:
-        """Busca compras por nombre de proveedor (búsqueda parcial, case-insensitive)."""
+        """Busca compras por nombre de proveedor (búsqueda parcial, case-insensitive, multi-palabra)."""
         limit = max(1, min(int(limit), 50))
+        # Split query into words; each word must appear somewhere in the supplier name
+        words = [w.strip() for w in query.split() if w.strip()]
+        if not words:
+            return {"mensaje": "Proporcioná un nombre de proveedor para buscar.", **self._purchase_metadata(None)}
+        where_clauses = " AND ".join(["nombre_proveedor ILIKE ?"] * len(words))
+        params = [f"%{w}%" for w in words] + [limit]
         rows = self._con.execute(
-            """
+            f"""
             SELECT business_date, num_documento, cod_clase, nombre_proveedor,
                    nit_proveedor, total_factura, estado_documento
             FROM silver_fact_compras
-            WHERE nombre_proveedor ILIKE ?
+            WHERE {where_clauses}
               AND COALESCE(estado_documento, '') != 'A'
             ORDER BY business_date DESC,
                      TRY_CAST(num_documento AS BIGINT) DESC NULLS LAST,
                      num_documento DESC
             LIMIT ?
         """,
-            [f"%{query}%", limit],
+            params,
         ).fetchall()
         if not rows:
             return {
