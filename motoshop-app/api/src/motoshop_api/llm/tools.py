@@ -7,7 +7,7 @@ TOOL_DEFINITIONS exporta specs OpenAI-compatible para function calling.
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from motoshop_api.metrics.repo_duckdb import get_shared_connection
 
@@ -123,13 +123,15 @@ class ToolExecutor:
         }
 
     def get_top_skus(self, period: str = "day", limit: int = 10) -> dict:
-        """Top SKUs vendidos en el período (day, week, month)."""
+        """Top SKUs vendidos en el período (day, week, month, all)."""
         d = self._get_max_date()
         since = d.isoformat()
         if period == "week":
             since = (d - timedelta(days=7)).isoformat()
         elif period == "month":
             since = (d - timedelta(days=30)).isoformat()
+        elif period == "all":
+            since = "1900-01-01"
 
         limit = max(1, min(int(limit), 50))
         rows = self._con.execute(
@@ -346,7 +348,10 @@ class ToolExecutor:
         """
         ).fetchone()
         if not row:
-            return {"mensaje": "No hay compras registradas para este tenant."}
+            return {
+                "mensaje": "No hay compras registradas para este tenant.",
+                **self._purchase_metadata(None),
+            }
 
         items = self._con.execute(
             """
@@ -360,7 +365,7 @@ class ToolExecutor:
         ).fetchall()
 
         estado = str(row[6] or "").strip()
-        return {
+        result = {
             "fecha": row[0].isoformat(),
             "num_documento": row[1],
             "proveedor": row[4],
@@ -382,6 +387,7 @@ class ToolExecutor:
                 for i in items
             ],
         }
+        return {**result, **self._purchase_metadata(row[0])}
 
     def get_compras_recientes(self, limit: int = 5) -> dict:
         """Últimas N compras válidas (fecha, documento, proveedor, total, estado)."""
@@ -399,8 +405,11 @@ class ToolExecutor:
             [limit],
         ).fetchall()
         if not rows:
-            return {"mensaje": "No hay compras registradas para este tenant."}
-        return {
+            return {
+                "mensaje": "No hay compras registradas para este tenant.",
+                **self._purchase_metadata(None),
+            }
+        result = {
             "compras": [
                 {
                     "fecha": r[0].isoformat(),
@@ -412,6 +421,29 @@ class ToolExecutor:
                 for r in rows
             ],
             "count": len(rows),
+        }
+        return {**result, **self._purchase_metadata(rows[0][0])}
+
+    @staticmethod
+    def _purchase_metadata(cutoff: date | None) -> dict:
+        cutoff_at = cutoff.isoformat() if cutoff else None
+        observed_at = datetime.now(UTC).isoformat()
+        return {
+            "sources": [{
+                "source_id": "duckdb-purchases",
+                "domain": "purchases",
+                "kind": "duckdb",
+                "citation": "DuckDB purchases snapshot",
+                "cutoff_at": cutoff_at,
+                "observed_at": observed_at,
+                "status": "used",
+            }],
+            "freshness": [{
+                "domain": "purchases",
+                "cutoff_at": cutoff_at,
+                "observed_at": observed_at,
+                "status": "current" if cutoff_at else "unknown",
+            }],
         }
 
     def search_business_knowledge(self, query: str, limit: int = 5) -> dict:
@@ -766,11 +798,11 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_top_skus",
-            "description": "Top SKUs más vendidos en un período (day, week, month).",
+            "description": "Top SKUs más vendidos en un período (day, week, month, all). Use 'all' para ranking histórico completo desde el inicio de operaciones.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "period": {"type": "string", "enum": ["day", "week", "month"]},
+                    "period": {"type": "string", "enum": ["day", "week", "month", "all"]},
                     "limit": {"type": "integer", "default": 10},
                 },
                 "required": [],
