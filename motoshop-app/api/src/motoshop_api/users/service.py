@@ -138,7 +138,11 @@ def sync_users_from_supabase() -> int:
         logger.warning("sync de usuarios Supabase omitido: %s", exc)
         return 0
     for row in rows:
-        _users_cache[row["username"]] = row_to_user(row)
+        # Merge: Supabase añade usuarios nuevos, pero no sobreescribe los
+        # definidos en users.yaml. Esto permite recovery de credenciales YAML
+        # sin perder usuarios gestionados en Supabase.
+        if row["username"] not in _users_cache:
+            _users_cache[row["username"]] = row_to_user(row)
     return len(rows)
 
 
