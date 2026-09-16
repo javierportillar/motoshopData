@@ -29,6 +29,7 @@ PUBLIC_TOOL_NAMES = {
     "get_ultima_compra",
     "get_compras_recientes",
     "search_products",
+    "get_productos_comportamiento",
     "get_top_clientes",
     "get_inventario_por_bodega",
     "get_abc_xyz_distribution",
@@ -481,6 +482,7 @@ class ToolExecutor:
         """Busca productos del catálogo por nombre, código o proveedor.
 
         Devuelve código, nombre, precio de venta, costo, stock, proveedor y estado.
+        NO la uses para auditar comportamiento de productos — usa get_productos_comportamiento.
         """
         limit = max(1, min(int(limit), 30))
         query = str(query or "").strip()
@@ -513,6 +515,118 @@ class ToolExecutor:
                 for r in rows
             ],
             "total": len(rows),
+        }
+
+    def get_productos_comportamiento(self, skus: list[str], period: str = "month") -> dict:
+        """Analiza el comportamiento de una lista de SKUs: ventas, stock, demanda y alertas.
+
+        Usala para auditar compras o responder '¿cómo se comportan estos productos?',
+        '¿se vendieron?', '¿tenían stock antes de comprarlos?'.
+        Recibe una lista de códigos de producto y devuelve ventas, stock actual,
+        alertas de quiebre y clasificación ABC para cada uno.
+        """
+        if not skus:
+            return {"productos": []}
+        skus = [str(s).strip() for s in skus if s][:20]  # max 20 SKUs
+        period = str(period or "month").lower().strip()
+        d = self._get_max_date()
+        if d is None:
+            return {"productos": [], "mensaje": "No hay datos disponibles"}
+
+        if period == "day":
+            since = d.isoformat()
+        elif period == "week":
+            since = (d - timedelta(days=7)).isoformat()
+        elif period == "all":
+            since = "1900-01-01"
+        else:  # month
+            since = d.replace(day=1).isoformat()
+
+        placeholders = ",".join(["?" for _ in skus])
+
+        # Ventas por SKU
+        ventas_rows = self._con.execute(
+            f"""
+            SELECT cod_producto, ROUND(SUM(valor_total),2) AS valor, ROUND(SUM(cantidad_total),2) AS cantidad,
+                   COUNT(*) AS num_ventas
+            FROM gold_mart_ventas_diarias_sku
+            WHERE cod_producto IN ({placeholders}) AND business_date >= ?
+            GROUP BY cod_producto
+        """,
+            skus + [since],
+        ).fetchall()
+        ventas_map = {r[0]: {"valor_vendido": float(r[1] or 0), "unidades_vendidas": float(r[2] or 0), "num_ventas": int(r[3])} for r in ventas_rows}
+
+        # Stock actual
+        stock_rows = self._con.execute(
+            f"""
+            SELECT cod_producto, cantidad_actual
+            FROM gold_mart_inventario_actual
+            WHERE cod_producto IN ({placeholders})
+        """,
+            skus,
+        ).fetchall()
+        stock_map = {r[0]: float(r[1] or 0) for r in stock_rows}
+
+        # Info del catálogo
+        cat_rows = self._con.execute(
+            f"""
+            SELECT cod_producto, nombre_producto, precio_venta_sin_iva, costo_ultima_compra, existencia
+            FROM silver_dim_producto
+            WHERE cod_producto IN ({placeholders})
+        """,
+            skus,
+        ).fetchall()
+        cat_map = {r[0]: {"nombre": r[1], "precio_venta": float(r[2] or 0), "costo": float(r[3] or 0), "stock_catalogo": float(r[4] or 0)} for r in cat_rows}
+
+        # Alertas de quiebre
+        alert_rows = self._con.execute(
+            f"""
+            SELECT sku, dias_hasta_quiebre, urgencia
+            FROM gold_alertas_quiebre
+            WHERE sku IN ({placeholders})
+        """,
+            skus,
+        ).fetchall()
+        alert_map = {r[0]: {"dias_quiebre": int(r[1] or 0), "urgencia": r[2]} for r in alert_rows}
+
+        # Dormidos
+        dorm_rows = self._con.execute(
+            f"""
+            SELECT cod_producto, dias_sin_venta
+            FROM gold_mart_productos_dormidos
+            WHERE cod_producto IN ({placeholders}) AND dias_sin_venta < 5000
+        """,
+            skus,
+        ).fetchall()
+        dorm_map = {r[0]: int(r[1] or 0) for r in dorm_rows}
+
+        productos = []
+        for sku in skus:
+            cat = cat_map.get(sku, {})
+            v = ventas_map.get(sku, {})
+            s = stock_map.get(sku, cat.get("stock_catalogo", 0))
+            a = alert_map.get(sku)
+            dorm = dorm_map.get(sku)
+
+            producto = {
+                "codigo": sku,
+                "nombre": cat.get("nombre", "Desconocido"),
+                "precio_venta": cat.get("precio_venta", 0),
+                "costo": cat.get("costo", 0),
+                "stock_actual": s,
+                "valor_vendido_periodo": v.get("valor_vendido", 0),
+                "unidades_vendidas_periodo": v.get("unidades_vendidas", 0),
+                "num_ventas_periodo": v.get("num_ventas", 0),
+                "dias_sin_venta": dorm,
+                "alerta_quiebre": a,
+            }
+            productos.append(producto)
+
+        return {
+            "period": period,
+            "productos": productos,
+            "total": len(productos),
         }
 
     def get_top_clientes(self, period: str = "month", limit: int = 10) -> dict:
@@ -1152,7 +1266,8 @@ TOOL_DEFINITIONS = [
                 "Busca productos del catálogo por nombre, código SKU o proveedor. "
                 "Devuelve precio, costo, stock, proveedor y estado. "
                 "Usala para preguntas como '¿tenemos filtros de aceite?', "
-                "'¿cuál es el precio del SKU X?', '¿qué productos nos provee Y?'."
+                "'¿cuál es el precio del SKU X?', '¿qué productos nos provee Y?'. "
+                "NO la uses para auditar comportamiento de productos — usa get_productos_comportamiento."
             ),
             "parameters": {
                 "type": "object",
@@ -1161,6 +1276,32 @@ TOOL_DEFINITIONS = [
                     "limit": {"type": "integer", "default": 10},
                 },
                 "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_productos_comportamiento",
+            "description": (
+                "Analiza el comportamiento de una lista de SKUs: ventas, stock, demanda y alertas de quiebre. "
+                "Usala para auditar compras ('¿cómo se comportan estos productos?', '¿se vendieron?', "
+                "'¿tenían stock antes de comprarlos?'). "
+                "Recibe una lista de códigos de producto (máximo 20) y devuelve para cada uno: "
+                "valor vendido, unidades vendidas, stock actual, alertas de quiebre y días sin venta. "
+                "Usa esta tool en vez de llamar search_products múltiples veces."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skus": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Lista de códigos de producto a analizar (máximo 20).",
+                    },
+                    "period": {"type": "string", "enum": ["day", "week", "month", "all"], "default": "month"},
+                },
+                "required": ["skus"],
             },
         },
     },

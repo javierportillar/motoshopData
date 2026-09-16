@@ -30,7 +30,7 @@ ZEN_API_KEY = settings.opencode_api_key_fallback
 ZEN_MODEL = settings.zen_model
 ZEN_MAX_TOKENS = settings.zen_max_tokens
 
-LLM_REQUEST_DEADLINE_SECONDS = 30
+LLM_REQUEST_DEADLINE_SECONDS = 60
 TIMEOUT = min(settings.llm_timeout, LLM_REQUEST_DEADLINE_SECONDS)
 
 _client_singleton: LLMClient | None = None

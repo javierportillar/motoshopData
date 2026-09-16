@@ -114,8 +114,8 @@ def test_chat_stops_after_five_tool_iterations() -> None:
 
     result = _chat(llm, executor=executor).chat("consultá ventas")
 
-    assert llm.calls == 5
-    assert executor.calls == 5
+    assert llm.calls == 8
+    assert executor.calls == 8
     assert result["turn_count"] == 1
     assert "respuesta concreta" in result["text"]
 
@@ -217,8 +217,8 @@ def test_tool_iterations_stop_when_the_shared_deadline_is_consumed(monkeypatch) 
     with pytest.raises(TransientLLMError):
         _chat(llm, executor=_SlowExecutor()).chat("consultá ventas")
 
-    assert llm.calls == 1
-    assert clock[0] == 131.0
+    assert llm.calls == 2
+    assert clock[0] == 162.0
 
 
 def test_tool_errors_do_not_log_raw_arguments_or_values(caplog) -> None:

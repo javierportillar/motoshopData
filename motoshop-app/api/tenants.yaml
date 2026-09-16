@@ -39,7 +39,7 @@ tenants:
       business_description: "Repuestos y accesorios para moto en Cali, Colombia. Asistente transversal que cubre ventas, inventario, compras a proveedores y reportes del negocio."
       locale: "es-CO"
       currency: "COP"
-      enabled_tools: [get_kpis_today, get_kpis_month, get_top_skus, get_dormidos, get_alerts_by_urgency, get_vendedor_performance, get_inventory_value, compare_periods, get_abc_distribution, get_forecast_summary, get_data_freshness, search_business_knowledge, get_ultima_compra, get_compras_recientes, search_products, get_top_clientes, get_inventario_por_bodega, get_abc_xyz_distribution, get_cohortes_clientes, get_drift_alerts, generate_report]
+      enabled_tools: [get_kpis_today, get_kpis_month, get_top_skus, get_dormidos, get_alerts_by_urgency, get_vendedor_performance, get_inventory_value, compare_periods, get_abc_distribution, get_forecast_summary, get_data_freshness, search_business_knowledge, get_ultima_compra, get_compras_recientes, search_products, get_productos_comportamiento, get_top_clientes, get_inventario_por_bodega, get_abc_xyz_distribution, get_cohortes_clientes, get_drift_alerts, generate_report]
       knowledge_namespace: "motoshop"
 
   - id: masvital

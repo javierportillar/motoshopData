@@ -140,7 +140,7 @@ def test_provider_deadline_is_capped_for_a_later_caller_deadline(monkeypatch) ->
     with pytest.raises(TransientLLMError):
         client.complete("hello", deadline=200.0)
 
-    assert timeouts == [30.0, 10.0]
+    assert timeouts == [60.0, 40.0]
 
 
 def test_tool_calls_stop_when_a_prior_call_consumes_the_shared_deadline(monkeypatch) -> None:
@@ -166,7 +166,7 @@ def test_tool_calls_stop_when_a_prior_call_consumes_the_shared_deadline(monkeypa
 
         def run(self, name, args):
             self.calls += 1
-            clock[0] += 31
+            clock[0] += 61  # exceeds 60s deadline
             return {"sources": []}
 
     monkeypatch.setattr(qa_module.time, "monotonic", lambda: clock[0])

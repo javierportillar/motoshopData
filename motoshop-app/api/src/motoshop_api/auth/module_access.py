@@ -39,6 +39,7 @@ ASSISTANT_TOOL_DOMAINS: dict[str, frozenset[str]] = {
     "get_ultima_compra": frozenset({"purchases"}),
     "get_compras_recientes": frozenset({"purchases"}),
     "search_products": frozenset({"inventory"}),
+    "get_productos_comportamiento": frozenset({"inventory", "sales"}),
     "get_top_clientes": frozenset({"sales"}),
     "get_inventario_por_bodega": frozenset({"inventory"}),
     "get_abc_xyz_distribution": frozenset({"abc"}),
