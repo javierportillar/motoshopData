@@ -10,7 +10,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from motoshop_api.auth.tenant_dep import TenantContext
-from motoshop_api.llm.client import LLMDependencyError
+from motoshop_api.llm.client import (
+    LLM_REQUEST_DEADLINE_SECONDS,
+    LLMDependencyError,
+    TransientLLMError,
+)
 from motoshop_api.llm.contracts import AssistantEnvelope, Attachment, Freshness, SourceEvidence
 from motoshop_api.llm.registry import resolve_entity_ref
 from motoshop_api.tenants import get_tenant_config
@@ -115,14 +119,18 @@ def _freshness(value: Any) -> dict[str, Any] | None:
     return Freshness.model_validate(value).model_dump()
 
 
-def _entity_references(value: Any, tenant_id: str, user_id: str) -> list[dict[str, Any]]:
+def _entity_references(
+    value: Any, tenant_id: str, user_id: str, context: TenantContext | None = None
+) -> list[dict[str, Any]]:
     refs: list[dict[str, Any]] = []
     for item in value if isinstance(value, list) else []:
         if not isinstance(item, dict) or "route_key" not in item:
             continue
+        if context is not None and not context.allows(str(item.get("domain", ""))):
+            continue
         try:
             ref = resolve_entity_ref(
-                TenantContext(tenant_id, user_id, "", True, frozenset({item["domain"]})),
+                context or TenantContext(tenant_id, user_id, "", True, frozenset({item["domain"]})),
                 entity_type=item["entity_type"], entity_id=item["entity_id"],
                 label=item["label"], domain=item["domain"], route_key=item["route_key"],
             )
@@ -162,7 +170,10 @@ def _persisted_envelope(
     ).model_dump()
 
 
-def get_qa_chat(tenant: str = "motoshop", user_id: str = "anonymous", repository=None):
+def get_qa_chat(
+    tenant: str = "motoshop", user_id: str = "anonymous", repository=None,
+    tenant_context: TenantContext | None = None,
+):
     from motoshop_api.llm.client import get_llm_client
     from motoshop_api.llm.conversations.repository import get_conversation_repository
     from motoshop_api.llm.tools import TOOL_DEFINITIONS, ToolExecutor
@@ -174,14 +185,23 @@ def get_qa_chat(tenant: str = "motoshop", user_id: str = "anonymous", repository
         for definition in TOOL_DEFINITIONS
         if enabled is None or definition["function"]["name"] in enabled
     ]
+    if tenant_context is not None:
+        from motoshop_api.auth.module_access import assistant_tool_allowed
+
+        tool_defs = [
+            definition for definition in tool_defs
+            if assistant_tool_allowed(definition["function"]["name"], tenant_context.allowed_domains)
+        ]
+    executor = ToolExecutor(tenant=tenant, user_id=user_id, tenant_context=tenant_context)
     return QAChat(
         get_llm_client(),
         _conversation_mgr,
-        ToolExecutor(tenant=tenant, user_id=user_id),
+        executor,
         tool_defs,
         tenant_id=tenant,
         user_id=user_id,
         repository=repository or get_conversation_repository(),
+        tenant_context=tenant_context,
     )
 
 
@@ -196,6 +216,7 @@ class QAChat:
         tenant_id: str = "motoshop",
         user_id: str = "anonymous",
         repository=None,
+        tenant_context: TenantContext | None = None,
     ):
         from motoshop_api.llm.conversations.repository import get_conversation_repository
 
@@ -205,6 +226,7 @@ class QAChat:
         self.tool_defs = tool_defs
         self.tenant_id = tenant_id
         self.user_id = user_id
+        self.tenant_context = tenant_context
         self.repository = repository or get_conversation_repository()
 
     def _conversation(self, conversation_id: str | None) -> tuple[str, dict, list[dict]]:
@@ -302,11 +324,23 @@ class QAChat:
                 llm_kwargs["session_id"] = cid
 
         started = time.monotonic()
+        deadline = started + LLM_REQUEST_DEADLINE_SECONDS
+        with suppress(Exception):
+            import inspect
+            sig = inspect.signature(self.llm.complete_with_tools)
+            if "deadline" in sig.parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            ):
+                llm_kwargs["deadline"] = deadline
         try:
             for _ in range(MAX_TOOL_ITERATIONS):
+                if time.monotonic() >= deadline:
+                    raise TransientLLMError("LLM request deadline exceeded")
                 result = self.llm.complete_with_tools(
                     messages, self.tool_defs, **llm_kwargs
                 )
+                if time.monotonic() >= deadline:
+                    raise TransientLLMError("LLM request deadline exceeded")
                 calls = result.get("tool_calls", [])
                 if not calls:
                     final_text = result.get("text", "")
@@ -343,7 +377,8 @@ class QAChat:
                             if normalized:
                                 freshness.append(normalized)
                         entity_refs.extend(_entity_references(
-                            tool_result.get("entity_refs"), self.tenant_id, self.user_id
+                            tool_result.get("entity_refs"), self.tenant_id, self.user_id,
+                            self.tenant_context,
                         ))
                         if tool_result.get("download_url") and _explicit_file_request(message):
                             attachments.append(_attachment(tool_result))

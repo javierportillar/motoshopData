@@ -74,6 +74,12 @@ async def download_report(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No tenés acceso a este reporte",
         )
+    if rec.user_id != user.username:
+        logger.warning("report_download_denied owner_mismatch tenant=%s", rec.tenant)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tenés acceso a este reporte",
+        )
 
     safe_ascii_name = quote(rec.filename)
     headers = {

@@ -237,8 +237,9 @@ def test_chat_http_endpoint_forwards_authenticated_tenant_and_user(
                 "data_as_of": None,
             }
 
-    def fake_factory(tenant, user_id):
-        captured.update(tenant=tenant, user_id=user_id)
+    def fake_factory(**kwargs):
+        context = kwargs["tenant_context"]
+        captured.update(tenant=context.tenant_id, user_id=context.user_id)
         return FakeChat()
 
     monkeypatch.setattr("motoshop_api.llm.qa_chat.get_qa_chat", fake_factory)
@@ -251,6 +252,70 @@ def test_chat_http_endpoint_forwards_authenticated_tenant_and_user(
     assert captured == {"tenant": "masvital", "user_id": "admin"}
 
 
+
+def test_chat_passes_authenticated_capability_context_to_executor(client, monkeypatch):
+    from motoshop_api.auth.deps import get_current_user
+    from motoshop_api.auth.users import User
+    from motoshop_api.main import app
+
+    captured = {}
+
+    class FakeChat:
+        def chat(self, message, conversation_id, request_id):
+            return {"text": "ok", "conversation_id": "c1", "turn_count": 1, "tools_used": []}
+
+    def fake_factory(**kwargs):
+        captured.update(kwargs)
+        return FakeChat()
+
+    restricted = User(
+        username="sales-only",
+        hashed_password="hash",
+        email="sales-only@test.com",
+        role="vendedor",
+        tenants_allowed=["motoshop"],
+        allowed_modules=["chat-ia", "ventas-summary"],
+        source="supabase",
+    )
+    app.dependency_overrides[get_current_user] = lambda: restricted
+    monkeypatch.setattr("motoshop_api.llm.qa_chat.get_qa_chat", fake_factory)
+    try:
+        response = client.post(
+            "/api/llm/qa/chat",
+            headers={"X-Tenant": "motoshop"},
+            json={"message": "¿Cómo van las ventas?"},
+        )
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    context = captured["tenant_context"]
+    assert context.user_id == "sales-only"
+    assert context.tenant_id == "motoshop"
+    assert context.allowed_domains == frozenset({"sales", "purchases"})
+
+
+def test_assistant_rejection_paths_use_problem_details(client, admin_token):
+    invalid = client.post(
+        "/api/llm/qa/chat",
+        headers={"Authorization": f"Bearer {admin_token}", "X-Request-ID": "validation-1"},
+        json={"message": "x" * 501},
+    )
+    assert invalid.status_code == 422
+    assert invalid.headers["content-type"] == "application/problem+json"
+    assert set(("type", "title", "status", "detail", "request_id")) <= invalid.json().keys()
+
+    unauthenticated = client.post("/api/llm/qa/chat", json={"message": "hola"})
+    assert unauthenticated.status_code == 401
+    assert unauthenticated.headers["content-type"] == "application/problem+json"
+
+    missing_conversation = client.get(
+        "/api/llm/chat/conversations/not-found/messages",
+        headers={"Authorization": f"Bearer {admin_token}", "X-Tenant": "motoshop"},
+    )
+    assert missing_conversation.status_code == 404
+    assert missing_conversation.headers["content-type"] == "application/problem+json"
+
+
 def test_chat_http_endpoint_maps_provider_outage_to_503(client, admin_token, monkeypatch):
     from motoshop_api.llm.client import TransientLLMError
 
@@ -259,7 +324,7 @@ def test_chat_http_endpoint_maps_provider_outage_to_503(client, admin_token, mon
             raise TransientLLMError("provider timeout")
 
     monkeypatch.setattr(
-        "motoshop_api.llm.qa_chat.get_qa_chat", lambda tenant, user_id: FailingChat()
+        "motoshop_api.llm.qa_chat.get_qa_chat", lambda **_: FailingChat()
     )
     response = client.post(
         "/api/llm/qa/chat",
@@ -268,6 +333,7 @@ def test_chat_http_endpoint_maps_provider_outage_to_503(client, admin_token, mon
     )
     assert response.status_code == 503
     assert response.headers["Retry-After"] == "30"
+    assert response.headers["content-type"] == "application/problem+json"
 
 
 def test_chat_http_endpoint_maps_provider_rejection_to_502(client, admin_token, monkeypatch):

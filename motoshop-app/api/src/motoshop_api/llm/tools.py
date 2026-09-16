@@ -36,7 +36,13 @@ PUBLIC_TOOL_NAMES = {
 class ToolExecutor:
     """Ejecuta tools contra DuckDB."""
 
-    def __init__(self, duckdb_path: str | None = None, tenant: str = "motoshop", user_id: str = "agent"):
+    def __init__(
+        self,
+        duckdb_path: str | None = None,
+        tenant: str = "motoshop",
+        user_id: str = "agent",
+        tenant_context=None,
+    ):
         from motoshop_api.metrics.repo_duckdb import _make_db_path
 
         # Nunca heredar DUCKDB_PATH global: en producción rompería el aislamiento.
@@ -54,6 +60,15 @@ class ToolExecutor:
             else PUBLIC_TOOL_NAMES
         )
         self._allowed_tools = PUBLIC_TOOL_NAMES & configured
+        if tenant_context is not None:
+            self.set_capability_context(tenant_context.allowed_domains)
+
+    def set_capability_context(self, allowed_domains: set[str] | frozenset[str]) -> None:
+        from motoshop_api.auth.module_access import assistant_tool_allowed
+
+        self._allowed_tools = {
+            name for name in self._allowed_tools if assistant_tool_allowed(name, allowed_domains)
+        }
 
     def _get_max_date(self) -> date:
         r = self._con.execute(
@@ -403,6 +418,7 @@ class ToolExecutor:
         resultado para que el agente lo comunique al usuario.
         """
         from datetime import datetime
+
         from motoshop_api.reports.generator import (
             ReportData,
             generate_excel,
@@ -584,7 +600,12 @@ class ToolExecutor:
         try:
             return method(**args)
         except Exception as exc:
-            logger.warning("tool_error: %s(%s) → %s", name, args, exc)
+            logger.warning(
+                "tool_error tool=%s argument_keys=%s error_type=%s",
+                name,
+                sorted(str(key) for key in args),
+                type(exc).__name__,
+            )
             return {"error": str(exc)}
 
     def close(self):

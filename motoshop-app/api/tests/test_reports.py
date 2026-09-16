@@ -35,6 +35,14 @@ def tenant_users():
             tenants_allowed=["motoshop"],
             source="supabase",
         ),
+        "other_moto_user": User(
+            username="other_moto_user",
+            hashed_password=hash_password("moto456"),
+            email="other-moto@test.com",
+            role="gerente",
+            tenants_allowed=["motoshop"],
+            source="supabase",
+        ),
         "vital_user": User(
             username="vital_user",
             hashed_password=hash_password("vital123"),
@@ -221,7 +229,7 @@ def test_tool_executor_generate_report_all_formats():
 # ── Endpoint de descarga: autenticación y aislamiento por tenant ──────────────
 
 
-def _save_report(tmp_path, monkeypatch, tenant="motoshop"):
+def _save_report(tmp_path, monkeypatch, tenant="motoshop", user_id="moto_user"):
     storage = ReportStorage(base_dir=tmp_path)
     monkeypatch.setattr("motoshop_api.reports.router.get_report_storage", lambda: storage)
     return storage.save_report(
@@ -229,7 +237,7 @@ def _save_report(tmp_path, monkeypatch, tenant="motoshop"):
         "reporte_test.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         tenant,
-        "moto_user",
+        user_id,
     )
 
 
@@ -270,9 +278,21 @@ def test_download_cross_tenant_forbidden(tmp_path, monkeypatch, tenant_users):
     assert resp.status_code == 403
 
 
+
+def test_download_same_tenant_different_user_forbidden(tmp_path, monkeypatch, tenant_users):
+    rec = _save_report(tmp_path, monkeypatch, tenant="motoshop")
+    client = TestClient(app)
+    token = _login(client, "other_moto_user", "moto456")
+    resp = client.get(
+        f"/api/reports/download/{rec.report_id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert resp.status_code == 403
+    assert resp.headers["content-type"] == "application/problem+json"
+
+
 def test_download_with_query_token(tmp_path, monkeypatch, tenant_users):
     """El fallback ?token= (descarga directa en navegador) también funciona."""
-    rec = _save_report(tmp_path, monkeypatch, tenant="masvital")
+    rec = _save_report(tmp_path, monkeypatch, tenant="masvital", user_id="vital_user")
     client = TestClient(app)
     token = _login(client, "vital_user", "vital123")
     resp = client.get(f"/api/reports/download/{rec.report_id}?token={token}")

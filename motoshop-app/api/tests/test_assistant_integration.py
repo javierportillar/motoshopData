@@ -102,7 +102,7 @@ def test_chat_envelope_round_trips_through_history_and_remains_tenant_scoped(
     repository = InMemoryConversationRepository()
     monkeypatch.setattr(
         "motoshop_api.llm.qa_chat.get_qa_chat",
-        lambda tenant, user_id: _chat(repository),
+        lambda **_: _chat(repository),
     )
     monkeypatch.setattr(
         "motoshop_api.llm.conversations.repository.get_conversation_repository",
@@ -148,7 +148,7 @@ def test_explicit_report_attachment_round_trips_in_sqlite_history(
     repository = SQLiteConversationRepository(str(tmp_path / "assistant.sqlite3"))
     monkeypatch.setattr(
         "motoshop_api.llm.qa_chat.get_qa_chat",
-        lambda tenant, user_id: _chat(repository, _FakeExecutor(with_attachment=True)),
+        lambda **_: _chat(repository, _FakeExecutor(with_attachment=True)),
     )
     monkeypatch.setattr(
         "motoshop_api.llm.conversations.repository.get_conversation_repository",

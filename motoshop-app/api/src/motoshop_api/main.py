@@ -9,7 +9,8 @@ from pathlib import Path
 
 import sqlalchemy.exc
 import structlog
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
@@ -33,6 +34,7 @@ from motoshop_api.health.router import router as health_router
 from motoshop_api.metrics.router import router as metrics_router
 from motoshop_api.metrics.repo_duckdb import DuckDBNotReadyError
 from motoshop_api.llm.router import briefing_router, router as llm_router
+from motoshop_api.llm.contracts import problem_response
 from motoshop_api.push.router import router as push_router
 from motoshop_api.forecast.router import router as forecast_router
 from motoshop_api.admin.router import router as admin_router
@@ -118,6 +120,38 @@ app = FastAPI(
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+def _assistant_request_id(request: Request) -> str:
+    return getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID", "unknown")
+
+
+def _assistant_path(request: Request) -> bool:
+    return request.url.path.startswith(("/api/llm/qa/", "/api/llm/chat/", "/api/reports/"))
+
+
+@app.exception_handler(RequestValidationError)
+async def assistant_validation_handler(request: Request, _exc: RequestValidationError):
+    if not _assistant_path(request):
+        return JSONResponse(status_code=422, content={"detail": "Invalid request"})
+    return problem_response(
+        422, "https://api.motoshop/errors/validation", "Request validation failed.",
+        _assistant_request_id(request),
+    )
+
+
+@app.exception_handler(HTTPException)
+async def assistant_http_exception_handler(request: Request, exc: HTTPException):
+    if not _assistant_path(request):
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers)
+    detail = exc.detail if isinstance(exc.detail, str) else "Request rejected."
+    response = problem_response(
+        exc.status_code, f"https://api.motoshop/errors/http-{exc.status_code}", detail,
+        _assistant_request_id(request),
+    )
+    if exc.headers:
+        response.headers.update(exc.headers)
+    return response
 
 # ── DuckDB re-descargando desde R2 → 503 'loading' (no 500) ──────────
 # Tras cada deploy/reinicio, Render borra el disco efímero y {tenant}_gold.duckdb
