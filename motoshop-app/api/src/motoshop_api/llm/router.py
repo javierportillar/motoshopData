@@ -301,11 +301,17 @@ class ConversationResponse(BaseModel):
 class MessageResponse(BaseModel):
     id: str
     conversation_id: str
+    tenant_id: str
+    user_id: str
     role: str
     content: str
     created_at: str
-    tools_used: list[str] = []
-    sources: list[dict] = []
+    status: str = "success"
+    tools_used: list[str] = Field(default_factory=list)
+    sources: list[dict] = Field(default_factory=list)
+    freshness: list[dict] = Field(default_factory=list)
+    entity_refs: list[dict] = Field(default_factory=list)
+    attachments: list[dict] = Field(default_factory=list)
 
 
 class ConversationPatch(BaseModel):
@@ -337,7 +343,8 @@ async def qa_chat(
         raise HTTPException(status_code=404, detail="Conversación no encontrada") from None
     except TransientLLMError:
         response = problem_response(
-            503, "https://api.motoshop/errors/provider-unavailable",
+            503,
+            "https://api.motoshop/errors/provider-unavailable",
             "El proveedor de inteligencia no está disponible temporalmente.",
             body.request_id or request.headers.get("X-Request-ID", "unknown"),
         )
@@ -345,16 +352,22 @@ async def qa_chat(
         return response
     except PermanentLLMError:
         return problem_response(
-            502, "https://api.motoshop/errors/provider-rejected",
+            502,
+            "https://api.motoshop/errors/provider-rejected",
             "El proveedor de inteligencia rechazó la consulta.",
             body.request_id or request.headers.get("X-Request-ID", "unknown"),
         )
     return AssistantEnvelope(
-        status=result.get("status", "complete"), tenant_id=result.get("tenant_id", tenant),
-        text=result.get("text", ""), conversation_id=result.get("conversation_id", ""),
-        turn_count=result.get("turn_count", 0), tools_used=result.get("tools_used", []),
-        sources=result.get("sources", []), freshness=result.get("freshness", []),
-        entity_refs=result.get("entity_refs", []), attachments=result.get("attachments", []),
+        status=result.get("status", "complete"),
+        tenant_id=result.get("tenant_id", tenant),
+        text=result.get("text", ""),
+        conversation_id=result.get("conversation_id", ""),
+        turn_count=result.get("turn_count", 0),
+        tools_used=result.get("tools_used", []),
+        sources=result.get("sources", []),
+        freshness=result.get("freshness", []),
+        entity_refs=result.get("entity_refs", []),
+        attachments=result.get("attachments", []),
     )
 
 
