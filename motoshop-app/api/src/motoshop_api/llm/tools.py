@@ -1,4 +1,4 @@
-"""Tools registry — 10 tools tipadas para Q&A chat sobre DuckDB.
+"""Tools registry — tools tipadas para Q&A chat sobre DuckDB.
 
 Cada tool toma args Pydantic, ejecuta query DuckDB, devuelve dict JSON.
 TOOL_DEFINITIONS exporta specs OpenAI-compatible para function calling.
@@ -26,6 +26,8 @@ PUBLIC_TOOL_NAMES = {
     "get_forecast_summary",
     "get_data_freshness",
     "search_business_knowledge",
+    "get_ultima_compra",
+    "get_compras_recientes",
     "generate_report",
 }
 
@@ -51,6 +53,7 @@ class ToolExecutor:
         self.user_id = user_id
         self.duckdb_path = path
         self._con = get_shared_connection(path)
+        self._assistant_enabled = True
         from motoshop_api.tenants import get_tenant_config
 
         config = get_tenant_config(tenant)
@@ -61,6 +64,7 @@ class ToolExecutor:
         )
         self._allowed_tools = PUBLIC_TOOL_NAMES & configured
         if tenant_context is not None:
+            self._assistant_enabled = tenant_context.assistant_enabled
             self.set_capability_context(tenant_context.allowed_domains)
 
     def set_capability_context(self, allowed_domains: set[str] | frozenset[str]) -> None:
@@ -311,6 +315,7 @@ class ToolExecutor:
         tables = (
             ("gold_mart_ventas_diarias_sku", "business_date"),
             ("gold_mart_inventario_actual", "snapshot_date"),
+            ("silver_fact_compras", "business_date"),
         )
         result: dict[str, str | None] = {}
         for table, col in tables:
@@ -324,6 +329,89 @@ class ToolExecutor:
             "tenant": self.tenant,
             "fecha_maxima": max(dates) if dates else None,
             "por_tabla": result,
+        }
+
+    def get_ultima_compra(self) -> dict:
+        """Última compra válida, con proveedor, monto, estado y productos."""
+        row = self._con.execute(
+            """
+            SELECT business_date, num_documento, cod_clase, nit_proveedor,
+                   nombre_proveedor, total_factura, estado_documento
+            FROM silver_fact_compras
+            WHERE COALESCE(estado_documento, '') != 'A'
+            ORDER BY business_date DESC,
+                     TRY_CAST(num_documento AS BIGINT) DESC NULLS LAST,
+                     num_documento DESC
+            LIMIT 1
+        """
+        ).fetchone()
+        if not row:
+            return {"mensaje": "No hay compras registradas para este tenant."}
+
+        items = self._con.execute(
+            """
+            SELECT cod_producto, nombre_detalle, cantidad, total_detalle
+            FROM silver_fact_compras_detalle
+            WHERE num_documento = ? AND cod_clase = ?
+            ORDER BY total_detalle DESC
+            LIMIT 15
+        """,
+            [row[1], row[2]],
+        ).fetchall()
+
+        estado = str(row[6] or "").strip()
+        return {
+            "fecha": row[0].isoformat(),
+            "num_documento": row[1],
+            "proveedor": row[4],
+            "nit_proveedor": row[3],
+            "total_factura": float(row[5] or 0),
+            "estado_documento": estado,
+            "nota_estado": (
+                "El documento figura con estado 'A' (posiblemente anulada); verificá con contabilidad."
+                if estado == "A"
+                else None
+            ),
+            "productos": [
+                {
+                    "codigo": i[0],
+                    "nombre": i[1],
+                    "cantidad": float(i[2] or 0),
+                    "valor_total": float(i[3] or 0),
+                }
+                for i in items
+            ],
+        }
+
+    def get_compras_recientes(self, limit: int = 5) -> dict:
+        """Últimas N compras válidas (fecha, documento, proveedor, total, estado)."""
+        limit = max(1, min(int(limit), 20))
+        rows = self._con.execute(
+            """
+            SELECT business_date, num_documento, nombre_proveedor, total_factura, estado_documento
+            FROM silver_fact_compras
+            WHERE COALESCE(estado_documento, '') != 'A'
+            ORDER BY business_date DESC,
+                     TRY_CAST(num_documento AS BIGINT) DESC NULLS LAST,
+                     num_documento DESC
+            LIMIT ?
+        """,
+            [limit],
+        ).fetchall()
+        if not rows:
+            return {"mensaje": "No hay compras registradas para este tenant."}
+        return {
+            "compras": [
+                {
+                    "fecha": r[0].isoformat(),
+                    "num_documento": r[1],
+                    "proveedor": r[2],
+                    "total_factura": float(r[3] or 0),
+                    "estado_documento": str(r[4] or "").strip(),
+                }
+                for r in rows
+            ],
+            "count": len(rows),
         }
 
     def search_business_knowledge(self, query: str, limit: int = 5) -> dict:
@@ -385,7 +473,7 @@ class ToolExecutor:
             r = self._con.execute(
                 "SELECT MIN(business_date) FROM gold_mart_ventas_diarias_sku"
             ).fetchone()
-            since = (r[0] if r and r[0] else max_date - timedelta(days=365 * 5))
+            since = r[0] if r and r[0] else max_date - timedelta(days=365 * 5)
             label = f"{since.isoformat()} a {until.isoformat()} (histórico completo)"
             return since, until, label
 
@@ -444,7 +532,12 @@ class ToolExecutor:
             fmt = "excel"
 
         report_type = str(report_type or "ventas_resumen").lower().strip()
-        if report_type not in ("ventas_resumen", "top_productos", "inventario_critico", "productos_dormidos"):
+        if report_type not in (
+            "ventas_resumen",
+            "top_productos",
+            "inventario_critico",
+            "productos_dormidos",
+        ):
             report_type = "top_productos"
 
         # Solo los reportes de ventas tienen ventana temporal; los de
@@ -464,7 +557,12 @@ class ToolExecutor:
         if report_type in ("ventas_resumen", "top_productos"):
             title = f"Reporte de Ventas y Productos Más Vendidos — {tenant_name}"
             subtitle = f"Período analizado: {period_label} · Generado el {generated_at}"
-            columns = ["Código SKU", "Nombre del Producto", "Cantidad Vendida", "Total Facturado (COP)"]
+            columns = [
+                "Código SKU",
+                "Nombre del Producto",
+                "Cantidad Vendida",
+                "Total Facturado (COP)",
+            ]
 
             kpis = self._con.execute(
                 """
@@ -480,7 +578,9 @@ class ToolExecutor:
             summary_metrics = {
                 "Total Ventas Período": f"${ventas_total:,.0f} COP".replace(",", "."),
                 "Total Facturas": f"{facturas_total:,}".replace(",", "."),
-                "Ticket Promedio": f"${(ventas_total / facturas_total if facturas_total else 0):,.0f} COP".replace(",", "."),
+                "Ticket Promedio": f"${(ventas_total / facturas_total if facturas_total else 0):,.0f} COP".replace(
+                    ",", "."
+                ),
                 "Período Analizado": period_label,
                 "Fecha de Corte de Datos": date_str,
             }
@@ -499,9 +599,18 @@ class ToolExecutor:
 
         elif report_type == "inventario_critico":
             title = f"Reporte de Inventario Crítico y Quiebre de Stock — {tenant_name}"
-            subtitle = f"Foto al corte {date_str} (sin ventana temporal) · Generado el {generated_at}"
-            columns = ["Código SKU", "Producto", "Stock Actual", "Demanda Predicha", "Días Quiebre", "Urgencia"]
-            
+            subtitle = (
+                f"Foto al corte {date_str} (sin ventana temporal) · Generado el {generated_at}"
+            )
+            columns = [
+                "Código SKU",
+                "Producto",
+                "Stock Actual",
+                "Demanda Predicha",
+                "Días Quiebre",
+                "Urgencia",
+            ]
+
             db_rows = self._con.execute(
                 """
                 SELECT sku, nom_producto, stock_actual, demanda_predicha, dias_hasta_quiebre, urgencia
@@ -511,7 +620,14 @@ class ToolExecutor:
                 [limit],
             ).fetchall()
             rows = [
-                [r[0], r[1], float(r[2] or 0), float(r[3] or 0), int(r[4] or 0), str(r[5] or "MEDIA")]
+                [
+                    r[0],
+                    r[1],
+                    float(r[2] or 0),
+                    float(r[3] or 0),
+                    int(r[4] or 0),
+                    str(r[5] or "MEDIA"),
+                ]
                 for r in db_rows
             ]
             summary_metrics = {
@@ -521,9 +637,11 @@ class ToolExecutor:
 
         elif report_type == "productos_dormidos":
             title = f"Reporte de Productos Dormidos (Sin Venta) — {tenant_name}"
-            subtitle = f"Foto al corte {date_str} (sin ventana temporal) · Generado el {generated_at}"
+            subtitle = (
+                f"Foto al corte {date_str} (sin ventana temporal) · Generado el {generated_at}"
+            )
             columns = ["Código SKU", "Producto", "Stock Actual", "Días sin Venta"]
-            
+
             db_rows = self._con.execute(
                 """
                 SELECT cod_producto, nom_producto, stock_actual, dias_sin_venta
@@ -533,10 +651,7 @@ class ToolExecutor:
             """,
                 [limit],
             ).fetchall()
-            rows = [
-                [r[0], r[1], float(r[2] or 0), int(r[3] or 0)]
-                for r in db_rows
-            ]
+            rows = [[r[0], r[1], float(r[2] or 0), int(r[3] or 0)] for r in db_rows]
             summary_metrics = {
                 "Total Dormidos": str(len(rows)),
                 "Fecha de Corte": date_str,
@@ -591,7 +706,7 @@ class ToolExecutor:
 
     def run(self, name: str, args: dict) -> dict:
         """Ejecuta una tool por nombre. Devuelve dict JSON."""
-        if name not in self._allowed_tools:
+        if not getattr(self, "_assistant_enabled", True) or name not in self._allowed_tools:
             logger.warning("tool_denied tenant=%s tool=%s", self.tenant, name)
             return {"error": "Tool not allowed for this tenant"}
         method = getattr(self, name, None)
@@ -599,6 +714,13 @@ class ToolExecutor:
             return {"error": f"Tool '{name}' not found"}
         try:
             return method(**args)
+        except ValueError as exc:
+            logger.warning(
+                "tool_validation_error tool=%s error_type=%s",
+                name,
+                type(exc).__name__,
+            )
+            return {"error": str(exc)}
         except Exception as exc:
             logger.warning(
                 "tool_error tool=%s argument_keys=%s error_type=%s",
@@ -606,7 +728,7 @@ class ToolExecutor:
                 sorted(str(key) for key in args),
                 type(exc).__name__,
             )
-            return {"error": str(exc)}
+            return {"error": "Tool execution failed"}
 
     def close(self):
         pass  # Connection is shared and managed globally
@@ -744,6 +866,36 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "get_ultima_compra",
+            "description": (
+                "Consulta la última compra válida en DuckDB (excluye documentos anulados), incluyendo fecha, "
+                "número de documento, proveedor, total, estado y productos comprados. "
+                "Usala para preguntas como 'cuál fue la última compra' o 'cuándo se hizo la última compra'."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_compras_recientes",
+            "description": "Lista las últimas compras válidas (excluye documentos anulados) con fecha, proveedor, documento, total y estado.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Cantidad de compras a devolver, entre 1 y 20.",
+                    }
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_business_knowledge",
             "description": "Busca conocimiento documental del tenant usando recuperación semántica y lexical.",
             "parameters": {
@@ -782,7 +934,12 @@ TOOL_DEFINITIONS = [
                     },
                     "report_type": {
                         "type": "string",
-                        "enum": ["ventas_resumen", "top_productos", "inventario_critico", "productos_dormidos"],
+                        "enum": [
+                            "ventas_resumen",
+                            "top_productos",
+                            "inventario_critico",
+                            "productos_dormidos",
+                        ],
                         "description": "Tipo de reporte: 'ventas_resumen', 'top_productos', 'inventario_critico' o 'productos_dormidos'.",
                     },
                     "period": {
