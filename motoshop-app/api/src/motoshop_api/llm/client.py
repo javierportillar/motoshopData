@@ -26,7 +26,7 @@ GO_MODEL = settings.go_model
 GO_MAX_TOKENS = settings.go_max_tokens
 
 ZEN_API_BASE = settings.zen_api_base
-ZEN_API_KEY = settings.opencode_api_key_fallback
+ZEN_API_KEY = settings.opencode_api_key_fallback or settings.opencode_api_key
 ZEN_MODEL = settings.zen_model
 ZEN_MAX_TOKENS = settings.zen_max_tokens
 
