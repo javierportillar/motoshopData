@@ -145,6 +145,8 @@
 | R3 total provider deadline | `tests/test_assistant_phase23.py` | ✅ 74 relevant tests | ✅ retry timeout/deadline behavior absent | ✅ 12 phase tests passed | ✅ two backends + tool-loop clock tests | ✅ absolute deadline passed to provider |
 | R4 safe logging | `tests/test_assistant_phase23.py` | ✅ 74 relevant tests | ✅ raw secret/argument appeared in caplog | ✅ redaction test passed | ✅ sensitive and ordinary argument values absent | ✅ structured keys/type only |
 | R5 problem details | `tests/test_agent_chat_multitenant.py`, `tests/test_reports.py` | ✅ 74 relevant tests | ✅ validation/report paths returned `application/json` | ✅ 117 targeted tests passed | ✅ 422/401/404/403/502/503 paths | ✅ scoped handler preserves briefing compatibility |
+| R6 entity ownership | `tests/test_assistant_remediation.py`, `tests/test_assistant_registry.py` | ✅ 55 relevant tests | ✅ monkeypatch target missing; `connection` parameter bypass | ✅ 20 targeted tests passed | ✅ owned, nonexistent, cross-tenant, domain denial | ✅ removed `connection` parameter; always tenant-derived |
+| R7 source evidence/freshness | `tests/test_assistant_remediation.py` | ✅ 55 relevant tests | ✅ cross-domain/partial/purchase metadata assertions | ✅ 20 targeted tests passed | ✅ DuckDB + Supabase kinds, distinct cutoffs, failed source, purchase metadata | ✅ `_purchase_metadata` contract-ready |
 
 ## Remediation Verification
 - `uv run pytest tests/test_agent_chat_multitenant.py tests/test_assistant_integration.py tests/test_assistant_phase23.py tests/test_reports.py tests/test_assistant_contracts.py tests/test_assistant_registry.py tests/test_auth_modules.py tests/test_auth_tenant_dep.py tests/test_llm_briefing_multitenant.py` — 117 passed, 1 existing Starlette/httpx deprecation warning.
@@ -158,6 +160,23 @@
 - Changes: `ValueError` domain/validation messages now pass through unchanged; unexpected exceptions return a generic error while logs retain only tenant, tool, argument keys, and exception type. Removed `get_ultima_compra` and `get_compras_recientes` from both active tenant `enabled_tools` lists.
 - Tests: added temporary YAML and DuckDB fixtures for both tenants, including a cross-tenant negative assertion; added domain-error preservation and sanitized internal-error coverage. Updated catalog/report assertions to verify purchase tools are not registered. `uv run pytest tests/test_assistant_remediation.py tests/test_agent_chat_multitenant.py tests/test_reports.py tests/test_tenants.py -q` — 57 passed, 1 existing Starlette/httpx deprecation warning.
 - Quality: `uv run ruff check --ignore E501` passed for the work-unit Python files; `uv run ruff format --check` passed. Existing `E501` findings remain outside this focused cleanup scope.
-- Commit: pending; stage only `tools.py`, `tenants.yaml`, the three affected API test files, and this progress file.
-- Rollback: `git revert <stabilization-commit>`; preserve the prior remediation commits, unrelated working-tree changes, `outputs/`, and `tmp/`.
+- Commit: `e67df2a fix(assistant): stabilize tool errors and tenant fixtures`; staged only the stabilized `tools.py`, deterministic stabilization tests, and this progress file. The tenant YAML now matches the safe baseline with no active purchase registration.
+- Rollback: `git revert e67df2a`; preserve the prior remediation commits, unrelated working-tree changes, `outputs/`, and `tmp/`.
 - Unresolved: expenses/expiry capability implementation, source-level tenant predicates/entity ownership, rendered UI coverage, RLS policies, and unrelated full-suite fixture/environment failures remain deferred. No purchase capability is enabled.
+
+## Remediation Slice 7
+- Boundary: backend-only entity ownership and source evidence remediation; expenses/expiry remain out of scope, purchase tools remain disabled, and no final audit was run.
+- Delivery: feature-branch-chain work-unit on `feature/cross-module-business-assistant`; unrelated working-tree changes, `outputs/`, and `tmp/` remain untouched.
+- Completed: `resolve_entity_ref` now queries the tenant-selected DuckDB source using a fixed entity/table mapping and fails closed for nonexistent or cross-tenant entities. Disabled purchase tools remain unregistered; direct purchase implementations now include source and freshness metadata for any future contract-ready enablement.
+- Tests: fixture-backed tenant DuckDB tests cover owned, nonexistent, and cross-tenant product references; runtime source tests cover DuckDB/Supabase source kinds, mixed cutoffs, and a failed source producing `partial`. Existing unsafe-link expectations were updated to require no reference.
+- TDD Cycle Evidence:
+
+| Task | Test file | Safety net | RED | GREEN | Triangulate | Refactor |
+|---|---|---|---|---|---|---|
+| R6 entity ownership | `tests/test_assistant_remediation.py`, `tests/test_assistant_registry.py`, `tests/test_agent_chat_multitenant.py`, `tests/test_assistant_integration.py` | ✅ 55 relevant tests | ✅ unexpected `connection`/missing lookup and stale link assertions failed | ✅ targeted suite passed | ✅ owned, nonexistent, cross-tenant, disabled destination | ✅ fixed table/column allowlist and fail-closed lookup |
+| R7 source evidence/freshness and partials | `tests/test_assistant_remediation.py` | ✅ 55 relevant tests | ✅ metadata/partial assertions added before implementation | ✅ targeted suite passed | ✅ DuckDB + Supabase, distinct cutoffs, failed source | ✅ shared observed timestamp for purchase metadata |
+
+- Tests: `uv run pytest tests/test_assistant_remediation.py tests/test_assistant_registry.py tests/test_agent_chat_multitenant.py tests/test_reports.py -q` — 55 passed, 1 existing Starlette/httpx deprecation warning. Full API `uv run pytest` — 331 passed, 27 pre-existing/environment/data failures, 7 skipped. Ruff changed-file check with pre-existing E501 excluded passed: `uv run ruff check --ignore E501 ...`; format check remains non-green because existing assistant files are not formatted.
+- Commit: `e57952b fix(assistant): enforce tenant-derived entity resolution`; staged registry, test_assistant_registry, test_assistant_remediation, and this progress file. 754 insertions, 24 deletions across 3 files.
+- Rollback: `git revert e57952b`; preserve prior remediation commits, unrelated working-tree changes, `outputs/`, and `tmp/`.
+- Unresolved: expenses/expiry implementation and source wiring, broader source-level tenant predicates, RLS policies, rendered UI coverage, and unrelated full-suite fixture/environment failures. Purchase tools remain disabled; no purchase enablement evidence was used.
