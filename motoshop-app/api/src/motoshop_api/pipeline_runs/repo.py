@@ -9,10 +9,13 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from time import time
+from uuid import uuid4
 
 import duckdb
 
 from motoshop_api.metrics.repo_duckdb import (
+    _get_r2_bootstrap_lock,
     get_shared_connection,
     publish_duckdb_snapshot,
 )
@@ -77,7 +80,17 @@ def _ensure_db_exists(db_path: Path) -> None:
     logger.info("Created empty pipeline_runs.duckdb at %s", db_path)
 
 
-def _bootstrap_pipeline_db_from_r2(db_path: Path, tenant: str = "motoshop") -> None:
+def _bootstrap_pipeline_db_from_r2(
+    db_path: Path, tenant: str = "motoshop", *, force: bool = False
+) -> bool:
+    """Serialize pipeline snapshot bootstrap attempts for a physical path."""
+    with _get_r2_bootstrap_lock(db_path):
+        return _bootstrap_pipeline_db_from_r2_unlocked(db_path, tenant, force=force)
+
+
+def _bootstrap_pipeline_db_from_r2_unlocked(
+    db_path: Path, tenant: str = "motoshop", *, force: bool = False
+) -> bool:
     """Descarga {tenant}_pipeline_runs.duckdb desde R2 si:
        - no existe localmente, O
        - el de R2 es mas nuevo que el local (auto-refresh).
@@ -99,20 +112,20 @@ def _bootstrap_pipeline_db_from_r2(db_path: Path, tenant: str = "motoshop") -> N
         if not db_path.exists():
             logger.warning("R2 credentials not set; creating empty DB")
             _ensure_db_exists(db_path)
-        return
+        return False
 
     # Decidir si descargar:
     # 1) no existe local -> SIEMPRE descargar
     # 2) existe pero ya paso el throttle -> chequear R2 mtime
-    must_download = not db_path.exists()
+    must_download = force or not db_path.exists()
     if not must_download:
-        from time import time
         last = _PIPELINE_R2_LAST_CHECK.get(tenant, 0)
         now = time()
         if now - last < _PIPELINE_R2_CHECK_INTERVAL_SEC:
-            return  # dentro del throttle, no chequear
+            return False  # dentro del throttle, no chequear
         _PIPELINE_R2_LAST_CHECK[tenant] = now
 
+    tmp_path: Path | None = None
     try:
         import boto3
         s3 = boto3.client(
@@ -127,7 +140,6 @@ def _bootstrap_pipeline_db_from_r2(db_path: Path, tenant: str = "motoshop") -> N
         effective_key = r2_object_key
         r2_mtime = None
         if not must_download:
-            from time import time
             # HEAD para comparar LastModified
             try:
                 head = s3.head_object(Bucket=r2_bucket, Key=r2_object_key)
@@ -138,7 +150,7 @@ def _bootstrap_pipeline_db_from_r2(db_path: Path, tenant: str = "motoshop") -> N
                     effective_key = "pipeline_runs.duckdb"
                 except Exception as exc:
                     logger.debug("HEAD check failed for %s: %s", tenant, exc)
-                    return
+                    return False
             r2_mtime = head['LastModified'].timestamp()
             last_downloaded = _PIPELINE_R2_DOWNLOADED_MTIME.get(tenant, 0)
             # V1.12: comparar contra r2_mtime de la ultima bajada, no contra
@@ -156,20 +168,20 @@ def _bootstrap_pipeline_db_from_r2(db_path: Path, tenant: str = "motoshop") -> N
             logger.info("Downloading pipeline_runs.duckdb from R2: %s/%s", r2_bucket, effective_key)
             db_path.parent.mkdir(parents=True, exist_ok=True)
             # Bajar a un .downloading y mover atomicamente
-            tmp_path = db_path.with_suffix(db_path.suffix + ".downloading")
+            tmp_path = db_path.with_name(f".{db_path.name}.{uuid4().hex}.downloading")
             try:
                 s3.download_file(r2_bucket, effective_key, str(tmp_path))
             except Exception:
                 # Si falla el tenant-aware, intentar legacy
                 if effective_key == r2_object_key:
                     logger.warning("%s not found in R2, trying legacy pipeline_runs.duckdb", r2_object_key)
+                    tmp_path.unlink(missing_ok=True)
                     s3.download_file(r2_bucket, "pipeline_runs.duckdb", str(tmp_path))
                     effective_key = "pipeline_runs.duckdb"
                 else:
                     raise
             # Si no teniamos r2_mtime (caso must_download = not db_path.exists())
             if r2_mtime is None:
-                from time import time
                 try:
                     head = s3.head_object(Bucket=r2_bucket, Key=effective_key)
                     r2_mtime = head['LastModified'].timestamp()
@@ -184,10 +196,16 @@ def _bootstrap_pipeline_db_from_r2(db_path: Path, tenant: str = "motoshop") -> N
                 raise
             _PIPELINE_R2_DOWNLOADED_MTIME[tenant] = r2_mtime
             logger.info("pipeline_runs.duckdb refreshed to %s (r2_mtime=%.0f)", db_path, r2_mtime)
+            tmp_path.unlink(missing_ok=True)
+            return True
+        return False
     except Exception as exc:
         logger.warning("Failed to refresh pipeline_runs.duckdb from R2: %s", exc)
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
         if not db_path.exists():
             _ensure_db_exists(db_path)
+        return False
 
 
 class PipelineRunsRepo:

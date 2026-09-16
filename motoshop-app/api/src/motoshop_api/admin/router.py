@@ -84,17 +84,15 @@ async def data_refresh(
         )
 
     try:
-        # Forzar re-download: borrar el archivo existente y bootstrap de vuelta
-        if db_path.exists():
-            db_path.unlink()
-            logger.info("Deleted existing DuckDB at %s before refresh", db_path)
+        # Forzar re-download sin borrar el snapshot activo. Si R2 falla o
+        # devuelve un archivo inválido, el tenant debe seguir usando la versión
+        # anterior hasta que el nuevo snapshot pueda validarse y publicarse.
+        refreshed = _bootstrap_duckdb_from_r2(db_path, tenant=tenant, force=True)
 
-        _bootstrap_duckdb_from_r2(db_path, tenant=tenant)
-
-        if not db_path.exists():
+        if not refreshed or not db_path.exists():
             raise HTTPException(
                 status_code=503,
-                detail="Refresh failed: DuckDB file not found after download. Check R2 connectivity.",
+                detail="Refresh failed: no valid new DuckDB snapshot was published. Check R2 connectivity.",
             )
 
         # Limpiar cache de métricas para que la próxima request use datos frescos
@@ -168,16 +166,12 @@ async def pipeline_refresh(
         )
 
     try:
-        if db_path.exists():
-            db_path.unlink()
-            logger.info("Deleted existing pipeline_runs.duckdb at %s before refresh", db_path)
+        refreshed = _bootstrap_pipeline_db_from_r2(db_path, tenant=tenant, force=True)
 
-        _bootstrap_pipeline_db_from_r2(db_path, tenant=tenant)
-
-        if not db_path.exists():
+        if not refreshed or not db_path.exists():
             raise HTTPException(
                 status_code=503,
-                detail="Refresh failed: pipeline_runs.duckdb not found after download. Check R2 connectivity.",
+                detail="Refresh failed: no valid new pipeline snapshot was published. Check R2 connectivity.",
             )
 
         size_bytes = db_path.stat().st_size

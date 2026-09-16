@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from types import SimpleNamespace
 
 import duckdb
@@ -14,6 +14,7 @@ from motoshop_api.metrics.repo_duckdb import (
     _R2_DOWNLOADED_MTIME,
     _R2_LAST_CHECK,
     DuckDBMetricsRepo,
+    DuckDBNotReadyError,
     _bootstrap_duckdb_from_r2,
     _retired_connections,
     close_all_shared_connections,
@@ -182,6 +183,72 @@ def test_r2_replacement_invalidates_metrics_cache(
         close_all_shared_connections()
 
 
+def test_r2_bootstrap_serializes_concurrent_first_download(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Concurrent first requests must share one download/publish attempt."""
+    db_path = tmp_path / "concurrent_gold.duckdb"
+    tenant = "concurrent-bootstrap"
+    first_download_started = Event()
+    release_first_download = Event()
+
+    class FakeS3:
+        calls = 0
+        active = 0
+        max_active = 0
+        state_lock = Lock()
+
+        def head_object(self, **_kwargs):
+            return {"LastModified": datetime(2026, 7, 18, tzinfo=UTC)}
+
+        def download_file(self, _bucket: str, _key: str, target: str) -> None:
+            with self.state_lock:
+                type(self).calls += 1
+                type(self).active += 1
+                type(self).max_active = max(type(self).max_active, type(self).active)
+                is_first = type(self).calls == 1
+            if is_first:
+                first_download_started.set()
+                assert release_first_download.wait(timeout=2)
+            Path(target).write_bytes(b"duckdb snapshot")
+            with self.state_lock:
+                type(self).active -= 1
+
+    fake_s3 = FakeS3()
+    monkeypatch.setitem(
+        sys.modules,
+        "boto3",
+        SimpleNamespace(client=lambda *_args, **_kwargs: fake_s3),
+    )
+    monkeypatch.setenv("R2_ENDPOINT", "https://r2.test")
+    monkeypatch.setenv("R2_ACCESS_KEY_ID", "key")
+    monkeypatch.setenv("R2_SECRET_ACCESS_KEY", "secret")
+    _R2_LAST_CHECK.pop(tenant, None)
+    _R2_DOWNLOADED_MTIME.pop(tenant, None)
+
+    monkeypatch.setattr(
+        "motoshop_api.metrics.repo_duckdb.publish_duckdb_snapshot",
+        lambda tmp_path, destination: Path(tmp_path).replace(destination),
+    )
+
+    threads = [
+        Thread(target=_bootstrap_duckdb_from_r2, args=(db_path, tenant))
+        for _ in range(2)
+    ]
+    for thread in threads:
+        thread.start()
+    assert first_download_started.wait(timeout=2)
+    release_first_download.set()
+    for thread in threads:
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+
+    assert fake_s3.calls == 1
+    assert fake_s3.max_active == 1
+    assert db_path.exists()
+    assert tenant in _R2_DOWNLOADED_MTIME
+
+
 def test_snapshot_publication_cannot_pool_connection_to_old_inode(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -250,6 +317,32 @@ def test_snapshot_publication_cannot_pool_connection_to_old_inode(
     finally:
         close_all_shared_connections()
         old_connection.close()
+
+
+def test_invalid_snapshot_does_not_replace_working_database(tmp_path: Path) -> None:
+    """A corrupt R2 object must not destroy the active DuckDB snapshot."""
+    db_path = tmp_path / "active.duckdb"
+    candidate_path = tmp_path / "candidate.duckdb.downloading"
+    _create_sales_db(db_path)
+    candidate_path.write_bytes(b"not a duckdb database")
+
+    try:
+        try:
+            publish_duckdb_snapshot(candidate_path, db_path)
+        except DuckDBNotReadyError:
+            pass
+        else:
+            raise AssertionError("invalid DuckDB candidate was published")
+
+        connection = duckdb.connect(str(db_path), read_only=True)
+        try:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM silver_fact_ventas"
+            ).fetchone() == (3,)
+        finally:
+            connection.close()
+    finally:
+        close_all_shared_connections()
 
 
 def test_active_query_finishes_on_old_snapshot_before_retired_connection_closes(

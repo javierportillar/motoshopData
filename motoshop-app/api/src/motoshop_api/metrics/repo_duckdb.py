@@ -15,6 +15,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from time import monotonic, time
 from typing import Any
 from uuid import uuid4
 
@@ -263,6 +264,10 @@ def publish_duckdb_snapshot(tmp_path: Path, db_path: Path) -> None:
     """
     key = str(db_path.resolve())
     with _shared_connections_lock:
+        # Validate before replacing the active snapshot. A corrupt or
+        # incomplete download must never destroy a working database.
+        candidate = _open_connection(tmp_path, key)
+        candidate.close()
         tmp_path.replace(db_path)
         version_path = db_path.with_name(
             f".{db_path.stem}.snapshot-{uuid4().hex}{db_path.suffix}"
@@ -326,8 +331,35 @@ _R2_CHECK_INTERVAL_SEC = 60  # chequear LastModified en R2 maximo 1 vez/min por 
 # se comian las nuevas versiones). Ahora trackeamos r2_mtime explicito.
 _R2_DOWNLOADED_MTIME: dict[str, float] = {}
 
+# Bootstrap may be triggered concurrently by the first chat request, the
+# readiness probe, and several data endpoints.  Each path needs its own lock:
+# a shared `.downloading` path otherwise lets one request move/delete the
+# temporary file while another request is still using it.
+_R2_BOOTSTRAP_LOCKS: dict[str, threading.Lock] = {}
+_R2_BOOTSTRAP_LOCKS_GUARD = threading.Lock()
 
-def _bootstrap_duckdb_from_r2(db_path: Path, tenant: str = "motoshop") -> None:
+
+def _get_r2_bootstrap_lock(db_path: Path) -> threading.Lock:
+    key = str(db_path.resolve())
+    with _R2_BOOTSTRAP_LOCKS_GUARD:
+        lock = _R2_BOOTSTRAP_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _R2_BOOTSTRAP_LOCKS[key] = lock
+        return lock
+
+
+def _bootstrap_duckdb_from_r2(
+    db_path: Path, tenant: str = "motoshop", *, force: bool = False
+) -> bool:
+    """Serialize bootstrap attempts for a physical DuckDB path."""
+    with _get_r2_bootstrap_lock(db_path):
+        return _bootstrap_duckdb_from_r2_unlocked(db_path, tenant, force=force)
+
+
+def _bootstrap_duckdb_from_r2_unlocked(
+    db_path: Path, tenant: str = "motoshop", *, force: bool = False
+) -> bool:
     """Descarga {tenant}_gold.duckdb desde R2 si:
        - no existe localmente, O
        - el de R2 es mas nuevo que el local (auto-refresh).
@@ -347,18 +379,17 @@ def _bootstrap_duckdb_from_r2(db_path: Path, tenant: str = "motoshop") -> None:
     if not all([r2_endpoint, r2_key, r2_secret]):
         if not db_path.exists():
             logger.warning("R2 credentials not set; skipping bootstrap download")
-        return
+        return False
 
     # Decidir si descargar:
     # 1) no existe local -> SIEMPRE descargar
     # 2) existe pero ya paso el throttle -> chequear R2 mtime
-    must_download = not db_path.exists()
+    must_download = force or not db_path.exists()
     if not must_download:
-        from time import time
         last = _R2_LAST_CHECK.get(tenant, 0)
         now = time()
         if now - last < _R2_CHECK_INTERVAL_SEC:
-            return  # within throttle, no chequear
+            return False  # within throttle, no chequear
         _R2_LAST_CHECK[tenant] = now
 
     try:
@@ -390,41 +421,63 @@ def _bootstrap_duckdb_from_r2(db_path: Path, tenant: str = "motoshop") -> None:
                     )
             except Exception as exc:
                 logger.debug("HEAD check failed for %s: %s", tenant, exc)
-                return  # no romper si HEAD falla, mantener archivo local
+                return False  # no romper si HEAD falla, mantener archivo local
 
         if must_download:
             logger.info("Downloading DuckDB from R2: %s/%s", r2_bucket, r2_object_key)
             db_path.parent.mkdir(parents=True, exist_ok=True)
-            # bajar a un archivo temporal y mover atomicamente: asi una request
-            # concurrente no abre un archivo a medio bajar
-            tmp_path = db_path.with_suffix(db_path.suffix + ".downloading")
-            s3.download_file(r2_bucket, r2_object_key, str(tmp_path))
-            # Si no teniamos r2_mtime (caso must_download = not db_path.exists()),
-            # ahora lo conseguimos del HEAD
-            if r2_mtime is None:
-                try:
-                    head = s3.head_object(Bucket=r2_bucket, Key=r2_object_key)
-                    r2_mtime = head['LastModified'].timestamp()
-                except Exception:
-                    r2_mtime = time()  # fallback al wall clock
-            # Publish file + pool eviction/close as one critical section. Replacing
-            # after eviction left a window where another request could open and
-            # pool the old inode indefinitely.
+            # Use a unique temporary path as a second line of defence. The
+            # public wrapper serializes normal calls, but this also protects
+            # callers that invoke the unlocked helper in maintenance code.
+            tmp_path = db_path.with_name(f".{db_path.name}.{uuid4().hex}.downloading")
+            started = monotonic()
             try:
+                s3.download_file(r2_bucket, r2_object_key, str(tmp_path))
+                downloaded_size = tmp_path.stat().st_size
+                if downloaded_size <= 0:
+                    raise OSError("R2 download produced an empty DuckDB file")
+                logger.info(
+                    "DuckDB downloaded from R2: tenant=%s object=%s size_bytes=%d duration_seconds=%.2f",
+                    tenant,
+                    r2_object_key,
+                    downloaded_size,
+                    monotonic() - started,
+                )
+                # Si no teniamos r2_mtime (caso must_download = not db_path.exists()),
+                # ahora lo conseguimos del HEAD.
+                if r2_mtime is None:
+                    try:
+                        head = s3.head_object(Bucket=r2_bucket, Key=r2_object_key)
+                        r2_mtime = head['LastModified'].timestamp()
+                    except Exception:
+                        r2_mtime = time()  # fallback al wall clock
+                # Publish file + pool eviction/close as one critical section.
                 publish_duckdb_snapshot(tmp_path, db_path)
-            except Exception as exc:
-                logger.warning("Could not publish DuckDB snapshot for %s: %s", db_path, exc)
-                raise
-            _R2_DOWNLOADED_MTIME[tenant] = r2_mtime
-            # Publish only after the atomic replace. A monotonic generation
-            # prevents an old in-flight query from making stale data visible if
-            # it finishes after physical caches have been cleared.
-            from motoshop_api.metrics.snapshot import publish_snapshot
+                _R2_DOWNLOADED_MTIME[tenant] = r2_mtime
+                # Publish only after the atomic replace. A monotonic generation
+                # prevents an old in-flight query from making stale data visible
+                # if it finishes after physical caches have been cleared.
+                from motoshop_api.metrics.snapshot import publish_snapshot
 
-            publish_snapshot(tenant)
-            logger.info("DuckDB refreshed to %s (r2_mtime=%.0f)", db_path, r2_mtime)
+                publish_snapshot(tenant)
+                logger.info("DuckDB refreshed to %s (r2_mtime=%.0f)", db_path, r2_mtime)
+                return True
+            finally:
+                # On success publish_duckdb_snapshot atomically moves this path;
+                # on failure this removes a partial download before retry.
+                tmp_path.unlink(missing_ok=True)
+        return False
     except Exception as exc:
-        logger.warning("Failed to download DuckDB from R2: %s", exc)
+        logger.warning(
+            "Failed to download DuckDB from R2: tenant=%s bucket=%s object=%s error_type=%s error=%s",
+            tenant,
+            r2_bucket,
+            r2_object_key,
+            type(exc).__name__,
+            exc,
+            exc_info=True,
+        )
+        return False
 
 
 class DuckDBMetricsRepo:
