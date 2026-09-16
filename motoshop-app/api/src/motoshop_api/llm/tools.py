@@ -28,6 +28,12 @@ PUBLIC_TOOL_NAMES = {
     "search_business_knowledge",
     "get_ultima_compra",
     "get_compras_recientes",
+    "search_products",
+    "get_top_clientes",
+    "get_inventario_por_bodega",
+    "get_abc_xyz_distribution",
+    "get_cohortes_clientes",
+    "get_drift_alerts",
     "generate_report",
 }
 
@@ -74,17 +80,23 @@ class ToolExecutor:
             name for name in self._allowed_tools if assistant_tool_allowed(name, allowed_domains)
         }
 
-    def _get_max_date(self) -> date:
-        r = self._con.execute(
-            "SELECT MAX(business_date) FROM gold_mart_ventas_diarias_sku"
-        ).fetchone()
-        return r[0] if r and r[0] else date.today()
+    def _get_max_date(self) -> date | None:
+        """Devuelve la fecha máxima con datos, o None si el DuckDB está vacío."""
+        try:
+            r = self._con.execute(
+                "SELECT MAX(business_date) FROM gold_mart_ventas_diarias_sku"
+            ).fetchone()
+            return r[0] if r and r[0] else None
+        except Exception:
+            return None
 
     # ── Tool implementations ──────────────────────────────────────────────
 
     def get_kpis_today(self) -> dict:
         """KPIs del último día con datos: ventas, facturas, ticket promedio."""
         d = self._get_max_date()
+        if d is None:
+            return {"mensaje": "No hay datos de ventas disponibles.", "fecha": None, "ventas": 0, "facturas": 0, "ticket_promedio": 0}
         r = self._con.execute(
             """
             SELECT ROUND(COALESCE(SUM(valor_total),0),2) AS ventas,
@@ -104,7 +116,8 @@ class ToolExecutor:
     def get_kpis_month(self, month: str | None = None) -> dict:
         """KPIs mensuales: ventas totales, facturas, ticket promedio."""
         if not month:
-            month = (self._get_max_date()).strftime("%Y-%m")
+            d = self._get_max_date()
+            month = d.strftime("%Y-%m") if d else date.today().strftime("%Y-%m")
         r = self._con.execute(
             """
             SELECT ROUND(COALESCE(SUM(valor_total),0),2) AS ventas,
@@ -125,6 +138,8 @@ class ToolExecutor:
     def get_top_skus(self, period: str = "day", limit: int = 10) -> dict:
         """Top SKUs vendidos en el período (day, week, month, all)."""
         d = self._get_max_date()
+        if d is None:
+            return {"period": period, "skus": []}
         since = d.isoformat()
         if period == "week":
             since = (d - timedelta(days=7)).isoformat()
@@ -207,11 +222,26 @@ class ToolExecutor:
     def get_vendedor_performance(
         self, vendedor_id: str | None = None, period: str = "month"
     ) -> dict:
-        """Performance de vendedores. Si no se especifica ID, top 5."""
+        """Performance de vendedores. Si no se especifica ID, top 5.
+
+        period: 'day' (último día), 'week' (7 días), 'month' (mes actual), 'all' (histórico).
+        """
         d = self._get_max_date()
-        month = d.strftime("%Y-%m")
+        if d is None:
+            return {"period": period, "vendedores": []}
+        period = str(period or "month").lower().strip()
+
+        if period == "day":
+            since = d.isoformat()
+        elif period == "week":
+            since = (d - timedelta(days=7)).isoformat()
+        elif period == "all":
+            since = "1900-01-01"
+        else:  # month (default)
+            since = d.replace(day=1).isoformat()
+
         where_v = "AND nit_vendedor = ?" if vendedor_id else ""
-        params = [month]
+        params: list = [since, d.isoformat()]
         if vendedor_id:
             params.append(vendedor_id)
 
@@ -221,16 +251,17 @@ class ToolExecutor:
                    COALESCE(NULLIF(nombre_vendedor,''),'Sin asignar') AS nombre,
                    COUNT(*) AS facturas, ROUND(SUM(total_factura),2) AS total
             FROM silver_fact_ventas
-            WHERE STRFTIME(business_date,'%Y-%m') = ? {where_v}
+            WHERE business_date >= ? AND business_date <= ? {where_v}
             GROUP BY nit_vendedor, nombre_vendedor ORDER BY total DESC LIMIT 5
         """,
             params,
         ).fetchall()
         return {
+            "period": period,
             "vendedores": [
                 {"nit": r[0], "nombre": r[1], "facturas": int(r[2]), "total": float(r[3])}
                 for r in rows
-            ]
+            ],
         }
 
     def get_inventory_value(self) -> dict:
@@ -446,6 +477,177 @@ class ToolExecutor:
             }],
         }
 
+    def search_products(self, query: str, limit: int = 10) -> dict:
+        """Busca productos del catálogo por nombre, código o proveedor.
+
+        Devuelve código, nombre, precio de venta, costo, stock, proveedor y estado.
+        """
+        limit = max(1, min(int(limit), 30))
+        query = str(query or "").strip()
+        if not query:
+            return {"productos": [], "total": 0}
+        like = f"%{query}%"
+        rows = self._con.execute(
+            """
+            SELECT cod_producto, nombre_producto, precio_venta_sin_iva, costo_ultima_compra,
+                   existencia, nit_proveedor, estado_producto, cod_grupo
+            FROM silver_dim_producto
+            WHERE nombre_producto ILIKE ? OR cod_producto ILIKE ? OR nit_proveedor ILIKE ?
+            ORDER BY existencia DESC
+            LIMIT ?
+        """,
+            [like, like, like, limit],
+        ).fetchall()
+        return {
+            "productos": [
+                {
+                    "codigo": r[0],
+                    "nombre": r[1],
+                    "precio_venta": float(r[2] or 0),
+                    "costo_ultima_compra": float(r[3] or 0),
+                    "stock": float(r[4] or 0),
+                    "proveedor": r[5],
+                    "estado": r[6],
+                    "grupo": r[7],
+                }
+                for r in rows
+            ],
+            "total": len(rows),
+        }
+
+    def get_top_clientes(self, period: str = "month", limit: int = 10) -> dict:
+        """Top clientes por total facturado. Filtrable por período (day, week, month, all)."""
+        d = self._get_max_date()
+        if d is None:
+            return {"clientes": []}
+        limit = max(1, min(int(limit), 20))
+        period = str(period or "month").lower().strip()
+
+        if period == "day":
+            since = d.isoformat()
+        elif period == "week":
+            since = (d - timedelta(days=7)).isoformat()
+        elif period == "all":
+            since = "1900-01-01"
+        else:  # month
+            since = d.replace(day=1).isoformat()
+
+        rows = self._con.execute(
+            """
+            SELECT COALESCE(NULLIF(nit_cliente,''),'SIN_ASIGNAR') AS nit,
+                   COALESCE(NULLIF(nombre_cliente,''),'Sin asignar') AS nombre,
+                   COUNT(*) AS facturas, ROUND(SUM(total_factura),2) AS total
+            FROM silver_fact_ventas
+            WHERE business_date >= ? AND business_date <= ?
+              AND COALESCE(estado_documento, '') != 'A'
+            GROUP BY nit_cliente, nombre_cliente
+            ORDER BY total DESC LIMIT ?
+        """,
+            [since, d.isoformat(), limit],
+        ).fetchall()
+        return {
+            "period": period,
+            "clientes": [
+                {"nit": r[0], "nombre": r[1], "facturas": int(r[2]), "total": float(r[3])}
+                for r in rows
+            ],
+        }
+
+    def get_inventario_por_bodega(self, limit: int = 20) -> dict:
+        """Inventario actual agrupado por bodega: unidades, valor y SKUs."""
+        limit = max(1, min(int(limit), 50))
+        rows = self._con.execute(
+            """
+            SELECT cod_bodega, nombre_bodega,
+                   ROUND(SUM(cantidad),2) AS unidades,
+                   ROUND(SUM(cantidad * COALESCE(valor_costo, 0)), 0) AS valor,
+                   COUNT(DISTINCT cod_producto) AS skus
+            FROM silver_fact_inventario
+            WHERE cantidad > 0
+            GROUP BY cod_bodega, nombre_bodega
+            ORDER BY valor DESC LIMIT ?
+        """,
+            [limit],
+        ).fetchall()
+        return {
+            "bodegas": [
+                {
+                    "codigo": r[0],
+                    "nombre": r[1],
+                    "unidades": float(r[2] or 0),
+                    "valor_cop": float(r[3] or 0),
+                    "skus": int(r[4] or 0),
+                }
+                for r in rows
+            ],
+        }
+
+    def get_abc_xyz_distribution(self) -> dict:
+        """Distribución ABC/XYZ del último mes: cuántos productos en cada combinación."""
+        rows = self._con.execute("""
+            WITH mm AS (SELECT MAX(business_month) AS m FROM gold_mart_abc_xyz)
+            SELECT abc, xyz, COUNT(*) AS skus
+            FROM gold_mart_abc_xyz, mm WHERE business_month = mm.m
+            GROUP BY abc, xyz ORDER BY abc, xyz
+        """).fetchall()
+        return {
+            "abc_xyz": [
+                {"abc": r[0], "xyz": r[1], "skus": int(r[2])}
+                for r in rows
+            ],
+        }
+
+    def get_cohortes_clientes(self, limit: int = 6) -> dict:
+        """Retención de cohortes de clientes: cuántos compran mes a mes desde su primer compra."""
+        limit = max(1, min(int(limit), 12))
+        rows = self._con.execute(
+            """
+            SELECT mes_cohorte, business_month,
+                   COUNT(DISTINCT nit_cliente) AS clientes,
+                   ROUND(AVG(ticket_promedio),2) AS ticket_promedio
+            FROM gold_mart_cohortes_clientes
+            WHERE mes_cohorte >= (
+                SELECT MAX(mes_cohorte) FROM gold_mart_cohortes_clientes
+            ) - INTERVAL '?' MONTH
+            GROUP BY mes_cohorte, business_month
+            ORDER BY mes_cohorte, business_month
+        """,
+            [limit],
+        ).fetchall()
+        return {
+            "cohortes": [
+                {
+                    "mes_cohorte": r[0].isoformat() if hasattr(r[0], "isoformat") else str(r[0]),
+                    "mes_medicion": r[1].isoformat() if hasattr(r[1], "isoformat") else str(r[1]),
+                    "clientes_activos": int(r[2]),
+                    "ticket_promedio": float(r[3] or 0),
+                }
+                for r in rows
+            ],
+        }
+
+    def get_drift_alerts(self) -> dict:
+        """Alertas de drift: categorías con desviación significativa entre demanda real y predicha."""
+        rows = self._con.execute("""
+            SELECT cod_grupo, week_end, desviacion_pct, threshold_pct, alert_msg
+            FROM gold_alertas_drift
+            ORDER BY week_end DESC
+            LIMIT 10
+        """).fetchall()
+        return {
+            "drift_alerts": [
+                {
+                    "grupo": r[0],
+                    "semana": r[1].isoformat() if hasattr(r[1], "isoformat") else str(r[1]),
+                    "desviacion_pct": float(r[2] or 0),
+                    "umbral_pct": float(r[3] or 0),
+                    "mensaje": r[4],
+                }
+                for r in rows
+            ],
+            "total": len(rows),
+        }
+
     def search_business_knowledge(self, query: str, limit: int = 5) -> dict:
         """Busca procedimientos/documentos del tenant con recuperación híbrida."""
         from motoshop_api.llm.retrieval import get_hybrid_retriever
@@ -552,6 +754,8 @@ class ToolExecutor:
         tenant_name = config.nombre if config else self.tenant.capitalize()
         brand_color = config.color_brand if config and config.color_brand else "#7B1818"
         max_date = self._get_max_date()
+        if max_date is None:
+            return {"status": "empty", "summary": "No hay datos disponibles para generar el reporte."}
         date_str = max_date.isoformat()
         limit = max(5, min(int(limit), 100))
 
@@ -840,12 +1044,12 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_vendedor_performance",
-            "description": "Performance de vendedores del mes actual. Si se pasa vendedor_id, solo ese.",
+            "description": "Performance de vendedores. Filtrable por período (day, week, month, all) y vendedor_id opcional.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "vendedor_id": {"type": "string"},
-                    "period": {"type": "string", "default": "month"},
+                    "period": {"type": "string", "enum": ["day", "week", "month", "all"], "default": "month"},
                 },
                 "required": [],
             },
@@ -938,6 +1142,106 @@ TOOL_DEFINITIONS = [
                 },
                 "required": ["query"],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_products",
+            "description": (
+                "Busca productos del catálogo por nombre, código SKU o proveedor. "
+                "Devuelve precio, costo, stock, proveedor y estado. "
+                "Usala para preguntas como '¿tenemos filtros de aceite?', "
+                "'¿cuál es el precio del SKU X?', '¿qué productos nos provee Y?'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Término de búsqueda: nombre, código o proveedor."},
+                    "limit": {"type": "integer", "default": 10},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_top_clientes",
+            "description": (
+                "Top clientes por total facturado. Filtrable por período (day, week, month, all). "
+                "Usala para preguntas como '¿quiénes son nuestros mejores clientes?', "
+                "'¿cuánto vendimos al cliente X?'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "period": {"type": "string", "enum": ["day", "week", "month", "all"], "default": "month"},
+                    "limit": {"type": "integer", "default": 10},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_inventario_por_bodega",
+            "description": (
+                "Inventario actual agrupado por bodega: unidades, valor en COP y SKUs distintos. "
+                "Usala para preguntas como '¿cuánto inventario hay por bodega?', "
+                "'¿qué bodega tiene más stock?'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "default": 20},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_abc_xyz_distribution",
+            "description": (
+                "Distribución ABC/XYZ del último mes: muestra cuántos productos hay en cada "
+                "combinación (A-X, A-Y, A-Z, B-X, etc.). "
+                "Usala para preguntas como '¿cuántos productos son XYZ?', "
+                "'¿cuáles son clase A pero impredecibles?'."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_cohortes_clientes",
+            "description": (
+                "Retención de cohortes de clientes: cuántos compran mes a mes desde su primera compra. "
+                "Usala para preguntas como '¿cómo van los cohortes?', "
+                "'¿cuántos clientes nuevos seguían comprando al mes siguiente?'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "default": 6, "description": "Meses de cohorte a mostrar (1-12)."},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_drift_alerts",
+            "description": (
+                "Alertas de drift: categorías con desviación significativa entre demanda real y predicha. "
+                "Usala para preguntas como '¿hubo drift en alguna categoría?', "
+                "'¿qué categorías se desviaron del forecast?'."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
     {

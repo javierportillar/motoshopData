@@ -220,19 +220,28 @@ def test_tool_preserves_user_facing_value_error() -> None:
     assert executor.run("validate", {}) == {"error": "date_from must be before date_to"}
 
 
-def test_purchase_tools_are_disabled_for_both_fixture_tenants(isolated_tenant_fixtures) -> None:
+def test_rbac_blocks_tools_not_in_fixture_enabled_tools(isolated_tenant_fixtures) -> None:
+    """Verifica que el mecanismo RBAC bloquea tools que NO están en enabled_tools del fixture.
+
+    El fixture usa enabled_tools=['get_kpis_today'], así que cualquier otra tool
+    (incluyendo compras) debe ser rechazada. Esto valida el MECANISMO, no una política.
+    """
     from motoshop_api.llm.tools import ToolExecutor
 
     for tenant in ("motoshop", "masvital"):
         executor = ToolExecutor(
             tenant=tenant, duckdb_path=str(isolated_tenant_fixtures / f"{tenant}.duckdb")
         )
+        # Tools no en enabled_tools son bloqueadas por RBAC
         assert executor.run("get_ultima_compra", {}) == {
             "error": "Tool not allowed for this tenant"
         }
         assert executor.run("get_compras_recientes", {}) == {
             "error": "Tool not allowed for this tenant"
         }
+        # Tool en enabled_tools pasa el RBAC (puede fallar por schema del fixture, eso es OK)
+        result = executor.run("get_kpis_today", {})
+        assert result.get("error") != "Tool not allowed for this tenant"
 
 
 def test_purchase_fixture_does_not_cross_tenant(isolated_tenant_fixtures) -> None:
@@ -479,11 +488,14 @@ def test_one_source_failure_produces_partial_status(isolated_tenant_fixtures) ->
     assert len(cutoffs) == 2
 
 
-def test_purchase_tools_remain_disabled_and_have_metadata(
+def test_purchase_tools_return_valid_metadata_when_explicitly_allowed(
     isolated_tenant_fixtures,
 ) -> None:
+    """Verifica que las tools de compras devuelven metadata válida (sources, freshness)
+    cuando se habilitan explícitamente via _allowed_tools."""
     from motoshop_api.llm.tools import ToolExecutor
 
+    # Con el fixture default (solo get_kpis_today), compras están bloqueada
     for tenant in ("motoshop", "masvital"):
         executor = ToolExecutor(
             tenant=tenant,
@@ -493,6 +505,7 @@ def test_purchase_tools_remain_disabled_and_have_metadata(
             "error": "Tool not allowed for this tenant"
         }
 
+    # Al habilitar explícitamente, la tool funciona y devuelve metadata completa
     executor = ToolExecutor(
         tenant="motoshop",
         duckdb_path=str(isolated_tenant_fixtures / "motoshop.duckdb"),
@@ -504,6 +517,64 @@ def test_purchase_tools_remain_disabled_and_have_metadata(
     assert result["sources"][0]["domain"] == "purchases"
     assert result["sources"][0]["kind"] == "duckdb"
     assert result["freshness"][0]["domain"] == "purchases"
+
+
+def test_purchase_tools_work_when_in_enabled_tools(isolated_tenant_fixtures) -> None:
+    """Verifica que get_ultima_compra y get_compras_recientes funcionan correctamente
+    cuando están incluidas en enabled_tools del tenant (como en producción)."""
+    from motoshop_api.llm.tools import ToolExecutor
+
+    # Crear un fixture con compras habilitadas
+    import yaml as _yaml
+
+    tenants_path = isolated_tenant_fixtures / "tenants_with_compras.yaml"
+    tenants_path.write_text(
+        _yaml.safe_dump(
+            {
+                "tenants": [
+                    {
+                        "id": "motoshop",
+                        "nombre": "Fixture MotoShop",
+                        "r2_object_key": "motoshop.duckdb",
+                        "local_db_path": str(isolated_tenant_fixtures / "motoshop.duckdb"),
+                        "agent": {
+                            "enabled_tools": [
+                                "get_kpis_today",
+                                "get_ultima_compra",
+                                "get_compras_recientes",
+                            ]
+                        },
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    from motoshop_api.tenants import load_tenants
+
+    load_tenants(tenants_path)
+
+    try:
+        executor = ToolExecutor(
+            tenant="motoshop",
+            duckdb_path=str(isolated_tenant_fixtures / "motoshop.duckdb"),
+        )
+
+        # get_ultima_compra debe funcionar
+        result = executor.run("get_ultima_compra", {})
+        assert "error" not in result
+        assert result["proveedor"] == "Moto supplier"
+        assert result["fecha"] == "2026-01-02"
+        assert result["sources"][0]["domain"] == "purchases"
+        assert result["freshness"][0]["domain"] == "purchases"
+
+        # get_compras_recientes debe funcionar
+        result2 = executor.run("get_compras_recientes", {"limit": 5})
+        assert "error" not in result2
+        assert result2["count"] == 1
+        assert result2["compras"][0]["proveedor"] == "Moto supplier"
+    finally:
+        load_tenants(isolated_tenant_fixtures / "tenants.yaml")
 
 
 def test_fixture_sources_preserve_distinct_source_kinds_and_partial_failure(

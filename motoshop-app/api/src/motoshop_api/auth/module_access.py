@@ -38,6 +38,12 @@ ASSISTANT_TOOL_DOMAINS: dict[str, frozenset[str]] = {
     "get_data_freshness": frozenset(ASSISTANT_DOMAIN_MODULES),
     "get_ultima_compra": frozenset({"purchases"}),
     "get_compras_recientes": frozenset({"purchases"}),
+    "search_products": frozenset({"inventory"}),
+    "get_top_clientes": frozenset({"sales"}),
+    "get_inventario_por_bodega": frozenset({"inventory"}),
+    "get_abc_xyz_distribution": frozenset({"abc"}),
+    "get_cohortes_clientes": frozenset({"sales"}),
+    "get_drift_alerts": frozenset({"forecasts"}),
     "search_business_knowledge": frozenset({"analyses"}),
     "generate_report": frozenset({"sales", "inventory", "dormant_products", "alerts"}),
 }

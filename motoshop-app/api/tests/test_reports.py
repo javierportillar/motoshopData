@@ -234,12 +234,14 @@ def test_tool_executor_generate_report_all_formats():
         assert result["date_from"] and result["date_to"]
 
 
-def test_purchase_tools_are_not_registered_for_active_tenant():
+def test_purchase_tools_are_registered_and_functional_for_active_tenant():
+    """Las tools de compras están habilitadas en el tenant config de producción."""
     executor = ToolExecutor(tenant="motoshop")
-    assert executor.run("get_ultima_compra", {}) == {"error": "Tool not allowed for this tenant"}
-    assert executor.run("get_compras_recientes", {}) == {
-        "error": "Tool not allowed for this tenant"
-    }
+    # Ambas tools deben estar permitidas por RBAC
+    result_compra = executor.run("get_ultima_compra", {})
+    result_recientes = executor.run("get_compras_recientes", {"limit": 3})
+    assert "error" not in result_compra or result_compra.get("error") != "Tool not allowed for this tenant"
+    assert "error" not in result_recientes or result_recientes.get("error") != "Tool not allowed for this tenant"
 
 
 # ── Endpoint de descarga: autenticación y aislamiento por tenant ──────────────

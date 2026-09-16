@@ -62,13 +62,25 @@ def test_chat_tool_catalog_is_scoped_to_tenant(monkeypatch):
         "get_inventory_value",
         "get_data_freshness",
         "search_business_knowledge",
+        "get_ultima_compra",
+        "get_compras_recientes",
+        "search_products",
+        "get_top_clientes",
+        "get_inventario_por_bodega",
+        "get_drift_alerts",
         "generate_report",
     }
 
     moto = qa_module.get_qa_chat("motoshop", "ana", repository=InMemoryConversationRepository())
     moto_names = {item["function"]["name"] for item in moto.tool_defs}
-    assert "get_ultima_compra" not in moto_names
-    assert "get_compras_recientes" not in moto_names
+    assert "get_ultima_compra" in moto_names
+    assert "get_compras_recientes" in moto_names
+    assert "search_products" in moto_names
+    assert "get_top_clientes" in moto_names
+    assert "get_inventario_por_bodega" in moto_names
+    assert "get_abc_xyz_distribution" in moto_names
+    assert "get_cohortes_clientes" in moto_names
+    assert "get_drift_alerts" in moto_names
 
 
 def test_tool_executor_does_not_inherit_global_duckdb(monkeypatch):
