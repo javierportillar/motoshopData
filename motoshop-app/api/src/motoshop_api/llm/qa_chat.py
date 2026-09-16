@@ -105,7 +105,8 @@ def _observed_at() -> str:
 
 def _source_evidence(value: Any, index: int, tool_name: str) -> dict[str, Any]:
     if isinstance(value, dict) and "source_id" in value:
-        return SourceEvidence.model_validate(value).model_dump()
+        allowed = {field: value[field] for field in SourceEvidence.model_fields if field in value}
+        return SourceEvidence.model_validate(allowed).model_dump()
     citation = str(value.get("source", tool_name)) if isinstance(value, dict) else tool_name
     return SourceEvidence(
         source_id=f"source-{index}", domain=tool_name, kind="document", citation=citation,
@@ -134,7 +135,7 @@ def _entity_references(
                 entity_type=item["entity_type"], entity_id=item["entity_id"],
                 label=item["label"], domain=item["domain"], route_key=item["route_key"],
             )
-        except (KeyError, PermissionError, ValueError):
+        except (KeyError, PermissionError, ValueError, LookupError):
             continue
         refs.append(ref.model_dump())
     return refs
@@ -188,10 +189,15 @@ def get_qa_chat(
     if tenant_context is not None:
         from motoshop_api.auth.module_access import assistant_tool_allowed
 
-        tool_defs = [
-            definition for definition in tool_defs
-            if assistant_tool_allowed(definition["function"]["name"], tenant_context.allowed_domains)
-        ]
+        if not tenant_context.assistant_enabled:
+            tool_defs = []
+        else:
+            tool_defs = [
+                definition for definition in tool_defs
+                if assistant_tool_allowed(
+                    definition["function"]["name"], tenant_context.allowed_domains
+                )
+            ]
     executor = ToolExecutor(tenant=tenant, user_id=user_id, tenant_context=tenant_context)
     return QAChat(
         get_llm_client(),
@@ -349,6 +355,8 @@ class QAChat:
                     {"role": "assistant", "content": result.get("text") or "", "tool_calls": calls}
                 )
                 for call in calls:
+                    if time.monotonic() >= deadline:
+                        raise TransientLLMError("LLM request deadline exceeded")
                     fn = call.get("function", {})
                     name = fn.get("name", "")
                     try:
@@ -362,6 +370,8 @@ class QAChat:
                         }
                     else:
                         tool_result = self.executor.run(name, args)
+                    if time.monotonic() >= deadline:
+                        raise TransientLLMError("LLM request deadline exceeded")
                     tool_calls_used.append(name)
                     if isinstance(tool_result, dict):
                         if tool_result.get("status") in {
@@ -371,7 +381,10 @@ class QAChat:
                         for index, source in enumerate(
                             tool_result.get("sources", []), start=len(sources)
                         ):
-                            sources.append(_source_evidence(source, index, name))
+                            normalized_source = _source_evidence(source, index, name)
+                            sources.append(normalized_source)
+                            if normalized_source["status"] == "failed":
+                                response_status = "partial"
                         for item in tool_result.get("freshness", []):
                             normalized = _freshness(item)
                             if normalized:

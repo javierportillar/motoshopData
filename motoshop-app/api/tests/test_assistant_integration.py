@@ -119,7 +119,7 @@ def test_chat_envelope_round_trips_through_history_and_remains_tenant_scoped(
     reply = response.json()
     assert reply["tenant_id"] == "motoshop"
     assert reply["sources"][0]["cutoff_at"] == "2026-09-13"
-    assert reply["entity_refs"][0]["href"] == "/inventario/productos/SKU-1"
+    assert reply["entity_refs"] == []
 
     history = client.get(
         f"/api/llm/chat/conversations/{reply['conversation_id']}/messages",

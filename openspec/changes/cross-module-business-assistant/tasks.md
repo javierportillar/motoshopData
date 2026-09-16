@@ -41,12 +41,12 @@ Preserve existing backend modifications in `llm/tools.py`, `tenants.yaml`, API t
 
 ## Phase 3: Frontend contract parity (RED → GREEN → REFACTOR)
 
-- [ ] 3.1 RED: Add `lib/api/chat.test.ts`, `components/chat/ChatDrawer.test.tsx`, and `app/(authenticated)/chat/page.test.tsx` for every status, empty arrays, server links only, expired attachments, accessibility, and tenant/user cache isolation (assistant-chat-delivery).
-- [ ] 3.2 GREEN: Modify `lib/api/chat.ts`, `lib/api/hooks.ts`, `components/chat/ChatDrawer.tsx`, `app/(authenticated)/chat/page.tsx`, `lib/auth/access.ts`, and `app/(authenticated)/layout.tsx` to share the typed envelope and identical evidence/freshness/link/report rendering.
-- [ ] 3.3 REFACTOR: Remove markdown/raw URL fallbacks, cancel stale requests on tenant changes, and run `npm run test:unit`, `npm run typecheck`, and `npm run lint`.
+- [x] 3.1 RED: Add `lib/api/chat.test.ts`, `components/chat/ChatDrawer.test.tsx`, and `app/(authenticated)/chat/page.test.tsx` for every status, empty arrays, server links only, expired attachments, accessibility, and tenant/user cache isolation (assistant-chat-delivery).
+- [x] 3.2 GREEN: Modify `lib/api/chat.ts`, `lib/api/hooks.ts`, `components/chat/ChatDrawer.tsx`, `app/(authenticated)/chat/page.tsx`, `lib/auth/access.ts`, and `app/(authenticated)/layout.tsx` to share the typed envelope and identical evidence/freshness/link/report rendering.
+- [x] 3.3 REFACTOR: Remove markdown/raw URL fallbacks, cancel stale requests on tenant changes, and run `npm run test:unit`, `npm run typecheck`, and `npm run lint`.
 
 ## Phase 4: Cross-repository verification and rollout gate
 
-- [ ] 4.1 RED: Add `frontfambus/tests/assistant-chat.spec.ts` and `motoshop-app/api/tests/test_assistant_integration.py` for drawer/full-page parity, tenant switching, authorized links, partial results, expired reports, and cross-tenant source/report isolation.
-- [ ] 4.2 GREEN: Complete fixtures and wiring, then run targeted tests before `uv run pytest`, API pytest, `npx playwright test`, and `npm run build`.
-- [ ] 4.3 REFACTOR/GO-NO-GO: confirm 100% supported-tool cross-tenant coverage, disabled `chat-ia` rollback, migration/RLS review, and canary-only enablement; do not enable purchase-plan tools.
+- [x] 4.1 RED: Add `frontfambus/tests/assistant-chat.spec.ts` and `motoshop-app/api/tests/test_assistant_integration.py` for drawer/full-page parity, tenant switching, authorized links, partial results, expired reports, and cross-tenant source/report isolation.
+- [x] 4.2 GREEN: Complete fixtures and wiring, then run targeted tests before `uv run pytest`, API pytest, `npx playwright test`, and `npm run build`.
+- [x] 4.3 REFACTOR/GO-NO-GO: confirm 100% supported-tool cross-tenant coverage, disabled `chat-ia` rollback, migration/RLS review, and canary-only enablement; do not enable purchase-plan tools.

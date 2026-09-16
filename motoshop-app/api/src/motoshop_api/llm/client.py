@@ -131,7 +131,11 @@ class LLMClient:
         failures: list[str] = []
         last_cause: Exception | None = None
         saw_transient_failure = False
-        request_deadline = deadline or (time.monotonic() + LLM_REQUEST_DEADLINE_SECONDS)
+        now = time.monotonic()
+        request_deadline = min(
+            deadline if deadline is not None else now + LLM_REQUEST_DEADLINE_SECONDS,
+            now + LLM_REQUEST_DEADLINE_SECONDS,
+        )
 
         for backend in self._backends:
             remaining = request_deadline - time.monotonic()

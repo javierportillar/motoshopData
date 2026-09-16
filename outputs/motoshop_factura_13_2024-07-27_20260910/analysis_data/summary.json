@@ -1,0 +1,64 @@
+{
+  "source": {
+    "database": "Cloudflare R2 / motoshop_gold.duckdb",
+    "downloaded_at_local": "2026-09-10T17:20:26.829406-05:00",
+    "latest_sale_timestamp": "2026-09-10T08:35:50",
+    "inventory_snapshot_date": "2026-09-10",
+    "latest_purchase_date": "2026-09-08"
+  },
+  "invoice": {
+    "num_documento": "13",
+    "cod_clase": "S18",
+    "purchase_timestamp": "2024-07-27T15:40:22",
+    "supplier": "KAROL NATALIA BURGOS BUSTOS",
+    "supplier_nit": "1116274616",
+    "payment_method": "F06",
+    "status": "B (vigente/contabilizada en el pipeline)",
+    "header_total": 11267897.0,
+    "detail_total": 11267897.0,
+    "detail_lines": 580,
+    "distinct_skus": 578,
+    "units": 3897.0,
+    "duplicate_line_skus": 2
+  },
+  "performance": {
+    "skus_with_any_sale_since": 428,
+    "skus_never_sold_since": 150,
+    "skus_100pct_apparent_absorption": 258,
+    "units_sold_apparent_cap": 2035.0,
+    "unit_weighted_sell_through": 0.5221965614575315,
+    "cost_weighted_sell_through": 0.5998310953676627,
+    "estimated_cohort_revenue": 10399385.555020247,
+    "estimated_cohort_gross_profit": 3640550.555020247,
+    "estimated_cohort_gross_margin": 0.3500736207691416,
+    "estimated_revenue_to_invoice_cost": 0.9229216024090606,
+    "total_sales_revenue_of_skus_since": 41750400.0,
+    "total_sales_units_of_skus_since": 3410.0,
+    "skus_replenished_after_invoice": 97,
+    "unabsorbed_units": 1862.0,
+    "unabsorbed_cost": 4509062.0,
+    "skus_below_50pct_absorption": 239,
+    "units_in_skus_below_50pct_absorption": 1923.0,
+    "cost_in_skus_below_50pct_absorption": 4101563.0
+  },
+  "inventory": {
+    "skus_with_positive_stock": 377,
+    "skus_zero_stock": 196,
+    "skus_negative_stock": 5,
+    "current_units_across_skus": 2539.0,
+    "current_positive_units": 2548.0,
+    "current_stock_value_at_invoice_cost": 8792511.0,
+    "minimum_potential_invoice_residual_units": 1861.0,
+    "minimum_potential_invoice_residual_cost": 4508596.0,
+    "skus_with_stock_no_sales_since": 150,
+    "skus_with_stock_no_sales_365d": 292,
+    "stock_value_no_sales_365d_at_invoice_cost": 4715341.0
+  },
+  "data_quality": {
+    "header_detail_delta": 0.0,
+    "missing_master_skus": 0,
+    "missing_current_price_skus": 0,
+    "negative_stock_skus": 5,
+    "lot_traceability": "No lot/serial link exists between a 2024 purchase line and 2026 on-hand units; residual figures are bounded estimates, not exact lot counts."
+  }
+}

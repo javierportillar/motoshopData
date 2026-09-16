@@ -65,6 +65,11 @@ def test_chat_tool_catalog_is_scoped_to_tenant(monkeypatch):
         "generate_report",
     }
 
+    moto = qa_module.get_qa_chat("motoshop", "ana", repository=InMemoryConversationRepository())
+    moto_names = {item["function"]["name"] for item in moto.tool_defs}
+    assert "get_ultima_compra" not in moto_names
+    assert "get_compras_recientes" not in moto_names
+
 
 def test_tool_executor_does_not_inherit_global_duckdb(monkeypatch):
     import motoshop_api.metrics.repo_duckdb as repo_duckdb
@@ -252,7 +257,6 @@ def test_chat_http_endpoint_forwards_authenticated_tenant_and_user(
     assert captured == {"tenant": "masvital", "user_id": "admin"}
 
 
-
 def test_chat_passes_authenticated_capability_context_to_executor(client, monkeypatch):
     from motoshop_api.auth.deps import get_current_user
     from motoshop_api.auth.users import User
@@ -323,9 +327,7 @@ def test_chat_http_endpoint_maps_provider_outage_to_503(client, admin_token, mon
         def chat(self, message, conversation_id, request_id):
             raise TransientLLMError("provider timeout")
 
-    monkeypatch.setattr(
-        "motoshop_api.llm.qa_chat.get_qa_chat", lambda **_: FailingChat()
-    )
+    monkeypatch.setattr("motoshop_api.llm.qa_chat.get_qa_chat", lambda **_: FailingChat())
     response = client.post(
         "/api/llm/qa/chat",
         headers={"Authorization": f"Bearer {admin_token}", "X-Tenant": "motoshop"},
@@ -345,12 +347,15 @@ def test_chat_http_endpoint_maps_provider_rejection_to_502(client, admin_token, 
 
     monkeypatch.setattr("motoshop_api.llm.qa_chat.get_qa_chat", lambda **_: FailingChat())
     response = client.post(
-        "/api/llm/qa/chat", headers={"Authorization": f"Bearer {admin_token}", "X-Tenant": "motoshop"},
+        "/api/llm/qa/chat",
+        headers={"Authorization": f"Bearer {admin_token}", "X-Tenant": "motoshop"},
         json={"message": "¿Cómo vamos?", "request_id": "problem-1"},
     )
-    assert (response.status_code, response.headers["content-type"], response.json()["request_id"]) == (
-        502, "application/problem+json", "problem-1"
-    )
+    assert (
+        response.status_code,
+        response.headers["content-type"],
+        response.json()["request_id"],
+    ) == (502, "application/problem+json", "problem-1")
 
 
 def _chat_with_tool_result(tool_result, tool_name="sales"):
@@ -359,43 +364,92 @@ def _chat_with_tool_result(tool_result, tool_name="sales"):
 
     class FakeLLM:
         calls = 0
+
         def complete_with_tools(self, messages, tools, *, max_tokens):
             self.calls += 1
-            return ({"text": "", "tool_calls": [{"id": "call", "function": {
-                "name": tool_name, "arguments": "{}"}}]} if self.calls == 1
-                    else {"text": "No hay ventas en el alcance consultado.", "tool_calls": []})
+            return (
+                {
+                    "text": "",
+                    "tool_calls": [
+                        {"id": "call", "function": {"name": tool_name, "arguments": "{}"}}
+                    ],
+                }
+                if self.calls == 1
+                else {"text": "No hay ventas en el alcance consultado.", "tool_calls": []}
+            )
 
     class FakeExecutor:
         calls = 0
+
         def run(self, name, args):
             self.calls += 1
             return tool_result
 
     chat = QAChat(
-        FakeLLM(), ConversationManager(), FakeExecutor(), [], tenant_id="motoshop", user_id="ana",
+        FakeLLM(),
+        ConversationManager(),
+        FakeExecutor(),
+        [],
+        tenant_id="motoshop",
+        user_id="ana",
         repository=InMemoryConversationRepository(),
     )
     return chat, chat.executor
 
+
 def test_qa_chat_returns_governed_envelope_with_per_source_freshness():
-    chat, _ = _chat_with_tool_result({
-        "sources": [{"source_id": "duckdb-sales", "domain": "sales", "kind": "duckdb",
-                     "citation": "sales snapshot", "cutoff_at": "2026-09-13",
-                     "observed_at": "2026-09-15T10:00:00+00:00", "status": "used"}],
-        "freshness": [{"domain": "sales", "cutoff_at": "2026-09-13",
-                        "observed_at": "2026-09-15T10:00:00+00:00", "status": "current"}],
-        "entity_refs": [{"entity_type": "product", "entity_id": "SKU-1", "label": "Filtro",
-                          "domain": "inventory", "route_key": "product"},
-                         {"href": "https://evil.example/file"}],
-    })
+    chat, _ = _chat_with_tool_result(
+        {
+            "sources": [
+                {
+                    "source_id": "duckdb-sales",
+                    "domain": "sales",
+                    "kind": "duckdb",
+                    "citation": "sales snapshot",
+                    "cutoff_at": "2026-09-13",
+                    "observed_at": "2026-09-15T10:00:00+00:00",
+                    "status": "used",
+                }
+            ],
+            "freshness": [
+                {
+                    "domain": "sales",
+                    "cutoff_at": "2026-09-13",
+                    "observed_at": "2026-09-15T10:00:00+00:00",
+                    "status": "current",
+                }
+            ],
+            "entity_refs": [
+                {
+                    "entity_type": "product",
+                    "entity_id": "SKU-1",
+                    "label": "Filtro",
+                    "domain": "inventory",
+                    "route_key": "product",
+                },
+                {"href": "https://evil.example/file"},
+            ],
+        }
+    )
     result = chat.chat("¿Cómo están las ventas?")
 
-    assert set(result) == {"status", "tenant_id", "text", "conversation_id", "turn_count",
-                           "tools_used", "sources", "freshness", "entity_refs", "attachments"}
+    assert set(result) == {
+        "status",
+        "tenant_id",
+        "text",
+        "conversation_id",
+        "turn_count",
+        "tools_used",
+        "sources",
+        "freshness",
+        "entity_refs",
+        "attachments",
+    }
     assert result["status"] == "complete"
     assert result["tenant_id"] == "motoshop"
     assert result["sources"][0]["cutoff_at"] == result["freshness"][0]["cutoff_at"] == "2026-09-13"
-    assert result["entity_refs"][0]["href"] == "/inventario/productos/SKU-1"
+    assert result["entity_refs"] == []
+
 
 def test_qa_chat_marks_empty_and_does_not_invent_values():
     chat, _ = _chat_with_tool_result({"status": "empty", "sources": [], "freshness": []})
@@ -413,7 +467,9 @@ def test_qa_chat_requires_explicit_file_intent_and_reuses_duplicate_envelope():
     result = chat.chat("Dame un reporte de stock", request_id="duplicate-1")
 
     assert (result["status"], result["attachments"], executor.calls) == (
-        "needs_clarification", [], 0
+        "needs_clarification",
+        [],
+        0,
     )
 
     duplicate = chat.chat("Dame un reporte de stock", result["conversation_id"], "duplicate-1")

@@ -1,0 +1,59 @@
+{
+  "source": {
+    "database": "Cloudflare R2 / motoshop_gold.duckdb",
+    "downloaded_at_local": "2026-09-02 15:09:38 -05:00",
+    "latest_sale_timestamp": "2026-09-02T12:06:14",
+    "inventory_snapshot_date": "2026-09-02",
+    "latest_purchase_date": "2026-09-01"
+  },
+  "invoice": {
+    "num_documento": "13",
+    "cod_clase": "S18",
+    "purchase_timestamp": "2024-07-27T15:40:22",
+    "supplier": "KAROL NATALIA BURGOS BUSTOS",
+    "supplier_nit": "1116274616",
+    "payment_method": "F06",
+    "status": "B (vigente/contabilizada en el pipeline)",
+    "header_total": 11267897.0,
+    "detail_total": 11267897.0,
+    "detail_lines": 580,
+    "distinct_skus": 578,
+    "units": 3897.0,
+    "duplicate_line_skus": 2
+  },
+  "performance": {
+    "skus_with_any_sale_since": 428,
+    "skus_never_sold_since": 150,
+    "skus_100pct_apparent_absorption": 258,
+    "units_sold_apparent_cap": 2031.0,
+    "unit_weighted_sell_through": 0.5211701308698999,
+    "cost_weighted_sell_through": 0.5984910050207239,
+    "estimated_cohort_revenue": 10375645.273639759,
+    "estimated_cohort_gross_profit": 3631910.2736397586,
+    "estimated_cohort_gross_margin": 0.3500418699612781,
+    "estimated_revenue_to_invoice_cost": 0.9208147069182261,
+    "total_sales_revenue_of_skus_since": 41465900.0,
+    "total_sales_units_of_skus_since": 3397.0,
+    "skus_replenished_after_invoice": 97
+  },
+  "inventory": {
+    "skus_with_positive_stock": 377,
+    "skus_zero_stock": 196,
+    "skus_negative_stock": 5,
+    "current_units_across_skus": 2551.0,
+    "current_positive_units": 2560.0,
+    "current_stock_value_at_invoice_cost": 8975979.0,
+    "minimum_potential_invoice_residual_units": 1865.0,
+    "minimum_potential_invoice_residual_cost": 4523696.0,
+    "skus_with_stock_no_sales_since": 150,
+    "skus_with_stock_no_sales_365d": 292,
+    "stock_value_no_sales_365d_at_invoice_cost": 4715341.0
+  },
+  "data_quality": {
+    "header_detail_delta": 0.0,
+    "missing_master_skus": 0,
+    "missing_current_price_skus": 0,
+    "negative_stock_skus": 5,
+    "lot_traceability": "No lot/serial link exists between a 2024 purchase line and 2026 on-hand units; residual figures are bounded estimates, not exact lot counts."
+  }
+}
