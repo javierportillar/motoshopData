@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 import httpx
 import pytest
 
@@ -219,6 +221,32 @@ def test_tool_iterations_stop_when_the_shared_deadline_is_consumed(monkeypatch) 
 
     assert llm.calls == 2
     assert clock[0] == 162.0
+
+
+def test_tool_result_with_date_is_serialized_before_next_llm_call() -> None:
+    class _DateLLM:
+        calls = 0
+
+        def complete_with_tools(self, messages, tools, *, max_tokens, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    "text": "",
+                    "tool_calls": [{
+                        "id": "product-1",
+                        "function": {"name": "product", "arguments": "{}"},
+                    }],
+                }
+            assert '"ultima_compra": "2026-09-13"' in messages[-1]["content"]
+            return {"text": "Ficha procesada", "tool_calls": []}
+
+    class _DateExecutor(_Executor):
+        def run(self, name, args):
+            return {"ultima_compra": date(2026, 9, 13)}
+
+    result = _chat(_DateLLM(), executor=_DateExecutor()).chat("consultá el producto")
+
+    assert result["text"] == "Ficha procesada"
 
 
 def test_tool_errors_do_not_log_raw_arguments_or_values(caplog) -> None:

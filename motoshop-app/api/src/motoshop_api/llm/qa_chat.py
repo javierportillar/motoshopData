@@ -45,7 +45,7 @@ Capacidades:
 - Ventas: KPIs, top productos, comparación de períodos, performance de vendedores, mejores clientes.
 - Inventario: valor de inventario, alertas de quiebre de stock, productos dormidos, distribución ABC, clasificación ABC/XYZ, inventario por bodega.
 - Compras: última compra realizada, historial de compras recientes, búsqueda de compras por nombre de proveedor, detalle de productos de una compra específica, montos y productos comprados.
-- Productos: búsqueda en catálogo por nombre, código SKU o proveedor (precio, costo, stock, estado). Detalle completo de un producto: ficha técnica, stock, precios, margen, proveedor, historial de compras/ventas y movimiento mensual.
+- Productos: búsqueda en catálogo por nombre, código SKU o proveedor (precio, costo, stock, estado). Detalle completo de un producto: ficha técnica, stock, valor de inventario, precio, costo, margen, velocidad mensual, días de stock, rotación anual, estado operativo, acción sugerida, categoría ABC, ranking, proveedor, fechas de última compra/venta, historial de compras/ventas y movimiento mensual.
 - Clientes: top clientes por facturación, cohortes de retención.
 - Forecast: resumen de demanda, alertas de drift por categoría.
 - Reportes: generación de archivos Excel, PDF o Word cuando el usuario lo pida explícitamente.
@@ -423,7 +423,7 @@ class QAChat:
                         {
                             "role": "tool",
                             "tool_call_id": call.get("id", ""),
-                            "content": _json.dumps(tool_result, ensure_ascii=False),
+                            "content": _json.dumps(tool_result, ensure_ascii=False, default=str),
                         }
                     )
             if not final_text:

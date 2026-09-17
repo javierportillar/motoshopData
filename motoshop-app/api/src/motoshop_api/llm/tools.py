@@ -13,6 +13,18 @@ from motoshop_api.metrics.repo_duckdb import get_shared_connection
 
 logger = logging.getLogger(__name__)
 
+
+def _json_safe(value):
+    """Convert DuckDB date values nested in tool results to JSON-safe values."""
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 PUBLIC_TOOL_NAMES = {
     "get_kpis_today",
     "get_kpis_month",
@@ -504,8 +516,8 @@ class ToolExecutor:
         }
         return {**result, **self._purchase_metadata(rows[0][0])}
 
-    def get_producto_detalle(self, codigo: str) -> dict:
-        """Detalle completo de un producto: ficha, historial de compras, ventas, stock y movimientos."""
+    def get_producto_detalle(self, codigo: str, window_days: int = 180) -> dict:
+        """Detalle operativo completo de un producto usando las mismas métricas de la ficha web."""
 
         # 1. Ficha técnica del producto
         prod = self._con.execute(
@@ -692,6 +704,78 @@ class ToolExecutor:
             },
             "movimiento_mensual": movimientos_lista,
         }
+        # Reutilizar el cálculo canónico del dashboard evita que el asistente
+        # informe stock, costos o estados distintos a los de la ficha web.
+        try:
+            from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
+
+            dashboard_detail = DuckDBMetricsRepo(
+                db_path=self.duckdb_path,
+                tenant=self.tenant,
+            ).get_product_detail(codigo, window_days)
+        except Exception:
+            dashboard_detail = {"found": False}
+
+        if dashboard_detail.get("found") and dashboard_detail.get("metrics"):
+            metrics = _json_safe(dashboard_detail["metrics"])
+            timeline = _json_safe(dashboard_detail.get("timeline", []))
+            movements = _json_safe(dashboard_detail.get("movimientos", []))
+            visible_movements = movements[:100]
+            sales_by_month = [float(row.get("unidades_vendidas", 0) or 0) for row in timeline]
+            average_monthly_sales = (
+                sum(sales_by_month) / len(sales_by_month) if sales_by_month else 0
+            )
+            last_month_sales = sales_by_month[-1] if sales_by_month else None
+            trend_pct = (
+                round((last_month_sales - average_monthly_sales) / average_monthly_sales * 100, 1)
+                if last_month_sales is not None and average_monthly_sales > 0
+                else None
+            )
+            rotation_days = (
+                round(365 / metrics["rotacion_anual"])
+                if metrics.get("rotacion_anual") and metrics["rotacion_anual"] > 0
+                else None
+            )
+
+            resultado.update({
+                "metricas_operativas": metrics,
+                "estado_operativo": {
+                    "estado": metrics.get("estado"),
+                    "accion": metrics.get("accion"),
+                    "categoria_abc": metrics.get("abc"),
+                    "descripcion": (
+                        f"{metrics.get('estado')}; acción sugerida: {metrics.get('accion')}"
+                    ),
+                },
+                "ritmo_rotacion": {
+                    "velocidad_mensual": metrics.get("velocidad_mensual"),
+                    "dias_stock": metrics.get("dias_stock"),
+                    "dias_por_rotacion": rotation_days,
+                    "rotacion_anual": metrics.get("rotacion_anual"),
+                    "tendencia_ultimo_mes_pct": trend_pct,
+                },
+                "timeline_mensual": timeline,
+                "historial_movimientos": visible_movements,
+                "movimientos_totales": len(movements),
+                "movimientos_mostrados": len(visible_movements),
+                "movimientos_omitidos": max(0, len(movements) - len(visible_movements)),
+                "periodo_metricas_dias": window_days,
+            })
+            # Estos valores deben coincidir con la ficha del dashboard.
+            resultado["stock"].update({
+                "actual": metrics.get("cantidad_actual", resultado["stock"]["actual"]),
+                "valor_inventario": metrics.get("valor_inventario", resultado["stock"]["valor_inventario"]),
+            })
+            resultado["precios"].update({
+                "costo": metrics.get("costo_unit", resultado["precios"]["costo"]),
+                "margen_unitario": round(
+                    float(metrics.get("precio", 0) or 0) - float(metrics.get("costo_unit", 0) or 0), 2
+                ),
+                "margen_porcentaje": metrics.get("margen_pct"),
+            })
+            if metrics.get("proveedor"):
+                resultado["proveedor"]["nombre"] = metrics["proveedor"]
+
         return resultado
 
     def get_detalle_compra(
@@ -1605,8 +1689,10 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "get_producto_detalle",
             "description": (
-                "Detalle completo de un producto: ficha técnica, stock, precios, margen, "
-                "proveedor, historial de compras, historial de ventas y movimiento mensual. "
+                "Detalle completo de un producto: ficha técnica, stock, valor de inventario, "
+                "precios, margen, velocidad, días de stock, rotación, estado operativo, "
+                "ABC, ranking, proveedor, historial de compras, historial de ventas y "
+                "movimiento mensual. "
                 "Usala cuando el usuario pida detalles de un producto específico, "
                 "por ejemplo '¿cómo está el producto 06-108?', 'detalles del comando derecho', "
                 "'¿cuánto se vendió de este producto?', '¿cuándo se compró por última vez?'."
@@ -1617,6 +1703,11 @@ TOOL_DEFINITIONS = [
                     "codigo": {
                         "type": "string",
                         "description": "Código del producto (ej: '06-108', '04-001').",
+                    },
+                    "window_days": {
+                        "type": "integer",
+                        "default": 180,
+                        "description": "Días del período para ventas, velocidad y margen; normalmente 180.",
                     },
                 },
                 "required": ["codigo"],
