@@ -694,8 +694,15 @@ class ToolExecutor:
         }
         return resultado
 
-    def get_detalle_compra(self, num_documento: str, fecha: str = "") -> dict:
-        """Detalle de productos de una compra específica (por número de documento y opcionalmente fecha)."""
+    def get_detalle_compra(
+        self,
+        num_documento: str,
+        fecha: str = "",
+        producto: str = "",
+        limit: int = 40,
+    ) -> dict:
+        """Detalle resumido y consultable de productos de una compra específica."""
+        limit = max(1, min(int(limit), 100))
         # Buscar la compra
         if fecha:
             compra = self._con.execute(
@@ -724,7 +731,7 @@ class ToolExecutor:
             return {"error": f"No se encontró la compra '{num_documento}' (fecha: {fecha or 'cualquiera'})."}
 
         # Obtener detalles de productos
-        detalles = self._con.execute(
+        todos_los_detalles = self._con.execute(
             """
             SELECT cod_producto, nombre_detalle, cantidad, valor_unitario,
                    total_detalle, costo_producto
@@ -735,7 +742,20 @@ class ToolExecutor:
             [num_documento, compra[2]],
         ).fetchall()
 
-        total_calculado = sum(float(d[4] or 0) for d in detalles)
+        # El detalle puede tener cientos de líneas. Filtrar antes de construir
+        # la respuesta evita exceder el límite de contexto del proveedor LLM.
+        terminos = [term.casefold() for term in str(producto or "").split() if term.strip()]
+        detalles = [
+            detalle
+            for detalle in todos_los_detalles
+            if not terminos
+            or all(
+                termino in f"{detalle[0] or ''} {detalle[1] or ''}".casefold()
+                for termino in terminos
+            )
+        ]
+        detalles_visibles = detalles[:limit]
+        total_calculado = sum(float(d[4] or 0) for d in todos_los_detalles)
 
         resultado = {
             "compra": {
@@ -756,9 +776,13 @@ class ToolExecutor:
                     "total": float(d[4] or 0),
                     "costo": float(d[5] or 0),
                 }
-                for d in detalles
+                for d in detalles_visibles
             ],
             "total_productos": len(detalles),
+            "total_productos_factura": len(todos_los_detalles),
+            "productos_mostrados": len(detalles_visibles),
+            "productos_omitidos": max(0, len(detalles) - len(detalles_visibles)),
+            "filtro_producto": producto or None,
         }
         return resultado
 
@@ -1604,8 +1628,9 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "get_detalle_compra",
             "description": (
-                "Detalle de productos de una compra específica: lista todos los productos, cantidades, "
-                "valores unitarios, totales, descuentos e IVA. "
+                "Detalle de productos de una compra específica: productos, cantidades, valores unitarios, "
+                "totales y costos. Devuelve un resumen completo y una lista acotada de productos para no "
+                "exceder el contexto; usá producto para consultar una línea concreta. "
                 "Usala cuando el usuario pida el detalle de una compra específica, "
                 "por ejemplo '¿qué productos tiene la compra 13?', 'detalla la compra del 27 de julio', "
                 "'¿qué se compró en el documento 13?'."
@@ -1621,6 +1646,16 @@ TOOL_DEFINITIONS = [
                         "type": "string",
                         "default": "",
                         "description": "Fecha de la compra en formato YYYY-MM-DD (opcional, si hay varias compras con mismo número).",
+                    },
+                    "producto": {
+                        "type": "string",
+                        "default": "",
+                        "description": "Código o palabras del producto a consultar (opcional).",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 40,
+                        "description": "Cantidad máxima de líneas devueltas, entre 1 y 100.",
                     },
                 },
                 "required": ["num_documento"],

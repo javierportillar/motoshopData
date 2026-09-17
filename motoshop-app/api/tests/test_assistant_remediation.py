@@ -59,7 +59,11 @@ def isolated_tenant_fixtures(tmp_path: Path):
             connection.execute(
                 "CREATE TABLE silver_fact_compras_detalle (cod_clase VARCHAR, num_documento VARCHAR, "
                 "cod_producto VARCHAR, nombre_detalle VARCHAR, cantidad DOUBLE, "
-                "precio_unitario DOUBLE, total_detalle DOUBLE)"
+                "valor_unitario DOUBLE, total_detalle DOUBLE, costo_producto DOUBLE, business_date DATE)"
+            )
+            connection.execute(
+                "INSERT INTO silver_fact_compras_detalle VALUES ('FC', '1', 'SKU-1', ?, 2, 12.5, 25, 10, '2026-01-02')",
+                ["Test product"],
             )
             connection.execute(
                 "CREATE TABLE gold_mart_inventario_actual (cod_producto VARCHAR, snapshot_date DATE)"
@@ -542,6 +546,7 @@ def test_purchase_tools_work_when_in_enabled_tools(isolated_tenant_fixtures) -> 
                                 "get_kpis_today",
                                 "get_ultima_compra",
                                 "get_compras_recientes",
+                                "get_detalle_compra",
                             ]
                         },
                     },
@@ -573,6 +578,12 @@ def test_purchase_tools_work_when_in_enabled_tools(isolated_tenant_fixtures) -> 
         assert "error" not in result2
         assert result2["count"] == 1
         assert result2["compras"][0]["proveedor"] == "Moto supplier"
+
+        result3 = executor.run("get_detalle_compra", {"num_documento": "1", "fecha": "2026-01-02"})
+        assert result3["compra"]["proveedor"] == "Moto supplier"
+        assert result3["total_productos"] == 1
+        assert result3["productos"][0]["codigo"] == "SKU-1"
+        assert result3["productos"][0]["total"] == 25
     finally:
         load_tenants(isolated_tenant_fixtures / "tenants.yaml")
 
