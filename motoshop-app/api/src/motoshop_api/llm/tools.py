@@ -37,6 +37,7 @@ PUBLIC_TOOL_NAMES = {
     "get_drift_alerts",
     "buscar_compras_por_proveedor",
     "get_producto_detalle",
+    "get_detalle_compra",
     "generate_report",
 }
 
@@ -690,6 +691,74 @@ class ToolExecutor:
                 } if ultima_venta else None,
             },
             "movimiento_mensual": movimientos_lista,
+        }
+        return resultado
+
+    def get_detalle_compra(self, num_documento: str, fecha: str = "") -> dict:
+        """Detalle de productos de una compra específica (por número de documento y opcionalmente fecha)."""
+        # Buscar la compra
+        if fecha:
+            compra = self._con.execute(
+                """
+                SELECT business_date, num_documento, cod_clase, nombre_proveedor,
+                       nit_proveedor, total_factura, estado_documento
+                FROM silver_fact_compras
+                WHERE num_documento = ? AND business_date = ? AND COALESCE(estado_documento, '') != 'A'
+                LIMIT 1
+                """,
+                [num_documento, fecha],
+            ).fetchone()
+        else:
+            compra = self._con.execute(
+                """
+                SELECT business_date, num_documento, cod_clase, nombre_proveedor,
+                       nit_proveedor, total_factura, estado_documento
+                FROM silver_fact_compras
+                WHERE num_documento = ? AND COALESCE(estado_documento, '') != 'A'
+                ORDER BY business_date DESC LIMIT 1
+                """,
+                [num_documento],
+            ).fetchone()
+
+        if not compra:
+            return {"error": f"No se encontró la compra '{num_documento}' (fecha: {fecha or 'cualquiera'})."}
+
+        # Obtener detalles de productos
+        detalles = self._con.execute(
+            """
+            SELECT cod_producto, nombre_detalle, cantidad, valor_unitario,
+                   total_detalle, costo_producto
+            FROM silver_fact_compras_detalle
+            WHERE num_documento = ? AND cod_clase = ?
+            ORDER BY total_detalle DESC
+            """,
+            [num_documento, compra[2]],
+        ).fetchall()
+
+        total_calculado = sum(float(d[4] or 0) for d in detalles)
+
+        resultado = {
+            "compra": {
+                "fecha": compra[0].isoformat(),
+                "num_documento": compra[1],
+                "proveedor": compra[3],
+                "nit_proveedor": compra[4],
+                "total_factura": float(compra[5] or 0),
+                "total_calculado_detalles": round(total_calculado, 2),
+                "estado_documento": str(compra[6] or "").strip(),
+            },
+            "productos": [
+                {
+                    "codigo": d[0],
+                    "nombre": d[1],
+                    "cantidad": float(d[2] or 0),
+                    "valor_unitario": float(d[3] or 0),
+                    "total": float(d[4] or 0),
+                    "costo": float(d[5] or 0),
+                }
+                for d in detalles
+            ],
+            "total_productos": len(detalles),
         }
         return resultado
 
@@ -1527,6 +1596,34 @@ TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["codigo"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_detalle_compra",
+            "description": (
+                "Detalle de productos de una compra específica: lista todos los productos, cantidades, "
+                "valores unitarios, totales, descuentos e IVA. "
+                "Usala cuando el usuario pida el detalle de una compra específica, "
+                "por ejemplo '¿qué productos tiene la compra 13?', 'detalla la compra del 27 de julio', "
+                "'¿qué se compró en el documento 13?'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "num_documento": {
+                        "type": "string",
+                        "description": "Número de documento de la compra (ej: '13', '43').",
+                    },
+                    "fecha": {
+                        "type": "string",
+                        "default": "",
+                        "description": "Fecha de la compra en formato YYYY-MM-DD (opcional, si hay varias compras con mismo número).",
+                    },
+                },
+                "required": ["num_documento"],
             },
         },
     },

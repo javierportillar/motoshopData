@@ -66,6 +66,7 @@ def test_chat_tool_catalog_is_scoped_to_tenant(monkeypatch):
         "get_compras_recientes",
         "buscar_compras_por_proveedor",
         "get_producto_detalle",
+        "get_detalle_compra",
         "search_products",
         "get_top_clientes",
         "get_inventario_por_bodega",
