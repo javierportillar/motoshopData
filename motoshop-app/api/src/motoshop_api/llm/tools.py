@@ -7,7 +7,10 @@ TOOL_DEFINITIONS exporta specs OpenAI-compatible para function calling.
 from __future__ import annotations
 
 import logging
+import re
+import unicodedata
 from datetime import UTC, date, datetime, timedelta
+from difflib import SequenceMatcher
 
 from motoshop_api.metrics.repo_duckdb import get_shared_connection
 
@@ -23,6 +26,49 @@ def _json_safe(value):
     if isinstance(value, list):
         return [_json_safe(item) for item in value]
     return value
+
+
+_PRODUCT_SEARCH_STOPWORDS = {
+    "a", "al", "con", "cual", "cómo", "como", "de", "del", "detalle",
+    "dame", "el", "en", "esta", "está", "información", "la", "los",
+    "me", "para", "por", "producto", "qué", "que", "sobre", "un", "una",
+}
+
+
+def _search_tokens(value: str) -> list[str]:
+    normalized = unicodedata.normalize("NFKD", str(value or "")).encode(
+        "ascii", "ignore"
+    ).decode("ascii").lower()
+    return [
+        token for token in re.findall(r"[a-z0-9]+", normalized)
+        if token not in _PRODUCT_SEARCH_STOPWORDS
+    ]
+
+
+def _product_match_score(query: str, searchable_text: str) -> float:
+    """Score partial, reordered and lightly misspelled product-name matches."""
+    query_tokens = _search_tokens(query)
+    candidate_tokens = _search_tokens(searchable_text)
+    if not query_tokens or not candidate_tokens:
+        return 0.0
+
+    scores = []
+    for query_token in query_tokens:
+        token_scores = []
+        for candidate_token in candidate_tokens:
+            if query_token == candidate_token:
+                token_scores.append(1.0)
+            elif len(query_token) >= 4 and (
+                query_token in candidate_token or candidate_token in query_token
+            ):
+                token_scores.append(0.9)
+            elif len(query_token) >= 4 and len(candidate_token) >= 4:
+                token_scores.append(SequenceMatcher(None, query_token, candidate_token).ratio())
+        scores.append(max(token_scores, default=0.0))
+
+    if any(score < 0.72 for score in scores):
+        return 0.0
+    return sum(scores) / len(scores)
 
 
 PUBLIC_TOOL_NAMES = {
@@ -893,7 +939,7 @@ class ToolExecutor:
         }
 
     def search_products(self, query: str, limit: int = 10) -> dict:
-        """Busca productos del catálogo por nombre, código o proveedor.
+        """Busca productos por código, nombre parcial, palabras reordenadas o typos leves.
 
         Devuelve código, nombre, precio de venta, costo, stock, proveedor y estado.
         NO la uses para auditar comportamiento de productos — usa get_productos_comportamiento.
@@ -902,19 +948,26 @@ class ToolExecutor:
         query = str(query or "").strip()
         if not query:
             return {"productos": [], "total": 0}
-        like = f"%{query}%"
         rows = self._con.execute(
             """
             SELECT cod_producto, nombre_producto, precio_venta_sin_iva, costo_ultima_compra,
                    existencia, nit_proveedor, estado_producto, cod_grupo
             FROM silver_dim_producto
-            WHERE nombre_producto ILIKE ? OR cod_producto ILIKE ? OR nit_proveedor ILIKE ?
-            ORDER BY existencia DESC
-            LIMIT ?
-        """,
-            [like, like, like, limit],
+            """
         ).fetchall()
-        return {
+
+        scored_rows = []
+        for row in rows:
+            score = _product_match_score(
+                query,
+                " ".join(str(value or "") for value in (row[0], row[1], row[5], row[7])),
+            )
+            if score > 0:
+                scored_rows.append((score, row))
+        scored_rows.sort(key=lambda item: (item[0], float(item[1][4] or 0)), reverse=True)
+        matches = [row for _, row in scored_rows]
+        visible_rows = matches[:limit]
+        result = {
             "productos": [
                 {
                     "codigo": r[0],
@@ -926,10 +979,15 @@ class ToolExecutor:
                     "estado": r[6],
                     "grupo": r[7],
                 }
-                for r in rows
+                for r in visible_rows
             ],
-            "total": len(rows),
+            "total": len(matches),
+            "ambiguo": len(matches) > 1,
+            "criterio_busqueda": query,
         }
+        if len(matches) > limit:
+            result["productos_omitidos"] = len(matches) - limit
+        return result
 
     def get_productos_comportamiento(self, skus: list[str], period: str = "month") -> dict:
         """Analiza el comportamiento de una lista de SKUs: ventas, stock, demanda y alertas.
@@ -1773,7 +1831,9 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "search_products",
             "description": (
-                "Busca productos del catálogo por nombre, código SKU o proveedor. "
+                "Busca productos del catálogo por código SKU, nombre parcial, palabras "
+                "desordenadas o errores leves de escritura. Devuelve un indicador ambiguo "
+                "cuando hay varias coincidencias. "
                 "Devuelve precio, costo, stock, proveedor y estado. "
                 "Usala para preguntas como '¿tenemos filtros de aceite?', "
                 "'¿cuál es el precio del SKU X?', '¿qué productos nos provee Y?'. "

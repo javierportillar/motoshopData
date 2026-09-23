@@ -4,6 +4,7 @@ from datetime import date
 
 import httpx
 import pytest
+import duckdb
 
 from motoshop_api.llm.client import LLMClient, PermanentLLMError, TransientLLMError
 from motoshop_api.llm.contracts import AssistantRequest
@@ -247,6 +248,41 @@ def test_tool_result_with_date_is_serialized_before_next_llm_call() -> None:
     result = _chat(_DateLLM(), executor=_DateExecutor()).chat("consultá el producto")
 
     assert result["text"] == "Ficha procesada"
+
+
+def test_search_products_matches_reordered_words_and_reports_ambiguity() -> None:
+    from motoshop_api.llm.tools import ToolExecutor
+
+    executor = object.__new__(ToolExecutor)
+    executor._con = duckdb.connect(":memory:")
+    executor._con.execute(
+        """
+        CREATE TABLE silver_dim_producto (
+            cod_producto VARCHAR,
+            nombre_producto VARCHAR,
+            precio_venta_sin_iva DOUBLE,
+            costo_ultima_compra DOUBLE,
+            existencia DOUBLE,
+            nit_proveedor VARCHAR,
+            estado_producto VARCHAR,
+            cod_grupo VARCHAR
+        )
+        """
+    )
+    executor._con.executemany(
+        "INSERT INTO silver_dim_producto VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            ("171751", "KIT CAJA CADENA - DR 150 DORADA CASSARELLA", 142100, 85278, 3, "N1", "A", "G1"),
+            ("175712", "KIT CAJA CADENA - DR 150 DORADA GAVIRIA", 130000, 78000, 2, "N2", "A", "G1"),
+            ("SKU-OTHER", "FILTRO DE ACEITE", 10000, 5000, 4, "N3", "A", "G2"),
+        ],
+    )
+
+    result = executor.search_products("cadena dr 150")
+
+    assert result["ambiguo"] is True
+    assert result["total"] == 2
+    assert {item["codigo"] for item in result["productos"]} == {"171751", "175712"}
 
 
 def test_tool_errors_do_not_log_raw_arguments_or_values(caplog) -> None:
