@@ -565,6 +565,11 @@ class ToolExecutor:
     def get_producto_detalle(self, codigo: str, window_days: int = 180) -> dict:
         """Detalle operativo completo de un producto usando las mismas métricas de la ficha web."""
 
+        requested_codigo = str(codigo or "").strip()
+        if not requested_codigo:
+            return {"error": "Indicá el código o el nombre del producto a consultar."}
+        codigo = requested_codigo
+
         # 1. Ficha técnica del producto
         prod = self._con.execute(
             """
@@ -576,10 +581,44 @@ class ToolExecutor:
             FROM silver_dim_producto
             WHERE cod_producto = ?
             """,
-            [codigo],
+            [requested_codigo],
         ).fetchone()
+        resolution = None
         if not prod:
-            return {"error": f"Producto '{codigo}' no encontrado en el catálogo."}
+            matches = self.search_products(requested_codigo, limit=8)
+            if matches.get("total") == 1:
+                codigo = matches["productos"][0]["codigo"]
+                prod = self._con.execute(
+                    """
+                    SELECT cod_producto, nombre_producto, codigo_barras, presentacion,
+                           existencia, costo_producto, costo_ultima_compra,
+                           precio_venta_sin_iva, precio_venta_con_iva,
+                           estado_producto, cod_grupo, nit_proveedor,
+                           stock_minimo, stock_maximo, fecha_actualizacion
+                    FROM silver_dim_producto
+                    WHERE cod_producto = ?
+                    """,
+                    [codigo],
+                ).fetchone()
+                resolution = {
+                    "consulta": requested_codigo,
+                    "codigo_resuelto": codigo,
+                    "nombre_resuelto": prod[1] if prod else None,
+                }
+            elif matches.get("total", 0) > 1:
+                return {
+                    "ambiguo": True,
+                    "consulta": requested_codigo,
+                    "mensaje": (
+                        f"Hay {matches['total']} productos que coinciden con "
+                        f"'{requested_codigo}'. Pedí el modelo de moto o el código SKU."
+                    ),
+                    "coincidencias": matches["productos"],
+                }
+            else:
+                return {"error": f"Producto '{requested_codigo}' no encontrado en el catálogo."}
+        if not prod:
+            return {"error": f"Producto '{requested_codigo}' no encontrado en el catálogo."}
 
         # 2. Nombre del proveedor (por NIT o por última compra directa)
         proveedor_nombre = proveedor_nombre = prod[11]  # NIT por defecto
@@ -700,6 +739,7 @@ class ToolExecutor:
         margen_pct = (margen_unit / precio * 100) if precio else 0
 
         resultado = {
+            **({"resolucion_busqueda": resolution} if resolution else {}),
             "ficha": {
                 "codigo": prod[0],
                 "nombre": prod[1],
@@ -749,6 +789,12 @@ class ToolExecutor:
                 } if ultima_venta else None,
             },
             "movimiento_mensual": movimientos_lista,
+            "metricas_operativas_disponibles": False,
+            "metricas_operativas_mensaje": (
+                "No se pudieron calcular las métricas operativas del dashboard; "
+                "los valores de catálogo e historial pueden consultarse, pero no "
+                "deben interpretarse como la ficha operativa completa."
+            ),
         }
         # Reutilizar el cálculo canónico del dashboard evita que el asistente
         # informe stock, costos o estados distintos a los de la ficha web.
@@ -759,7 +805,13 @@ class ToolExecutor:
                 db_path=self.duckdb_path,
                 tenant=self.tenant,
             ).get_product_detail(codigo, window_days)
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "product_metrics_unavailable tenant=%s codigo=%s error_type=%s",
+                self.tenant,
+                codigo,
+                type(exc).__name__,
+            )
             dashboard_detail = {"found": False}
 
         if dashboard_detail.get("found") and dashboard_detail.get("metrics"):
@@ -784,6 +836,8 @@ class ToolExecutor:
             )
 
             resultado.update({
+                "metricas_operativas_disponibles": True,
+                "metricas_operativas_mensaje": "Métricas calculadas con la misma fuente del dashboard.",
                 "metricas_operativas": metrics,
                 "estado_operativo": {
                     "estado": metrics.get("estado"),

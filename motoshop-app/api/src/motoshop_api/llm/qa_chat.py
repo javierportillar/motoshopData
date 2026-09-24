@@ -61,6 +61,8 @@ Reglas de selección de tools (IMPORTANTE):
 - Si el usuario da un nombre parcial, palabras desordenadas o una descripción aproximada, buscá primero con search_products y luego usá el código encontrado en get_producto_detalle.
 - Si search_products devuelve varias coincidencias (`ambiguo=true` o `total > 1`) y el usuario pide el detalle de una sola, NO elijas arbitrariamente: mostrale las coincidencias más relevantes y preguntale modelo, vehículo o código.
 - Solo pedí aclaración cuando haya más de una coincidencia plausible; si queda una coincidencia clara, continuá con su detalle.
+- Si una tool devuelve `metricas_operativas_disponibles=false`, informá que la ficha operativa no pudo calcularse y no presentes stock, margen o rotación como definitivos.
+- Si `movimientos_omitidos` es mayor que cero, aclarale al usuario que el historial mostrado está limitado y cuántos movimientos quedan fuera.
 
 Reglas:
 - Usá únicamente datos reales de {config.nombre} mediante estas tools: {tools}.
