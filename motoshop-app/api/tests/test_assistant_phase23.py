@@ -285,6 +285,74 @@ def test_search_products_matches_reordered_words_and_reports_ambiguity() -> None
     assert {item["codigo"] for item in result["productos"]} == {"171751", "175712"}
 
 
+def test_product_detail_resolves_a_unique_name_and_flags_missing_dashboard_metrics(monkeypatch) -> None:
+    from motoshop_api.llm.tools import ToolExecutor
+
+    product = (
+        "171751", "KIT CAJA CADENA DR 150", "", "UND", 3, 85278, 85278,
+        142100, 168899, "A", "G1", "N1", 0, 0, date(2026, 9, 23),
+    )
+
+    class _Result:
+        def __init__(self, row=None, rows=None):
+            self.row = row
+            self.rows = rows or ([] if row is None else [row])
+
+        def fetchone(self):
+            return self.row
+
+        def fetchall(self):
+            return self.rows
+
+    class _Connection:
+        def execute(self, sql, params=None):
+            if "FROM silver_dim_producto" in sql:
+                return _Result(product if params and params[0] == "171751" else None)
+            if "SELECT nombre_proveedor" in sql:
+                return _Result(("INTEGRANDO SAS",))
+            if "SELECT c.business_date" in sql:
+                return _Result((date(2026, 9, 13), "2350", "INTEGRANDO SAS", 170556))
+            if "SELECT v.business_date" in sql:
+                return _Result((date(2026, 8, 25), "6943", "", 140000, 1))
+            if "COUNT(*) as num_compras" in sql:
+                return _Result((1, 2, 170556))
+            if "COUNT(*) as num_ventas" in sql:
+                return _Result((1, 1, 140000))
+            if "strftime(c.business_date" in sql:
+                return _Result(rows=[])
+            if "SUM(valor_costo * cantidad)" in sql:
+                return _Result((255834,))
+            raise AssertionError(f"Unexpected query: {sql[:80]}")
+
+    executor = object.__new__(ToolExecutor)
+    executor._con = _Connection()
+    executor.tenant = "motoshop"
+    executor.duckdb_path = "/tmp/test-motoshop.duckdb"
+    executor.search_products = lambda query, limit=8: {
+        "productos": [{"codigo": "171751", "nombre": "KIT CAJA CADENA DR 150"}],
+        "total": 1,
+        "ambiguo": False,
+    }
+
+    class _BrokenMetricsRepo:
+        def __init__(self, **kwargs):
+            pass
+
+        def get_product_detail(self, codigo, window_days):
+            raise RuntimeError("dashboard fixture unavailable")
+
+    monkeypatch.setattr(
+        "motoshop_api.metrics.repo_duckdb.DuckDBMetricsRepo", _BrokenMetricsRepo
+    )
+
+    result = executor.get_producto_detalle("kit caja cadena dr 150")
+
+    assert result["resolucion_busqueda"]["codigo_resuelto"] == "171751"
+    assert result["ficha"]["codigo"] == "171751"
+    assert result["metricas_operativas_disponibles"] is False
+    assert "no se pudieron calcular" in result["metricas_operativas_mensaje"].lower()
+
+
 def test_tool_errors_do_not_log_raw_arguments_or_values(caplog) -> None:
     from motoshop_api.llm.tools import ToolExecutor
 
