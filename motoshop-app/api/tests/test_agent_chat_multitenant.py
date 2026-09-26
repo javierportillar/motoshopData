@@ -68,6 +68,8 @@ def test_chat_tool_catalog_is_scoped_to_tenant(monkeypatch):
         "get_producto_detalle",
         "get_detalle_compra",
         "search_products",
+        "analizar_compras_periodo",
+        "evaluar_compra_planeada",
         "get_top_clientes",
         "get_inventario_por_bodega",
         "get_drift_alerts",
@@ -79,6 +81,8 @@ def test_chat_tool_catalog_is_scoped_to_tenant(monkeypatch):
     assert "get_ultima_compra" in moto_names
     assert "get_compras_recientes" in moto_names
     assert "search_products" in moto_names
+    assert "analizar_compras_periodo" in moto_names
+    assert "evaluar_compra_planeada" in moto_names
     assert "get_top_clientes" in moto_names
     assert "get_inventario_por_bodega" in moto_names
     assert "get_abc_xyz_distribution" in moto_names

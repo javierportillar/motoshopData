@@ -7,6 +7,12 @@ from collections import defaultdict
 from datetime import date, timedelta
 
 
+def _inventory_source_label(inventory_source: str) -> str:
+    if inventory_source == "catalog":
+        return "silver_dim_producto.existencia"
+    return "gold_mart_inventario_actual.cantidad_actual"
+
+
 def _as_date(value: str | date, field: str) -> date:
     if isinstance(value, date):
         return value
@@ -16,21 +22,28 @@ def _as_date(value: str | date, field: str) -> date:
         raise ValueError(f"{field} debe estar en formato YYYY-MM-DD.") from exc
 
 
-def _cutoffs(connection) -> dict[str, date | None]:
+def _cutoffs(connection, inventory_source: str = "gold") -> dict[str, date | None]:
+    if inventory_source not in {"gold", "catalog"}:
+        raise ValueError("inventory_source debe ser 'gold' o 'catalog'.")
+    inventory_table = (
+        "silver_dim_producto" if inventory_source == "catalog" else "gold_mart_inventario_actual"
+    )
     row = connection.execute(
-        """
+        f"""
         SELECT
           (SELECT MAX(business_date) FROM silver_fact_compras
            WHERE COALESCE(estado_documento, '') != 'A'),
           (SELECT MAX(business_date) FROM silver_fact_ventas
            WHERE COALESCE(estado_documento, '') != 'A'),
-          (SELECT MAX(snapshot_date) FROM gold_mart_inventario_actual)
+          (SELECT MAX(snapshot_date) FROM {inventory_table})
         """
     ).fetchone()
     return {"purchases": row[0], "sales": row[1], "inventory": row[2]}
 
 
-def _freshness_metadata(cutoffs: dict[str, date | None]) -> tuple[list[dict], list[dict]]:
+def _freshness_metadata(
+    cutoffs: dict[str, date | None], inventory_source: str = "gold"
+) -> tuple[list[dict], list[dict]]:
     sources = []
     freshness = []
     for domain in ("purchases", "sales", "inventory"):
@@ -40,7 +53,11 @@ def _freshness_metadata(cutoffs: dict[str, date | None]) -> tuple[list[dict], li
             "source_id": f"duckdb-{domain}",
             "domain": domain,
             "kind": "duckdb",
-            "citation": f"DuckDB {domain} snapshot",
+            "citation": (
+                "DuckDB silver_dim_producto.existencia snapshot"
+                if domain == "inventory" and inventory_source == "catalog"
+                else f"DuckDB {domain} snapshot"
+            ),
             "cutoff_at": cutoff_at,
             "status": "used" if cutoff else "unknown",
         })
@@ -63,7 +80,8 @@ def _monthly_purchases(connection, date_from: date, date_to: date) -> list[dict]
           SUM(COALESCE(d.total_detalle, COALESCE(d.cantidad, 0) * COALESCE(d.valor_unitario, 0))) AS valor_comprado,
           COUNT(DISTINCT h.num_documento || '|' || h.cod_clase || '|' || CAST(h.business_date AS VARCHAR)) AS facturas,
           MIN(h.business_date) AS primera_compra,
-          MAX(h.business_date) AS ultima_compra
+          MAX(h.business_date) AS ultima_compra,
+          COALESCE(NULLIF(MAX(p.presentacion), ''), NULLIF(MAX(p.cod_medida), ''), 'SIN_DATO') AS unidad_medida
         FROM silver_fact_compras_detalle d
         JOIN silver_fact_compras h
           ON h.num_documento = d.num_documento
@@ -88,6 +106,7 @@ def _monthly_purchases(connection, date_from: date, date_to: date) -> list[dict]
             "facturas": int(row[5] or 0),
             "primera_compra": row[6],
             "ultima_compra": row[7],
+            "unidad_medida": row[8],
         }
         for row in rows
     ]
@@ -164,19 +183,35 @@ def _product_day_movements(
     return sales, purchases
 
 
-def _current_stock(connection, product_codes: list[str], cutoff: date | None) -> dict[str, float]:
+def _current_stock(
+    connection,
+    product_codes: list[str],
+    cutoff: date | None,
+    inventory_source: str = "gold",
+) -> dict[str, float]:
     if not product_codes or not cutoff:
         return {}
     placeholders = ",".join("?" for _ in product_codes)
-    rows = connection.execute(
-        f"""
-        SELECT cod_producto, SUM(COALESCE(cantidad_actual, 0))
-        FROM gold_mart_inventario_actual
-        WHERE snapshot_date = ? AND cod_producto IN ({placeholders})
-        GROUP BY cod_producto
-        """,
-        [cutoff, *product_codes],
-    ).fetchall()
+    if inventory_source == "catalog":
+        rows = connection.execute(
+            f"""
+            SELECT cod_producto, MAX(COALESCE(existencia, 0))
+            FROM silver_dim_producto
+            WHERE snapshot_date = ? AND cod_producto IN ({placeholders})
+            GROUP BY cod_producto
+            """,
+            [cutoff, *product_codes],
+        ).fetchall()
+    else:
+        rows = connection.execute(
+            f"""
+            SELECT cod_producto, SUM(COALESCE(cantidad_actual, 0))
+            FROM gold_mart_inventario_actual
+            WHERE snapshot_date = ? AND cod_producto IN ({placeholders})
+            GROUP BY cod_producto
+            """,
+            [cutoff, *product_codes],
+        ).fetchall()
     return {row[0]: float(row[1] or 0) for row in rows}
 
 
@@ -188,10 +223,18 @@ def _additional_demand_candidates(
     *,
     target_cover_days: int,
     sales_window_days: int,
+    inventory_source: str = "gold",
     limit: int = 5,
 ) -> list[dict]:
     exclusions = ",".join("?" for _ in excluded_codes)
     excluded_clause = f"AND p.cod_producto NOT IN ({exclusions})" if excluded_codes else ""
+    inventory_cte = (
+        """SELECT cod_producto, MAX(COALESCE(existencia, 0)) AS current_stock
+          FROM silver_dim_producto WHERE snapshot_date = ? GROUP BY cod_producto"""
+        if inventory_source == "catalog"
+        else """SELECT cod_producto, SUM(COALESCE(cantidad_actual, 0)) AS current_stock
+          FROM gold_mart_inventario_actual WHERE snapshot_date = ? GROUP BY cod_producto"""
+    )
     rows = connection.execute(
         f"""
         WITH sales AS (
@@ -208,10 +251,7 @@ def _additional_demand_candidates(
             AND COALESCE(h.estado_documento, '') != 'A'
           GROUP BY d.cod_producto
         ), inventory AS (
-          SELECT cod_producto, SUM(COALESCE(cantidad_actual, 0)) AS current_stock
-          FROM gold_mart_inventario_actual
-          WHERE snapshot_date = ?
-          GROUP BY cod_producto
+          {inventory_cte}
         ), purchase_history AS (
           SELECT d.cod_producto, SUM(COALESCE(d.cantidad, 0)) AS purchased_units
           FROM silver_fact_compras_detalle d
@@ -222,7 +262,9 @@ def _additional_demand_candidates(
           WHERE COALESCE(h.estado_documento, '') != 'A'
           GROUP BY d.cod_producto
         )
-        SELECT p.cod_producto, p.nombre_producto, s.units_window, s.units_90d,
+        SELECT p.cod_producto, p.nombre_producto,
+               COALESCE(NULLIF(p.presentacion, ''), NULLIF(p.cod_medida, ''), 'SIN_DATO') AS unit,
+               s.units_window, s.units_90d,
                COALESCE(i.current_stock, 0) AS current_stock, s.last_sale,
                CEIL(GREATEST(s.units_window / ? * ? - COALESCE(i.current_stock, 0), 0)) AS suggested_qty
         FROM sales s
@@ -254,11 +296,12 @@ def _additional_demand_candidates(
         {
             "codigo": row[0],
             "nombre": row[1],
-            "unidades_vendidas_ventana": round(float(row[2] or 0), 2),
-            "unidades_vendidas_90d": round(float(row[3] or 0), 2),
-            "stock_actual": round(float(row[4] or 0), 2),
-            "ultima_venta": row[5].isoformat() if row[5] else None,
-            "cantidad_guia_para_cobertura": int(row[6] or 0),
+            "unidad_medida": row[2],
+            "unidades_vendidas_ventana": round(float(row[3] or 0), 2),
+            "unidades_vendidas_90d": round(float(row[4] or 0), 2),
+            "stock_actual": round(float(row[5] or 0), 2),
+            "ultima_venta": row[6].isoformat() if row[6] else None,
+            "cantidad_guia_para_cobertura": int(row[7] or 0),
         }
         for row in rows
     ]
@@ -271,6 +314,7 @@ def analyze_purchase_period(
     *,
     target_cover_days: int = 45,
     limit: int = 30,
+    inventory_source: str = "gold",
 ) -> dict:
     """Assess purchased SKUs against prior demand and post-purchase movement."""
     start = _as_date(date_from, "date_from")
@@ -279,9 +323,9 @@ def analyze_purchase_period(
         raise ValueError("date_from debe ser anterior o igual a date_to.")
     target_cover_days = max(1, min(int(target_cover_days), 365))
     limit = max(1, min(int(limit), 60))
-    cutoffs = _cutoffs(connection)
+    cutoffs = _cutoffs(connection, inventory_source)
     purchases_by_month = _monthly_purchases(connection, start, end)
-    sources, freshness = _freshness_metadata(cutoffs)
+    sources, freshness = _freshness_metadata(cutoffs, inventory_source)
     if not purchases_by_month:
         return {
             "status": "empty",
@@ -305,7 +349,7 @@ def analyze_purchase_period(
             min(date.fromisoformat(f"{row['mes']}-01") for row in purchases_by_month),
             stock_cutoff,
         )
-    stock = _current_stock(connection, product_codes, stock_cutoff)
+    stock = _current_stock(connection, product_codes, stock_cutoff, inventory_source)
 
     enriched = []
     for row in purchases_by_month:
@@ -434,12 +478,21 @@ def analyze_purchase_period(
     for month in sorted({row["mes"] for row in enriched}):
         items = [row for row in enriched if row["mes"] == month]
         invoices = invoice_totals.get(month, {"facturas": 0, "valor_facturado": 0.0})
+        units_by_measure: dict[str, float] = defaultdict(float)
+        sold_after_by_measure: dict[str, float] = defaultdict(float)
+        for item in items:
+            units_by_measure[item["unidad_medida"]] += item["unidades_compradas"]
+            sold_after_by_measure[item["unidad_medida"]] += (
+                item["unidades_vendidas_despues_de_ultima_compra_del_mes"]
+            )
         by_month.append({
             "mes": month,
             "facturas": invoices["facturas"],
             "valor_facturado": round(invoices["valor_facturado"], 2),
             "productos_distintos": len(items),
-            "unidades_compradas": round(sum(row["unidades_compradas"] for row in items), 2),
+            "unidades_compradas_por_medida": {
+                unit: round(units, 2) for unit, units in sorted(units_by_measure.items())
+            },
             "productos_sin_rotacion_previa_180d": sum(
                 row["evaluacion_de_la_compra"] == "producto_con_historial_sin_rotacion_180d" for row in items
             ),
@@ -459,9 +512,9 @@ def analyze_purchase_period(
                 row["valor_comprado"] for row in items
                 if row["evaluacion_de_la_compra"] in risk_assessments
             ), 2),
-            "unidades_vendidas_despues_de_ultima_compra": round(
-                sum(row["unidades_vendidas_despues_de_ultima_compra_del_mes"] for row in items), 2
-            ),
+            "ventas_observadas_despues_de_ultima_compra_por_medida": {
+                unit: round(units, 2) for unit, units in sorted(sold_after_by_measure.items())
+            },
         })
 
     priority = {
@@ -488,11 +541,14 @@ def analyze_purchase_period(
         key=lambda row: row["unidades_vendidas_despues_de_ultima_compra_del_mes"],
         reverse=True,
     )[:5]
-    sources, freshness = _freshness_metadata(cutoffs)
+    sources, freshness = _freshness_metadata(cutoffs, inventory_source)
     result = {
         "status": "complete",
         "periodo": {"desde": start.isoformat(), "hasta": end.isoformat()},
         "cortes_datos": {key: value.isoformat() if value else None for key, value in cutoffs.items()},
+        "fuente_inventario": (
+            _inventory_source_label(inventory_source)
+        ),
         "periodo_parcial": bool(cutoffs["purchases"] and cutoffs["purchases"] < end),
         "parametros": {
             "objetivo_cobertura_dias": target_cover_days,
@@ -507,6 +563,7 @@ def analyze_purchase_period(
                 "mes": row["mes"],
                 "codigo": row["codigo"],
                 "nombre": row["nombre"],
+                "unidad_medida": row["unidad_medida"],
                 "unidades_compradas": row["unidades_compradas"],
                 "unidades_vendidas_antes_de_siguiente_compra": row[
                     "unidades_vendidas_despues_de_ultima_compra_del_mes"
@@ -517,7 +574,8 @@ def analyze_purchase_period(
         ],
         "productos_omitidos": max(0, len(enriched) - len(visible)),
         "nota_stock_historico": (
-            "El stock al inicio de cada mes es una reconstrucción estimada desde el snapshot actual "
+            f"El stock actual usa {_inventory_source_label(inventory_source)}. "
+            "El stock al inicio de cada mes es una reconstrucción estimada desde ese snapshot "
             "menos compras más ventas registradas; no hay snapshot histórico inmutable para agosto/septiembre. "
             "Puede diferir por ajustes, traslados o devoluciones no representados en compras/ventas. "
             "Las ventas observadas después de una compra se cuentan hasta la siguiente compra del SKU, "
@@ -527,6 +585,11 @@ def analyze_purchase_period(
             f"La cantidad de referencia apunta a {target_cover_days} días de cobertura según las ventas "
             "de los 180 días previos; es una guía, no incorpora lead time, mínimos de proveedor, "
             "estacionalidad ni órdenes abiertas."
+        ),
+        "nota_unidades": (
+            "Las cantidades de distintas presentaciones/unidades no deben sumarse entre productos."
+            if any(len(month["unidades_compradas_por_medida"]) > 1 for month in by_month)
+            else None
         ),
         "sources": sources,
         "freshness": freshness,
@@ -545,9 +608,13 @@ def _historical_fallback_text(result: dict) -> str:
         "Auditoría cuantitativa de compras (no reemplaza la validación del comprador):",
     ]
     for month in result["resumen_por_mes"]:
+        unit_totals = ", ".join(
+            f"{quantity:,.0f} {unit}"
+            for unit, quantity in month["unidades_compradas_por_medida"].items()
+        )
         lines.append(
             f"- {month['mes']}: ${month['valor_facturado']:,.0f} COP en {month['facturas']} facturas "
-            f"{month['productos_distintos']} productos y {month['unidades_compradas']:,.0f} u compradas; "
+            f"{month['productos_distintos']} productos; cantidades por medida: {unit_totals}; "
             f"{month['productos_sin_rotacion_previa_180d']} con historial pero sin venta "
             "en los 180 días previos, "
             f"{month['productos_sin_historial_previo']} sin historial previo (no se deben "
@@ -566,8 +633,9 @@ def _historical_fallback_text(result: dict) -> str:
         for row in result["movimiento_posterior_destacado"][:3]:
             lines.append(
                 f"- {row['mes']} · {row['codigo']} {row['nombre']}: "
-                f"compradas {row['unidades_compradas']:g} u, luego se vendieron "
-                f"{row['unidades_vendidas_antes_de_siguiente_compra']:g} u antes de otra reposición."
+                f"compradas {row['unidades_compradas']:g} {row['unidad_medida']}, luego se vendieron "
+                f"{row['unidades_vendidas_antes_de_siguiente_compra']:g} {row['unidad_medida']} "
+                "antes de otra reposición."
             )
     flagged = [
         row for row in result["productos"]
@@ -587,15 +655,20 @@ def _historical_fallback_text(result: dict) -> str:
             }
             lines.append(
                 f"- {row['mes']} · {row['codigo']} {row['nombre']}: compradas "
-                f"{row['unidades_compradas']:g} u (${row['valor_comprado']:,.0f}); "
-                f"venta previa 180d={row['unidades_vendidas_180d_antes_del_mes']:g} u; "
+                f"{row['unidades_compradas']:g} {row['unidad_medida']} "
+                f"(${row['valor_comprado']:,.0f}); "
+                f"venta previa 180d={row['unidades_vendidas_180d_antes_del_mes']:g} "
+                f"{row['unidad_medida']}; "
                 f"stock previo estimado={row['stock_estimado_al_inicio_del_mes']}; "
                 f"guía de compra={recommended}; vendidas tras la última compra="
-                f"{row['unidades_vendidas_despues_de_ultima_compra_del_mes']:g} u; "
+                f"{row['unidades_vendidas_despues_de_ultima_compra_del_mes']:g} "
+                f"{row['unidad_medida']}; "
                 f"señal: {signal_labels[row['evaluacion_de_la_compra']]}."
             )
     lines.append(result["nota_stock_historico"])
     lines.append(result["nota_recomendacion"])
+    if result.get("nota_unidades"):
+        lines.append(result["nota_unidades"])
     if result["periodo_parcial"]:
         lines.append(
             f"El período solicitado termina el {result['periodo']['hasta']}, pero compras tiene corte "
@@ -610,6 +683,7 @@ def evaluate_planned_purchase(
     *,
     target_cover_days: int = 45,
     sales_window_days: int = 180,
+    inventory_source: str = "gold",
 ) -> dict:
     """Compare planned quantities with recent demand and current stock."""
     target_cover_days = max(1, min(int(target_cover_days), 365))
@@ -620,13 +694,23 @@ def evaluate_planned_purchase(
         raise ValueError("Se pueden evaluar hasta 50 productos por consulta.")
 
     codes = sorted({item["codigo"] for item in items})
-    cutoffs = _cutoffs(connection)
+    cutoffs = _cutoffs(connection, inventory_source)
     sales_cutoff = cutoffs["sales"]
     stock_cutoff = cutoffs["inventory"]
     if not sales_cutoff or not stock_cutoff:
         raise ValueError("No están disponibles los cortes de ventas e inventario para evaluar la compra.")
 
     placeholders = ",".join("?" for _ in codes)
+    measure_rows = connection.execute(
+        f"""
+        SELECT cod_producto,
+               COALESCE(NULLIF(presentacion, ''), NULLIF(cod_medida, ''), 'SIN_DATO')
+        FROM silver_dim_producto
+        WHERE cod_producto IN ({placeholders})
+        """,
+        codes,
+    ).fetchall()
+    measures = {row[0]: row[1] for row in measure_rows}
     sales_rows = connection.execute(
         f"""
         SELECT d.cod_producto,
@@ -668,7 +752,7 @@ def evaluate_planned_purchase(
         }
         for row in sales_rows
     }
-    stock = _current_stock(connection, codes, stock_cutoff)
+    stock = _current_stock(connection, codes, stock_cutoff, inventory_source)
     metrics = []
     for item in items:
         code = item["codigo"]
@@ -707,6 +791,7 @@ def evaluate_planned_purchase(
         metrics.append({
             "codigo": code,
             "nombre": item["nombre"],
+            "unidad_medida": measures.get(code, "SIN_DATO"),
             "cantidad_solicitada": requested,
             "stock_actual": round(current_stock, 2),
             "ventas_historicas_acumuladas_unidades": round(demand.get("unidades_historicas", 0), 2),
@@ -728,7 +813,7 @@ def evaluate_planned_purchase(
             "recomendacion": recommendation,
         })
 
-    sources, freshness = _freshness_metadata(cutoffs)
+    sources, freshness = _freshness_metadata(cutoffs, inventory_source)
     additional_candidates = _additional_demand_candidates(
         connection,
         codes,
@@ -736,18 +821,31 @@ def evaluate_planned_purchase(
         stock_cutoff,
         target_cover_days=target_cover_days,
         sales_window_days=sales_window_days,
+        inventory_source=inventory_source,
     )
+    requested_by_measure: dict[str, float] = defaultdict(float)
+    suggested_by_measure: dict[str, float] = defaultdict(float)
+    for row in metrics:
+        requested_by_measure[row["unidad_medida"]] += row["cantidad_solicitada"]
+        suggested_by_measure[row["unidad_medida"]] += row["cantidad_sugerida"]
     result = {
         "status": "complete",
         "cortes_datos": {key: value.isoformat() if value else None for key, value in cutoffs.items()},
+        "fuente_inventario": (
+            _inventory_source_label(inventory_source)
+        ),
         "parametros": {
             "objetivo_cobertura_dias": target_cover_days,
             "ventana_ventas_dias": sales_window_days,
             "items_evaluados": len(metrics),
         },
         "resumen": {
-            "unidades_solicitadas": round(sum(row["cantidad_solicitada"] for row in metrics), 2),
-            "unidades_sugeridas": sum(row["cantidad_sugerida"] for row in metrics),
+            "unidades_solicitadas_por_medida": {
+                unit: round(amount, 2) for unit, amount in sorted(requested_by_measure.items())
+            },
+            "unidades_sugeridas_por_medida": {
+                unit: round(amount, 2) for unit, amount in sorted(suggested_by_measure.items())
+            },
             "productos_a_reducir": sum(row["recomendacion"] in {
                 "reducir_cantidad", "reducir_o_eliminar_por_stock_actual",
                 "evitar_reponer_sin_ventas_365d",
@@ -774,6 +872,11 @@ def evaluate_planned_purchase(
             "No contempla lead time, stock de seguridad, mínimos de compra, órdenes abiertas ni estacionalidad. "
             "Validá esos factores antes de emitir la orden."
         ),
+        "nota_unidades": (
+            "Las cantidades de distintas presentaciones/unidades no deben sumarse entre productos."
+            if len(requested_by_measure) > 1
+            else None
+        ),
         "sources": sources,
         "freshness": freshness,
     }
@@ -783,29 +886,43 @@ def evaluate_planned_purchase(
 
 def _planned_fallback_text(result: dict) -> str:
     sales_window_label = f"ventas_{result['parametros']['ventana_ventas_dias']}d_unidades"
+    requested_by_measure = ", ".join(
+        f"{amount:g} {unit}"
+        for unit, amount in result["resumen"]["unidades_solicitadas_por_medida"].items()
+    )
+    suggested_by_measure = ", ".join(
+        f"{amount:g} {unit}"
+        for unit, amount in result["resumen"]["unidades_sugeridas_por_medida"].items()
+    )
     lines = [
         "Evaluación cuantitativa de la compra planeada:",
-        f"Se propusieron {result['resumen']['unidades_solicitadas']:g} unidades; "
-        f"la guía es {result['resumen']['unidades_sugeridas']} unidades "
+        f"Se propusieron {requested_by_measure}; "
+        f"la guía es {suggested_by_measure} "
         f"para {result['parametros']['objetivo_cobertura_dias']} días de cobertura.",
     ]
     for item in result["productos"]:
         label = item["recomendacion"].replace("_", " ")
         lines.append(
-            f"- {item['codigo']} {item['nombre']}: pedirían {item['cantidad_solicitada']:g}, "
-            f"stock {item['stock_actual']:g}, ventas {result['parametros']['ventana_ventas_dias']}d "
-            f"{item[sales_window_label]:g}, "
-            f"guía {item['cantidad_sugerida']} u, cobertura tras compra "
+            f"- {item['codigo']} {item['nombre']}: pedirían "
+            f"{item['cantidad_solicitada']:g} {item['unidad_medida']}, "
+            f"stock {item['stock_actual']:g} {item['unidad_medida']}, "
+            f"ventas {result['parametros']['ventana_ventas_dias']}d "
+            f"{item[sales_window_label]:g} {item['unidad_medida']}, "
+            f"guía {item['cantidad_sugerida']} {item['unidad_medida']}, cobertura tras compra "
             f"{item['dias_cobertura_tras_compra']} días; recomendación: {label}."
         )
     if result["productos_con_demanda_y_stock_bajo_fuera_de_la_lista"]:
         lines.append("Otros productos con demanda y stock bajo que podrías revisar:")
         for item in result["productos_con_demanda_y_stock_bajo_fuera_de_la_lista"][:5]:
             lines.append(
-                f"- {item['codigo']} {item['nombre']}: {item['unidades_vendidas_ventana']:g} u "
+                f"- {item['codigo']} {item['nombre']}: "
+                f"{item['unidades_vendidas_ventana']:g} {item['unidad_medida']} "
                 f"vendidas en {result['parametros']['ventana_ventas_dias']}d, stock "
-                f"{item['stock_actual']:g}, guía {item['cantidad_guia_para_cobertura']} u."
+                f"{item['stock_actual']:g} {item['unidad_medida']}, "
+                f"guía {item['cantidad_guia_para_cobertura']} {item['unidad_medida']}."
             )
     lines.append(result["nota"])
     lines.append(result["nota_candidatos_adicionales"])
+    if result.get("nota_unidades"):
+        lines.append(result["nota_unidades"])
     return "\n".join(lines)

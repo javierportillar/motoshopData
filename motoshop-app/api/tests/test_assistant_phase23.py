@@ -504,10 +504,14 @@ def test_purchase_analysis_tools_require_purchase_sales_and_inventory_access() -
 
 def test_purchase_analysis_tools_are_public_tool_definitions() -> None:
     from motoshop_api.llm.tools import PUBLIC_TOOL_NAMES, TOOL_DEFINITIONS
+    from motoshop_api.tenants import get_tenant_config
 
     defined = {item["function"]["name"] for item in TOOL_DEFINITIONS}
     assert {"analizar_compras_periodo", "evaluar_compra_planeada"} <= PUBLIC_TOOL_NAMES
     assert {"analizar_compras_periodo", "evaluar_compra_planeada"} <= defined
+    for tenant in ("motoshop", "masvital"):
+        enabled = set(get_tenant_config(tenant).agent.enabled_tools)
+        assert {"analizar_compras_periodo", "evaluar_compra_planeada"} <= enabled
 
 
 def test_product_detail_resolves_a_unique_name_and_flags_missing_dashboard_metrics(monkeypatch) -> None:

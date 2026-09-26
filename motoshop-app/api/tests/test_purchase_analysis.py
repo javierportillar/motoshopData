@@ -30,15 +30,19 @@ def purchase_db():
         "cod_producto VARCHAR, cantidad DOUBLE, total_detalle DOUBLE, business_date DATE)"
     )
     connection.execute(
-        "CREATE TABLE silver_dim_producto (cod_producto VARCHAR, nombre_producto VARCHAR)"
+        "CREATE TABLE silver_dim_producto (cod_producto VARCHAR, nombre_producto VARCHAR, "
+        "existencia DOUBLE, snapshot_date DATE, presentacion VARCHAR, cod_medida VARCHAR)"
     )
     connection.execute(
         "CREATE TABLE gold_mart_inventario_actual (cod_producto VARCHAR, cantidad_actual DOUBLE, snapshot_date DATE)"
     )
     connection.execute(
         "INSERT INTO silver_dim_producto VALUES "
-        "('DORM', 'Dormant product'), ('NEW', 'New product'), "
-        "('FAST', 'Fast mover'), ('STALE', 'Stale demand product'), ('ALT', 'Alternative fast mover')"
+        "('DORM', 'Dormant product', 10, '2026-09-15', 'UND', '001'), "
+        "('NEW', 'New product', 3, '2026-09-15', 'UND', '001'), "
+        "('FAST', 'Fast mover', 5, '2026-09-15', 'UND', '001'), "
+        "('STALE', 'Stale demand product', 4, '2026-09-15', 'UND', '001'), "
+        "('ALT', 'Alternative fast mover', 5, '2026-09-15', 'UND', '001')"
     )
     connection.execute(
         "INSERT INTO silver_fact_compras VALUES "
@@ -80,6 +84,9 @@ def purchase_db():
 
 
 def test_historical_audit_distinguishes_dormant_skus_from_new_items(purchase_db) -> None:
+    purchase_db.execute(
+        "UPDATE silver_dim_producto SET presentacion='GRAMO' WHERE cod_producto='DORM'"
+    )
     result = analyze_purchase_period(
         purchase_db, "2026-08-01", "2026-09-30", target_cover_days=45
     )
@@ -96,6 +103,11 @@ def test_historical_audit_distinguishes_dormant_skus_from_new_items(purchase_db)
     assert august["evaluacion_de_la_compra"] == "producto_con_historial_sin_rotacion_180d"
     assert new_item["evaluacion_de_la_compra"] == "producto_sin_historial_previo"
     assert result["resumen_por_mes"][0]["productos_sin_historial_previo"] == 1
+    assert result["resumen_por_mes"][0]["unidades_compradas_por_medida"] == {
+        "GRAMO": 4,
+        "UND": 3,
+    }
+    assert result["nota_unidades"] is not None
     assert "no se deben clasificar automáticamente" in result["respuesta_fallback"]
 
 
@@ -140,7 +152,7 @@ def test_planned_purchase_compares_requested_quantity_with_stock_and_velocity(pu
     assert products["DORM"]["recomendacion"] == "reducir_o_eliminar_por_stock_actual"
     assert products["NEW"]["recomendacion"] == "revisar_sin_historial_de_ventas"
     assert products["STALE"]["recomendacion"] == "revisar_sin_rotacion_en_ventana"
-    assert result["resumen"]["unidades_sugeridas"] == 40
+    assert result["resumen"]["unidades_sugeridas_por_medida"]["UND"] == 40
     assert result["productos_con_demanda_y_stock_bajo_fuera_de_la_lista"][0]["codigo"] == "ALT"
 
 
@@ -152,3 +164,57 @@ def test_planned_purchase_rejects_empty_or_oversized_order(purchase_db) -> None:
             purchase_db,
             [{"codigo": "DORM", "cantidad": 1}] * 51,
         )
+
+
+def test_masvital_catalog_stock_source_avoids_retail_price_as_quantity(purchase_db) -> None:
+    purchase_db.execute(
+        "UPDATE gold_mart_inventario_actual SET cantidad_actual = 46800 WHERE cod_producto='DORM'"
+    )
+    purchase_db.execute(
+        "UPDATE silver_dim_producto SET existencia = 3 WHERE cod_producto='DORM'"
+    )
+
+    result = evaluate_planned_purchase(
+        purchase_db,
+        [{"codigo": "DORM", "nombre": "Dormant product", "cantidad": 2}],
+        inventory_source="catalog",
+    )
+
+    assert result["fuente_inventario"] == "silver_dim_producto.existencia"
+    assert result["productos"][0]["stock_actual"] == 3
+
+
+@pytest.mark.parametrize(
+    ("tenant", "expected_source"),
+    [("motoshop", "gold"), ("masvital", "catalog")],
+)
+def test_purchase_tools_select_the_tenant_inventory_source(
+    tenant, expected_source, monkeypatch
+) -> None:
+    from motoshop_api.llm import purchase_analysis
+    from motoshop_api.llm.tools import ToolExecutor
+
+    observed = []
+
+    def fake_analysis(*args, **kwargs):
+        observed.append(kwargs["inventory_source"])
+        return {"status": "complete"}
+
+    class _Connection:
+        def execute(self, sql, params):
+            class _Result:
+                def fetchone(self):
+                    return ("SKU-1", "Product")
+
+            return _Result()
+
+    monkeypatch.setattr(purchase_analysis, "analyze_purchase_period", fake_analysis)
+    monkeypatch.setattr(purchase_analysis, "evaluate_planned_purchase", fake_analysis)
+    executor = object.__new__(ToolExecutor)
+    executor._con = _Connection()
+    executor.tenant = tenant
+
+    executor.analizar_compras_periodo("2026-08-01", "2026-08-31")
+    executor.evaluar_compra_planeada([{"codigo": "SKU-1", "cantidad": 1}])
+
+    assert observed == [expected_source, expected_source]

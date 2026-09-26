@@ -983,12 +983,17 @@ class ToolExecutor:
         """Audit purchased SKUs against prior demand, current stock, and post-buy movement."""
         from motoshop_api.llm.purchase_analysis import analyze_purchase_period
 
+        # MasVital's R2 gold inventory mart is contaminated by retail-price
+        # values in the quantity field; its dimension existence matches the
+        # recorded physical counts and is the usable inventory snapshot.
+        inventory_source = "catalog" if self.tenant.casefold() == "masvital" else "gold"
         return _json_safe(analyze_purchase_period(
             self._con,
             date_from,
             date_to,
             target_cover_days=target_cover_days,
             limit=limit,
+            inventory_source=inventory_source,
         ))
 
     def evaluar_compra_planeada(
@@ -1088,11 +1093,13 @@ class ToolExecutor:
                 grouped[item["codigo"]]["cantidad"] += item["cantidad"]
                 grouped[item["codigo"]]["lineas_originales"] += 1
 
+        inventory_source = "catalog" if self.tenant.casefold() == "masvital" else "gold"
         return _json_safe(evaluate_planned_purchase(
             self._con,
             list(grouped.values()),
             target_cover_days=target_cover_days,
             sales_window_days=sales_window_days,
+            inventory_source=inventory_source,
         ))
 
     @staticmethod
