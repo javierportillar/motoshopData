@@ -41,6 +41,8 @@ ASSISTANT_TOOL_DOMAINS: dict[str, frozenset[str]] = {
     "buscar_compras_por_proveedor": frozenset({"purchases"}),
     "get_producto_detalle": frozenset({"purchases", "inventory", "products"}),
     "get_detalle_compra": frozenset({"purchases"}),
+    "analizar_compras_periodo": frozenset({"purchases", "sales", "inventory"}),
+    "evaluar_compra_planeada": frozenset({"purchases", "sales", "inventory"}),
     "search_products": frozenset({"inventory"}),
     "get_productos_comportamiento": frozenset({"inventory", "sales"}),
     "get_top_clientes": frozenset({"sales"}),
@@ -52,10 +54,19 @@ ASSISTANT_TOOL_DOMAINS: dict[str, frozenset[str]] = {
     "generate_report": frozenset({"sales", "inventory", "dormant_products", "alerts"}),
 }
 
+ASSISTANT_TOOLS_REQUIRE_ALL_DOMAINS = frozenset({
+    "analizar_compras_periodo",
+    "evaluar_compra_planeada",
+})
+
 
 def assistant_tool_allowed(tool_name: str, allowed_domains: set[str] | frozenset[str]) -> bool:
     """Return whether an authenticated assistant context may invoke a tool."""
-    return bool(ASSISTANT_TOOL_DOMAINS.get(tool_name, frozenset()) & set(allowed_domains))
+    required_domains = ASSISTANT_TOOL_DOMAINS.get(tool_name, frozenset())
+    granted_domains = set(allowed_domains)
+    if tool_name in ASSISTANT_TOOLS_REQUIRE_ALL_DOMAINS:
+        return required_domains <= granted_domains
+    return bool(required_domains & granted_domains)
 
 
 def assistant_domains_for_user(user: User, enabled_features: list[str]) -> set[str]:

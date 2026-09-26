@@ -137,12 +137,16 @@ class LLMClient:
             now + LLM_REQUEST_DEADLINE_SECONDS,
         )
 
-        for backend in self._backends:
+        for backend_index, backend in enumerate(self._backends):
             remaining = request_deadline - time.monotonic()
             if remaining <= 0:
                 saw_transient_failure = True
                 failures.append("deadline_exceeded")
                 break
+            backends_left = len(self._backends) - backend_index
+            # A slow primary must not consume the whole chat deadline and starve
+            # the fallback. Fast failures still pass all remaining time onward.
+            backend_budget = remaining / backends_left
             try:
                 mt = max_tokens if max_tokens is not None else backend["max_tokens"]
                 body = {
@@ -166,7 +170,7 @@ class LLMClient:
                     f"{backend['base']}/chat/completions",
                     json=body,
                     headers=headers,
-                    timeout=min(TIMEOUT, remaining),
+                    timeout=min(TIMEOUT, backend_budget),
                 )
 
                 if resp.status_code in (402, 403, 408, 425, 429) or 500 <= resp.status_code <= 599:

@@ -7,6 +7,7 @@ TOOL_DEFINITIONS exporta specs OpenAI-compatible para function calling.
 from __future__ import annotations
 
 import logging
+import math
 import re
 import unicodedata
 from datetime import UTC, date, datetime, timedelta
@@ -96,6 +97,8 @@ PUBLIC_TOOL_NAMES = {
     "buscar_compras_por_proveedor",
     "get_producto_detalle",
     "get_detalle_compra",
+    "analizar_compras_periodo",
+    "evaluar_compra_planeada",
     "generate_report",
 }
 
@@ -586,7 +589,7 @@ class ToolExecutor:
         resolution = None
         if not prod:
             matches = self.search_products(requested_codigo, limit=8)
-            if matches.get("total") == 1:
+            if matches.get("productos") and not matches.get("ambiguo"):
                 codigo = matches["productos"][0]["codigo"]
                 prod = self._con.execute(
                     """
@@ -605,7 +608,7 @@ class ToolExecutor:
                     "codigo_resuelto": codigo,
                     "nombre_resuelto": prod[1] if prod else None,
                 }
-            elif matches.get("total", 0) > 1:
+            elif matches.get("productos"):
                 return {
                     "ambiguo": True,
                     "consulta": requested_codigo,
@@ -970,6 +973,128 @@ class ToolExecutor:
         }
         return resultado
 
+    def analizar_compras_periodo(
+        self,
+        date_from: str,
+        date_to: str,
+        target_cover_days: int = 45,
+        limit: int = 30,
+    ) -> dict:
+        """Audit purchased SKUs against prior demand, current stock, and post-buy movement."""
+        from motoshop_api.llm.purchase_analysis import analyze_purchase_period
+
+        return _json_safe(analyze_purchase_period(
+            self._con,
+            date_from,
+            date_to,
+            target_cover_days=target_cover_days,
+            limit=limit,
+        ))
+
+    def evaluar_compra_planeada(
+        self,
+        items: list[dict],
+        target_cover_days: int = 45,
+        sales_window_days: int = 180,
+    ) -> dict:
+        """Compare a proposed order with recent sales velocity and current stock."""
+        from motoshop_api.llm.purchase_analysis import evaluate_planned_purchase
+
+        if not isinstance(items, list) or not items:
+            raise ValueError("Indicá productos con código o nombre y cantidad planeada.")
+        if len(items) > 50:
+            raise ValueError("Se pueden evaluar hasta 50 productos por consulta.")
+
+        normalized = []
+        unresolved = []
+        for index, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                unresolved.append({"linea": index, "error": "La línea debe ser un objeto con producto y cantidad."})
+                continue
+            code_or_name = str(
+                item.get("codigo")
+                or item.get("sku")
+                or item.get("producto")
+                or item.get("nombre")
+                or ""
+            ).strip()
+            if not code_or_name:
+                unresolved.append({"linea": index, "error": "Falta el código o nombre del producto."})
+                continue
+            try:
+                quantity = float(item.get("cantidad"))
+                if not math.isfinite(quantity) or quantity < 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                unresolved.append({
+                    "linea": index,
+                    "consulta": code_or_name,
+                    "error": "La cantidad debe ser un número mayor o igual a cero.",
+                })
+                continue
+
+            exact = self._con.execute(
+                "SELECT cod_producto, nombre_producto FROM silver_dim_producto WHERE cod_producto = ?",
+                [code_or_name],
+            ).fetchone()
+            if exact:
+                normalized.append({
+                    "codigo": exact[0], "nombre": exact[1], "cantidad": quantity,
+                })
+                continue
+
+            matches = self.search_products(code_or_name, limit=8)
+            candidates = matches.get("productos", [])
+            if not candidates:
+                unresolved.append({
+                    "linea": index, "consulta": code_or_name,
+                    "error": "No se encontró el producto en el catálogo.",
+                })
+            elif matches.get("ambiguo"):
+                unresolved.append({
+                    "linea": index,
+                    "consulta": code_or_name,
+                    "error": "Hay varias coincidencias; indicá el modelo de moto o el SKU.",
+                    "coincidencias": [
+                        {"codigo": candidate["codigo"], "nombre": candidate["nombre"]}
+                        for candidate in candidates[:5]
+                    ],
+                })
+            else:
+                normalized.append({
+                    "codigo": candidates[0]["codigo"],
+                    "nombre": candidates[0]["nombre"],
+                    "cantidad": quantity,
+                    "consulta_original": code_or_name,
+                })
+
+        if unresolved:
+            return {
+                "status": "needs_clarification",
+                "mensaje": "No evalué la compra completa porque hay líneas que necesitan corrección o desambiguación.",
+                "lineas_pendientes": unresolved,
+                "sources": [],
+                "freshness": [],
+            }
+
+        # Combine repeated SKU lines so the recommendation compares against the
+        # total requested quantity rather than scoring duplicate rows separately.
+        grouped: dict[str, dict] = {}
+        for item in normalized:
+            if item["codigo"] not in grouped:
+                grouped[item["codigo"]] = item.copy()
+                grouped[item["codigo"]]["lineas_originales"] = 1
+            else:
+                grouped[item["codigo"]]["cantidad"] += item["cantidad"]
+                grouped[item["codigo"]]["lineas_originales"] += 1
+
+        return _json_safe(evaluate_planned_purchase(
+            self._con,
+            list(grouped.values()),
+            target_cover_days=target_cover_days,
+            sales_window_days=sales_window_days,
+        ))
+
     @staticmethod
     def _purchase_metadata(cutoff: date | None) -> dict:
         cutoff_at = cutoff.isoformat() if cutoff else None
@@ -1020,7 +1145,9 @@ class ToolExecutor:
                 scored_rows.append((score, row))
         scored_rows.sort(key=lambda item: (item[0], float(item[1][4] or 0)), reverse=True)
         matches = [row for _, row in scored_rows]
-        visible_rows = matches[:limit]
+        top_match_is_ambiguous = (
+            len(scored_rows) > 1 and scored_rows[0][0] - scored_rows[1][0] <= 0.05
+        )
         result = {
             "productos": [
                 {
@@ -1032,11 +1159,12 @@ class ToolExecutor:
                     "proveedor": r[5],
                     "estado": r[6],
                     "grupo": r[7],
+                    "similitud": round(score, 3),
                 }
-                for r in visible_rows
+                for score, r in scored_rows[:limit]
             ],
             "total": len(matches),
-            "ambiguo": len(matches) > 1,
+            "ambiguo": top_match_is_ambiguous,
             "criterio_busqueda": query,
         }
         if len(matches) > limit:
@@ -1926,6 +2054,78 @@ TOOL_DEFINITIONS = [
                     "period": {"type": "string", "enum": ["day", "week", "month", "all"], "default": "month"},
                 },
                 "required": ["skus"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analizar_compras_periodo",
+            "description": (
+                "Audita en una sola llamada las compras de un rango de fechas contra ventas "
+                "históricas acumuladas, unidades vendidas antes y después de comprar, velocidad "
+                "reciente, stock actual y stock inicial estimado. Identifica productos sin "
+                "demanda, compras mayores a la referencia y señales de sobrestock. Úsala para "
+                "análisis mensuales o auditorías de compras; no encadenes get_detalle_compra "
+                "por cada factura. El stock histórico es estimado y la referencia usa cobertura configurable."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date_from": {"type": "string", "description": "Inicio inclusivo YYYY-MM-DD."},
+                    "date_to": {"type": "string", "description": "Fin inclusivo YYYY-MM-DD."},
+                    "target_cover_days": {
+                        "type": "integer", "default": 45,
+                        "description": "Días objetivo de cobertura para calcular cantidad de referencia; por defecto 45, no es una política fija.",
+                    },
+                    "limit": {
+                        "type": "integer", "default": 30,
+                        "description": "Máximo de productos individuales devueltos (1-60); el resumen incluye todos.",
+                    },
+                },
+                "required": ["date_from", "date_to"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "evaluar_compra_planeada",
+            "description": (
+                "Evalúa una lista de productos y cantidades antes de emitir una orden. Compara "
+                "cada cantidad con el stock actual, ventas históricas acumuladas, ventas recientes, "
+                "velocidad y días de cobertura; sugiere reducir, aumentar, mantener o revisar. "
+                "Acepta SKU o nombre; ante nombres ambiguos pide el modelo o SKU. Usa esta herramienta "
+                "cuando el usuario comparta una compra que piensa solicitar, no calcula una orden real."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 50,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "codigo": {"type": "string", "description": "SKU si se conoce."},
+                                "producto": {"type": "string", "description": "Nombre o descripción si no se conoce el SKU."},
+                                "cantidad": {"type": "number", "description": "Unidades incluidas en la compra planeada."},
+                            },
+                            "required": ["cantidad"],
+                        },
+                        "description": "Líneas de la orden propuesta; cada línea debe incluir codigo o producto y cantidad.",
+                    },
+                    "target_cover_days": {
+                        "type": "integer", "default": 45,
+                        "description": "Días objetivo de cobertura; guía ajustable, no incluye lead time ni stock de seguridad.",
+                    },
+                    "sales_window_days": {
+                        "type": "integer", "default": 180,
+                        "description": "Ventana principal para estimar velocidad (30-730 días).",
+                    },
+                },
+                "required": ["items"],
             },
         },
     },

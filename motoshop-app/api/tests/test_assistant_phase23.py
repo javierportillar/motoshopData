@@ -190,7 +190,41 @@ def test_provider_retries_share_one_absolute_deadline(monkeypatch) -> None:
     with pytest.raises(TransientLLMError):
         client.complete("hello", deadline=130.0)
 
-    assert timeouts == [30.0, 10.0]
+    assert timeouts == [15.0, 10.0]
+
+
+def test_provider_timeout_reserves_budget_for_fallback_backend(monkeypatch) -> None:
+    import motoshop_api.llm.client as client_module
+
+    client = object.__new__(LLMClient)
+    client._backends = [
+        {"name": "go", "base": "https://go.test", "key": "go-key", "model": "go", "max_tokens": 100},
+        {"name": "hf", "base": "https://hf.test", "key": "hf-key", "model": "hf", "max_tokens": 100},
+    ]
+    clock = [100.0]
+    timeouts = []
+
+    class _FallbackHTTP:
+        def post(self, url, **kwargs):
+            timeout = kwargs["timeout"]
+            timeouts.append(timeout)
+            if url.startswith("https://go.test"):
+                clock[0] += timeout
+                raise httpx.ReadTimeout("primary timed out")
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "fallback answered"}}], "usage": {}},
+                request=httpx.Request("POST", url),
+            )
+
+    client._http = _FallbackHTTP()
+    monkeypatch.setattr(client_module.time, "monotonic", lambda: clock[0])
+
+    result = client.complete("hello", deadline=160.0)
+
+    assert timeouts == [30.0, 30.0]
+    assert result["backend"] == "hf"
+    assert result["text"] == "fallback answered"
 
 
 def test_tool_iterations_stop_when_the_shared_deadline_is_consumed(monkeypatch) -> None:
@@ -250,6 +284,176 @@ def test_tool_result_with_date_is_serialized_before_next_llm_call() -> None:
     assert result["text"] == "Ficha procesada"
 
 
+def test_purchase_analysis_fallback_survives_provider_failure_after_tool_data() -> None:
+    from motoshop_api.llm.client import TransientLLMError
+
+    class _FailingAfterToolLLM:
+        calls = 0
+
+        def complete_with_tools(self, messages, tools, *, max_tokens, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    "text": "",
+                    "tool_calls": [{
+                        "id": "audit-1",
+                        "function": {
+                            "name": "purchase_audit",
+                            "arguments": "{}",
+                        },
+                    }],
+                }
+            raise TransientLLMError("provider unavailable after purchase data was read")
+
+    class _AuditExecutor(_Executor):
+        def run(self, name, args):
+            return {
+                "respuesta_fallback": "Auditoría: una compra requiere revisión.",
+                "sources": [{
+                    "source_id": "duckdb-purchases", "domain": "purchases",
+                    "kind": "duckdb", "citation": "Purchases fixture",
+                    "cutoff_at": "2026-09-13", "status": "used",
+                }],
+                "freshness": [{"domain": "purchases", "cutoff_at": "2026-09-13", "status": "current"}],
+            }
+
+    result = _chat(_FailingAfterToolLLM(), executor=_AuditExecutor()).chat(
+        "Analiza las compras", request_id="purchase-fallback"
+    )
+
+    assert result["status"] == "partial"
+    assert result["text"].startswith("Auditoría:")
+    assert result["tools_used"] == ["purchase_audit"]
+    assert len(result["sources"]) == 1
+    assert len(result["freshness"]) == 1
+
+
+def test_chat_deduplicates_repeated_purchase_evidence() -> None:
+    class _RepeatedEvidenceLLM:
+        calls = 0
+
+        def complete_with_tools(self, messages, tools, *, max_tokens, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    "text": "",
+                    "tool_calls": [
+                        {"id": str(i), "function": {"name": "sales", "arguments": "{}"}}
+                        for i in range(2)
+                    ],
+                }
+            return {"text": "Audit complete", "tool_calls": []}
+
+    class _EvidenceExecutor(_Executor):
+        def run(self, name, args):
+            return {
+                "sources": [{
+                    "source_id": "duckdb-purchases", "domain": "purchases",
+                    "kind": "duckdb", "citation": "Purchases fixture",
+                    "cutoff_at": "2026-09-13", "status": "used",
+                }],
+                "freshness": [{"domain": "purchases", "cutoff_at": "2026-09-13", "status": "current"}],
+            }
+
+    result = _chat(_RepeatedEvidenceLLM(), executor=_EvidenceExecutor()).chat("Analiza compras")
+
+    assert len(result["sources"]) == 1
+    assert len(result["freshness"]) == 1
+
+
+def test_purchase_audit_months_route_to_deterministic_tool_without_llm() -> None:
+    from motoshop_api.llm.qa_chat import ConversationManager, QAChat
+    from motoshop_api.llm.conversations.repository import InMemoryConversationRepository
+
+    class _UnavailableLLM:
+        def complete_with_tools(self, *args, **kwargs):
+            raise AssertionError("Historical purchase audits should not need an LLM call")
+
+    class _AuditExecutor:
+        args = None
+
+        def get_data_freshness(self):
+            return {"fecha_maxima": "2026-09-15"}
+
+        def run(self, name, args):
+            assert name == "analizar_compras_periodo"
+            self.args = args
+            return {
+                "status": "complete",
+                "respuesta_fallback": "Auditoría agosto-septiembre calculada.",
+                "sources": [{
+                    "source_id": "duckdb-purchases", "domain": "purchases",
+                    "kind": "duckdb", "citation": "Purchases fixture",
+                    "cutoff_at": "2026-09-13", "status": "used",
+                }],
+                "freshness": [{"domain": "purchases", "cutoff_at": "2026-09-13", "status": "current"}],
+            }
+
+    executor = _AuditExecutor()
+    chat = QAChat(
+        _UnavailableLLM(),
+        ConversationManager(),
+        executor,
+        [{"function": {"name": "analizar_compras_periodo"}}],
+        tenant_id="motoshop",
+        user_id="ana",
+        repository=InMemoryConversationRepository(),
+    )
+    result = chat.chat(
+        "Analiza las compras de agosto y septiembre según ventas históricas y rotación",
+        request_id="purchase-audit-deterministic",
+    )
+
+    assert executor.args == {"date_from": "2026-08-01", "date_to": "2026-09-30"}
+    assert result["status"] == "complete"
+    assert result["tools_used"] == ["analizar_compras_periodo"]
+    assert result["text"] == "Auditoría agosto-septiembre calculada."
+
+
+def test_explicit_planned_order_lines_route_to_deterministic_evaluator() -> None:
+    from motoshop_api.llm.qa_chat import ConversationManager, QAChat
+    from motoshop_api.llm.conversations.repository import InMemoryConversationRepository
+
+    class _UnavailableLLM:
+        def complete_with_tools(self, *args, **kwargs):
+            raise AssertionError("Explicit product quantities should be evaluable without an LLM")
+
+    class _PlanExecutor:
+        received_items = None
+
+        def run(self, name, args):
+            assert name == "evaluar_compra_planeada"
+            self.received_items = args["items"]
+            return {
+                "status": "complete",
+                "respuesta_fallback": "La propuesta necesita ajustes según stock y rotación.",
+                "sources": [],
+                "freshness": [],
+            }
+
+    executor = _PlanExecutor()
+    chat = QAChat(
+        _UnavailableLLM(),
+        ConversationManager(),
+        executor,
+        [{"function": {"name": "evaluar_compra_planeada"}}],
+        tenant_id="motoshop",
+        user_id="ana",
+        repository=InMemoryConversationRepository(),
+    )
+    result = chat.chat(
+        "Quiero pedir: 171751 x 4; KIT CAJA CADENA DR 150 DORADA CASSARELLA: 2; 3 x 12345",
+        request_id="planned-order-deterministic",
+    )
+
+    assert executor.received_items == [
+        {"producto": "171751", "cantidad": 4.0},
+        {"producto": "KIT CAJA CADENA DR 150 DORADA CASSARELLA", "cantidad": 2.0},
+        {"producto": "12345", "cantidad": 3.0},
+    ]
+    assert result["status"] == "complete"
+    assert result["tools_used"] == ["evaluar_compra_planeada"]
+    assert "ajustes" in result["text"]
 def test_search_products_matches_reordered_words_and_reports_ambiguity() -> None:
     from motoshop_api.llm.tools import ToolExecutor
 
@@ -283,6 +487,27 @@ def test_search_products_matches_reordered_words_and_reports_ambiguity() -> None
     assert result["ambiguo"] is True
     assert result["total"] == 2
     assert {item["codigo"] for item in result["productos"]} == {"171751", "175712"}
+
+
+def test_purchase_analysis_tools_require_purchase_sales_and_inventory_access() -> None:
+    from motoshop_api.auth.module_access import assistant_tool_allowed
+
+    assert not assistant_tool_allowed("analizar_compras_periodo", {"purchases", "sales"})
+    assert not assistant_tool_allowed("evaluar_compra_planeada", {"purchases", "inventory"})
+    assert assistant_tool_allowed(
+        "analizar_compras_periodo", {"purchases", "sales", "inventory"}
+    )
+    assert assistant_tool_allowed(
+        "evaluar_compra_planeada", {"purchases", "sales", "inventory"}
+    )
+
+
+def test_purchase_analysis_tools_are_public_tool_definitions() -> None:
+    from motoshop_api.llm.tools import PUBLIC_TOOL_NAMES, TOOL_DEFINITIONS
+
+    defined = {item["function"]["name"] for item in TOOL_DEFINITIONS}
+    assert {"analizar_compras_periodo", "evaluar_compra_planeada"} <= PUBLIC_TOOL_NAMES
+    assert {"analizar_compras_periodo", "evaluar_compra_planeada"} <= defined
 
 
 def test_product_detail_resolves_a_unique_name_and_flags_missing_dashboard_metrics(monkeypatch) -> None:

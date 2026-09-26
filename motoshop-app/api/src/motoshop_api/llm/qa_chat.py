@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json as _json
 import logging
+import re
 import time
+import unicodedata
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from motoshop_api.auth.tenant_dep import TenantContext
@@ -24,6 +26,131 @@ CONVERSATION_TTL = 30 * 60
 MAX_TURNS = 20
 MAX_TOOL_ITERATIONS = 8
 _FILE_INTENT = ("excel", "pdf", "word", "export", "download", "descarg", "archivo", "planilla")
+_SPANISH_MONTHS = {
+    "enero": 1,
+    "febrero": 2,
+    "marzo": 3,
+    "abril": 4,
+    "mayo": 5,
+    "junio": 6,
+    "julio": 7,
+    "agosto": 8,
+    "septiembre": 9,
+    "setiembre": 9,
+    "octubre": 10,
+    "noviembre": 11,
+    "diciembre": 12,
+}
+
+
+def _purchase_audit_period(message: str, latest_date: str | None) -> dict | None:
+    """Recognize explicit Spanish purchase-audit requests that can run without an LLM."""
+    normalized = unicodedata.normalize("NFKD", message).encode("ascii", "ignore").decode("ascii").lower()
+    if "compr" not in normalized or not any(
+        marker in normalized
+        for marker in ("analiz", "resumen", "neces", "rotacion", "venta", "movimiento", "histor", "elegid")
+    ):
+        return None
+    if any(marker in normalized for marker in ("planead", "planejad", "cotizacion", "voy a pedir", "pienso pedir")):
+        return None
+
+    months = [
+        month_number
+        for month_name, month_number in _SPANISH_MONTHS.items()
+        if re.search(rf"\b{month_name}\b", normalized)
+    ]
+    if not months:
+        return None
+    explicit_years = {int(year) for year in re.findall(r"\b(20\d{2})\b", normalized)}
+    if len(explicit_years) > 1:
+        return None
+    if explicit_years:
+        year = next(iter(explicit_years))
+    else:
+        try:
+            reference = date.fromisoformat(str(latest_date)[:10]) if latest_date else date.today()
+        except ValueError:
+            reference = date.today()
+        # Do not silently analyze a not-yet-arrived month as if it were historical.
+        if max(months) > reference.month:
+            return None
+        year = reference.year
+
+    first_month, last_month = min(months), max(months)
+    date_from = date(year, first_month, 1)
+    if last_month == 12:
+        following_month = date(year + 1, 1, 1)
+    else:
+        following_month = date(year, last_month + 1, 1)
+    date_to = following_month - date.resolution
+    return {"date_from": date_from.isoformat(), "date_to": date_to.isoformat()}
+
+
+def _parse_planned_purchase_lines(message: str) -> list[dict] | None:
+    """Parse explicit, line-oriented order quantities for deterministic offline review."""
+    normalized = unicodedata.normalize("NFKD", message).encode("ascii", "ignore").decode("ascii").lower()
+    if not any(marker in normalized for marker in (
+        "planead", "planejad", "voy a pedir", "quiero pedir", "pienso pedir",
+        "voy a comprar", "quiero comprar", "cotizacion", "orden de compra", "pedido propuesto",
+    )):
+        return None
+    prefix = re.compile(
+        r"(?is)^.*?(?:compra\s+planead\w*|planej\w*|voy\s+a\s+pedir|quiero\s+pedir|"
+        r"pienso\s+pedir|voy\s+a\s+comprar|quiero\s+comprar|cotizaci[oó]n|orden\s+de\s+compra|"
+        r"pedido\s+propuesto)\s*:?\s*"
+    )
+    body = prefix.sub("", message.strip(), count=1)
+    segments = re.split(r"[\n;|]+|\s+y\s+(?=\d+(?:[.,]\d+)?\s*(?:x|×)\s+)", body)
+    parsed = []
+
+    def quantity(raw: str) -> float:
+        compact = raw.strip().replace(" ", "")
+        if re.fullmatch(r"\d{1,3}(?:[.,]\d{3})+", compact):
+            compact = re.sub(r"[.,]", "", compact)
+        else:
+            compact = compact.replace(",", ".")
+        return float(compact)
+
+    quantity_first = re.compile(r"^(\d+(?:[.,]\d+)?)\s*(?:x|×)\s*(.+)$", re.IGNORECASE)
+    quantity_words = re.compile(
+        r"^(\d+(?:[.,]\d+)?)\s+(?:unidades?\s+de\s+)?(.+)$", re.IGNORECASE
+    )
+    product_first = re.compile(r"^(.+?)\s*(?:x|×|:|=)\s*(\d+(?:[.,]\d+)?)\s*(?:unidades?)?$", re.IGNORECASE)
+    sku_quantity = re.compile(r"^sku\s+([\w./-]+)\s+(?:cantidad\s*)?(\d+(?:[.,]\d+)?)$", re.IGNORECASE)
+
+    for segment in segments:
+        line = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", segment).strip().rstrip(".")
+        if not line:
+            continue
+        match = sku_quantity.match(line)
+        quantity_match = quantity_first.match(line)
+        product_match = product_first.match(line)
+        numeric_sku_format = (
+            quantity_match
+            and product_match
+            and quantity_match.group(2).strip().isdigit()
+            and len(quantity_match.group(1)) >= 4
+            and len(quantity_match.group(2).strip()) <= 3
+        )
+        if match or (product_match and (not quantity_match or numeric_sku_format)):
+            match = match or product_match
+            product, count = match.groups()
+        else:
+            match = quantity_match or quantity_words.match(line)
+            if not match:
+                return None
+            count, product = match.groups()
+        product = product.strip()
+        if not product:
+            return None
+        try:
+            amount = quantity(count)
+        except ValueError:
+            return None
+        if amount < 0:
+            return None
+        parsed.append({"producto": product, "cantidad": amount})
+    return parsed or None
 
 
 def build_qa_system(tenant_id: str, latest_date: str | None = None) -> str:
@@ -44,7 +171,7 @@ def build_qa_system(tenant_id: str, latest_date: str | None = None) -> str:
 Capacidades:
 - Ventas: KPIs, top productos, comparación de períodos, performance de vendedores, mejores clientes.
 - Inventario: valor de inventario, alertas de quiebre de stock, productos dormidos, distribución ABC, clasificación ABC/XYZ, inventario por bodega.
-- Compras: última compra realizada, historial de compras recientes, búsqueda de compras por nombre de proveedor, detalle de productos de una compra específica, montos y productos comprados.
+- Compras: última compra, historial por proveedor/documento, auditoría de compras contra demanda (`analizar_compras_periodo`) y evaluación de cantidades antes de ordenar (`evaluar_compra_planeada`).
 - Productos: búsqueda en catálogo por nombre, código SKU o proveedor (precio, costo, stock, estado). Detalle completo de un producto: ficha técnica, stock, valor de inventario, precio, costo, margen, velocidad mensual, días de stock, rotación anual, estado operativo, acción sugerida, categoría ABC, ranking, proveedor, fechas de última compra/venta, historial de compras/ventas y movimiento mensual.
 - Clientes: top clientes por facturación, cohortes de retención.
 - Forecast: resumen de demanda, alertas de drift por categoría.
@@ -54,12 +181,18 @@ Capacidades:
 Reglas de selección de tools (IMPORTANTE):
 - Si el usuario menciona un PROVEEDOR específico (nombre o parte del nombre), usá SIEMPRE buscar_compras_por_proveedor.
 - Si el usuario pide el DETALLE de una compra específica (productos, cantidades, valores), usá get_detalle_compra con el número de documento.
+- Si pregunta si las compras de un mes o período fueron necesarias, o pide comparar compras con rotación, ventas acumuladas y stock, usá `analizar_compras_periodo` una sola vez para todo el rango. No hagas una llamada por factura/producto ni encadenes búsquedas de compras recientes.
+- Si nombra meses sin año, inferí el año más reciente disponible en los datos, usa fechas inclusivas y di explícitamente qué año/corte estás analizando. Si más de un año es plausible, preguntá antes de concluir.
+- Explicá cuántos productos se compraron sin ventas previas en 180 días, cuántos ya tenían stock estimado suficiente, cuáles se movieron después y cuáles conviene revisar. Separa evidencias de conclusiones.
+- El stock histórico devuelto por `analizar_compras_periodo` es reconstruido desde snapshot actual y compras/ventas registradas, no un snapshot contable exacto. Declará esta limitación; no afirmes certeza absoluta de que el comprador se equivocó.
+- Cuando el usuario comparta una lista/cotización de compra planeada con cantidades, usá `evaluar_compra_planeada`. Para nombres ambiguos, pedí SKU/modelo antes de recomendar cantidades.
+- Las cantidades sugeridas usan por defecto 45 días de cobertura como referencia configurable; aclará que no incluyen lead time, mínimos del proveedor, stock de seguridad, órdenes abiertas ni estacionalidad. No presentes la guía como orden automática.
 - Si pide una compra grande, resumí el total y los productos devueltos; aclarale cuántas líneas adicionales quedan disponibles. Si pregunta por un producto concreto dentro de la compra, pasá ese código o nombre en producto.
 - get_compras_recientes solo devuelve las últimas N compras (por fecha). NO la uses para buscar por proveedor.
 - Si el usuario pregunta por un PRODUCTO específico con código, usá get_producto_detalle para información completa.
 - Si el usuario pide "detalles", "cómo está", "info de" un producto, usá get_producto_detalle.
 - Si el usuario da un nombre parcial, palabras desordenadas o una descripción aproximada, buscá primero con search_products y luego usá el código encontrado en get_producto_detalle.
-- Si search_products devuelve varias coincidencias (`ambiguo=true` o `total > 1`) y el usuario pide el detalle de una sola, NO elijas arbitrariamente: mostrale las coincidencias más relevantes y preguntale modelo, vehículo o código.
+- Si search_products devuelve varias coincidencias plausibles (`ambiguo=true`) y el usuario pide el detalle de una sola, NO elijas arbitrariamente: mostrale las coincidencias más relevantes y preguntale modelo, vehículo o código.
 - Solo pedí aclaración cuando haya más de una coincidencia plausible; si queda una coincidencia clara, continuá con su detalle.
 - Si una tool devuelve `metricas_operativas_disponibles=false`, informá que la ficha operativa no pudo calcularse y no presentes stock, margen o rotación como definitivos.
 - Si `movimientos_omitidos` es mayor que cero, aclarale al usuario que el historial mostrado está limitado y cuántos movimientos quedan fuera.
@@ -78,7 +211,7 @@ Reglas:
 {freshness_rule}
 - La tool generate_report es SOLO para cuando el usuario pida EXPLÍCITAMENTE un archivo descargable (palabras como "excel", "pdf", "word", "planilla", "exportame", "descargame", "mandame el archivo"). Para preguntas sobre datos ("cuáles son", "qué productos", "cuántos", "cuánto hay de stock", "cuál fue la última compra") respondé SIEMPRE en el chat usando las tools de consulta correspondientes, con una lista o resumen legible. NUNCA generes un archivo si el usuario no lo pidió: si el pedido es ambiguo (ej. "dame un reporte de stock"), respondé con los datos en el chat y ofrecé al final exportarlo a Excel/PDF/Word.
 - En los reportes de ventas, comunicá SIEMPRE el período analizado que devuelve generate_report. Si el usuario pide un rango de fechas ("desde julio de 2024", "todo el histórico"), pasalo con date_from/date_to (ISO YYYY-MM-DD) o period='all'. Nunca digas "histórico" o "hasta la fecha" si el reporte no cubre eso.
-- Tono natural en {agent.locale}, directo y máximo 5 oraciones.
+- Tono natural en {agent.locale}, directo y conciso. Para auditorías/compras planeadas, usa secciones y tablas breves cuando ayuden a justificar cada recomendación; no sacrifiques evidencia para cumplir un límite fijo de oraciones.
 - Los valores monetarios se expresan en {agent.currency}.
 """
 
@@ -327,6 +460,91 @@ class QAChat:
         if callable(freshness_fn):
             with suppress(Exception):
                 latest_date = freshness_fn().get("fecha_maxima")
+        enabled_tool_names = {
+            item.get("function", {}).get("name") for item in self.tool_defs
+        }
+        direct_tool_name = None
+        direct_tool_args = None
+        purchase_period = _purchase_audit_period(message, latest_date)
+        if purchase_period and "analizar_compras_periodo" in enabled_tool_names:
+            direct_tool_name = "analizar_compras_periodo"
+            direct_tool_args = purchase_period
+        else:
+            planned_items = _parse_planned_purchase_lines(message)
+            if planned_items and "evaluar_compra_planeada" in enabled_tool_names:
+                direct_tool_name = "evaluar_compra_planeada"
+                direct_tool_args = {"items": planned_items}
+
+        if direct_tool_name and direct_tool_args:
+            direct_started = time.monotonic()
+            audit = self.executor.run(direct_tool_name, direct_tool_args)
+            answer = audit.get("respuesta_fallback") or audit.get("mensaje") or audit.get("error")
+            if audit.get("lineas_pendientes"):
+                clarification_lines = [answer or "Necesito aclarar algunas líneas antes de evaluar la orden:"]
+                for pending in audit["lineas_pendientes"]:
+                    clarification_lines.append(
+                        f"- {pending.get('consulta', 'Línea ' + str(pending.get('linea', '')))}: "
+                        f"{pending.get('error', 'verificá el producto y la cantidad')}"
+                    )
+                    for candidate in pending.get("coincidencias", []):
+                        clarification_lines.append(
+                            f"  - {candidate.get('codigo')}: {candidate.get('nombre')}"
+                        )
+                answer = "\n".join(clarification_lines)
+            if answer:
+                direct_sources = []
+                direct_freshness = []
+                source_keys: set[tuple] = set()
+                freshness_keys: set[tuple] = set()
+                for index, source in enumerate(audit.get("sources", [])):
+                    normalized = _source_evidence(source, index, direct_tool_name)
+                    source_key = (
+                        normalized.get("source_id"),
+                        normalized.get("domain"),
+                        normalized.get("cutoff_at"),
+                    )
+                    if source_key not in source_keys:
+                        source_keys.add(source_key)
+                        direct_sources.append(normalized)
+                for item in audit.get("freshness", []):
+                    normalized = _freshness(item)
+                    if normalized:
+                        freshness_key = (normalized.get("domain"), normalized.get("cutoff_at"))
+                        if freshness_key not in freshness_keys:
+                            freshness_keys.add(freshness_key)
+                            direct_freshness.append(normalized)
+                direct_status = audit.get("status", "complete")
+                latency_ms = int((time.monotonic() - direct_started) * 1000)
+                self.cm.add_turn(key, message, answer)
+                self.repository.append_turn(
+                    self.tenant_id,
+                    self.user_id,
+                    cid,
+                    message,
+                    answer,
+                    request_id=request_id,
+                    tools_used=[direct_tool_name],
+                    sources=direct_sources,
+                    freshness=direct_freshness,
+                    model=f"deterministic-{direct_tool_name}",
+                    provider="duckdb",
+                    tokens_input=0,
+                    tokens_output=0,
+                    latency_ms=latency_ms,
+                    status=direct_status,
+                )
+                return AssistantEnvelope(
+                    status=direct_status,
+                    tenant_id=self.tenant_id,
+                    text=answer,
+                    conversation_id=cid,
+                    turn_count=len(history) // 2 + 1,
+                    tools_used=[direct_tool_name],
+                    sources=direct_sources,
+                    freshness=direct_freshness,
+                    entity_refs=[],
+                    attachments=[],
+                ).model_dump()
         messages = [{
             "role": "system",
             "content": build_qa_system(self.tenant_id, latest_date=latest_date),
@@ -343,10 +561,13 @@ class QAChat:
         tool_calls_used: list[str] = []
         sources: list[dict] = []
         freshness: list[dict] = []
+        source_keys: set[tuple] = set()
+        freshness_keys: set[tuple] = set()
         entity_refs: list[dict] = []
         attachments: list[dict] = []
         response_status = "complete"
         final_text = ""
+        deterministic_fallback_text = ""
         result: dict = {}
         provider_failure: LLMDependencyError | None = None
         llm_kwargs: dict = {"max_tokens": 1000}
@@ -399,10 +620,12 @@ class QAChat:
                         }
                     else:
                         tool_result = self.executor.run(name, args)
-                    if time.monotonic() >= deadline:
-                        raise TransientLLMError("LLM request deadline exceeded")
                     tool_calls_used.append(name)
                     if isinstance(tool_result, dict):
+                        deterministic_fallback_text = (
+                            str(tool_result.get("respuesta_fallback") or "").strip()
+                            or deterministic_fallback_text
+                        )
                         if tool_result.get("status") in {
                             "partial", "empty", "needs_clarification", "unavailable"
                         }:
@@ -411,13 +634,23 @@ class QAChat:
                             tool_result.get("sources", []), start=len(sources)
                         ):
                             normalized_source = _source_evidence(source, index, name)
-                            sources.append(normalized_source)
+                            source_key = (
+                                normalized_source.get("source_id"),
+                                normalized_source.get("domain"),
+                                normalized_source.get("cutoff_at"),
+                            )
+                            if source_key not in source_keys:
+                                source_keys.add(source_key)
+                                sources.append(normalized_source)
                             if normalized_source["status"] == "failed":
                                 response_status = "partial"
                         for item in tool_result.get("freshness", []):
                             normalized = _freshness(item)
                             if normalized:
-                                freshness.append(normalized)
+                                freshness_key = (normalized.get("domain"), normalized.get("cutoff_at"))
+                                if freshness_key not in freshness_keys:
+                                    freshness_keys.add(freshness_key)
+                                    freshness.append(normalized)
                         entity_refs.extend(_entity_references(
                             tool_result.get("entity_refs"), self.tenant_id, self.user_id,
                             self.tenant_context,
@@ -432,18 +665,26 @@ class QAChat:
                         }
                     )
             if not final_text:
-                final_text = (
-                    "No pude obtener una respuesta concreta con los datos disponibles. "
-                    "¿Podés reformular la pregunta?"
-                )
+                if deterministic_fallback_text:
+                    final_text = deterministic_fallback_text
+                    response_status = "partial"
+                else:
+                    final_text = (
+                        "No pude obtener una respuesta concreta con los datos disponibles. "
+                        "¿Podés reformular la pregunta?"
+                    )
         except LLMDependencyError as exc:
             provider_failure = exc
             logger.warning(
                 "qa_provider_error tenant=%s error=%s", self.tenant_id, type(exc).__name__
             )
-            final_text = (
-                "El proveedor de inteligencia no está disponible. Intentá de nuevo en unos minutos."
-            )
+            if deterministic_fallback_text:
+                final_text = deterministic_fallback_text
+                response_status = "partial"
+            else:
+                final_text = (
+                    "El proveedor de inteligencia no está disponible. Intentá de nuevo en unos minutos."
+                )
         except Exception:
             logger.exception("qa_chat_error tenant=%s", self.tenant_id)
             final_text = "Error interno al procesar tu consulta. Intentá de nuevo."
@@ -467,7 +708,11 @@ class QAChat:
             tokens_input=result.get("tokens_input", 0),
             tokens_output=result.get("tokens_output", 0),
             latency_ms=latency_ms,
-            status=response_status if not provider_failure else "unavailable",
+            status=(
+                response_status
+                if not provider_failure or deterministic_fallback_text
+                else "unavailable"
+            ),
             error_code=type(provider_failure).__name__ if provider_failure else None,
         )
         _log_qa_cost(
@@ -477,7 +722,7 @@ class QAChat:
             cid,
             success=provider_failure is None,
         )
-        if provider_failure:
+        if provider_failure and not deterministic_fallback_text:
             raise provider_failure
         turn_count = len(history) // 2 + 1
         return AssistantEnvelope(
