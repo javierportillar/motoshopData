@@ -70,6 +70,7 @@ def test_chat_tool_catalog_is_scoped_to_tenant(monkeypatch):
         "search_products",
         "analizar_compras_periodo",
         "evaluar_compra_planeada",
+        "get_analisis_modulo",
         "get_top_clientes",
         "get_inventario_por_bodega",
         "get_drift_alerts",
@@ -83,6 +84,7 @@ def test_chat_tool_catalog_is_scoped_to_tenant(monkeypatch):
     assert "search_products" in moto_names
     assert "analizar_compras_periodo" in moto_names
     assert "evaluar_compra_planeada" in moto_names
+    assert "get_analisis_modulo" in moto_names
     assert "get_top_clientes" in moto_names
     assert "get_inventario_por_bodega" in moto_names
     assert "get_abc_xyz_distribution" in moto_names

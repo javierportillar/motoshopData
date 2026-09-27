@@ -374,6 +374,13 @@ class SalesForecastRateWindow(BaseModel):
     days_with_sales: int
 
 
+class SalesForecastBacktestAccuracy(BaseModel):
+    confidence: Literal["high", "medium", "low"]
+    sample_months: int
+    median_absolute_error_pct: float | None
+    note: str
+
+
 class SalesForecastMonthlyResponse(BaseModel):
     current_month: SalesForecastCurrentMonth
     next_month: SalesForecastNextMonth
@@ -384,6 +391,7 @@ class SalesForecastMonthlyResponse(BaseModel):
         "current_month_run_rate",
     ]
     rate_window: SalesForecastRateWindow | None
+    backtest_accuracy: SalesForecastBacktestAccuracy | None = None
     model_version: str
     drivers: list[str]
 

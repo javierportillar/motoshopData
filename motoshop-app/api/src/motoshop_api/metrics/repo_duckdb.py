@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import statistics
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -56,6 +57,39 @@ from motoshop_api.metrics.schemas import (
     VendedorComparacion,
     VendedorDetailResponse,
 )
+
+
+def _calibrate_forecast_confidence(history: list[dict]) -> dict:
+    """Calibrate confidence from completed-month forecast backtests, not data volume alone."""
+    errors = [
+        abs(float(item["error_pct"]))
+        for item in history
+        if float(item.get("actual_amount") or 0) > 0 and item.get("error_pct") is not None
+    ]
+    sample_count = len(errors)
+    median_error = round(statistics.median(errors), 1) if errors else None
+    if sample_count >= 4 and median_error is not None and median_error <= 15:
+        confidence = "high"
+    elif sample_count >= 4 and median_error is not None and median_error <= 30:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    if sample_count == 0:
+        note = "Sin meses cerrados con ventas suficientes para calibrar el error del pronóstico."
+    else:
+        note = (
+            f"Calibrado con {sample_count} meses cerrados; error absoluto mediano "
+            f"{median_error:.1f}%."
+        )
+        if confidence == "low":
+            note += " Usá la proyección como orientación, no como compromiso de ventas."
+    return {
+        "confidence": confidence,
+        "sample_months": sample_count,
+        "median_absolute_error_pct": median_error,
+        "note": note,
+    }
 
 logger = logging.getLogger(__name__)
 
@@ -1929,16 +1963,6 @@ class DuckDBMetricsRepo:
 
         next_projected = round(daily_rate * next_total_days.day, 2)
 
-        # Confianza basada en cuántos días de la ventana de 90d tienen ventas
-        if rate_basis == "rolling_90d_complete" and rolling_days >= 60:
-            confidence_next = "high"
-        elif rate_basis == "rolling_90d_complete" and rolling_days >= 30:
-            confidence_next = "medium"
-        elif rate_basis == "previous_month_complete":
-            confidence_next = "medium"
-        else:
-            confidence_next = "low"
-
         # ── Backtest histórico: qué habría proyectado la fórmula para los
         #    últimos 6 meses CERRADOS, comparado con lo que efectivamente vendió.
         #    Sirve para que el usuario vea el error real del modelo y calibre
@@ -1995,6 +2019,8 @@ class DuckDBMetricsRepo:
             })
         # Meses en orden cronológico ascendente para render natural
         history.reverse()
+        forecast_accuracy = _calibrate_forecast_confidence(history)
+        calibrated_confidence = forecast_accuracy["confidence"]
 
         return {
             "current_month": {
@@ -2004,16 +2030,17 @@ class DuckDBMetricsRepo:
                 "daily_rate": round(daily_rate, 2),
                 "days_observed": day_num,
                 "days_total": total_days.day,
-                "confidence": "high" if rate_basis == "rolling_90d_complete" else "medium",
+                "confidence": calibrated_confidence,
             },
             "next_month": {
                 "month": next_month_str,
                 "projected_amount": next_projected,
                 "days_total": next_total_days.day,
                 "last_year_same_month": ly_val,
-                "confidence": confidence_next,
+                "confidence": calibrated_confidence,
             },
             "history": history,
+            "backtest_accuracy": forecast_accuracy,
             "rate_basis": rate_basis,
             "rate_window": {
                 "start": str(window_start),
@@ -4126,6 +4153,7 @@ class DuckDBMetricsRepo:
         total_revenue = 0.0
         total_margen = 0.0
         total_unidades = 0.0
+        total_unidades_por_medida: dict[str, float] = {}
         total_compras = 0.0
         cod_set = set()
         for r in actual_rows:
@@ -4166,6 +4194,8 @@ class DuckDBMetricsRepo:
             total_revenue += rev
             total_margen += marg
             total_unidades += uds
+            unit = _presentacion_to_unidad(r["presentacion"])
+            total_unidades_por_medida[unit] = total_unidades_por_medida.get(unit, 0.0) + uds
             total_compras += valor_comprado
 
         # Agregar productos que SOLO se compraron en el período (no se vendieron)
@@ -4232,6 +4262,10 @@ class DuckDBMetricsRepo:
             "total_revenue": round(total_revenue, 2),
             "total_margen": round(total_margen, 2),
             "total_unidades": round(total_unidades, 2),
+            "total_unidades_por_medida": {
+                unit: round(amount, 2)
+                for unit, amount in sorted(total_unidades_por_medida.items())
+            },
             "total_compras_periodo": round(total_compras, 2),
             "margen_promedio_pct": round(total_margen / total_revenue * 100, 1) if total_revenue > 0 else None,
             "pareto": {

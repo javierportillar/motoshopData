@@ -237,7 +237,7 @@ def inventory_discrepancies(
 @router.get(
     "/metrics/sales-forecast-monthly",
     response_model=SalesForecastMonthlyResponse,
-    dependencies=[Depends(require_module("forecast"))],
+    dependencies=[Depends(require_module("analisis", "forecast"))],
 )
 @limiter.limit("10/minute")
 def sales_forecast_monthly(

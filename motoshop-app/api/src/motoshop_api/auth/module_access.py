@@ -43,6 +43,7 @@ ASSISTANT_TOOL_DOMAINS: dict[str, frozenset[str]] = {
     "get_detalle_compra": frozenset({"purchases"}),
     "analizar_compras_periodo": frozenset({"purchases", "sales", "inventory"}),
     "evaluar_compra_planeada": frozenset({"purchases", "sales", "inventory"}),
+    "get_analisis_modulo": frozenset({"analyses", "forecasts"}),
     "search_products": frozenset({"inventory"}),
     "get_productos_comportamiento": frozenset({"inventory", "sales"}),
     "get_top_clientes": frozenset({"sales"}),
@@ -159,10 +160,10 @@ ROUTE_MODULES: dict[RouteKey, tuple[str, ...]] = {
     # Forecast/projection
     **_routes(
         "forecast",
-        "/api/metrics/sales-forecast-monthly",
         "/api/metrics/forecast-categoria",
         "/api/forecast/{sku}",
     ),
+    ("GET", "/api/metrics/sales-forecast-monthly"): ("analisis", "forecast"),
     ("POST", "/api/forecast/cache/clear"): ("forecast",),
     # Alerts, notifications and user alert actions
     **_routes("alerts", "/api/alerts/stockout", "/api/alerts/actions/me"),

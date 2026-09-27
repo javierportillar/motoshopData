@@ -99,6 +99,7 @@ PUBLIC_TOOL_NAMES = {
     "get_detalle_compra",
     "analizar_compras_periodo",
     "evaluar_compra_planeada",
+    "get_analisis_modulo",
     "generate_report",
 }
 
@@ -1101,6 +1102,91 @@ class ToolExecutor:
             sales_window_days=sales_window_days,
             inventory_source=inventory_source,
         ))
+
+    def get_analisis_modulo(
+        self,
+        date_from: str = "",
+        date_to: str = "",
+        sections: list[str] | None = None,
+        product_limit: int = 10,
+    ) -> dict:
+        """Return bounded canonical context for the dashboard Analysis tabs."""
+        from datetime import date
+
+        from motoshop_api.llm.analysis_context import build_analysis_context
+        from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
+
+        requested_sections = list(sections) if sections is not None else None
+        tenant_context = getattr(self, "tenant_context", None)
+        if tenant_context is not None:
+            allowed_domains = set(tenant_context.allowed_domains)
+            if "analyses" not in allowed_domains:
+                if "forecasts" not in allowed_domains:
+                    return {
+                        "status": "unavailable",
+                        "mensaje": "No tenés permiso para consultar el módulo Análisis.",
+                        "sections": {},
+                        "sources": [],
+                        "freshness": [],
+                    }
+                if requested_sections and set(requested_sections) - {"proyeccion"}:
+                    return {
+                        "status": "needs_clarification",
+                        "mensaje": "Tu acceso permite consultar la proyección mensual, no las demás pestañas de Análisis.",
+                        "sections": {},
+                        "sources": [],
+                        "freshness": [],
+                    }
+                requested_sections = ["proyeccion"]
+
+        latest_sales_date = self._get_max_date()
+        if latest_sales_date is None:
+            return {
+                "status": "empty",
+                "tenant": self.tenant,
+                "mensaje": "No hay datos de ventas para explicar el módulo Análisis.",
+                "sections": {},
+                "sources": [],
+                "freshness": [],
+            }
+        try:
+            end = date.fromisoformat(date_to) if date_to else latest_sales_date
+            start = date.fromisoformat(date_from) if date_from else end.replace(day=1)
+        except ValueError as exc:
+            raise ValueError("date_from y date_to deben estar en formato YYYY-MM-DD.") from exc
+        if start > end:
+            raise ValueError("date_from debe ser anterior o igual a date_to.")
+
+        requested_end = end
+        end = min(end, latest_sales_date)
+        if start > end:
+            return {
+                "status": "empty",
+                "tenant": self.tenant,
+                "period": {"from": start.isoformat(), "to": end.isoformat()},
+                "mensaje": "El rango solicitado está después del último día con ventas disponibles.",
+                "sections": {},
+                "sources": [],
+                "freshness": [],
+            }
+
+        result = build_analysis_context(
+            DuckDBMetricsRepo(db_path=self.duckdb_path, tenant=self.tenant),
+            self._con,
+            self.tenant,
+            date_from=start.isoformat(),
+            date_to=end.isoformat(),
+            sections=requested_sections,
+            product_limit=product_limit,
+        )
+        result["period"]["requested_to"] = requested_end.isoformat()
+        result["period"]["truncated_to_available_data"] = requested_end > end
+        if requested_end > end:
+            result["period_note"] = (
+                f"El rango se limita al último corte de ventas disponible ({end.isoformat()})."
+            )
+            result["respuesta_fallback"] += f"\n{result['period_note']}"
+        return _json_safe(result)
 
     @staticmethod
     def _purchase_metadata(cutoff: date | None) -> dict:
@@ -2133,6 +2219,49 @@ TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["items"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_analisis_modulo",
+            "description": (
+                "Contexto completo del módulo Análisis del dashboard: Balance, Productos top "
+                "(ventas, margen, unidades, compras y Pareto), Proveedores (concentración y "
+                "ventas asociadas), Horas pico, Gastos operativos y Proyección mensual. "
+                "Úsala para explicar el módulo completo o una/s pestaña/s; usa las métricas "
+                "canónicas del dashboard. Devuelve cortes de datos, calidad y limitaciones."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date_from": {
+                        "type": "string",
+                        "description": "Inicio inclusivo YYYY-MM-DD; por defecto inicio del mes del último corte.",
+                    },
+                    "date_to": {
+                        "type": "string",
+                        "description": "Fin inclusivo YYYY-MM-DD; por defecto último día con ventas.",
+                    },
+                    "sections": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "balance", "productos", "proveedores",
+                                "horas_pico", "gastos", "proyeccion",
+                            ],
+                        },
+                        "description": "Pestañas a explicar; omitilo para incluir las seis.",
+                    },
+                    "product_limit": {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Máximo de filas por ranking, entre 5 y 20.",
+                    },
+                },
+                "required": [],
             },
         },
     },

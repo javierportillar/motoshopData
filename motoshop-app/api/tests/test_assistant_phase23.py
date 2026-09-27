@@ -454,6 +454,93 @@ def test_explicit_planned_order_lines_route_to_deterministic_evaluator() -> None
     assert result["status"] == "complete"
     assert result["tools_used"] == ["evaluar_compra_planeada"]
     assert "ajustes" in result["text"]
+
+
+def test_full_analysis_request_uses_dashboard_context_without_llm() -> None:
+    from motoshop_api.llm.qa_chat import ConversationManager, QAChat
+    from motoshop_api.llm.conversations.repository import InMemoryConversationRepository
+
+    class _UnavailableLLM:
+        def complete_with_tools(self, *args, **kwargs):
+            raise AssertionError("Explicit full-dashboard questions use the deterministic context tool")
+
+    class _AnalysisExecutor:
+        arguments = None
+
+        def get_data_freshness(self):
+            return {"fecha_maxima": "2026-09-26"}
+
+        def run(self, name, args):
+            assert name == "get_analisis_modulo"
+            self.arguments = args
+            return {
+                "status": "complete",
+                "respuesta_fallback": "Resumen de las seis pestañas de Análisis.",
+                "sources": [],
+                "freshness": [],
+            }
+
+    executor = _AnalysisExecutor()
+    chat = QAChat(
+        _UnavailableLLM(),
+        ConversationManager(),
+        executor,
+        [{"function": {"name": "get_analisis_modulo"}}],
+        tenant_id="masvital",
+        user_id="ana",
+        repository=InMemoryConversationRepository(),
+    )
+    result = chat.chat("Explícame todo el módulo de Análisis", request_id="analysis-module-direct")
+
+    assert executor.arguments == {}
+    assert result["status"] == "complete"
+    assert result["tools_used"] == ["get_analisis_modulo"]
+    assert result["text"] == "Resumen de las seis pestañas de Análisis."
+
+
+def test_projection_question_selects_only_projection_section_without_llm() -> None:
+    from motoshop_api.llm.qa_chat import ConversationManager, QAChat
+    from motoshop_api.llm.conversations.repository import InMemoryConversationRepository
+
+    class _UnavailableLLM:
+        def complete_with_tools(self, *args, **kwargs):
+            raise AssertionError("A known Analysis tab should use its deterministic data tool")
+
+    class _AnalysisExecutor:
+        arguments = None
+
+        def run(self, name, args):
+            assert name == "get_analisis_modulo"
+            self.arguments = args
+            return {"status": "complete", "respuesta_fallback": "Forecast explicada."}
+
+    executor = _AnalysisExecutor()
+    chat = QAChat(
+        _UnavailableLLM(),
+        ConversationManager(),
+        executor,
+        [{"function": {"name": "get_analisis_modulo"}}],
+        tenant_id="masvital",
+        user_id="ana",
+        repository=InMemoryConversationRepository(),
+    )
+
+    result = chat.chat("Explícame la proyección mensual", request_id="analysis-projection-direct")
+
+    assert executor.arguments == {"sections": ["proyeccion"]}
+    assert result["status"] == "complete"
+    assert result["tools_used"] == ["get_analisis_modulo"]
+    assert result["text"] == "Forecast explicada."
+
+
+def test_analysis_question_with_one_explicit_date_uses_a_single_day_range() -> None:
+    from motoshop_api.llm.qa_chat import _analysis_module_request
+
+    assert _analysis_module_request("Explica el balance del 2026-09-14") == {
+        "date_from": "2026-09-14",
+        "date_to": "2026-09-14",
+        "sections": ["balance"],
+    }
 def test_search_products_matches_reordered_words_and_reports_ambiguity() -> None:
     from motoshop_api.llm.tools import ToolExecutor
 
@@ -500,6 +587,25 @@ def test_purchase_analysis_tools_require_purchase_sales_and_inventory_access() -
     assert assistant_tool_allowed(
         "evaluar_compra_planeada", {"purchases", "sales", "inventory"}
     )
+
+
+def test_analysis_context_is_available_to_analysis_or_forecast_users_without_cross_tab_leakage() -> None:
+    from types import SimpleNamespace
+
+    from motoshop_api.auth.module_access import assistant_tool_allowed
+    from motoshop_api.llm.tools import ToolExecutor
+
+    assert assistant_tool_allowed("get_analisis_modulo", {"analyses"})
+    assert assistant_tool_allowed("get_analisis_modulo", {"forecasts"})
+    assert not assistant_tool_allowed("get_analisis_modulo", {"sales"})
+
+    executor = object.__new__(ToolExecutor)
+    executor.tenant_context = SimpleNamespace(allowed_domains=frozenset({"forecasts"}))
+    result = executor.get_analisis_modulo(sections=["balance"])
+
+    assert result["status"] == "needs_clarification"
+    assert result["sections"] == {}
+    assert "proyección mensual" in result["mensaje"]
 
 
 def test_purchase_analysis_tools_are_public_tool_definitions() -> None:

@@ -153,6 +153,62 @@ def _parse_planned_purchase_lines(message: str) -> list[dict] | None:
     return parsed or None
 
 
+def _analysis_module_request(message: str, latest_date: str | None = None) -> dict | None:
+    """Recognize dashboard-analysis questions that can use a deterministic fallback."""
+    normalized = unicodedata.normalize("NFKD", message).encode("ascii", "ignore").decode("ascii").lower()
+    action = any(marker in normalized for marker in (
+        "explic", "analiz", "resum", "significa", "calcula", "interpreta", "compara", "por que", "como va",
+    ))
+    full_module = "analisis" in normalized and any(marker in normalized for marker in (
+        "todo", "toda", "todos", "todas", "modulo", "pestanas", "componentes", "completo", "integral",
+    ))
+    section_terms = {
+        "balance": ("balance", "ganancia bruta", "ganancia neta", "margen neto"),
+        "productos": ("productos top", "pareto", "ranking de productos", "top de productos"),
+        "proveedores": ("proveedores", "concentracion de proveedores", "concentracion"),
+        "horas_pico": ("horas pico", "hora pico", "horario de venta"),
+        "gastos": ("gastos operativos", "gastos del mes", "gastos"),
+        "proyeccion": ("proyeccion", "pronostico mensual", "ventas proyectadas", "forecast mensual"),
+    }
+    requested_sections = [
+        section for section, terms in section_terms.items()
+        if any(term in normalized for term in terms)
+    ]
+    if not full_module and not (action and requested_sections):
+        return None
+
+    dates = re.findall(r"\b20\d{2}-\d{2}-\d{2}\b", normalized)
+    args: dict = {}
+    if len(dates) >= 2:
+        args["date_from"], args["date_to"] = dates[0], dates[1]
+    elif len(dates) == 1:
+        args["date_from"] = dates[0]
+        args["date_to"] = dates[0]
+    elif not dates:
+        month_numbers = [
+            month for month_name, month in _SPANISH_MONTHS.items()
+            if re.search(rf"\b{month_name}\b", normalized)
+        ]
+        years = {int(year) for year in re.findall(r"\b(20\d{2})\b", normalized)}
+        if month_numbers and len(years) <= 1:
+            year = next(iter(years)) if years else None
+            if year is None:
+                try:
+                    reference = date.fromisoformat(str(latest_date)[:10]) if latest_date else date.today()
+                except ValueError:
+                    reference = date.today()
+                if max(month_numbers) > reference.month:
+                    return None
+                year = reference.year
+            first_month, last_month = min(month_numbers), max(month_numbers)
+            args["date_from"] = date(year, first_month, 1).isoformat()
+            following_month = date(year + 1, 1, 1) if last_month == 12 else date(year, last_month + 1, 1)
+            args["date_to"] = (following_month - date.resolution).isoformat()
+    if not full_module:
+        args["sections"] = requested_sections
+    return args
+
+
 def build_qa_system(tenant_id: str, latest_date: str | None = None) -> str:
     config = get_tenant_config(tenant_id)
     if config is None:
@@ -175,10 +231,16 @@ Capacidades:
 - Productos: búsqueda en catálogo por nombre, código SKU o proveedor (precio, costo, stock, estado). Detalle completo de un producto: ficha técnica, stock, valor de inventario, precio, costo, margen, velocidad mensual, días de stock, rotación anual, estado operativo, acción sugerida, categoría ABC, ranking, proveedor, fechas de última compra/venta, historial de compras/ventas y movimiento mensual.
 - Clientes: top clientes por facturación, cohortes de retención.
 - Forecast: resumen de demanda, alertas de drift por categoría.
+- Análisis: balance bruto/neto, gastos registrados, rankings/Pareto de productos, concentración de proveedores, horas pico y proyección mensual con backtest.
 - Reportes: generación de archivos Excel, PDF o Word cuando el usuario lo pida explícitamente.
 - Conocimiento: búsqueda semántica en documentación interna del negocio.
 
 Reglas de selección de tools (IMPORTANTE):
+- Si el usuario pregunta por la página/pestañas de Análisis, pide explicar sus componentes o relacionar Balance, Productos, Proveedores, Horas pico, Gastos y Proyección, usa `get_analisis_modulo` una sola vez con todas las secciones o selecciona las que pidió.
+- Si no hay filtros explícitos, `get_analisis_modulo` usa el mes del último corte de ventas; comunica el rango efectivo y los cortes por dominio.
+- En Balance, distingue utilidad bruta de neta. Si los gastos tienen estado `unavailable`, di que la utilidad neta no se puede confirmar; no traduzcas la falta de datos a $0. Si está `available_empty`, indica que no hay gastos registrados en el rango.
+- En Productos y Proveedores, explica si un dato compara revenue con valor comprado. Ese ratio monetario no equivale a rotación física ni prueba que la compra del período haya causado las ventas.
+- En Proyección, comunica la confianza calibrada y el resultado de backtest; la proyección es de revenue global, no de unidades por SKU.
 - Si el usuario menciona un PROVEEDOR específico (nombre o parte del nombre), usá SIEMPRE buscar_compras_por_proveedor.
 - Si el usuario pide el DETALLE de una compra específica (productos, cantidades, valores), usá get_detalle_compra con el número de documento.
 - Si pregunta si las compras de un mes o período fueron necesarias, o pide comparar compras con rotación, ventas acumuladas y stock, usá `analizar_compras_periodo` una sola vez para todo el rango. No hagas una llamada por factura/producto ni encadenes búsquedas de compras recientes.
@@ -475,8 +537,13 @@ class QAChat:
             if planned_items and "evaluar_compra_planeada" in enabled_tool_names:
                 direct_tool_name = "evaluar_compra_planeada"
                 direct_tool_args = {"items": planned_items}
+            else:
+                analysis_args = _analysis_module_request(message, latest_date)
+                if analysis_args is not None and "get_analisis_modulo" in enabled_tool_names:
+                    direct_tool_name = "get_analisis_modulo"
+                    direct_tool_args = analysis_args
 
-        if direct_tool_name and direct_tool_args:
+        if direct_tool_name and direct_tool_args is not None:
             direct_started = time.monotonic()
             audit = self.executor.run(direct_tool_name, direct_tool_args)
             answer = audit.get("respuesta_fallback") or audit.get("mensaje") or audit.get("error")
