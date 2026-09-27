@@ -40,6 +40,7 @@ class EntityRef(_Contract):
     entity_type: str
     entity_id: str
     label: str
+    label_is_unique: bool = True
     domain: str
     href: str
 class Attachment(_Contract):

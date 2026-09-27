@@ -66,6 +66,14 @@ def isolated_tenant_fixtures(tmp_path: Path):
                 ["Test product"],
             )
             connection.execute(
+                "CREATE TABLE silver_dim_producto (cod_producto VARCHAR, nombre_producto VARCHAR, "
+                "existencia DOUBLE, snapshot_date DATE)"
+            )
+            if tenant == "motoshop":
+                connection.execute(
+                    "INSERT INTO silver_dim_producto VALUES ('SKU-1', 'Test product', 2, '2026-01-02')"
+                )
+            connection.execute(
                 "CREATE TABLE gold_mart_inventario_actual (cod_producto VARCHAR, snapshot_date DATE)"
             )
             if tenant == "motoshop":
@@ -308,7 +316,8 @@ def test_entity_reference_requires_owned_entity_and_fails_closed(
         domain="inventory",
         route_key="product",
     )
-    assert ref.href == "/inventario/productos/SKU-1"
+    assert ref.href == "/dashboards/productos/SKU-1"
+    assert ref.label == "Test product"
 
     with pytest.raises(LookupError):
         resolve_entity_ref(
@@ -369,6 +378,82 @@ def test_entity_ref_denied_for_unauthorized_domain(isolated_tenant_fixtures, mon
             domain="inventory",
             route_key="product",
         )
+
+
+def test_historical_product_mentions_resolve_only_inside_authorized_tenant_catalog(
+    isolated_tenant_fixtures, monkeypatch
+) -> None:
+    from motoshop_api.metrics import repo_duckdb
+    from motoshop_api.llm.registry import resolve_product_refs_in_text
+
+    monkeypatch.setattr(
+        repo_duckdb,
+        "_make_db_path",
+        lambda tenant: isolated_tenant_fixtures / f"{tenant}.duckdb",
+    )
+    monkeypatch.setattr(
+        repo_duckdb,
+        "get_shared_connection",
+        lambda path: duckdb.connect(str(path), read_only=True),
+    )
+    inventory_context = TenantContext(
+        "motoshop", "managed", "vendedor", True, frozenset({"inventory"})
+    )
+    denied_context = TenantContext(
+        "motoshop", "managed", "vendedor", True, frozenset({"sales"})
+    )
+    other_tenant_context = TenantContext(
+        "masvital", "managed", "vendedor", True, frozenset({"inventory"})
+    )
+
+    refs = resolve_product_refs_in_text(
+        inventory_context,
+        "Revisar SKU-1. (Test product); no enlazar SKU-9 ni el corte 2026-01-02.",
+    )
+
+    assert [(ref.entity_id, ref.label, ref.href) for ref in refs] == [
+        ("SKU-1", "Test product", "/dashboards/productos/SKU-1")
+    ]
+    with duckdb.connect(str(isolated_tenant_fixtures / "motoshop.duckdb")) as connection:
+        connection.execute(
+            "INSERT INTO silver_dim_producto VALUES "
+            "('ABC', 'Alphabetic SKU', 1, '2026-01-02'), "
+            "('123', 'Short numeric SKU', 1, '2026-01-02'), "
+            "('A1', 'Two-character alpha-numeric SKU', 1, '2026-01-02'), "
+            "('12', 'Two-character numeric SKU', 1, '2026-01-02')"
+        )
+    short_codes = resolve_product_refs_in_text(
+        inventory_context, "ABC and 123; also A1 and 12; date 2026-01-02"
+    )
+    assert {ref.entity_id for ref in short_codes} == {"ABC", "123", "A1", "12"}
+    assert resolve_product_refs_in_text(denied_context, "SKU-1") == []
+    assert resolve_product_refs_in_text(other_tenant_context, "SKU-1") == []
+
+
+def test_historical_masvital_links_only_include_products_in_the_current_snapshot(
+    isolated_tenant_fixtures, monkeypatch
+) -> None:
+    from motoshop_api.metrics import repo_duckdb
+    from motoshop_api.llm.registry import resolve_product_refs_in_text
+
+    db_path = isolated_tenant_fixtures / "masvital.duckdb"
+    with duckdb.connect(str(db_path)) as connection:
+        connection.execute(
+            "INSERT INTO silver_dim_producto VALUES "
+            "('SKU-OLD1', 'Old product', 9, '2026-01-01'), "
+            "('SKU-CURRENT2', 'Current product', 3, '2026-02-01')"
+        )
+    monkeypatch.setattr(repo_duckdb, "_make_db_path", lambda tenant: db_path)
+    monkeypatch.setattr(
+        repo_duckdb,
+        "get_shared_connection",
+        lambda path: duckdb.connect(str(path), read_only=True),
+    )
+    context = TenantContext("masvital", "managed", "vendedor", True, frozenset({"inventory"}))
+
+    refs = resolve_product_refs_in_text(context, "SKU-OLD1 y SKU-CURRENT2")
+
+    assert [ref.entity_id for ref in refs] == ["SKU-CURRENT2"]
 
 
 def test_cross_domain_evidence_shows_distinct_cutoffs(isolated_tenant_fixtures) -> None:

@@ -142,6 +142,93 @@ def test_chat_envelope_round_trips_through_history_and_remains_tenant_scoped(
     assert cross_tenant.status_code == 404
 
 
+def test_old_assistant_history_backfills_catalog_verified_product_refs_read_only(
+    client, admin_token, monkeypatch
+):
+    from motoshop_api.llm.contracts import EntityRef
+
+    repository = InMemoryConversationRepository()
+    conversation = repository.create_conversation("motoshop", "admin")
+    repository.append_turn(
+        "motoshop",
+        "admin",
+        conversation["id"],
+        "¿Qué revisar?",
+        "BONNAT001 SALSAS MRS TASTE requiere revisión.",
+    )
+    repository.append_turn(
+        "motoshop",
+        "admin",
+        conversation["id"],
+        "¿Dónde veo el producto?",
+        "Detalle anterior: BONNAT001 SALSAS MRS TASTE.",
+        entity_refs=[{
+            "entity_type": "product",
+            "entity_id": "BONNAT001",
+            "label": "SALSAS MRS TASTE",
+            "domain": "inventory",
+            "href": "/inventario/productos/BONNAT001",
+        }],
+    )
+    monkeypatch.setattr(
+        "motoshop_api.llm.conversations.repository.get_conversation_repository",
+        lambda: repository,
+    )
+    monkeypatch.setattr(
+        "motoshop_api.llm.registry.resolve_product_refs_in_text",
+        lambda context, text, *, limit=30: [
+            EntityRef(
+                entity_type="product",
+                entity_id="BONNAT001",
+                label="SALSAS MRS TASTE",
+                domain="inventory",
+                href="/dashboards/productos/BONNAT001",
+            )
+        ],
+    )
+
+    response = client.get(
+        f"/api/llm/chat/conversations/{conversation['id']}/messages",
+        headers={"Authorization": f"Bearer {admin_token}", "X-Tenant": "motoshop"},
+    )
+
+    assert response.status_code == 200, response.text
+    assistant_messages = [row for row in response.json() if row["role"] == "assistant"]
+    expected_ref = {
+        "entity_type": "product",
+        "entity_id": "BONNAT001",
+        "label": "SALSAS MRS TASTE",
+        "label_is_unique": True,
+        "domain": "inventory",
+        "href": "/dashboards/productos/BONNAT001",
+    }
+    assert [row["entity_refs"] for row in assistant_messages] == [[expected_ref], [expected_ref]]
+    stored_assistant_messages = [
+        row for row in repository.list_messages("motoshop", "admin", conversation["id"])
+        if row["role"] == "assistant"
+    ]
+    assert stored_assistant_messages[0]["entity_refs"] == []
+    assert stored_assistant_messages[1]["entity_refs"][0]["href"] == "/inventario/productos/BONNAT001"
+
+
+def test_history_reference_filter_requires_entity_domain_and_current_capability() -> None:
+    from motoshop_api.auth.tenant_dep import TenantContext
+    from motoshop_api.llm.router import _entity_ref_allowed
+
+    sales_only = TenantContext("motoshop", "sales", "vendedor", True, frozenset({"sales"}))
+    inventory_only = TenantContext(
+        "motoshop", "inventory", "vendedor", True, frozenset({"inventory"})
+    )
+
+    assert not _entity_ref_allowed({
+        "entity_type": "product", "entity_id": "SKU-1", "domain": "sales",
+    }, sales_only)
+    assert not _entity_ref_allowed({
+        "entity_type": "product", "entity_id": "SKU-1", "domain": "inventory",
+    }, sales_only)
+    assert _entity_ref_allowed({
+        "entity_type": "product", "entity_id": "SKU-1", "domain": "inventory",
+    }, inventory_only)
 def test_explicit_report_attachment_round_trips_in_sqlite_history(
     client, admin_token, monkeypatch, tmp_path
 ):

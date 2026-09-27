@@ -18,7 +18,11 @@ from motoshop_api.llm.client import (
     TransientLLMError,
 )
 from motoshop_api.llm.contracts import AssistantEnvelope, Attachment, Freshness, SourceEvidence
-from motoshop_api.llm.registry import resolve_entity_ref
+from motoshop_api.llm.registry import (
+    resolve_entity_ref,
+    resolve_product_refs,
+    visible_markdown_text,
+)
 from motoshop_api.tenants import get_tenant_config
 
 logger = logging.getLogger(__name__)
@@ -348,22 +352,146 @@ def _freshness(value: Any) -> dict[str, Any] | None:
 def _entity_references(
     value: Any, tenant_id: str, user_id: str, context: TenantContext | None = None
 ) -> list[dict[str, Any]]:
+    if context is None:
+        return []
     refs: list[dict[str, Any]] = []
-    for item in value if isinstance(value, list) else []:
+    seen: set[tuple[str, str, str]] = set()
+    items = [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+    product_items = [
+        item for item in items
+        if item.get("entity_type") == "product"
+        and item.get("domain") == "inventory"
+        and item.get("route_key") == "product"
+        and context.allows("inventory")
+    ]
+    product_refs = {
+        ref.entity_id.casefold(): ref
+        for ref in resolve_product_refs(
+            context,
+            [str(item.get("entity_id", "")) for item in product_items],
+        )
+    }
+
+    for item in items:
         if not isinstance(item, dict) or "route_key" not in item:
             continue
         if context is not None and not context.allows(str(item.get("domain", ""))):
             continue
         try:
-            ref = resolve_entity_ref(
-                context or TenantContext(tenant_id, user_id, "", True, frozenset({item["domain"]})),
-                entity_type=item["entity_type"], entity_id=item["entity_id"],
-                label=item["label"], domain=item["domain"], route_key=item["route_key"],
-            )
+            if item.get("entity_type") == "product" and item.get("domain") == "inventory":
+                ref = product_refs.get(str(item.get("entity_id", "")).casefold())
+                if ref is None:
+                    continue
+            else:
+                ref = resolve_entity_ref(
+                    context,
+                    entity_type=item["entity_type"], entity_id=item["entity_id"],
+                    label=item["label"], domain=item["domain"], route_key=item["route_key"],
+                )
         except (KeyError, PermissionError, ValueError, LookupError):
             continue
-        refs.append(ref.model_dump())
+        key = (ref.entity_type, ref.entity_id, ref.domain)
+        if key not in seen:
+            seen.add(key)
+            refs.append(ref.model_dump())
     return refs
+
+
+_PRODUCT_REFERENCE_TOOLS = frozenset({
+    "get_top_skus",
+    "get_dormidos",
+    "get_alerts_by_urgency",
+    "get_producto_detalle",
+    "get_detalle_compra",
+    "analizar_compras_periodo",
+    "evaluar_compra_planeada",
+    "search_products",
+    "get_productos_comportamiento",
+    "get_inventario_por_bodega",
+    "get_abc_xyz_distribution",
+    "get_abc_distribution",
+    "get_analisis_modulo",
+})
+_PRODUCT_ID_FIELDS = ("cod_producto", "codigo", "sku", "entity_id")
+_PRODUCT_LABEL_FIELDS = ("nom_producto", "nombre_producto", "nombre", "label")
+
+
+def _product_records(value: Any) -> list[tuple[str, str]]:
+    """Extract only structured code/name pairs from a tool result."""
+    records: list[tuple[str, str]] = []
+    pending = [value]
+    while pending and len(records) < 200:
+        current = pending.pop()
+        if isinstance(current, list):
+            pending.extend(reversed(current))
+            continue
+        if not isinstance(current, dict):
+            continue
+        entity_id = next(
+            (str(current[key]).strip() for key in _PRODUCT_ID_FIELDS
+             if isinstance(current.get(key), str) and current[key].strip()),
+            "",
+        )
+        label = next(
+            (str(current[key]).strip() for key in _PRODUCT_LABEL_FIELDS
+             if isinstance(current.get(key), str) and current[key].strip()),
+            "",
+        )
+        if entity_id and label:
+            records.append((entity_id, label))
+        pending.extend(child for child in current.values() if isinstance(child, (dict, list)))
+    return records
+
+
+def _tool_entity_candidates(tool_name: str, value: Any) -> list[dict[str, Any]]:
+    """Build candidate product refs only from known, structured product tools."""
+    if not isinstance(value, dict):
+        return []
+    candidates = [
+        item for item in value.get("entity_refs", [])
+        if isinstance(item, dict)
+    ]
+    if tool_name in _PRODUCT_REFERENCE_TOOLS:
+        candidates.extend(
+            {
+                "entity_type": "product",
+                "entity_id": entity_id,
+                "label": label,
+                "domain": "inventory",
+                "route_key": "product",
+            }
+            for entity_id, label in _product_records(value)
+        )
+    unique: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in candidates:
+        entity_type = str(item.get("entity_type", ""))
+        entity_id = str(item.get("entity_id", "")).strip()
+        if entity_type and entity_id:
+            unique.setdefault((entity_type, entity_id), item)
+    return list(unique.values())
+
+
+def _entity_candidates_mentioned_in_text(text: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only entities actually mentioned in the user-visible answer."""
+    text = visible_markdown_text(text)
+    selected = []
+    for item in candidates:
+        entity_id = str(item.get("entity_id", "")).strip()
+        label = str(item.get("label", "")).strip()
+        if item.get("entity_type") == "product" and entity_id.isdigit():
+            mentioned = any(
+                re.search(rf"(?<![\w]){re.escape(entity_id)}(?![\w])", line, re.IGNORECASE)
+                and re.search(rf"(?<![\w]){re.escape(label)}(?![\w])", line, re.IGNORECASE)
+                for line in text.splitlines()
+            )
+        else:
+            mentioned = any(
+                term and re.search(rf"(?<![\w]){re.escape(term)}(?![\w])", text, re.IGNORECASE)
+                for term in (entity_id, label)
+            )
+        if mentioned:
+            selected.append(item)
+    return selected
 
 
 def _attachment(value: dict[str, Any]) -> dict[str, Any]:
@@ -382,7 +510,13 @@ def _attachment(value: dict[str, Any]) -> dict[str, Any]:
 
 
 def _persisted_envelope(
-    row: dict[str, Any], conversation_id: str, turn_count: int
+    row: dict[str, Any],
+    conversation_id: str,
+    turn_count: int,
+    *,
+    tenant_id: str,
+    user_id: str,
+    context: TenantContext | None,
 ) -> dict[str, Any]:
     return AssistantEnvelope(
         status=row.get("status", "complete") if row.get("status") in {
@@ -391,7 +525,8 @@ def _persisted_envelope(
         tenant_id=row.get("tenant_id", ""), text=row.get("content", ""),
         conversation_id=conversation_id, turn_count=turn_count,
         tools_used=row.get("tools_used", []), sources=row.get("sources", []),
-        freshness=row.get("freshness", []), entity_refs=row.get("entity_refs", []),
+        freshness=row.get("freshness", []),
+        entity_refs=_entity_references(row.get("entity_refs", []), tenant_id, user_id, context),
         attachments=row.get("attachments", []),
     ).model_dump()
 
@@ -492,7 +627,14 @@ class QAChat:
             if previous:
                 cid = previous["conversation_id"]
                 history = self.repository.list_messages(self.tenant_id, self.user_id, cid, limit=40)
-                return _persisted_envelope(previous, cid, len(history) // 2)
+                return _persisted_envelope(
+                    previous,
+                    cid,
+                    len(history) // 2,
+                    tenant_id=self.tenant_id,
+                    user_id=self.user_id,
+                    context=self.tenant_context,
+                )
         try:
             cid, conversation, history = self._conversation(conversation_id)
         except PermissionError:
@@ -507,7 +649,14 @@ class QAChat:
                 None,
             )
             if previous:
-                return _persisted_envelope(previous, cid, len(history) // 2)
+                return _persisted_envelope(
+                    previous,
+                    cid,
+                    len(history) // 2,
+                    tenant_id=self.tenant_id,
+                    user_id=self.user_id,
+                    context=self.tenant_context,
+                )
         if int(conversation.get("message_count", 0)) // 2 >= MAX_TURNS:
             return AssistantEnvelope(
                 status="needs_clarification", tenant_id=self.tenant_id, text=(
@@ -560,6 +709,14 @@ class QAChat:
                         )
                 answer = "\n".join(clarification_lines)
             if answer:
+                direct_entity_refs = _entity_references(
+                    _entity_candidates_mentioned_in_text(
+                        str(answer), _tool_entity_candidates(direct_tool_name, audit)
+                    ),
+                    self.tenant_id,
+                    self.user_id,
+                    self.tenant_context,
+                )
                 direct_sources = []
                 direct_freshness = []
                 source_keys: set[tuple] = set()
@@ -594,6 +751,7 @@ class QAChat:
                     tools_used=[direct_tool_name],
                     sources=direct_sources,
                     freshness=direct_freshness,
+                    entity_refs=direct_entity_refs,
                     model=f"deterministic-{direct_tool_name}",
                     provider="duckdb",
                     tokens_input=0,
@@ -610,7 +768,7 @@ class QAChat:
                     tools_used=[direct_tool_name],
                     sources=direct_sources,
                     freshness=direct_freshness,
-                    entity_refs=[],
+                    entity_refs=direct_entity_refs,
                     attachments=[],
                 ).model_dump()
         messages = [{
@@ -631,6 +789,7 @@ class QAChat:
         freshness: list[dict] = []
         source_keys: set[tuple] = set()
         freshness_keys: set[tuple] = set()
+        entity_ref_candidates: list[dict[str, Any]] = []
         entity_refs: list[dict] = []
         attachments: list[dict] = []
         response_status = "complete"
@@ -719,10 +878,9 @@ class QAChat:
                                 if freshness_key not in freshness_keys:
                                     freshness_keys.add(freshness_key)
                                     freshness.append(normalized)
-                        entity_refs.extend(_entity_references(
-                            tool_result.get("entity_refs"), self.tenant_id, self.user_id,
-                            self.tenant_context,
-                        ))
+                        entity_ref_candidates.extend(
+                            _tool_entity_candidates(name, tool_result)
+                        )
                         if tool_result.get("download_url") and _explicit_file_request(message):
                             attachments.append(_attachment(tool_result))
                     messages.append(
@@ -757,6 +915,12 @@ class QAChat:
             logger.exception("qa_chat_error tenant=%s", self.tenant_id)
             final_text = "Error interno al procesar tu consulta. Intentá de nuevo."
 
+        entity_refs = _entity_references(
+            _entity_candidates_mentioned_in_text(final_text, entity_ref_candidates),
+            self.tenant_id,
+            self.user_id,
+            self.tenant_context,
+        )
         latency_ms = int((time.monotonic() - started) * 1000)
         self.cm.add_turn(key, message, final_text)
         self.repository.append_turn(

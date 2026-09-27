@@ -20,6 +20,7 @@ def _create_product_metrics_db(
     *,
     valid_sales: int,
     canceled_sales: int = 0,
+    catalog_stock: float = 7.0,
 ) -> None:
     con = duckdb.connect(str(db_path))
     try:
@@ -32,7 +33,9 @@ def _create_product_metrics_db(
                 precio_venta_sin_iva DOUBLE,
                 costo_producto DOUBLE,
                 costo_ultima_compra DOUBLE,
-                presentacion VARCHAR
+                presentacion VARCHAR,
+                existencia DOUBLE,
+                snapshot_date DATE
             )
             """
         )
@@ -95,8 +98,18 @@ def _create_product_metrics_db(
         today = date.today()
         purchase_date = today - timedelta(days=20)
         con.execute(
-            "INSERT INTO silver_dim_producto VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [SKU, "HABAS SALADAS X 50 GRAMOS", 2200.0, 1848.0, 0.0, 1750.0, "UNIDAD"],
+            "INSERT INTO silver_dim_producto VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                SKU,
+                "HABAS SALADAS X 50 GRAMOS",
+                2200.0,
+                1848.0,
+                0.0,
+                1750.0,
+                "UNIDAD",
+                catalog_stock,
+                today,
+            ],
         )
         con.execute(
             "INSERT INTO gold_mart_abc_xyz VALUES (?, ?, ?)",
@@ -139,9 +152,9 @@ def _create_product_metrics_db(
         con.close()
 
 
-def _repo(db_path: Path) -> DuckDBMetricsRepo:
+def _repo(db_path: Path, tenant: str = "test") -> DuckDBMetricsRepo:
     close_all_shared_connections()
-    return DuckDBMetricsRepo(db_path=db_path, tenant="test")
+    return DuckDBMetricsRepo(db_path=db_path, tenant=tenant)
 
 
 def test_product_with_one_unit_and_twenty_days_of_cover_is_reorder_risk(tmp_path: Path) -> None:
@@ -168,6 +181,35 @@ def test_product_with_all_purchased_units_sold_is_exhausted(tmp_path: Path) -> N
     assert metrics["cantidad_actual"] == 0
     assert metrics["estado"] == "agotado"
     assert metrics["accion"] == "reabastecer"
+
+
+def test_masvital_product_detail_uses_validated_catalog_existence(tmp_path: Path) -> None:
+    db_path = tmp_path / "masvital.duckdb"
+    _create_product_metrics_db(db_path, valid_sales=9, catalog_stock=7)
+    with duckdb.connect(str(db_path)) as connection:
+        connection.execute(
+            "INSERT INTO silver_dim_producto VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [SKU, "HABAS SALADAS X 50 GRAMOS", 2200.0, 1848.0, 0.0, 1750.0,
+             "UNIDAD", 8.0, date.today()],
+        )
+
+    detail = _repo(db_path, tenant="masvital").get_product_detail(SKU, window_days=180)
+
+    assert detail["metrics"]["comprado_total"] == 10
+    assert detail["metrics"]["vendido_total"] == 9
+    assert detail["metrics"]["cantidad_actual"] == 8
+    assert detail["metrics"]["valor_inventario"] == 14_000
+    assert detail["metrics"]["stock_source"] == "catalog_snapshot"
+
+
+def test_motoshop_product_detail_identifies_reconstructed_stock_source(tmp_path: Path) -> None:
+    db_path = tmp_path / "motoshop.duckdb"
+    _create_product_metrics_db(db_path, valid_sales=9)
+
+    detail = _repo(db_path, tenant="motoshop").get_product_detail(SKU, window_days=180)
+
+    assert detail["metrics"]["cantidad_actual"] == 1
+    assert detail["metrics"]["stock_source"] == "purchases_minus_sales_estimate"
 
 
 def test_canceled_sales_do_not_reduce_stock_or_appear_as_movements(tmp_path: Path) -> None:

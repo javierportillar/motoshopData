@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -37,6 +38,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/llm", tags=["llm"])
 briefing_router = APIRouter(prefix="/llm", tags=["llm"])
 limiter = Limiter(key_func=get_remote_address)
+_ENTITY_REF_DOMAINS = {"product": "inventory", "alert": "alerts"}
+
+
+def _entity_ref_allowed(ref: Any, context: TenantContext) -> bool:
+    if not isinstance(ref, dict):
+        return False
+    entity_type = str(ref.get("entity_type", ""))
+    required_domain = _ENTITY_REF_DOMAINS.get(entity_type)
+    domain = str(ref.get("domain", ""))
+    return required_domain is not None and domain == required_domain and context.allows(required_domain)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 
@@ -412,6 +423,7 @@ async def list_chat_messages(
     conversation_id: str,
     user: User = Depends(get_current_user),
     tenant: str = Depends(get_tenant),
+    tenant_context: TenantContext = Depends(get_tenant_context),
 ) -> list[MessageResponse]:
     from motoshop_api.llm.conversations.repository import get_conversation_repository
 
@@ -419,7 +431,62 @@ async def list_chat_messages(
     owner = await run_in_threadpool(repo.get_conversation, tenant, user.username, conversation_id)
     if owner is None:
         raise HTTPException(status_code=404, detail="Conversación no encontrada")
-    rows = await run_in_threadpool(repo.list_messages, tenant, user.username, conversation_id)
+    rows = [
+        dict(row)
+        for row in await run_in_threadpool(
+            repo.list_messages, tenant, user.username, conversation_id
+        )
+    ]
+    from motoshop_api.llm.registry import (
+        product_ref_mentioned,
+        resolve_product_refs_in_text,
+    )
+
+    assistant_rows = [row for row in rows if row.get("role") == "assistant"]
+    if tenant_context.allows("inventory") and assistant_rows:
+        existing_product_ids = {
+            str(ref.get("entity_id"))
+            for row in assistant_rows
+            for ref in row.get("entity_refs", [])
+            if isinstance(ref, dict) and ref.get("entity_type") == "product"
+        }
+        # Resolve all messages and stored product IDs in one tenant-scoped batch.
+        # This refreshes old route templates, rejects deleted/cross-tenant SKUs,
+        # and never mutates the persisted conversation.
+        combined_text = "\n".join(
+            [
+                *(str(row.get("content") or "") for row in assistant_rows),
+                *existing_product_ids,
+            ]
+        )
+        resolved_products = await run_in_threadpool(
+            resolve_product_refs_in_text,
+            tenant_context,
+            combined_text,
+            limit=50,
+        )
+        for row in assistant_rows:
+            content = str(row.get("content") or "")
+            prior_refs = row.get("entity_refs") or []
+            non_product_refs = [
+                ref for ref in prior_refs
+                if isinstance(ref, dict)
+                and ref.get("entity_type") != "product"
+                and _entity_ref_allowed(ref, tenant_context)
+            ]
+            refreshed_product_refs = [
+                ref.model_dump()
+                for ref in resolved_products
+                if product_ref_mentioned(content, ref)
+            ]
+            row["entity_refs"] = [*non_product_refs, *refreshed_product_refs]
+    else:
+        # Entity metadata is protected independently of the client renderer.
+        for row in assistant_rows:
+            row["entity_refs"] = [
+                ref for ref in row.get("entity_refs", [])
+                if _entity_ref_allowed(ref, tenant_context)
+            ]
     return [MessageResponse(**row) for row in rows]
 
 

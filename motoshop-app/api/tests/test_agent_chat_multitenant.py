@@ -184,6 +184,98 @@ def test_qa_chat_reuses_persisted_response_for_same_request_id():
     assert llm.calls == 1
 
 
+@pytest.mark.parametrize("include_conversation_id", [False, True])
+@pytest.mark.parametrize(
+    ("allowed_domains", "product_is_current", "expected_ref"),
+    [
+        ({"inventory"}, True, True),
+        ({"sales"}, True, False),
+        ({"inventory"}, False, False),
+    ],
+)
+def test_qa_chat_revalidates_entity_refs_when_replaying_idempotent_response(
+    monkeypatch, include_conversation_id, allowed_domains, product_is_current, expected_ref
+):
+    from motoshop_api.auth.tenant_dep import TenantContext
+    from motoshop_api.llm.contracts import EntityRef
+    from motoshop_api.llm.conversations.repository import InMemoryConversationRepository
+    from motoshop_api.llm.qa_chat import ConversationManager, QAChat
+
+    class FakeLLM:
+        def complete_with_tools(self, messages, tools, *, max_tokens):
+            raise AssertionError("An idempotent replay must not call the LLM")
+
+    class FakeExecutor:
+        pass
+
+    context = TenantContext(
+        "motoshop", "managed", "admin", True, frozenset(allowed_domains)
+    )
+    repo = InMemoryConversationRepository()
+    conversation = repo.create_conversation("motoshop", "ana")
+    repo.append_turn(
+        "motoshop",
+        "ana",
+        conversation["id"],
+        "¿Qué pasa con SKU-1?",
+        "Producto encontrado",
+        request_id="replay-product-link",
+        status="complete",
+        entity_refs=[{
+            "entity_type": "product",
+            "entity_id": "SKU-1",
+            "label": "Old product label",
+            "domain": "inventory",
+            "route_key": "product",
+        }],
+    )
+
+    def resolve_current_products(current_context, entity_ids):
+        if not product_is_current or not current_context.allows("inventory"):
+            return []
+        if "SKU-1" not in entity_ids:
+            return []
+        return [EntityRef(
+            entity_type="product",
+            entity_id="SKU-1",
+            label="Current product label",
+            domain="inventory",
+            href="/dashboards/productos/SKU-1",
+        )]
+
+    monkeypatch.setattr(
+        "motoshop_api.llm.qa_chat.resolve_product_refs", resolve_current_products
+    )
+    chat = QAChat(
+        FakeLLM(),
+        ConversationManager(),
+        FakeExecutor(),
+        [],
+        tenant_id="motoshop",
+        user_id="ana",
+        repository=repo,
+        tenant_context=context,
+    )
+
+    result = chat.chat(
+        "retry",
+        conversation["id"] if include_conversation_id else None,
+        "replay-product-link",
+    )
+
+    if expected_ref:
+        assert result["entity_refs"] == [{
+            "entity_type": "product",
+            "entity_id": "SKU-1",
+            "label": "Current product label",
+            "label_is_unique": True,
+            "domain": "inventory",
+            "href": "/dashboards/productos/SKU-1",
+        }]
+    else:
+        assert result["entity_refs"] == []
+
+
 def test_hybrid_retriever_degrades_without_supabase(monkeypatch):
     from motoshop_api.llm.retrieval import HybridRetriever
 

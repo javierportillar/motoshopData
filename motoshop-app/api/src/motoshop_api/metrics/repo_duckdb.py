@@ -3254,8 +3254,7 @@ class DuckDBMetricsRepo:
     #   get_product_analytics   → tabla rica paginada y filtrable
     #   get_product_detail      → ficha completa de un SKU + timeline
 
-    @staticmethod
-    def _product_metrics_cte(window_days: int) -> str:
+    def _product_metrics_cte(self, window_days: int) -> str:
         """Devuelve las CTEs (sin el WITH inicial) que terminan en `metrics`.
 
         El caller escribe:  f"WITH {cte} SELECT ... FROM metrics WHERE ..."
@@ -3267,6 +3266,25 @@ class DuckDBMetricsRepo:
         dinámico, margen, estado y acción sugerida.
         """
         wmonths = round(window_days / 30.0, 4)
+        if self._tenant.casefold() == "masvital":
+            # MasVital's Gold inventory mart can contain retail prices in its
+            # quantity column; use one deterministic row per SKU from the latest
+            # validated catalog snapshot, preferring the audited MAX(existencia).
+            catalog_source = (
+                "(SELECT * EXCLUDE (catalog_row) FROM ("
+                "SELECT dp.*, ROW_NUMBER() OVER (PARTITION BY cod_producto "
+                "ORDER BY COALESCE(existencia, 0) DESC, "
+                "COALESCE(NULLIF(TRIM(nombre_producto), ''), cod_producto) ASC) AS catalog_row "
+                "FROM silver_dim_producto dp "
+                "WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM silver_dim_producto)"
+                ") WHERE catalog_row = 1)"
+            )
+            current_stock = "ROUND(COALESCE(dp.existencia, 0), 2)"
+        else:
+            catalog_source = "silver_dim_producto"
+            current_stock = (
+                "ROUND(COALESCE(ct.comprado_total, 0) - COALESCE(vt.vendido_total, 0), 2)"
+            )
         return f"""
             ventas_validas AS (
                 SELECT d.*
@@ -3330,7 +3348,7 @@ class DuckDBMetricsRepo:
                     COALESCE(NULLIF(TRIM(dp.nombre_producto), ''), dp.cod_producto) AS nombre,
                     COALESCE(ct.comprado_total, 0) AS comprado_total,
                     COALESCE(vt.vendido_total, 0) AS vendido_total,
-                    ROUND(COALESCE(ct.comprado_total, 0) - COALESCE(vt.vendido_total, 0), 2) AS cantidad_actual,
+                    {current_stock} AS cantidad_actual,
                     COALESCE(c.costo_producto, 0) AS costo_unit,
                     COALESCE(dp.precio_venta_con_iva, 0) AS precio,
                     COALESCE(vw.revenue_win, 0) AS revenue_win,
@@ -3340,7 +3358,7 @@ class DuckDBMetricsRepo:
                     uc.uc AS ultima_compra,
                     pr.supplier AS proveedor,
                     CASE WHEN ct.comprado_total IS NULL AND vt.vendido_total > 0 THEN TRUE ELSE FALSE END AS es_servicio
-                FROM silver_dim_producto dp
+                FROM {catalog_source} dp
                 LEFT JOIN compras_tot ct USING(cod_producto)
                 LEFT JOIN ventas_tot vt USING(cod_producto)
                 LEFT JOIN ventas_win vw USING(cod_producto)
@@ -3807,6 +3825,11 @@ class DuckDBMetricsRepo:
         if not metric_rows:
             return {"found": False, "sku": sku}
         m = metric_rows[0]
+        m["stock_source"] = (
+            "catalog_snapshot"
+            if self._tenant.casefold() == "masvital"
+            else "purchases_minus_sales_estimate"
+        )
         m["accion"] = self._accion_for(m.get("estado", ""), m.get("abc", "C"))
 
         # Timeline mensual: compras vs ventas (últimos 18 meses)

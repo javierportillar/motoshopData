@@ -541,6 +541,176 @@ def test_analysis_question_with_one_explicit_date_uses_a_single_day_range() -> N
         "date_to": "2026-09-14",
         "sections": ["balance"],
     }
+
+
+def test_deterministic_purchase_audit_links_only_products_mentioned_in_its_answer(monkeypatch) -> None:
+    from motoshop_api.llm import qa_chat
+    from motoshop_api.auth.tenant_dep import TenantContext
+    from motoshop_api.llm.contracts import EntityRef
+    from motoshop_api.llm.qa_chat import ConversationManager, QAChat
+    from motoshop_api.llm.conversations.repository import InMemoryConversationRepository
+
+    class _UnavailableLLM:
+        def complete_with_tools(self, *args, **kwargs):
+            raise AssertionError("Deterministic purchase audits must not invoke the LLM")
+
+    class _AuditExecutor:
+        def get_data_freshness(self):
+            return {"fecha_maxima": "2026-09-26"}
+
+        def run(self, name, args):
+            assert name == "analizar_compras_periodo"
+            return {
+                "status": "complete",
+                "respuesta_fallback": "Producto BONNAT001 SALSAS MRS TASTE: revisar stock.",
+                "productos": [
+                    {"codigo": "BONNAT001", "nombre": "SALSAS MRS TASTE"},
+                    {"codigo": "BONNAT002", "nombre": "GALLETAS MRS TASTE"},
+                ],
+                "sources": [],
+                "freshness": [],
+            }
+
+    def resolve_products(context, entity_ids):
+        assert context.tenant_id == "masvital"
+        assert entity_ids == ["BONNAT001"]
+        return [EntityRef(
+            entity_type="product",
+            entity_id="BONNAT001",
+            label="SALSAS MRS TASTE",
+            domain="inventory",
+            href="/dashboards/productos/BONNAT001",
+        )]
+
+    monkeypatch.setattr(qa_chat, "resolve_product_refs", resolve_products)
+    chat = QAChat(
+        _UnavailableLLM(),
+        ConversationManager(),
+        _AuditExecutor(),
+        [{"function": {"name": "analizar_compras_periodo"}}],
+        tenant_id="masvital",
+        user_id="analyst",
+        tenant_context=TenantContext(
+            "masvital", "analyst", "analista", True,
+            frozenset({"purchases", "sales", "inventory"}),
+        ),
+        repository=InMemoryConversationRepository(),
+    )
+
+    result = chat.chat(
+        "Analiza las compras de agosto y septiembre según ventas históricas",
+        request_id="purchase-links-deterministic",
+    )
+
+    assert [ref["entity_id"] for ref in result["entity_refs"]] == ["BONNAT001"]
+    assert result["entity_refs"][0]["href"] == "/dashboards/productos/BONNAT001"
+
+
+def test_llm_tool_response_attaches_refs_for_structured_product_mentions(monkeypatch) -> None:
+    from motoshop_api.llm import qa_chat
+    from motoshop_api.auth.tenant_dep import TenantContext
+    from motoshop_api.llm.contracts import EntityRef
+    from motoshop_api.llm.qa_chat import ConversationManager, QAChat
+    from motoshop_api.llm.conversations.repository import InMemoryConversationRepository
+
+    class _ProductLLM:
+        calls = 0
+
+        def complete_with_tools(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    "tool_calls": [{
+                        "id": "product-detail-call",
+                        "function": {
+                            "name": "get_producto_detalle",
+                            "arguments": '{"codigo":"BONNAT001"}',
+                        },
+                    }],
+                }
+            return {
+                "text": "BONNAT001 SALSAS MRS TASTE tiene stock para revisar.",
+                "tool_calls": [],
+            }
+
+    class _ProductExecutor:
+        def run(self, name, args):
+            assert name == "get_producto_detalle"
+            return {"ficha": {"codigo": "BONNAT001", "nombre": "SALSAS MRS TASTE"}}
+
+    def resolve_products(context, entity_ids):
+        assert context.tenant_id == "motoshop"
+        assert entity_ids == ["BONNAT001"]
+        return [EntityRef(
+            entity_type="product",
+            entity_id="BONNAT001",
+            label="SALSAS MRS TASTE",
+            domain="inventory",
+            href="/dashboards/productos/BONNAT001",
+        )]
+
+    monkeypatch.setattr(qa_chat, "resolve_product_refs", resolve_products)
+    chat = QAChat(
+        _ProductLLM(),
+        ConversationManager(),
+        _ProductExecutor(),
+        [{"function": {"name": "get_producto_detalle"}}],
+        tenant_id="motoshop",
+        user_id="ana",
+        tenant_context=TenantContext(
+            "motoshop", "ana", "vendedor", True, frozenset({"inventory"})
+        ),
+        repository=InMemoryConversationRepository(),
+    )
+
+    result = chat.chat("Contame sobre BONNAT001", request_id="product-link-tool-call")
+
+    assert result["text"].startswith("BONNAT001")
+    assert result["entity_refs"] == [{
+        "entity_type": "product",
+        "entity_id": "BONNAT001",
+        "label": "SALSAS MRS TASTE",
+        "label_is_unique": True,
+        "domain": "inventory",
+        "href": "/dashboards/productos/BONNAT001",
+    }]
+
+
+def test_product_refs_are_not_returned_without_inventory_capability() -> None:
+    from motoshop_api.auth.tenant_dep import TenantContext
+    from motoshop_api.llm.qa_chat import _entity_references
+
+    context = TenantContext("motoshop", "sales-only", "vendedor", True, frozenset({"sales"}))
+    candidates = [{
+        "entity_type": "product",
+        "entity_id": "BONNAT001",
+        "label": "SALSAS MRS TASTE",
+        "domain": "inventory",
+        "route_key": "product",
+    }]
+
+    assert _entity_references(candidates, "motoshop", "sales-only", context) == []
+    assert _entity_references(candidates, "motoshop", "no-context") == []
+
+
+def test_numeric_product_candidate_requires_canonical_name_on_same_line() -> None:
+    from motoshop_api.llm.qa_chat import _entity_candidates_mentioned_in_text
+
+    candidate = [{
+        "entity_type": "product",
+        "entity_id": "123456",
+        "label": "Product alpha",
+        "domain": "inventory",
+        "route_key": "product",
+    }]
+
+    assert _entity_candidates_mentioned_in_text("Total: $123456.\nProduct alpha stock bajo.", candidate) == []
+    assert _entity_candidates_mentioned_in_text(
+        "Total: $123456 [nota](/dashboards/productos/Product-alpha)", candidate
+    ) == []
+    assert _entity_candidates_mentioned_in_text("123456 Product alpha: stock bajo.", candidate) == candidate
+
+
 def test_search_products_matches_reordered_words_and_reports_ambiguity() -> None:
     from motoshop_api.llm.tools import ToolExecutor
 
