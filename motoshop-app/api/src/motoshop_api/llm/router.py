@@ -38,7 +38,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/llm", tags=["llm"])
 briefing_router = APIRouter(prefix="/llm", tags=["llm"])
 limiter = Limiter(key_func=get_remote_address)
-_ENTITY_REF_DOMAINS = {"product": "inventory", "alert": "alerts"}
+_ENTITY_REF_DOMAINS = {
+    "product": "inventory",
+    "alert": "alerts",
+    "purchase_document": "purchases",
+    "supplier": "purchases",
+}
 
 
 def _entity_ref_allowed(ref: Any, context: TenantContext) -> bool:
@@ -437,12 +442,19 @@ async def list_chat_messages(
             repo.list_messages, tenant, user.username, conversation_id
         )
     ]
+    from motoshop_api.llm.contracts import EntityRef
+    from motoshop_api.llm.qa_chat import _entity_references, _persisted_entity_candidates
     from motoshop_api.llm.registry import (
+        PURCHASE_REFERENCE_TOOLS,
         product_ref_mentioned,
+        purchase_document_ref_mentioned,
         resolve_product_refs_in_text,
+        resolve_purchase_refs_in_messages,
+        supplier_ref_mentioned,
     )
 
     assistant_rows = [row for row in rows if row.get("role") == "assistant"]
+    resolved_products = []
     if tenant_context.allows("inventory") and assistant_rows:
         existing_product_ids = {
             str(ref.get("entity_id"))
@@ -465,28 +477,90 @@ async def list_chat_messages(
             combined_text,
             limit=50,
         )
-        for row in assistant_rows:
-            content = str(row.get("content") or "")
-            prior_refs = row.get("entity_refs") or []
-            non_product_refs = [
-                ref for ref in prior_refs
-                if isinstance(ref, dict)
-                and ref.get("entity_type") != "product"
-                and _entity_ref_allowed(ref, tenant_context)
-            ]
-            refreshed_product_refs = [
-                ref.model_dump()
-                for ref in resolved_products
-                if product_ref_mentioned(content, ref)
-            ]
-            row["entity_refs"] = [*non_product_refs, *refreshed_product_refs]
-    else:
-        # Entity metadata is protected independently of the client renderer.
-        for row in assistant_rows:
-            row["entity_refs"] = [
-                ref for ref in row.get("entity_refs", [])
-                if _entity_ref_allowed(ref, tenant_context)
-            ]
+    purchase_history_rows = [
+        row if (
+            tenant_context.allows("purchases")
+            and isinstance(row.get("tools_used"), list)
+            and set(row["tools_used"]) & PURCHASE_REFERENCE_TOOLS
+        ) else {}
+        for row in assistant_rows
+    ]
+    purchase_refs_by_message = await run_in_threadpool(
+        resolve_purchase_refs_in_messages,
+        tenant_context,
+        [str(row.get("content") or "") for row in purchase_history_rows],
+        limit=50,
+    )
+
+    stored_refs_by_message = [
+        [
+            ref for ref in _persisted_entity_candidates(row)
+            if isinstance(ref, dict)
+            and ref.get("entity_type") in {"purchase_document", "supplier"}
+        ]
+        for row in assistant_rows
+    ]
+    all_stored_purchase_refs = [
+        ref for refs in stored_refs_by_message for ref in refs
+    ]
+    resolved_stored_purchase_refs = await run_in_threadpool(
+        _entity_references,
+        all_stored_purchase_refs,
+        tenant,
+        user.username,
+        tenant_context,
+        require_visible_text=False,
+    )
+    resolved_purchase_ref_by_key = {
+        (ref["entity_type"], ref["entity_id"], ref["domain"]): ref
+        for ref in resolved_stored_purchase_refs
+    }
+
+    for message_index, row in enumerate(assistant_rows):
+        content = str(row.get("content") or "")
+        stored_candidates = _persisted_entity_candidates(row)
+        purchase_document_ids = [
+            str(ref.get("entity_id", ""))
+            for ref in stored_refs_by_message[message_index]
+            if ref.get("entity_type") == "purchase_document"
+        ]
+        stored_non_product_refs = [
+            ref for ref in stored_candidates
+            if isinstance(ref, dict)
+            and ref.get("entity_type") not in {"product", "purchase_document", "supplier"}
+            and _entity_ref_allowed(ref, tenant_context)
+        ]
+        for item in stored_refs_by_message[message_index]:
+            key = (str(item.get("entity_type", "")), str(item.get("entity_id", "")), str(item.get("domain", "")))
+            ref = resolved_purchase_ref_by_key.get(key)
+            if ref is None:
+                continue
+            if item.get("entity_type") == "purchase_document" and not purchase_document_ref_mentioned(
+                tenant_context,
+                content,
+                str(ref["entity_id"]),
+                candidate_ids=purchase_document_ids,
+            ):
+                continue
+            if item.get("entity_type") == "supplier" and not supplier_ref_mentioned(
+                content, EntityRef.model_validate(ref)
+            ):
+                continue
+            stored_non_product_refs.append(ref)
+        backfilled_purchase_refs = [
+            ref.model_dump()
+            for ref in purchase_refs_by_message.get(message_index, [])
+        ]
+        refreshed_product_refs = [
+            ref.model_dump()
+            for ref in resolved_products
+            if product_ref_mentioned(content, ref)
+        ]
+        unique_refs = {
+            (ref["entity_type"], ref["entity_id"], ref["domain"]): ref
+            for ref in [*stored_non_product_refs, *backfilled_purchase_refs, *refreshed_product_refs]
+        }
+        row["entity_refs"] = list(unique_refs.values())
     return [MessageResponse(**row) for row in rows]
 
 

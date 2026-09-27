@@ -9,6 +9,7 @@ está configurado; si no, cae a FakeMetricsRepo (datos mock).
 
 from __future__ import annotations
 
+from datetime import date
 from time import time
 from typing import Literal
 
@@ -123,6 +124,14 @@ def _clear_metrics_cache():
     _cache.clear()
 
 
+def _subtract_years(value: date, years: int) -> date:
+    try:
+        return value.replace(year=value.year - years)
+    except ValueError:
+        # Keep leap-day defaults and range checks valid in non-leap years.
+        return value.replace(year=value.year - years, day=28)
+
+
 def get_repo(tenant: str = Depends(get_tenant)) -> MetricsRepoProtocol:
     # V1.5: DATA_BACKEND env var determina el backend
     if settings.data_backend == "duckdb":
@@ -139,6 +148,13 @@ def get_repo(tenant: str = Depends(get_tenant)) -> MetricsRepoProtocol:
     from motoshop_api.metrics.repo import FakeMetricsRepo
 
     return FakeMetricsRepo()
+
+
+def get_purchase_profile_repo(tenant: str = Depends(get_tenant)) -> DuckDBMetricsRepo:
+    """Use the tenant's local purchase snapshot for the purchase profile."""
+    if tenant not in _duckdb_repos:
+        _duckdb_repos[tenant] = DuckDBMetricsRepo(tenant=tenant)
+    return _duckdb_repos[tenant]
 
 
 @router.get(
@@ -1113,6 +1129,49 @@ def compras_proveedor_detalle(
         lambda: repo.get_compras_proveedor_detalle(nit_proveedor, fecha_inicio, fecha_fin),
         ttl=300,
     )
+
+
+@router.get(
+    "/metrics/compras-proveedor-perfil",
+    dependencies=[Depends(require_module("ventas-summary"))],
+)
+@limiter.limit("30/minute")
+def compras_proveedor_perfil(
+    request: Request,
+    nit_proveedor: str = Query(
+        ...,
+        min_length=6,
+        max_length=30,
+        pattern=r"^(?:\d{6,14}|\d{1,3}(?:\.\d{3}){2,4})(?:-\d{1,2})?$",
+    ),
+    fecha_inicio: date | None = Query(default=None),
+    fecha_fin: date | None = Query(default=None),
+    page: int = Query(default=1, ge=1, le=10_000),
+    page_size: int = Query(default=20, ge=1, le=100),
+    repo: DuckDBMetricsRepo = Depends(get_purchase_profile_repo),
+    _user: User = Depends(get_current_user),
+) -> dict:
+    """Supplier profile with actual purchases and explicitly estimated sales."""
+    end_date = fecha_fin or date.today()
+    start_date = fecha_inicio or _subtract_years(end_date, 1)
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=422,
+            detail="fecha_inicio no puede ser posterior a fecha_fin",
+        )
+    if start_date < _subtract_years(end_date, 10):
+        raise HTTPException(status_code=422, detail="El rango máximo permitido es de 10 años")
+
+    result = repo.get_compras_proveedor_perfil(
+        nit_proveedor,
+        start_date.isoformat(),
+        end_date.isoformat(),
+        page=page,
+        page_size=page_size,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Proveedor no encontrado en el tenant activo")
+    return result
 
 
 # ── V1.21: Análisis de productos y proveedores ──────────────────────────

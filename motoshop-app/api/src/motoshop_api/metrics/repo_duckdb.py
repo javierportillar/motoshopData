@@ -3241,6 +3241,228 @@ class DuckDBMetricsRepo:
             "productos_resumen": productos_resumen,
         }
 
+    def get_compras_proveedor_perfil(
+        self,
+        nit_proveedor: str,
+        fecha_inicio: str,
+        fecha_fin: str,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict | None:
+        """Return bounded actual purchase history and estimated SKU attribution."""
+        valid_header = "UPPER(TRIM(COALESCE(h.estado_documento, ''))) != 'A'"
+        provider_rows = self._query(
+            """
+            SELECT COALESCE(
+                       ARG_MAX(NULLIF(TRIM(nombre_proveedor), ''), business_date),
+                       TRIM(nit_proveedor)
+                   ) AS nombre
+            FROM silver_fact_compras
+            WHERE TRIM(nit_proveedor) = ?
+            GROUP BY TRIM(nit_proveedor)
+            LIMIT 1
+            """,
+            [nit_proveedor],
+        )
+        if not provider_rows:
+            return None
+
+        bounds = [nit_proveedor, fecha_inicio, fecha_fin]
+        stats_rows = self._query(
+            f"""
+            SELECT COALESCE(SUM(h.total_factura), 0) AS total_compras,
+                   COUNT(*) AS documentos_validos,
+                   COALESCE(AVG(h.total_factura), 0) AS ticket_promedio,
+                   CAST(MIN(h.business_date) AS VARCHAR) AS primera_compra,
+                   CAST(MAX(h.business_date) AS VARCHAR) AS ultima_compra
+            FROM silver_fact_compras h
+            WHERE TRIM(h.nit_proveedor) = ? AND h.business_date BETWEEN ? AND ?
+              AND {valid_header}
+            """,
+            bounds,
+        )[0]
+        sku_rows = self._query(
+            f"""
+            SELECT COUNT(DISTINCT d.cod_producto) AS skus_distintos
+            FROM silver_fact_compras h
+            INNER JOIN silver_fact_compras_detalle d
+              ON d.business_date = h.business_date
+             AND d.cod_clase = h.cod_clase
+             AND d.num_documento = h.num_documento
+            WHERE TRIM(h.nit_proveedor) = ? AND h.business_date BETWEEN ? AND ?
+              AND {valid_header}
+            """,
+            bounds,
+        )[0]
+        total_rows = self._query(
+            f"""
+            SELECT COUNT(*) AS total
+            FROM silver_fact_compras h
+            WHERE TRIM(h.nit_proveedor) = ? AND h.business_date BETWEEN ? AND ?
+              AND {valid_header}
+            """,
+            bounds,
+        )
+        total_documents = int(total_rows[0]["total"] or 0)
+        documents = self._query(
+            f"""
+            SELECT CAST(h.business_date AS VARCHAR) AS business_date,
+                   h.cod_clase,
+                   h.num_documento,
+                   ROUND(COALESCE(h.total_factura, 0), 2) AS total_factura,
+                   COUNT(d.cod_producto) AS num_items
+            FROM silver_fact_compras h
+            LEFT JOIN silver_fact_compras_detalle d
+              ON d.business_date = h.business_date
+             AND d.cod_clase = h.cod_clase
+             AND d.num_documento = h.num_documento
+            WHERE TRIM(h.nit_proveedor) = ? AND h.business_date BETWEEN ? AND ?
+              AND {valid_header}
+            GROUP BY h.business_date, h.cod_clase, h.num_documento, h.total_factura
+            ORDER BY h.business_date DESC, h.cod_clase ASC, h.num_documento DESC
+            LIMIT ? OFFSET ?
+            """,
+            [*bounds, page_size, (page - 1) * page_size],
+        )
+        top_products = self._query(
+            f"""
+            SELECT d.cod_producto,
+                   COALESCE(MAX(NULLIF(TRIM(d.nombre_detalle), '')), d.cod_producto) AS nombre,
+                   ROUND(COALESCE(SUM(d.cantidad), 0), 2) AS unidades,
+                   ROUND(COALESCE(SUM(d.total_detalle), 0), 2) AS total_compras,
+                   COUNT(DISTINCT CAST(h.business_date AS VARCHAR) || '|' || h.cod_clase
+                         || '|' || h.num_documento) AS documentos
+            FROM silver_fact_compras h
+            INNER JOIN silver_fact_compras_detalle d
+              ON d.business_date = h.business_date
+             AND d.cod_clase = h.cod_clase
+             AND d.num_documento = h.num_documento
+            WHERE TRIM(h.nit_proveedor) = ? AND h.business_date BETWEEN ? AND ?
+              AND {valid_header}
+            GROUP BY d.cod_producto
+            ORDER BY total_compras DESC, d.cod_producto ASC
+            LIMIT 10
+            """,
+            bounds,
+        )
+        estimated_rows = self._query(
+            f"""
+            WITH latest_valid_supplier AS (
+                SELECT cod_producto, nit_proveedor
+                FROM (
+                    SELECT d.cod_producto,
+                           TRIM(h.nit_proveedor) AS nit_proveedor,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY d.cod_producto
+                               ORDER BY d.business_date DESC,
+                                        h.cod_clase DESC,
+                                        h.num_documento DESC
+                           ) AS supplier_rank
+                    FROM silver_fact_compras_detalle d
+                    INNER JOIN silver_fact_compras h
+                      ON h.business_date = d.business_date
+                     AND h.cod_clase = d.cod_clase
+                     AND h.num_documento = d.num_documento
+                    WHERE h.nit_proveedor IS NOT NULL AND TRIM(h.nit_proveedor) != ''
+                      AND UPPER(TRIM(COALESCE(h.estado_documento, ''))) != 'A'
+                ) ranked
+                WHERE supplier_rank = 1
+            ), costo_ref AS ({COSTO_REF_CTE}),
+            sales_lines AS (
+                SELECT v.cod_producto,
+                       COALESCE(v.total_detalle, 0) AS revenue,
+                       COALESCE(v.cantidad, 0) AS cantidad,
+                       CASE
+                           WHEN COALESCE(v.costo_producto, 0) > 0 THEN v.costo_producto
+                           ELSE cr.costo_producto
+                       END AS costo_unit
+                FROM silver_fact_ventas_detalle v
+                LEFT JOIN silver_fact_ventas vh
+                  ON vh.business_date = v.business_date
+                 AND vh.cod_clase = v.cod_clase
+                 AND vh.num_documento = v.num_documento
+                LEFT JOIN costo_ref cr ON cr.cod_producto = v.cod_producto
+                WHERE v.business_date BETWEEN ? AND ?
+                  AND COALESCE(vh.estado_documento, '') != 'A'
+            ),
+            sales_by_sku AS (
+                SELECT cod_producto,
+                       SUM(revenue) AS revenue,
+                       SUM(CASE WHEN costo_unit IS NOT NULL THEN revenue ELSE 0 END)
+                           AS revenue_with_cost,
+                       SUM(
+                           CASE WHEN costo_unit IS NOT NULL
+                               THEN revenue - costo_unit * cantidad
+                           END
+                       ) AS margin
+                FROM sales_lines
+                GROUP BY cod_producto
+            )
+            SELECT ROUND(COALESCE(SUM(s.revenue), 0), 2) AS revenue,
+                   ROUND(COALESCE(SUM(s.revenue_with_cost), 0), 2) AS revenue_with_cost,
+                   ROUND(COALESCE(SUM(s.margin), 0), 2) AS margin,
+                   COUNT(DISTINCT s.cod_producto) AS skus,
+                   COUNT(DISTINCT CASE WHEN s.revenue_with_cost > 0 THEN s.cod_producto END)
+                       AS skus_con_costo
+            FROM sales_by_sku s
+            INNER JOIN latest_valid_supplier p ON p.cod_producto = s.cod_producto
+            WHERE p.nit_proveedor = ?
+            """,
+            [fecha_inicio, fecha_fin, nit_proveedor],
+        )[0]
+
+        revenue = float(estimated_rows["revenue"] or 0)
+        revenue_with_cost = float(estimated_rows["revenue_with_cost"] or 0)
+        margin_value = float(estimated_rows["margin"] or 0)
+        margin = round(margin_value, 2) if revenue_with_cost else None
+        purchase_total = float(stats_rows["total_compras"] or 0)
+        return {
+            "proveedor": {
+                "nit": nit_proveedor,
+                "nombre": provider_rows[0]["nombre"] or nit_proveedor,
+            },
+            "periodo": {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin},
+            "compras": {
+                "total_compras": round(purchase_total, 2),
+                "num_documentos": int(stats_rows["documentos_validos"] or 0),
+                "ticket_promedio": round(float(stats_rows["ticket_promedio"] or 0), 2),
+                "primera_compra": stats_rows["primera_compra"],
+                "ultima_compra": stats_rows["ultima_compra"],
+                "skus_distintos": int(sku_rows["skus_distintos"] or 0),
+                "productos_top": top_products,
+            },
+            "ventas_estimadas": {
+                "revenue": round(revenue, 2),
+                "revenue_with_cost": round(revenue_with_cost, 2),
+                "margen_cobertura_pct": (
+                    round(revenue_with_cost / revenue * 100, 2) if revenue else None
+                ),
+                "margen": margin,
+                "margen_pct": (
+                    round(margin_value / revenue_with_cost * 100, 2) if revenue_with_cost else None
+                ),
+                "skus_vendidos": int(estimated_rows["skus"] or 0),
+                "skus_con_costo": int(estimated_rows["skus_con_costo"] or 0),
+                "metodo_atribucion": {
+                    "id": "latest_supplier_per_sku",
+                    "descripcion": (
+                        "Atribuye las ventas y el margen de cada SKU al proveedor de su compra "
+                        "válida más reciente, sin limitar esa compra de referencia al rango "
+                        "seleccionado. Es una estimación y no representa ventas facturadas "
+                        "directamente por el proveedor. El margen sólo incluye líneas con "
+                        "costo positivo conocido; revenue_with_cost refleja la base cubierta."
+                    ),
+                },
+            },
+            "documentos": documents,
+            "paginacion": {
+                "page": page,
+                "page_size": page_size,
+                "total_documentos": total_documents,
+                "has_more": page * page_size < total_documents,
+            },
+        }
+
     # ══════════════════════════════════════════════════════════════════════
     # ANALÍTICA DE PRODUCTOS / INVENTARIO (V1.10)
     # ══════════════════════════════════════════════════════════════════════

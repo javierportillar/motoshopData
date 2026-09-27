@@ -95,3 +95,4 @@ logs/
 
 # Supabase schema migrations are release artifacts and must be versioned.
 !infra/supabase/migrations/*.sql
+infra/supabase/.temp/

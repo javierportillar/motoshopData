@@ -454,17 +454,18 @@ class ToolExecutor:
             """
             SELECT cod_producto, nombre_detalle, cantidad, total_detalle
             FROM silver_fact_compras_detalle
-            WHERE num_documento = ? AND cod_clase = ?
+            WHERE num_documento = ? AND cod_clase = ? AND business_date = ?
             ORDER BY total_detalle DESC
             LIMIT 15
         """,
-            [row[1], row[2]],
+            [row[1], row[2], row[0]],
         ).fetchall()
 
         estado = str(row[6] or "").strip()
         result = {
             "fecha": row[0].isoformat(),
             "num_documento": row[1],
+            "cod_clase": row[2],
             "proveedor": row[4],
             "nit_proveedor": row[3],
             "total_factura": float(row[5] or 0),
@@ -491,7 +492,8 @@ class ToolExecutor:
         limit = max(1, min(int(limit), 20))
         rows = self._con.execute(
             """
-            SELECT business_date, num_documento, nombre_proveedor, total_factura, estado_documento
+            SELECT business_date, num_documento, cod_clase, nit_proveedor,
+                   nombre_proveedor, total_factura, estado_documento
             FROM silver_fact_compras
             WHERE COALESCE(estado_documento, '') != 'A'
             ORDER BY business_date DESC,
@@ -511,9 +513,11 @@ class ToolExecutor:
                 {
                     "fecha": r[0].isoformat(),
                     "num_documento": r[1],
-                    "proveedor": r[2],
-                    "total_factura": float(r[3] or 0),
-                    "estado_documento": str(r[4] or "").strip(),
+                    "cod_clase": r[2],
+                    "nit_proveedor": r[3],
+                    "proveedor": r[4],
+                    "total_factura": float(r[5] or 0),
+                    "estado_documento": str(r[6] or "").strip(),
                 }
                 for r in rows
             ],
@@ -554,6 +558,7 @@ class ToolExecutor:
                 {
                     "fecha": r[0].isoformat(),
                     "num_documento": r[1],
+                    "cod_clase": r[2],
                     "proveedor": r[3],
                     "nit_proveedor": r[4],
                     "total_factura": float(r[5] or 0),
@@ -888,35 +893,42 @@ class ToolExecutor:
         fecha: str = "",
         producto: str = "",
         limit: int = 40,
+        cod_clase: str = "",
     ) -> dict:
         """Detalle resumido y consultable de productos de una compra específica."""
         limit = max(1, min(int(limit), 100))
-        # Buscar la compra
+        # Never choose an arbitrary class/date when a document number is reused.
+        where = ["num_documento = ?", "UPPER(TRIM(COALESCE(estado_documento, ''))) != 'A'"]
+        params = [num_documento]
         if fecha:
-            compra = self._con.execute(
-                """
-                SELECT business_date, num_documento, cod_clase, nombre_proveedor,
-                       nit_proveedor, total_factura, estado_documento
-                FROM silver_fact_compras
-                WHERE num_documento = ? AND business_date = ? AND COALESCE(estado_documento, '') != 'A'
-                LIMIT 1
-                """,
-                [num_documento, fecha],
-            ).fetchone()
-        else:
-            compra = self._con.execute(
-                """
-                SELECT business_date, num_documento, cod_clase, nombre_proveedor,
-                       nit_proveedor, total_factura, estado_documento
-                FROM silver_fact_compras
-                WHERE num_documento = ? AND COALESCE(estado_documento, '') != 'A'
-                ORDER BY business_date DESC LIMIT 1
-                """,
-                [num_documento],
-            ).fetchone()
+            where.append("business_date = ?")
+            params.append(fecha)
+        if cod_clase:
+            where.append("cod_clase = ?")
+            params.append(cod_clase)
+        rows = self._con.execute(
+            f"""
+            SELECT business_date, num_documento, cod_clase, nombre_proveedor,
+                   nit_proveedor, total_factura, estado_documento
+            FROM silver_fact_compras
+            WHERE {' AND '.join(where)}
+            ORDER BY business_date DESC, cod_clase ASC
+            LIMIT 2
+            """,
+            params,
+        ).fetchall()
 
-        if not compra:
+        if not rows:
             return {"error": f"No se encontró la compra '{num_documento}' (fecha: {fecha or 'cualquiera'})."}
+        if len(rows) > 1:
+            return {
+                "error": (
+                    f"El número '{num_documento}' identifica más de un documento. "
+                    "Indicá la fecha y el código de clase para desambiguarlo."
+                ),
+                "ambiguo": True,
+            }
+        compra = rows[0]
 
         # Obtener detalles de productos
         todos_los_detalles = self._con.execute(
@@ -924,10 +936,10 @@ class ToolExecutor:
             SELECT cod_producto, nombre_detalle, cantidad, valor_unitario,
                    total_detalle, costo_producto
             FROM silver_fact_compras_detalle
-            WHERE num_documento = ? AND cod_clase = ?
+            WHERE num_documento = ? AND cod_clase = ? AND business_date = ?
             ORDER BY total_detalle DESC
             """,
-            [num_documento, compra[2]],
+            [num_documento, compra[2], compra[0]],
         ).fetchall()
 
         # El detalle puede tener cientos de líneas. Filtrar antes de construir
@@ -949,6 +961,7 @@ class ToolExecutor:
             "compra": {
                 "fecha": compra[0].isoformat(),
                 "num_documento": compra[1],
+                "cod_clase": compra[2],
                 "proveedor": compra[3],
                 "nit_proveedor": compra[4],
                 "total_factura": float(compra[5] or 0),
@@ -2069,7 +2082,12 @@ TOOL_DEFINITIONS = [
                     "fecha": {
                         "type": "string",
                         "default": "",
-                        "description": "Fecha de la compra en formato YYYY-MM-DD (opcional, si hay varias compras con mismo número).",
+                        "description": "Fecha de la compra en formato YYYY-MM-DD; necesaria si el número está repetido.",
+                    },
+                    "cod_clase": {
+                        "type": "string",
+                        "default": "",
+                        "description": "Código de clase del documento; necesario si sigue habiendo más de una coincidencia.",
                     },
                     "producto": {
                         "type": "string",

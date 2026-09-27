@@ -19,8 +19,14 @@ from motoshop_api.llm.client import (
 )
 from motoshop_api.llm.contracts import AssistantEnvelope, Attachment, Freshness, SourceEvidence
 from motoshop_api.llm.registry import (
+    PURCHASE_REFERENCE_TOOLS,
+    purchase_document_ref_mentioned,
     resolve_entity_ref,
     resolve_product_refs,
+    resolve_purchase_document_refs,
+    resolve_purchase_refs_in_messages,
+    resolve_supplier_refs,
+    supplier_ref_mentioned,
     visible_markdown_text,
 )
 from motoshop_api.tenants import get_tenant_config
@@ -247,6 +253,7 @@ Reglas de selección de tools (IMPORTANTE):
 - En Proyección, comunica la confianza calibrada y el resultado de backtest; la proyección es de revenue global, no de unidades por SKU.
 - Si el usuario menciona un PROVEEDOR específico (nombre o parte del nombre), usá SIEMPRE buscar_compras_por_proveedor.
 - Si el usuario pide el DETALLE de una compra específica (productos, cantidades, valores), usá get_detalle_compra con el número de documento.
+- Si el usuario pide el enlace de una compra mencionada antes, reutilizá su fecha, clase y número verificados en el historial; en la respuesta nombrá explícitamente "Factura" o "Documento" y el número para adjuntar el enlace autorizado. Nunca inventes una ruta.
 - Si pregunta si las compras de un mes o período fueron necesarias, o pide comparar compras con rotación, ventas acumuladas y stock, usá `analizar_compras_periodo` una sola vez para todo el rango. No hagas una llamada por factura/producto ni encadenes búsquedas de compras recientes.
 - Si nombra meses sin año, inferí el año más reciente disponible en los datos, usa fechas inclusivas y di explícitamente qué año/corte estás analizando. Si más de un año es plausible, preguntá antes de concluir.
 - Explicá cuántos productos se compraron sin ventas previas en 180 días, cuántos ya tenían stock estimado suficiente, cuáles se movieron después y cuáles conviene revisar. Separa evidencias de conclusiones.
@@ -350,7 +357,13 @@ def _freshness(value: Any) -> dict[str, Any] | None:
 
 
 def _entity_references(
-    value: Any, tenant_id: str, user_id: str, context: TenantContext | None = None
+    value: Any,
+    tenant_id: str,
+    user_id: str,
+    context: TenantContext | None = None,
+    *,
+    visible_text: str | None = None,
+    require_visible_text: bool = True,
 ) -> list[dict[str, Any]]:
     if context is None:
         return []
@@ -361,7 +374,6 @@ def _entity_references(
         item for item in items
         if item.get("entity_type") == "product"
         and item.get("domain") == "inventory"
-        and item.get("route_key") == "product"
         and context.allows("inventory")
     ]
     product_refs = {
@@ -371,22 +383,85 @@ def _entity_references(
             [str(item.get("entity_id", "")) for item in product_items],
         )
     }
+    purchase_items = [
+        item for item in items
+        if item.get("entity_type") == "purchase_document"
+        and item.get("domain") == "purchases"
+        and item.get("route_key") in {None, "purchase_document"}
+        and context.allows("purchases")
+    ]
+    purchase_candidate_ids = [str(item.get("entity_id", "")) for item in purchase_items]
+    purchase_refs = {
+        ref.entity_id: ref
+        for ref in resolve_purchase_document_refs(context, purchase_candidate_ids)
+    }
+    supplier_items = [
+        item for item in items
+        if item.get("entity_type") == "supplier"
+        and item.get("domain") == "purchases"
+        and item.get("route_key") in {None, "supplier"}
+        and context.allows("purchases")
+    ]
+    supplier_refs = {
+        ref.entity_id: ref
+        for ref in resolve_supplier_refs(
+            context,
+            [str(item.get("entity_id", "")) for item in supplier_items],
+        )
+    }
 
     for item in items:
-        if not isinstance(item, dict) or "route_key" not in item:
+        if not isinstance(item, dict):
             continue
-        if context is not None and not context.allows(str(item.get("domain", ""))):
+        entity_type = str(item.get("entity_type", ""))
+        inferred_routes = {
+            "product": ("inventory", "product"),
+            "alert": ("alerts", "alert"),
+            "purchase_document": ("purchases", "purchase_document"),
+            "supplier": ("purchases", "supplier"),
+        }
+        expected = inferred_routes.get(entity_type)
+        domain = str(item.get("domain", ""))
+        route_key = str(item.get("route_key") or (expected[1] if expected else ""))
+        if expected and domain != expected[0]:
+            continue
+        if not context.allows(domain):
             continue
         try:
-            if item.get("entity_type") == "product" and item.get("domain") == "inventory":
+            if entity_type == "product" and domain == "inventory":
                 ref = product_refs.get(str(item.get("entity_id", "")).casefold())
                 if ref is None:
+                    continue
+            elif entity_type == "purchase_document" and domain == "purchases":
+                ref = purchase_refs.get(str(item.get("entity_id", "")))
+                if ref is None:
+                    continue
+                if require_visible_text and (
+                    visible_text is None
+                    or not purchase_document_ref_mentioned(
+                        context,
+                        visible_text,
+                        ref.entity_id,
+                        candidate_ids=purchase_candidate_ids,
+                    )
+                ):
+                    continue
+            elif entity_type == "supplier" and domain == "purchases":
+                ref = supplier_refs.get(str(item.get("entity_id", "")))
+                if ref is None:
+                    continue
+                if require_visible_text and (
+                    visible_text is None or not supplier_ref_mentioned(visible_text, ref)
+                ):
                     continue
             else:
                 ref = resolve_entity_ref(
                     context,
-                    entity_type=item["entity_type"], entity_id=item["entity_id"],
-                    label=item["label"], domain=item["domain"], route_key=item["route_key"],
+                    entity_type=entity_type,
+                    entity_id=str(item.get("entity_id", "")),
+                    label=str(item.get("label", "")),
+                    domain=domain,
+                    route_key=route_key,
                 )
         except (KeyError, PermissionError, ValueError, LookupError):
             continue
@@ -444,12 +519,13 @@ def _product_records(value: Any) -> list[tuple[str, str]]:
 
 
 def _tool_entity_candidates(tool_name: str, value: Any) -> list[dict[str, Any]]:
-    """Build candidate product refs only from known, structured product tools."""
+    """Build entity candidates only from structured, allowlisted tool results."""
     if not isinstance(value, dict):
         return []
     candidates = [
         item for item in value.get("entity_refs", [])
         if isinstance(item, dict)
+        and item.get("entity_type") not in {"purchase_document", "supplier"}
     ]
     if tool_name in _PRODUCT_REFERENCE_TOOLS:
         candidates.extend(
@@ -462,6 +538,31 @@ def _tool_entity_candidates(tool_name: str, value: Any) -> list[dict[str, Any]]:
             }
             for entity_id, label in _product_records(value)
         )
+    if tool_name in PURCHASE_REFERENCE_TOOLS:
+        for record in _purchase_records(tool_name, value):
+            if str(record.get("estado_documento", "")).strip().upper() == "A":
+                continue
+            business_date = record.get("fecha") or record.get("business_date")
+            document_number = record.get("num_documento")
+            class_code = record.get("cod_clase")
+            if business_date is not None and document_number is not None and class_code is not None:
+                candidates.append({
+                    "entity_type": "purchase_document",
+                    "entity_id": f"{business_date}|{class_code}|{document_number}",
+                    "label": str(document_number),
+                    "domain": "purchases",
+                    "route_key": "purchase_document",
+                })
+            nit = record.get("nit_proveedor")
+            supplier_name = record.get("proveedor") or record.get("nombre_proveedor")
+            if nit is not None and supplier_name:
+                candidates.append({
+                    "entity_type": "supplier",
+                    "entity_id": str(nit).strip(),
+                    "label": str(supplier_name).strip(),
+                    "domain": "purchases",
+                    "route_key": "supplier",
+                })
     unique: dict[tuple[str, str], dict[str, Any]] = {}
     for item in candidates:
         entity_type = str(item.get("entity_type", ""))
@@ -471,14 +572,83 @@ def _tool_entity_candidates(tool_name: str, value: Any) -> list[dict[str, Any]]:
     return list(unique.values())
 
 
-def _entity_candidates_mentioned_in_text(text: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _purchase_records(tool_name: str, value: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read only the known record shapes returned by the four purchase tools."""
+    if tool_name == "get_ultima_compra":
+        records = [value]
+    elif tool_name == "get_detalle_compra":
+        purchase = value.get("compra")
+        records = [purchase] if isinstance(purchase, dict) else []
+    else:
+        purchases = value.get("compras")
+        records = [item for item in purchases if isinstance(item, dict)] if isinstance(purchases, list) else []
+    return [
+        record for record in records
+        if (record.get("fecha") or record.get("business_date")) is not None
+        and record.get("num_documento") is not None
+        and record.get("cod_clase") is not None
+    ]
+
+
+def _persisted_entity_candidates(row: dict[str, Any]) -> list[dict[str, Any]]:
+    """Retain purchase refs only when the turn records an allowlisted source tool."""
+    references = row.get("entity_refs", [])
+    if not isinstance(references, list):
+        return []
+    tools_used = row.get("tools_used", [])
+    source_tools = set(tools_used) if isinstance(tools_used, list) else set()
+    has_purchase_source = bool(source_tools & PURCHASE_REFERENCE_TOOLS)
+    return [
+        item for item in references
+        if isinstance(item, dict)
+        and (
+            item.get("entity_type") not in {"purchase_document", "supplier"}
+            or has_purchase_source
+        )
+    ]
+
+
+def _entity_candidates_mentioned_in_text(
+    text: str,
+    candidates: list[dict[str, Any]],
+    context: TenantContext | None = None,
+) -> list[dict[str, Any]]:
     """Keep only entities actually mentioned in the user-visible answer."""
     text = visible_markdown_text(text)
+    purchase_candidate_ids = [
+        str(item.get("entity_id", ""))
+        for item in candidates
+        if item.get("entity_type") == "purchase_document"
+    ]
     selected = []
     for item in candidates:
         entity_id = str(item.get("entity_id", "")).strip()
         label = str(item.get("label", "")).strip()
-        if item.get("entity_type") == "product" and entity_id.isdigit():
+        entity_type = item.get("entity_type")
+        if entity_type == "purchase_document":
+            if context is None:
+                parts = entity_id.split("|")
+                mentioned = len(parts) == 3 and bool(re.search(
+                    rf"\b(?:factura|documento|comprobante|doc)\b\s*"
+                    rf"(?:de\s+compra\s+)?(?:n(?:ro|[úu]m(?:ero)?)?\s*[.:#-]?\s*)?"
+                    rf"(?<![\w]){re.escape(parts[2])}(?![\w])",
+                    text,
+                    re.IGNORECASE,
+                ))
+            else:
+                mentioned = purchase_document_ref_mentioned(
+                    context, text, entity_id, candidate_ids=purchase_candidate_ids
+                )
+        elif entity_type == "supplier":
+            mentioned = bool(
+                re.search(
+                    rf"\b(?:NIT|RUT)\s*(?:[:#-]\s*)?{re.escape(entity_id)}(?![\w])",
+                    text,
+                    re.IGNORECASE,
+                )
+                or re.search(rf"(?<![\w]){re.escape(label)}(?![\w])", text, re.IGNORECASE)
+            )
+        elif entity_type == "product" and entity_id.isdigit():
             mentioned = any(
                 re.search(rf"(?<![\w]){re.escape(entity_id)}(?![\w])", line, re.IGNORECASE)
                 and re.search(rf"(?<![\w]){re.escape(label)}(?![\w])", line, re.IGNORECASE)
@@ -526,7 +696,13 @@ def _persisted_envelope(
         conversation_id=conversation_id, turn_count=turn_count,
         tools_used=row.get("tools_used", []), sources=row.get("sources", []),
         freshness=row.get("freshness", []),
-        entity_refs=_entity_references(row.get("entity_refs", []), tenant_id, user_id, context),
+        entity_refs=_entity_references(
+            _persisted_entity_candidates(row),
+            tenant_id,
+            user_id,
+            context,
+            visible_text=str(row.get("content", "")),
+        ),
         attachments=row.get("attachments", []),
     ).model_dump()
 
@@ -711,11 +887,14 @@ class QAChat:
             if answer:
                 direct_entity_refs = _entity_references(
                     _entity_candidates_mentioned_in_text(
-                        str(answer), _tool_entity_candidates(direct_tool_name, audit)
+                        str(answer),
+                        _tool_entity_candidates(direct_tool_name, audit),
+                        self.tenant_context,
                     ),
                     self.tenant_id,
                     self.user_id,
                     self.tenant_context,
+                    visible_text=str(answer),
                 )
                 direct_sources = []
                 direct_freshness = []
@@ -915,11 +1094,43 @@ class QAChat:
             logger.exception("qa_chat_error tenant=%s", self.tenant_id)
             final_text = "Error interno al procesar tu consulta. Intentá de nuevo."
 
+        if self.tenant_context and self.tenant_context.allows("purchases"):
+            purchase_history_rows = [
+                row for row in history
+                if row.get("role") == "assistant"
+                and isinstance(row.get("tools_used"), list)
+                and set(row["tools_used"]) & PURCHASE_REFERENCE_TOOLS
+            ]
+            backfilled_refs = resolve_purchase_refs_in_messages(
+                self.tenant_context,
+                [str(row.get("content") or "") for row in purchase_history_rows],
+            )
+            for index, row in enumerate(purchase_history_rows):
+                entity_ref_candidates.extend(
+                    item for item in _persisted_entity_candidates(row)
+                    if item.get("entity_type") in {"purchase_document", "supplier"}
+                )
+                for ref in backfilled_refs.get(index, []):
+                    entity_ref_candidates.append({
+                        "entity_type": ref.entity_type,
+                        "entity_id": ref.entity_id,
+                        "label": ref.label,
+                        "domain": ref.domain,
+                        "route_key": (
+                            "purchase_document"
+                            if ref.entity_type == "purchase_document"
+                            else "supplier"
+                        ),
+                    })
+
         entity_refs = _entity_references(
-            _entity_candidates_mentioned_in_text(final_text, entity_ref_candidates),
+            _entity_candidates_mentioned_in_text(
+                final_text, entity_ref_candidates, self.tenant_context
+            ),
             self.tenant_id,
             self.user_id,
             self.tenant_context,
+            visible_text=final_text,
         )
         latency_ms = int((time.monotonic() - started) * 1000)
         self.cm.add_turn(key, message, final_text)

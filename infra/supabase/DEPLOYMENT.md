@@ -1,5 +1,22 @@
 # Supabase deployment guardrails
 
+## Migration working directory
+
+The repository keeps Supabase migrations under `infra/supabase/migrations`.
+Always run the CLI from the repository root with `--workdir infra`; running it
+from the repository root alone does not discover these migrations.
+
+```bash
+supabase --workdir infra link --project-ref <project-ref>
+supabase --workdir infra migration list
+supabase --workdir infra db push --dry-run
+supabase --workdir infra db push
+```
+
+Do not use `migration repair` to mark migrations as applied until the remote
+schema has been verified against every migration. The migration ledger is not
+a substitute for applying or validating the SQL.
+
 ## `app_users` credential reconciliation
 
 Deployment is **blocked** until an operator rotates the historical legacy admin
