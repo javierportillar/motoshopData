@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     # into the parent shell (common on Raspberry/systemd and local uvicorn).
     go_api_base: str = Field(default="https://opencode.ai/zen/go/v1")
     opencode_api_key: str = Field(default="")
-    go_model: str = Field(default="qwen3.6-plus")
+    go_model: str = Field(default="deepseek-v4-flash")
     go_max_tokens: int = Field(default=800)
     zen_api_base: str = Field(default="https://router.huggingface.co/v1")
     opencode_api_key_fallback: str = Field(default="")

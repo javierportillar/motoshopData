@@ -59,6 +59,8 @@ services:
         value: supabase
       - key: OPENCODE_API_KEY
         sync: false
+      - key: GO_MODEL
+        value: deepseek-v4-flash
       - key: OPENCODE_API_KEY_FALLBACK
         sync: false
       - key: EMBEDDING_API_BASE

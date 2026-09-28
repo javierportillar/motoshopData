@@ -202,8 +202,7 @@ class BriefingGenerator:
         context_str = _json.dumps(context, ensure_ascii=False, indent=2)
         prompt = BRIEFING_PROMPT.format(context_json=context_str)
 
-        # El LLMClient usa qwen3.6-plus en GO (primario, sin chain-of-thought)
-        # con fallback a deepseek-v4-flash-free en Zen.
+        # El LLMClient usa el modelo GO configurado y el fallback configurado en Zen.
         # max_tokens=None delega en el default del backend (800 en GO, 8000 en Zen).
         client = get_llm_client()
         result = client.complete(

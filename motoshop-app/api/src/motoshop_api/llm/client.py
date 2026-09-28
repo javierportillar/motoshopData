@@ -1,6 +1,6 @@
 """LLMClient — dual-API wrapper (OpenCode GO + HuggingFace).
 
-GO: https://opencode.ai/zen/go/v1 (primario, qwen3.6-plus, sin reasoning)
+GO: https://opencode.ai/zen/go/v1 (primario, modelo OpenAI-compatible configurable)
 HF: https://router.huggingface.co/v1 (fallback, Qwen2.5-72B-Instruct)
 
 Dual-key: OPENCODE_API_KEY (GO) + OPENCODE_API_KEY_FALLBACK (HF).
@@ -115,7 +115,13 @@ class LLMClient:
         deadline: float | None = None,
     ) -> dict:
         """Complete a chat request that may return tool calls."""
-        return self._call(messages, max_tokens, tools=tools, session_id=session_id, deadline=deadline)
+        return self._call(
+            messages,
+            max_tokens,
+            tools=tools,
+            session_id=session_id,
+            deadline=deadline,
+        )
 
     def _call(
         self,
