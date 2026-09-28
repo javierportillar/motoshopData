@@ -495,7 +495,7 @@ def _analysis_fallback(
             lines.append("| Proveedor | NIT | Unidades vendidas | Ventas asociadas ($ COP) | Margen ($ COP / %) | Compras ($ COP) | Ratio V/C |")
             lines.append("| :--- | :--- | ---: | ---: | ---: | ---: | ---: |")
             for item in all_suppliers:
-                nit = str(item.get("nit_proveedor", "—")).strip()
+                nit = str(item.get("nit") or item.get("nit_proveedor") or "—").strip()
                 nombre = str(item.get("nombre", "—")).strip()
                 u_vendidas = float(item.get("unidades_vendidas", 0) or 0)
                 rev = float(item.get("revenue_periodo", 0) or 0)
