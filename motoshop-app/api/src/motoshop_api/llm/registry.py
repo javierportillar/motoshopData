@@ -70,8 +70,8 @@ _SPANISH_MONTHS = {
     "diciembre": 12,
 }
 _PURCHASE_DOCUMENT_MENTION = re.compile(
-    r"\b(?:factura|documento|comprobante)\b\s*(?:de\s+compra\s*)?"
-    r"(?:n(?:ro|[úu]m(?:ero)?)?\s*)?[:#-]?\s*"
+    r"\b(?:factura|documento|comprobante|doc)\.?\s*(?:de\s+compra\s*)?"
+    r"(?:n(?:ro|[úu]m(?:ero)?)?\.?\s*)?[:#-]?\s*"
     r"([A-Za-z0-9](?:[A-Za-z0-9._/-]{0,58}[A-Za-z0-9])?)(?![\w/-])",
     re.IGNORECASE,
 )
@@ -80,7 +80,7 @@ _SUPPLIER_NIT_MENTION = re.compile(
     re.IGNORECASE,
 )
 _PURCHASE_CLASS_MENTION = re.compile(
-    r"\b(?:cod[_\s]*clase|clase)\s*(?:[:=]\s*|\s+)"
+    r"\b(?:cod[_\s]*clase|clase)\s*(?:[:=]\s*|(?!de\b|del\b)\s+)"
     r"([A-Za-z0-9](?:[A-Za-z0-9._/-]{0,38}[A-Za-z0-9])?)",
     re.IGNORECASE,
 )
@@ -138,99 +138,6 @@ def _purchase_ref_from_identity(business_date: str, class_code: str, document_nu
             f"?cod_clase={quote(class_code, safe='')}"
         ),
     )
-
-
-def resolve_purchase_refs_in_messages(
-    context: TenantContext, texts: list[str], *, limit: int = 50
-) -> dict[int, list[EntityRef]]:
-    """Backfill explicitly labelled purchase/NIT mentions with bounded tenant queries."""
-    if not context.allows("purchases") or not texts:
-        return {}
-    candidate_limit = min(max(int(limit), 0), _MAX_PURCHASE_HISTORY_CANDIDATES)
-    if candidate_limit == 0:
-        return {}
-
-    document_selectors: list[tuple[int, str, str | None, str | None]] = []
-    supplier_nits_by_message: dict[int, set[str]] = {}
-    document_numbers: list[str] = []
-    supplier_nits: list[str] = []
-
-    for message_index, raw_text in enumerate(texts):
-        text = visible_markdown_text(str(raw_text or ""))
-        dates = _business_dates_in_text(text)
-        classes = {match.group(1) for match in _PURCHASE_CLASS_MENTION.finditer(text)}
-        business_date = next(iter(dates)) if len(dates) == 1 else None
-        class_code = next(iter(classes)) if len(classes) == 1 else None
-        for match in _PURCHASE_DOCUMENT_MENTION.finditer(text):
-            document_number = match.group(1).rstrip("./-")
-            if not document_number:
-                continue
-            selector = (message_index, document_number, business_date, class_code)
-            if selector not in document_selectors and len(document_selectors) < candidate_limit:
-                document_selectors.append(selector)
-                document_numbers.append(document_number)
-        for match in _SUPPLIER_NIT_MENTION.finditer(text):
-            nit = match.group(1).rstrip(".-")
-            if not nit or len(supplier_nits) >= candidate_limit:
-                continue
-            supplier_nits_by_message.setdefault(message_index, set()).add(nit)
-            if nit not in supplier_nits:
-                supplier_nits.append(nit)
-
-    refs_by_message: dict[int, list[EntityRef]] = {}
-    supplier_refs = {ref.entity_id: ref for ref in resolve_supplier_refs(context, supplier_nits)}
-    for message_index, nits in supplier_nits_by_message.items():
-        for nit in nits:
-            ref = supplier_refs.get(nit)
-            if ref is not None:
-                refs_by_message.setdefault(message_index, []).append(ref)
-
-    unique_numbers = list(dict.fromkeys(document_numbers))
-    if not unique_numbers:
-        return refs_by_message
-    placeholders = ",".join("?" for _ in unique_numbers)
-    try:
-        rows = _purchase_cursor_rows(
-            context,
-            f"""
-            SELECT DISTINCT CAST(business_date AS VARCHAR), cod_clase, num_documento
-            FROM silver_fact_compras
-            WHERE num_documento IN ({placeholders})
-              AND UPPER(TRIM(COALESCE(estado_documento, ''))) != 'A'
-            ORDER BY CAST(business_date AS VARCHAR) DESC, cod_clase, num_documento
-            LIMIT 5001
-            """,
-            unique_numbers,
-        )
-    except LookupError:
-        return refs_by_message
-    if len(rows) > 5000:
-        return refs_by_message
-
-    identities_by_number: dict[str, list[tuple[str, str, str]]] = {}
-    for raw_date, raw_class, raw_number in rows:
-        identity = (str(raw_date), str(raw_class), str(raw_number))
-        identities_by_number.setdefault(identity[2], []).append(identity)
-
-    for message_index, document_number, business_date, class_code in document_selectors:
-        matches = [
-            identity
-            for identity in identities_by_number.get(document_number, [])
-            if (business_date is None or identity[0] == business_date)
-            and (class_code is None or identity[1].casefold() == class_code.casefold())
-        ]
-        if len(matches) != 1:
-            continue
-        ref = _purchase_ref_from_identity(*matches[0])
-        refs_by_message.setdefault(message_index, []).append(ref)
-
-    for message_index, refs in refs_by_message.items():
-        deduplicated = {
-            (ref.entity_type, ref.entity_id, ref.domain): ref
-            for ref in refs
-        }
-        refs_by_message[message_index] = list(deduplicated.values())
-    return refs_by_message
 
 
 class GovernedRegistry:
@@ -405,6 +312,8 @@ def _parse_purchase_id(entity_id: str) -> tuple[str, str, str]:
 
 def resolve_purchase_document_ref(context: TenantContext, entity_id: str) -> EntityRef:
     """Resolve an exact valid purchase identity in the active tenant."""
+    if not context.allows("purchases"):
+        raise PermissionError("entity_destination_denied")
     _parse_purchase_id(entity_id)
     for ref in resolve_purchase_document_refs(context, [entity_id]):
         if ref.entity_id == entity_id:
@@ -435,17 +344,20 @@ def resolve_purchase_document_refs(
         for _ in identities
     ]
     parameters = [value for identity in identities for value in identity]
-    rows = _purchase_cursor_rows(
-        context,
-        f"""
-        SELECT CAST(business_date AS VARCHAR), cod_clase, num_documento, COUNT(*) AS exact_rows
-        FROM silver_fact_compras
-        WHERE ({" OR ".join(clauses)})
-          AND UPPER(TRIM(COALESCE(estado_documento, ''))) != 'A'
-        GROUP BY 1, 2, 3
-        """,
-        parameters,
-    )
+    try:
+        rows = _purchase_cursor_rows(
+            context,
+            f"""
+            SELECT CAST(business_date AS VARCHAR), cod_clase, num_documento, COUNT(*) AS exact_rows
+            FROM silver_fact_compras
+            WHERE ({" OR ".join(clauses)})
+              AND UPPER(TRIM(COALESCE(estado_documento, ''))) != 'A'
+            GROUP BY 1, 2, 3
+            """,
+            parameters,
+        )
+    except LookupError:
+        return []
     refs = []
     for raw_date, raw_class, raw_number, exact_rows in rows:
         if int(exact_rows) != 1:
@@ -465,36 +377,57 @@ def resolve_supplier_refs(context: TenantContext, nits: list[str]) -> list[Entit
     if not normalized_nits:
         return []
     placeholders = ",".join("?" for _ in normalized_nits)
-    rows = _purchase_cursor_rows(
-        context,
-        f"""
-        WITH suppliers AS (
+    try:
+        rows = _purchase_cursor_rows(
+            context,
+            f"""
             SELECT TRIM(nit_proveedor) AS nit,
                    COALESCE(
                        ARG_MAX(NULLIF(TRIM(nombre_proveedor), ''), business_date),
                        TRIM(nit_proveedor)
                    ) AS nombre
             FROM silver_fact_compras
-            WHERE nit_proveedor IS NOT NULL AND TRIM(nit_proveedor) != ''
+            WHERE TRIM(nit_proveedor) IN ({placeholders})
             GROUP BY TRIM(nit_proveedor)
-        ), named AS (
-            SELECT nit, nombre,
-                   COUNT(*) OVER (PARTITION BY LOWER(TRIM(nombre))) AS name_count
-            FROM suppliers
+            ORDER BY nit
+            """,
+            normalized_nits,
         )
-        SELECT nit, nombre, name_count
-        FROM named
-        WHERE nit IN ({placeholders})
-        ORDER BY nit
-        """,
-        normalized_nits,
-    )
+    except LookupError:
+        return []
+    if not rows:
+        return []
+
+    labels = list(dict.fromkeys(str(row[1]).strip().casefold() for row in rows))
+    label_placeholders = ",".join("?" for _ in labels)
+    try:
+        name_counts = {
+            str(row[0]).casefold(): int(row[1])
+            for row in _purchase_cursor_rows(
+                context,
+                f"""
+                SELECT LOWER(TRIM(COALESCE(
+                           NULLIF(TRIM(nombre_proveedor), ''), TRIM(nit_proveedor)
+                       ))) AS nombre,
+                       COUNT(DISTINCT TRIM(nit_proveedor)) AS nit_count
+                FROM silver_fact_compras
+                WHERE nit_proveedor IS NOT NULL AND TRIM(nit_proveedor) != ''
+                  AND LOWER(TRIM(COALESCE(
+                           NULLIF(TRIM(nombre_proveedor), ''), TRIM(nit_proveedor)
+                       ))) IN ({label_placeholders})
+                GROUP BY 1
+                """,
+                labels,
+            )
+        }
+    except LookupError:
+        name_counts = {}
     return [
         EntityRef(
             entity_type="supplier",
             entity_id=str(row[0]),
             label=str(row[1]),
-            label_is_unique=int(row[2]) == 1,
+            label_is_unique=name_counts.get(str(row[1]).strip().casefold(), 0) == 1,
             domain="purchases",
             href=f"/dashboards/compras/proveedores/{quote(str(row[0]), safe='')}",
         )
@@ -519,17 +452,19 @@ def purchase_document_ref_mentioned(
     text = visible_markdown_text(text)
     number_pattern = rf"(?<![\w]){re.escape(document_number)}(?![\w])"
     document_number_mention = re.compile(
-        rf"\b(?:factura|documento|comprobante|doc)\b"
+        rf"\b(?:factura|documento|comprobante|doc)\.?"
         rf"\s*(?:de\s+compra\s+)?"
-        rf"(?:(?:n(?:ro|[úu]m(?:ero)?)?|n[º°]|#)\s*)?[:#-]?\s*"
+        rf"(?:(?:n(?:ro|[úu]m(?:ero)?)?|n[º°])\.?\s*|#\s*)?[:#-]?\s*"
         rf"{number_pattern}",
         re.IGNORECASE,
     )
-    matching_lines = [
+    mention_contexts = [
         line for line in text.splitlines()
         if document_number_mention.search(line)
     ]
-    if not matching_lines:
+    mention_contexts.extend(_purchase_document_table_contexts(text, document_number))
+    mention_contexts = list(dict.fromkeys(mention_contexts))
+    if not mention_contexts:
         return False
 
     identities: list[tuple[str, str, str]] = []
@@ -559,20 +494,61 @@ def purchase_document_ref_mentioned(
         identities = [(str(row[0]), str(row[1]), str(row[2])) for row in rows]
     if len(identities) == 1:
         return identities[0] == (business_date, class_code, document_number)
-    visible_dates = _business_dates_in_text(text)
-    visible_classes = {
-        match.group(1).casefold()
-        for match in _PURCHASE_CLASS_MENTION.finditer(text)
-    }
-    if len(visible_dates) != 1 and len(visible_classes) != 1:
-        return False
-    matches = [
-        identity
-        for identity in identities
-        if (len(visible_dates) != 1 or identity[0] in visible_dates)
-        and (len(visible_classes) != 1 or identity[1].casefold() in visible_classes)
-    ]
-    return len(matches) == 1 and matches[0] == (business_date, class_code, document_number)
+    for mention_context in mention_contexts:
+        visible_dates = _business_dates_in_text(mention_context)
+        visible_classes = {
+            match.group(1).casefold()
+            for match in _PURCHASE_CLASS_MENTION.finditer(mention_context)
+        }
+        if not visible_dates and not visible_classes:
+            continue
+        matches = [
+            identity
+            for identity in identities
+            if (not visible_dates or identity[0] in visible_dates)
+            and (not visible_classes or identity[1].casefold() in visible_classes)
+        ]
+        if len(matches) == 1 and matches[0] == (business_date, class_code, document_number):
+            return True
+    return False
+
+
+def _purchase_document_table_contexts(text: str, document_number: str) -> list[str]:
+    """Return row-local evidence only when the number occupies a document column."""
+    lines = text.splitlines()
+    contexts: list[str] = []
+    index = 0
+    document_header = re.compile(r"\b(?:factura|documento|comprobante|doc)\b", re.IGNORECASE)
+    while index + 2 < len(lines):
+        header_line = lines[index].strip()
+        separator_line = lines[index + 1].strip()
+        if (
+            not header_line.startswith("|")
+            or not separator_line.startswith("|")
+            or not re.fullmatch(r"\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?", separator_line)
+        ):
+            index += 1
+            continue
+        headers = [cell.strip() for cell in header_line.strip("|").split("|")]
+        document_columns = [
+            column for column, header in enumerate(headers)
+            if document_header.search(header)
+        ]
+        index += 2
+        while index < len(lines) and lines[index].lstrip().startswith("|"):
+            cells = [cell.strip() for cell in lines[index].strip().strip("|").split("|")]
+            if any(
+                column < len(cells)
+                and cells[column].strip("`*_ ") == document_number
+                for column in document_columns
+            ):
+                contexts.append(" | ".join(
+                    f"{header}: {cells[column]}"
+                    for column, header in enumerate(headers)
+                    if column < len(cells)
+                ))
+            index += 1
+    return contexts
 
 
 def resolve_purchase_refs_in_messages(

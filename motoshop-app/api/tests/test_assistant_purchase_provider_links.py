@@ -28,6 +28,51 @@ class TenantDatabases:
         self.connections.clear()
 
 
+class _LeasedCursor:
+    """Model the production proxy, which closes a lease after fetching rows."""
+
+    def __init__(self, connection: duckdb.DuckDBPyConnection) -> None:
+        self._cursor = connection.cursor()
+        self._closed = False
+
+    def execute(self, query: str, parameters: list | None = None) -> _LeasedCursor:
+        if self._closed:
+            raise RuntimeError("leased cursor is closed")
+        if parameters is None:
+            self._cursor.execute(query)
+        else:
+            self._cursor.execute(query, parameters)
+        return self
+
+    def fetchone(self):
+        try:
+            return self._cursor.fetchone()
+        finally:
+            self.close()
+
+    def fetchall(self):
+        try:
+            return self._cursor.fetchall()
+        finally:
+            self.close()
+
+    def close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            self._cursor.close()
+
+
+class _LeasedConnection:
+    def __init__(self, connection: duckdb.DuckDBPyConnection) -> None:
+        self._connection = connection
+
+    def cursor(self) -> _LeasedCursor:
+        return _LeasedCursor(self._connection)
+
+    def execute(self, query: str, parameters: list | None = None) -> _LeasedCursor:
+        return self.cursor().execute(query, parameters)
+
+
 @pytest.fixture
 def tenant_databases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TenantDatabases:
     paths = {tenant: tmp_path / f"{tenant}.duckdb" for tenant in ("motoshop", "masvital")}
@@ -53,6 +98,13 @@ def tenant_databases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TenantD
             )
             connection.execute(
                 """
+                CREATE TABLE silver_dim_producto (
+                    cod_producto VARCHAR, nombre_producto VARCHAR
+                )
+                """
+            )
+            connection.execute(
+                """
                 CREATE TABLE silver_fact_ventas (
                     business_date DATE, num_documento VARCHAR, cod_clase VARCHAR,
                     estado_documento VARCHAR
@@ -69,6 +121,15 @@ def tenant_databases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TenantD
                 """
             )
             if tenant == "motoshop":
+                connection.executemany(
+                    "INSERT INTO silver_dim_producto VALUES (?, ?)",
+                    [
+                        ("SKU-1", "Alpha part"),
+                        ("SKU-2", "Beta part"),
+                        ("SKU-3", "Gamma part"),
+                        ("SKU-4", "Delta part"),
+                    ],
+                )
                 connection.executemany(
                     "INSERT INTO silver_fact_compras VALUES (?, ?, ?, ?, ?, ?, ?)",
                     [
@@ -283,37 +344,54 @@ def test_exact_purchase_resolution_preserves_date_class_and_encodes_route(
     )
 
 
-def test_duplicate_exact_purchase_identity_is_ambiguous(
-    tenant_databases: TenantDatabases,
+def test_purchase_and_supplier_refs_resolve_in_bounded_batches(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with duckdb.connect(str(tenant_databases.paths["motoshop"])) as connection:
-        connection.execute(
-            "INSERT INTO silver_fact_compras VALUES "
-            "('2026-01-02', '55', 'FC', '900111111-1', 'Shared Supplier', 100, 'B')"
-        )
+    import motoshop_api.llm.registry as registry
 
-    with pytest.raises(LookupError):
-        resolve_entity_ref(
-            _context(),
-            entity_type="purchase_document",
-            entity_id="2026-01-02|FC|55",
-            label="55",
-            domain="purchases",
-            route_key="purchase_document",
-        )
+    context = _context()
+    calls: list[tuple[str, list[str]]] = []
+
+    def fake_rows(_context, sql: str, parameters: list[str]):
+        calls.append((sql, parameters))
+        if "COUNT(*) AS exact_rows" in sql:
+            return [
+                ("2026-01-02", "FC", "55", 1),
+                ("2026-01-03", "NC", "55", 1),
+            ]
+        if "COUNT(DISTINCT TRIM(nit_proveedor))" in sql:
+            return [("supplier one", 1), ("supplier two", 1)]
+        return [("900111111-1", "Supplier One"), ("900222222-2", "Supplier Two")]
+
+    monkeypatch.setattr(registry, "_purchase_cursor_rows", fake_rows)
+
+    purchases = registry.resolve_purchase_document_refs(
+        context,
+        ["2026-01-02|FC|55", "2026-01-03|NC|55"],
+    )
+    assert len(purchases) == 2
+    assert len(calls) == 1
+    assert len(calls[0][1]) == 6
+
+    calls.clear()
+    suppliers = registry.resolve_supplier_refs(context, ["900111111-1", "900222222-2"])
+    assert [ref.entity_id for ref in suppliers] == ["900111111-1", "900222222-2"]
+    assert len(calls) == 2
+    assert calls[0][1] == ["900111111-1", "900222222-2"]
+    assert calls[1][1] == ["supplier one", "supplier two"]
 
 
-def test_reused_purchase_number_requires_visible_date_and_class(
-    tenant_databases: TenantDatabases,
+@pytest.mark.parametrize(
+    "document_label",
+    ["Factura 77", "Documento: 77", "Comprobante Nro. 77", "Doc. 77"],
+)
+def test_purchase_document_labels_support_common_visible_formats(
+    tenant_databases: TenantDatabases, document_label: str
 ) -> None:
     from motoshop_api.llm.registry import purchase_document_ref_mentioned
 
-    context = _context()
-    entity_id = "2026-01-02|FC|55"
-
-    assert not purchase_document_ref_mentioned(context, "La factura 55 suma $100.", entity_id)
     assert purchase_document_ref_mentioned(
-        context, "La factura 55 clase FC del 2026-01-02 suma $100.", entity_id
+        _context(), document_label, "2026-01-04|FC|77"
     )
 
 
@@ -374,6 +452,23 @@ def test_history_purchase_backfill_requires_structured_source_and_exact_visible_
         ("supplier", "900111111-1")
     ]
     assert 2 not in rows
+
+
+@pytest.mark.parametrize("document_label", ["Doc. 77", "Comprobante Nro. 77"])
+def test_history_purchase_backfill_accepts_common_document_labels(
+    tenant_databases: TenantDatabases, document_label: str
+) -> None:
+    from motoshop_api.llm.registry import resolve_purchase_refs_in_messages
+
+    rows = resolve_purchase_refs_in_messages(
+        _context("motoshop", "purchases"),
+        [f"{document_label}. Proveedor: Shared Supplier (NIT 900111111-1)."],
+    )
+
+    assert {(ref.entity_type, ref.entity_id) for ref in rows[0]} == {
+        ("purchase_document", "2026-01-04|FC|77"),
+        ("supplier", "900111111-1"),
+    }
 
 
 def test_history_purchase_backfill_does_not_link_hidden_markdown_destination(
@@ -550,10 +645,26 @@ def supplier_profile_client(monkeypatch: pytest.MonkeyPatch):
                 "compras": {
                     "total_compras": 0,
                     "num_documentos": 0,
+                    "ticket_promedio": 0,
+                    "primera_compra": None,
+                    "ultima_compra": None,
+                    "skus_distintos": 0,
                     "productos_top": [],
                 },
                 "ventas_estimadas": {
-                    "metodo_atribucion": {"id": "latest_supplier_per_sku", "descripcion": "test"}
+                    "revenue": 0,
+                    "revenue_with_cost": 0,
+                    "lineas_venta": 0,
+                    "lineas_con_costo": 0,
+                    "margen_cobertura_pct": None,
+                    "margen": None,
+                    "margen_pct": None,
+                    "skus_vendidos": 0,
+                    "skus_con_costo": 0,
+                    "metodo_atribucion": {
+                        "id": "latest_supplier_per_sku",
+                        "descripcion": "test",
+                    },
                 },
                 "documentos": [],
                 "paginacion": {
@@ -563,12 +674,27 @@ def supplier_profile_client(monkeypatch: pytest.MonkeyPatch):
                     "has_more": False,
                 },
             }
+            self.search_arguments: tuple | None = None
 
         def get_compras_proveedor_perfil(
             self, nit, fecha_inicio, fecha_fin, *, page, page_size
         ):
             self.arguments = (nit, fecha_inicio, fecha_fin, page, page_size)
             return self.result
+
+        def get_compras_buscar(self, query, fecha_inicio, fecha_fin, *, page, page_size):
+            self.search_arguments = (query, fecha_inicio, fecha_fin, page, page_size)
+            return {
+                "query": query,
+                "periodo": {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin},
+                "documentos": [],
+                "paginacion": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total_documentos": 0,
+                    "has_more": False,
+                },
+            }
 
     repo = ProfileRepo()
     authorized_user = User(
@@ -652,6 +778,7 @@ def test_supplier_profile_returns_not_found_and_requires_purchase_access(
     assert client.get(
         "/api/metrics/compras-proveedor-perfil?nit_proveedor=900111111-1"
     ).status_code == 403
+    assert client.get("/api/metrics/compras-buscar?q=Alpha").status_code == 403
 
 
 def test_supplier_profile_requires_authentication(client: TestClient) -> None:
@@ -674,6 +801,40 @@ def test_supplier_profile_endpoint_has_rate_limit(supplier_profile_client) -> No
     ]
 
     assert responses[-1].status_code == 429
+
+
+def test_purchase_search_endpoint_auth_date_defaults_and_validation(
+    supplier_profile_client,
+) -> None:
+    client, repo, _user = supplier_profile_client
+    response = client.get(
+        "/api/metrics/compras-buscar?q=SKU-1&page=2&page_size=25"
+    )
+    assert response.status_code == 200
+    today = date.today()
+    from motoshop_api.metrics.router import _subtract_years
+
+    assert repo.search_arguments == (
+        "SKU-1", _subtract_years(today, 1).isoformat(), today.isoformat(), 2, 25
+    )
+    assert client.get("/api/metrics/compras-buscar?q=x").status_code == 422
+    assert client.get(
+        "/api/metrics/compras-buscar?q=SKU-1&fecha_inicio=2015-01-01&fecha_fin=2026-01-01"
+    ).status_code == 422
+
+
+def test_purchase_search_endpoint_requires_authentication(client: TestClient) -> None:
+    assert client.get("/api/metrics/compras-buscar?q=SKU-1").status_code == 401
+
+
+def test_purchase_search_route_is_registered_once() -> None:
+    matching_routes = [
+        route for route in app.routes
+        if getattr(route, "path", None) == "/api/metrics/compras-buscar"
+        and "GET" in getattr(route, "methods", set())
+    ]
+
+    assert len(matching_routes) == 1
 
 
 def test_supplier_profile_actual_aggregates_pagination_and_estimated_methodology(
@@ -720,13 +881,46 @@ def test_supplier_profile_actual_aggregates_pagination_and_estimated_methodology
     assert estimated["revenue"] == 150
     assert estimated["revenue_with_cost"] == 100
     assert estimated["margen_cobertura_pct"] == pytest.approx(66.67)
+    assert estimated["lineas_venta"] == 2
+    assert estimated["lineas_con_costo"] == 1
     assert estimated["margen"] == 80
     assert estimated["margen_pct"] == 80
     assert estimated["skus_vendidos"] == 2
     assert estimated["skus_con_costo"] == 1
     assert estimated["metodo_atribucion"]["id"] == "latest_supplier_per_sku"
     assert "compra válida más reciente" in estimated["metodo_atribucion"]["descripcion"]
-    assert "no representa ventas facturadas directamente" in estimated["metodo_atribucion"]["descripcion"]
+    assert (
+        "no representa ventas facturadas directamente"
+        in estimated["metodo_atribucion"]["descripcion"]
+    )
+
+
+def test_supplier_profile_excludes_duplicated_document_identity_from_all_aggregates(
+    tenant_databases: TenantDatabases,
+) -> None:
+    from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
+
+    db_path = tenant_databases.paths["motoshop"]
+    with duckdb.connect(str(db_path)) as connection:
+        connection.execute(
+            "INSERT INTO silver_fact_compras VALUES "
+            "('2026-01-04', '77', 'FC', '900222222-2', 'Shared Supplier', 999, 'B')"
+        )
+
+    repo = DuckDBMetricsRepo(db_path=db_path, tenant="motoshop")
+    profile = repo.get_compras_proveedor_perfil(
+        "900111111-1", "2026-01-01", "2026-04-01", page=1, page_size=20
+    )
+
+    assert profile is not None
+    assert profile["compras"]["total_compras"] == 300
+    assert profile["compras"]["num_documentos"] == 3
+    assert profile["paginacion"]["total_documentos"] == len(profile["documentos"]) == 3
+    assert all(document["num_documento"] != "77" for document in profile["documentos"])
+    assert all(
+        product["cod_producto"] != "SKU-3"
+        for product in profile["compras"]["productos_top"]
+    )
 
 
 def test_supplier_profile_empty_range_and_supplier_missing_from_tenant(
@@ -758,12 +952,140 @@ def test_supplier_profile_empty_range_and_supplier_missing_from_tenant(
     assert unknown_cost["ventas_estimadas"]["revenue_with_cost"] == 0
     assert unknown_cost["ventas_estimadas"]["margen"] is None
     assert unknown_cost["ventas_estimadas"]["margen_pct"] is None
+    assert unknown_cost["ventas_estimadas"]["lineas_venta"] == 1
+    assert unknown_cost["ventas_estimadas"]["lineas_con_costo"] == 0
     assert unknown_cost["ventas_estimadas"]["skus_vendidos"] == 1
     assert unknown_cost["ventas_estimadas"]["skus_con_costo"] == 0
     assert unknown_cost["ventas_estimadas"]["margen_cobertura_pct"] == 0
     assert repo.get_compras_proveedor_perfil(
         "999999999-9", "2026-01-01", "2026-04-01"
     ) is None
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_numbers", "expected_match_type"),
+    [
+        ("55", {"55"}, "factura"),
+        ("900111111-1", {"55", "77", "100"}, "proveedor"),
+        ("SKU-3", {"77"}, "producto"),
+        ("Gamma part", {"77"}, "producto"),
+    ],
+)
+def test_purchase_search_matches_invoice_supplier_and_products(
+    tenant_databases: TenantDatabases,
+    query: str,
+    expected_numbers: set[str],
+    expected_match_type: str,
+) -> None:
+    from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
+
+    repo = DuckDBMetricsRepo(db_path=tenant_databases.paths["motoshop"], tenant="motoshop")
+    result = repo.get_compras_buscar(
+        query, "2026-01-01", "2026-04-01", page=1, page_size=20
+    )
+
+    assert {doc["num_documento"] for doc in result["documentos"]} == expected_numbers
+    assert all(doc["tipo_coincidencia"] == expected_match_type for doc in result["documentos"])
+    if query == "Gamma part":
+        assert result["documentos"][0]["productos_coincidentes"] == "Gamma part"
+
+
+def test_purchase_search_keeps_duplicate_numbers_by_exact_identity_and_paginates(
+    tenant_databases: TenantDatabases,
+) -> None:
+    from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
+
+    repo = DuckDBMetricsRepo(db_path=tenant_databases.paths["motoshop"], tenant="motoshop")
+    first = repo.get_compras_buscar("55", "2026-01-01", "2026-04-01", page=1, page_size=2)
+    second = repo.get_compras_buscar("55", "2026-01-01", "2026-04-01", page=2, page_size=2)
+
+    assert first["paginacion"] == {
+        "page": 1, "page_size": 2, "total_documentos": 4, "has_more": True,
+    }
+    assert second["paginacion"]["has_more"] is False
+    identities = {
+        (document["business_date"], document["cod_clase"], document["num_documento"])
+        for document in [*first["documentos"], *second["documentos"]]
+    }
+    assert identities == {
+        ("2026-01-02", "FC", "55"),
+        ("2026-01-02", "NC", "55"),
+        ("2026-01-03", "NC", "55"),
+        ("2026-02-01", "FC", "55"),
+    }
+    assert "2026-02-02" not in {date for date, _, _ in identities}
+
+
+def test_purchase_search_treats_like_wildcards_as_literal_and_validates_direct_input(
+    tenant_databases: TenantDatabases,
+) -> None:
+    from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
+
+    repo = DuckDBMetricsRepo(db_path=tenant_databases.paths["motoshop"], tenant="motoshop")
+    result = repo.get_compras_buscar("%%", "2026-01-01", "2026-04-01")
+    assert result["documentos"] == []
+    assert result["paginacion"]["total_documentos"] == 0
+    with pytest.raises(ValueError):
+        repo.get_compras_buscar(" ", "2026-01-01", "2026-04-01")
+
+
+def test_zero_revenue_line_with_known_cost_keeps_margin_available(
+    tenant_databases: TenantDatabases,
+) -> None:
+    from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
+
+    db_path = tenant_databases.paths["motoshop"]
+    with duckdb.connect(str(db_path)) as connection:
+        connection.execute(
+            "INSERT INTO silver_fact_compras VALUES "
+            "('2026-01-06', '102', 'FC', '900111111-1', 'Shared Supplier', 0, 'B')"
+        )
+        connection.execute(
+            "INSERT INTO silver_fact_compras_detalle VALUES "
+            "('SKU-5', '2026-01-06', 1, 10, 0, '102', 'FC', 'Zero-value part', 10)"
+        )
+        connection.execute(
+            "INSERT INTO silver_fact_ventas VALUES ('2026-03-04', 'V-ZERO', 'FV', 'B')"
+        )
+        connection.execute(
+            "INSERT INTO silver_fact_ventas_detalle VALUES "
+            "('SKU-5', '2026-03-04', 0, 0, 10, 'V-ZERO', 'FV')"
+        )
+
+    repo = DuckDBMetricsRepo(db_path=db_path, tenant="motoshop")
+    profile = repo.get_compras_proveedor_perfil(
+        "900111111-1", "2026-03-04", "2026-03-04"
+    )
+
+    assert profile is not None
+    estimates = profile["ventas_estimadas"]
+    assert estimates["revenue"] == 0
+    assert estimates["revenue_with_cost"] == 0
+    assert estimates["lineas_venta"] == estimates["lineas_con_costo"] == 1
+    assert estimates["skus_vendidos"] == estimates["skus_con_costo"] == 1
+    assert estimates["margen"] == 0
+    assert estimates["margen_pct"] is None
+
+
+def test_supplier_estimates_exclude_duplicate_sales_headers(
+    tenant_databases: TenantDatabases,
+) -> None:
+    from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
+
+    db_path = tenant_databases.paths["motoshop"]
+    with duckdb.connect(str(db_path)) as connection:
+        connection.execute(
+            "INSERT INTO silver_fact_ventas VALUES ('2026-03-01', 'V-1', 'FV', 'B')"
+        )
+
+    repo = DuckDBMetricsRepo(db_path=db_path, tenant="motoshop")
+    profile = repo.get_compras_proveedor_perfil(
+        "900111111-1", "2026-03-01", "2026-03-03"
+    )
+
+    assert profile is not None
+    assert profile["ventas_estimadas"]["revenue"] == 50
+    assert profile["ventas_estimadas"]["skus_vendidos"] == 1
 
 
 def test_history_revalidates_stored_purchase_reference_without_mutating_text(

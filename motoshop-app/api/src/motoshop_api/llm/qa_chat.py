@@ -629,8 +629,8 @@ def _entity_candidates_mentioned_in_text(
             if context is None:
                 parts = entity_id.split("|")
                 mentioned = len(parts) == 3 and bool(re.search(
-                    rf"\b(?:factura|documento|comprobante|doc)\b\s*"
-                    rf"(?:de\s+compra\s+)?(?:n(?:ro|[úu]m(?:ero)?)?\s*[.:#-]?\s*)?"
+                    rf"\b(?:factura|documento|comprobante|doc)\.?\s*"
+                    rf"(?:de\s+compra\s+)?(?:n(?:ro|[úu]m(?:ero)?)?\.?\s*[.:#-]?\s*)?"
                     rf"(?<![\w]){re.escape(parts[2])}(?![\w])",
                     text,
                     re.IGNORECASE,

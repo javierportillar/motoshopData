@@ -3250,7 +3250,7 @@ class DuckDBMetricsRepo:
         page_size: int = 20,
     ) -> dict | None:
         """Return bounded actual purchase history and estimated SKU attribution."""
-        valid_header = "UPPER(TRIM(COALESCE(h.estado_documento, ''))) != 'A'"
+        valid_headers_cte = _VALID_PURCHASE_HEADERS_CTE
         provider_rows = self._query(
             """
             SELECT COALESCE(
@@ -3270,54 +3270,45 @@ class DuckDBMetricsRepo:
         bounds = [nit_proveedor, fecha_inicio, fecha_fin]
         stats_rows = self._query(
             f"""
+            WITH valid_purchase_headers AS ({valid_headers_cte})
             SELECT COALESCE(SUM(h.total_factura), 0) AS total_compras,
-                   COUNT(*) AS documentos_validos,
+                   COUNT(*) AS total_documentos,
                    COALESCE(AVG(h.total_factura), 0) AS ticket_promedio,
                    CAST(MIN(h.business_date) AS VARCHAR) AS primera_compra,
                    CAST(MAX(h.business_date) AS VARCHAR) AS ultima_compra
-            FROM silver_fact_compras h
+            FROM valid_purchase_headers h
             WHERE TRIM(h.nit_proveedor) = ? AND h.business_date BETWEEN ? AND ?
-              AND {valid_header}
             """,
             bounds,
         )[0]
         sku_rows = self._query(
             f"""
+            WITH valid_purchase_headers AS ({valid_headers_cte})
             SELECT COUNT(DISTINCT d.cod_producto) AS skus_distintos
-            FROM silver_fact_compras h
+            FROM valid_purchase_headers h
             INNER JOIN silver_fact_compras_detalle d
               ON d.business_date = h.business_date
              AND d.cod_clase = h.cod_clase
              AND d.num_documento = h.num_documento
             WHERE TRIM(h.nit_proveedor) = ? AND h.business_date BETWEEN ? AND ?
-              AND {valid_header}
             """,
             bounds,
         )[0]
-        total_rows = self._query(
-            f"""
-            SELECT COUNT(*) AS total
-            FROM silver_fact_compras h
-            WHERE TRIM(h.nit_proveedor) = ? AND h.business_date BETWEEN ? AND ?
-              AND {valid_header}
-            """,
-            bounds,
-        )
-        total_documents = int(total_rows[0]["total"] or 0)
+        total_documents = int(stats_rows["total_documentos"] or 0)
         documents = self._query(
             f"""
+            WITH valid_purchase_headers AS ({valid_headers_cte})
             SELECT CAST(h.business_date AS VARCHAR) AS business_date,
                    h.cod_clase,
                    h.num_documento,
                    ROUND(COALESCE(h.total_factura, 0), 2) AS total_factura,
                    COUNT(d.cod_producto) AS num_items
-            FROM silver_fact_compras h
+            FROM valid_purchase_headers h
             LEFT JOIN silver_fact_compras_detalle d
               ON d.business_date = h.business_date
              AND d.cod_clase = h.cod_clase
              AND d.num_documento = h.num_documento
             WHERE TRIM(h.nit_proveedor) = ? AND h.business_date BETWEEN ? AND ?
-              AND {valid_header}
             GROUP BY h.business_date, h.cod_clase, h.num_documento, h.total_factura
             ORDER BY h.business_date DESC, h.cod_clase ASC, h.num_documento DESC
             LIMIT ? OFFSET ?
@@ -3326,19 +3317,19 @@ class DuckDBMetricsRepo:
         )
         top_products = self._query(
             f"""
+            WITH valid_purchase_headers AS ({valid_headers_cte})
             SELECT d.cod_producto,
                    COALESCE(MAX(NULLIF(TRIM(d.nombre_detalle), '')), d.cod_producto) AS nombre,
                    ROUND(COALESCE(SUM(d.cantidad), 0), 2) AS unidades,
                    ROUND(COALESCE(SUM(d.total_detalle), 0), 2) AS total_compras,
                    COUNT(DISTINCT CAST(h.business_date AS VARCHAR) || '|' || h.cod_clase
                          || '|' || h.num_documento) AS documentos
-            FROM silver_fact_compras h
+            FROM valid_purchase_headers h
             INNER JOIN silver_fact_compras_detalle d
               ON d.business_date = h.business_date
              AND d.cod_clase = h.cod_clase
              AND d.num_documento = h.num_documento
             WHERE TRIM(h.nit_proveedor) = ? AND h.business_date BETWEEN ? AND ?
-              AND {valid_header}
             GROUP BY d.cod_producto
             ORDER BY total_compras DESC, d.cod_producto ASC
             LIMIT 10
@@ -3347,27 +3338,65 @@ class DuckDBMetricsRepo:
         )
         estimated_rows = self._query(
             f"""
-            WITH latest_valid_supplier AS (
+            WITH valid_purchase_headers AS ({valid_headers_cte}),
+            supplier_skus AS (
+                SELECT DISTINCT d.cod_producto
+                FROM silver_fact_compras_detalle d
+                INNER JOIN valid_purchase_headers h
+                  ON h.business_date = d.business_date
+                 AND h.cod_clase = d.cod_clase
+                 AND h.num_documento = d.num_documento
+                WHERE TRIM(h.nit_proveedor) = ?
+            ),
+            latest_valid_supplier AS (
                 SELECT cod_producto, nit_proveedor
                 FROM (
                     SELECT d.cod_producto,
                            TRIM(h.nit_proveedor) AS nit_proveedor,
                            ROW_NUMBER() OVER (
                                PARTITION BY d.cod_producto
-                               ORDER BY d.business_date DESC,
-                                        h.cod_clase DESC,
-                                        h.num_documento DESC
-                           ) AS supplier_rank
+                                ORDER BY d.business_date DESC,
+                                         h.cod_clase DESC,
+                                         h.num_documento DESC
+                            ) AS supplier_rank
                     FROM silver_fact_compras_detalle d
-                    INNER JOIN silver_fact_compras h
+                    INNER JOIN valid_purchase_headers h
                       ON h.business_date = d.business_date
                      AND h.cod_clase = d.cod_clase
                      AND h.num_documento = d.num_documento
+                    INNER JOIN supplier_skus ss ON ss.cod_producto = d.cod_producto
                     WHERE h.nit_proveedor IS NOT NULL AND TRIM(h.nit_proveedor) != ''
-                      AND UPPER(TRIM(COALESCE(h.estado_documento, ''))) != 'A'
                 ) ranked
                 WHERE supplier_rank = 1
-            ), costo_ref AS ({COSTO_REF_CTE}),
+            ), costo_ref AS (
+                SELECT cod_producto, costo_producto
+                FROM (
+                    SELECT d.cod_producto,
+                           d.costo_producto,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY d.cod_producto
+                               ORDER BY d.business_date DESC,
+                                        h.cod_clase DESC,
+                                        h.num_documento DESC
+                           ) AS cost_rank
+                    FROM silver_fact_compras_detalle d
+                    INNER JOIN valid_purchase_headers h
+                      ON h.business_date = d.business_date
+                     AND h.cod_clase = d.cod_clase
+                     AND h.num_documento = d.num_documento
+                    INNER JOIN supplier_skus ss ON ss.cod_producto = d.cod_producto
+                    WHERE d.costo_producto > 0
+                ) ranked_costs
+                WHERE cost_rank = 1
+            ),
+            sales_header_identity AS (
+                SELECT business_date, cod_clase, num_documento,
+                       COUNT(*) AS header_count,
+                       SUM(CASE WHEN COALESCE(estado_documento, '') = 'A' THEN 1 ELSE 0 END)
+                           AS canceled_header_count
+                FROM silver_fact_ventas
+                GROUP BY business_date, cod_clase, num_documento
+            ),
             sales_lines AS (
                 SELECT v.cod_producto,
                        COALESCE(v.total_detalle, 0) AS revenue,
@@ -3377,16 +3406,22 @@ class DuckDBMetricsRepo:
                            ELSE cr.costo_producto
                        END AS costo_unit
                 FROM silver_fact_ventas_detalle v
-                LEFT JOIN silver_fact_ventas vh
+                LEFT JOIN sales_header_identity vh
                   ON vh.business_date = v.business_date
                  AND vh.cod_clase = v.cod_clase
                  AND vh.num_documento = v.num_documento
+                INNER JOIN supplier_skus ss ON ss.cod_producto = v.cod_producto
                 LEFT JOIN costo_ref cr ON cr.cod_producto = v.cod_producto
                 WHERE v.business_date BETWEEN ? AND ?
-                  AND COALESCE(vh.estado_documento, '') != 'A'
+                  AND (
+                      vh.header_count IS NULL
+                      OR (vh.header_count = 1 AND vh.canceled_header_count = 0)
+                  )
             ),
             sales_by_sku AS (
                 SELECT cod_producto,
+                       COUNT(*) AS lineas_venta,
+                       COUNT(costo_unit) AS lineas_con_costo,
                        SUM(revenue) AS revenue,
                        SUM(CASE WHEN costo_unit IS NOT NULL THEN revenue ELSE 0 END)
                            AS revenue_with_cost,
@@ -3401,20 +3436,24 @@ class DuckDBMetricsRepo:
             SELECT ROUND(COALESCE(SUM(s.revenue), 0), 2) AS revenue,
                    ROUND(COALESCE(SUM(s.revenue_with_cost), 0), 2) AS revenue_with_cost,
                    ROUND(COALESCE(SUM(s.margin), 0), 2) AS margin,
+                   SUM(s.lineas_venta) AS lineas_venta,
+                   SUM(s.lineas_con_costo) AS lineas_con_costo,
                    COUNT(DISTINCT s.cod_producto) AS skus,
-                   COUNT(DISTINCT CASE WHEN s.revenue_with_cost > 0 THEN s.cod_producto END)
+                   COUNT(DISTINCT CASE WHEN s.lineas_con_costo > 0 THEN s.cod_producto END)
                        AS skus_con_costo
             FROM sales_by_sku s
             INNER JOIN latest_valid_supplier p ON p.cod_producto = s.cod_producto
             WHERE p.nit_proveedor = ?
             """,
-            [fecha_inicio, fecha_fin, nit_proveedor],
+            [nit_proveedor, fecha_inicio, fecha_fin, nit_proveedor],
         )[0]
 
         revenue = float(estimated_rows["revenue"] or 0)
         revenue_with_cost = float(estimated_rows["revenue_with_cost"] or 0)
         margin_value = float(estimated_rows["margin"] or 0)
-        margin = round(margin_value, 2) if revenue_with_cost else None
+        sales_line_count = int(estimated_rows["lineas_venta"] or 0)
+        cost_line_count = int(estimated_rows["lineas_con_costo"] or 0)
+        margin = round(margin_value, 2) if cost_line_count else None
         purchase_total = float(stats_rows["total_compras"] or 0)
         return {
             "proveedor": {
@@ -3424,7 +3463,7 @@ class DuckDBMetricsRepo:
             "periodo": {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin},
             "compras": {
                 "total_compras": round(purchase_total, 2),
-                "num_documentos": int(stats_rows["documentos_validos"] or 0),
+                "num_documentos": total_documents,
                 "ticket_promedio": round(float(stats_rows["ticket_promedio"] or 0), 2),
                 "primera_compra": stats_rows["primera_compra"],
                 "ultima_compra": stats_rows["ultima_compra"],
@@ -3434,6 +3473,8 @@ class DuckDBMetricsRepo:
             "ventas_estimadas": {
                 "revenue": round(revenue, 2),
                 "revenue_with_cost": round(revenue_with_cost, 2),
+                "lineas_venta": sales_line_count,
+                "lineas_con_costo": cost_line_count,
                 "margen_cobertura_pct": (
                     round(revenue_with_cost / revenue * 100, 2) if revenue else None
                 ),
@@ -3454,6 +3495,152 @@ class DuckDBMetricsRepo:
                     ),
                 },
             },
+            "documentos": documents,
+            "paginacion": {
+                "page": page,
+                "page_size": page_size,
+                "total_documentos": total_documents,
+                "has_more": page * page_size < total_documents,
+            },
+        }
+
+    def get_compras_buscar(
+        self,
+        query: str,
+        fecha_inicio: str,
+        fecha_fin: str,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict:
+        """Search valid purchase documents by invoice, supplier, or product."""
+        query = str(query or "").strip()
+        if not 2 <= len(query) <= 100 or any(ord(char) < 32 for char in query):
+            raise ValueError("La búsqueda debe tener entre 2 y 100 caracteres válidos")
+        page = max(1, min(int(page), 10_000))
+        page_size = max(1, min(int(page_size), 100))
+
+        ctes = f"""
+            WITH valid_purchase_headers AS ({_VALID_PURCHASE_HEADERS_CTE}),
+            matched_products AS (
+                SELECT DISTINCT
+                       h.business_date,
+                       h.cod_clase,
+                       h.num_documento,
+                       COALESCE(
+                           NULLIF(TRIM(dp.nombre_producto), ''),
+                           NULLIF(TRIM(d.nombre_detalle), ''),
+                           d.cod_producto
+                       ) AS product_name
+                FROM valid_purchase_headers h
+                INNER JOIN silver_fact_compras_detalle d
+                  ON d.business_date = h.business_date
+                 AND d.cod_clase = h.cod_clase
+                 AND d.num_documento = h.num_documento
+                LEFT JOIN silver_dim_producto dp ON dp.cod_producto = d.cod_producto
+                WHERE h.business_date BETWEEN ? AND ?
+                  AND (
+                      contains(LOWER(COALESCE(d.cod_producto, '')), LOWER(?))
+                      OR contains(LOWER(COALESCE(dp.nombre_producto, '')), LOWER(?))
+                      OR contains(LOWER(COALESCE(d.nombre_detalle, '')), LOWER(?))
+                  )
+            ),
+            ranked_product_matches AS (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY business_date, cod_clase, num_documento
+                    ORDER BY product_name
+                ) AS match_rank
+                FROM matched_products
+            ),
+            product_summaries AS (
+                SELECT business_date, cod_clase, num_documento,
+                       STRING_AGG(product_name, ', ' ORDER BY product_name)
+                           AS productos_coincidentes
+                FROM ranked_product_matches
+                WHERE match_rank <= 3
+                GROUP BY business_date, cod_clase, num_documento
+            ),
+            filtered_documents AS (
+                SELECT CAST(h.business_date AS VARCHAR) AS business_date,
+                       h.cod_clase,
+                       h.num_documento,
+                       TRIM(h.nit_proveedor) AS nit_proveedor,
+                       COALESCE(NULLIF(TRIM(h.nombre_proveedor), ''), TRIM(h.nit_proveedor))
+                           AS nombre_proveedor,
+                       ROUND(COALESCE(h.total_factura, 0), 2) AS total_factura,
+                        (SELECT COUNT(*)
+                         FROM silver_fact_compras_detalle d
+                         WHERE d.business_date = h.business_date
+                           AND d.cod_clase = h.cod_clase
+                           AND d.num_documento = h.num_documento) AS num_items,
+                        COALESCE(p.productos_coincidentes, '') AS productos_coincidentes,
+                        COUNT(*) OVER () AS total_documentos,
+                        CASE
+                           WHEN contains(LOWER(COALESCE(h.num_documento, '')), LOWER(?))
+                               THEN 'factura'
+                           WHEN contains(LOWER(COALESCE(h.nombre_proveedor, '')), LOWER(?))
+                             OR contains(LOWER(COALESCE(h.nit_proveedor, '')), LOWER(?))
+                               THEN 'proveedor'
+                           ELSE 'producto'
+                       END AS tipo_coincidencia
+                FROM valid_purchase_headers h
+                LEFT JOIN product_summaries p
+                  ON p.business_date = h.business_date
+                 AND p.cod_clase = h.cod_clase
+                 AND p.num_documento = h.num_documento
+                WHERE h.business_date BETWEEN ? AND ?
+                  AND (
+                      contains(LOWER(COALESCE(h.num_documento, '')), LOWER(?))
+                      OR contains(LOWER(COALESCE(h.nombre_proveedor, '')), LOWER(?))
+                      OR contains(LOWER(COALESCE(h.nit_proveedor, '')), LOWER(?))
+                      OR p.num_documento IS NOT NULL
+                  )
+            )
+        """
+        common_parameters = [
+            fecha_inicio,
+            fecha_fin,
+            query,
+            query,
+            query,
+            query,
+            query,
+            query,
+            fecha_inicio,
+            fecha_fin,
+            query,
+            query,
+            query,
+        ]
+        documents = self._query(
+            f"""{ctes}
+            SELECT business_date, cod_clase, num_documento, nit_proveedor,
+                   nombre_proveedor, total_factura, num_items, total_documentos,
+                   productos_coincidentes, tipo_coincidencia
+            FROM filtered_documents
+            ORDER BY CASE WHEN UPPER(num_documento) = UPPER(?) THEN 0 ELSE 1 END,
+                     business_date DESC, cod_clase, num_documento DESC
+            LIMIT ? OFFSET ?
+            """,
+            [*common_parameters, query, page_size, (page - 1) * page_size],
+        )
+        total_documents = (
+            int(documents[0]["total_documentos"])
+            if documents
+            else 0
+        )
+        documents = [
+            {key: value for key, value in row.items() if key != "total_documentos"}
+            for row in documents
+        ]
+        if not documents and page > 1:
+            total_rows = self._query(
+                f"{ctes} SELECT COUNT(*) AS total FROM filtered_documents",
+                common_parameters,
+            )
+            total_documents = int(total_rows[0]["total"] or 0)
+        return {
+            "query": query,
+            "periodo": {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin},
             "documentos": documents,
             "paginacion": {
                 "page": page,
@@ -5272,6 +5459,20 @@ def _presentacion_to_unidad(presentacion: str | None) -> str:
         return _PRESENTACION_LABELS[key]
     # Fallback: primeras letras lowercase
     return key[:3].lower() if key else "u"
+
+
+_VALID_PURCHASE_HEADERS_CTE = """
+    SELECT * EXCLUDE (identity_count)
+    FROM (
+        SELECT h.*,
+               COUNT(*) OVER (
+                   PARTITION BY h.business_date, h.cod_clase, h.num_documento
+               ) AS identity_count
+        FROM silver_fact_compras h
+        WHERE UPPER(TRIM(COALESCE(h.estado_documento, ''))) != 'A'
+    ) ranked_headers
+    WHERE identity_count = 1
+"""
 
 
 COSTO_REF_CTE = """

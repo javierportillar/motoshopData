@@ -607,6 +607,95 @@ class PurchasesDayDetailResponse(BaseModel):
     items: list[PurchaseDayDocument]
 
 
+class SupplierProfileProduct(BaseModel):
+    cod_producto: str
+    nombre: str
+    unidades: float
+    total_compras: float
+    documentos: int
+
+
+class SupplierProfileSalesAttribution(BaseModel):
+    id: str
+    descripcion: str
+
+
+class SupplierProfileIdentity(BaseModel):
+    nit: str
+    nombre: str
+
+
+class SupplierProfilePeriod(BaseModel):
+    fecha_inicio: str
+    fecha_fin: str
+
+
+class SupplierProfilePurchases(BaseModel):
+    total_compras: float
+    num_documentos: int
+    ticket_promedio: float
+    primera_compra: str | None
+    ultima_compra: str | None
+    skus_distintos: int
+    productos_top: list[SupplierProfileProduct]
+
+
+class SupplierProfileEstimatedSales(BaseModel):
+    revenue: float
+    revenue_with_cost: float
+    lineas_venta: int
+    lineas_con_costo: int
+    margen_cobertura_pct: float | None
+    margen: float | None
+    margen_pct: float | None
+    skus_vendidos: int
+    skus_con_costo: int
+    metodo_atribucion: SupplierProfileSalesAttribution
+
+
+class MetricsPagination(BaseModel):
+    page: int
+    page_size: int
+    total_documentos: int
+    has_more: bool
+
+
+class SupplierProfileDocument(BaseModel):
+    business_date: str
+    cod_clase: str
+    num_documento: str
+    total_factura: float
+    num_items: int
+
+
+class SupplierProfileResponse(BaseModel):
+    proveedor: SupplierProfileIdentity
+    periodo: SupplierProfilePeriod
+    compras: SupplierProfilePurchases
+    ventas_estimadas: SupplierProfileEstimatedSales
+    documentos: list[SupplierProfileDocument]
+    paginacion: MetricsPagination
+
+
+class PurchaseSearchDocument(BaseModel):
+    business_date: str
+    cod_clase: str
+    num_documento: str
+    nit_proveedor: str | None = None
+    nombre_proveedor: str
+    total_factura: float
+    num_items: int
+    productos_coincidentes: str = ""
+    tipo_coincidencia: Literal["factura", "proveedor", "producto"]
+
+
+class PurchaseSearchResponse(BaseModel):
+    query: str
+    periodo: SupplierProfilePeriod
+    documentos: list[PurchaseSearchDocument]
+    paginacion: MetricsPagination
+
+
 # ── Análisis financiero (V1.11: horas-pico + balance) ───────────────────────
 
 class HoraPicoItem(BaseModel):

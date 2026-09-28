@@ -26,7 +26,6 @@ from motoshop_api.metrics.repo import (
     RealMetricsRepo,
 )
 from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
-from motoshop_api.metrics.snapshot import get_snapshot_generation, publish_snapshot
 from motoshop_api.metrics.schemas import (
     AbcDetalleResponse,
     AbcSegmentation,
@@ -44,8 +43,9 @@ from motoshop_api.metrics.schemas import (
     PaymentsHistoryResponse,
     PlanComprasResponse,
     PurchasesDayDetailResponse,
-    SalesDailyResponse,
+    PurchaseSearchResponse,
     SalesDailyMonthResponse,
+    SalesDailyResponse,
     SalesDayDetailResponse,
     SalesDayInvoicesResponse,
     SalesForecastMonthlyResponse,
@@ -55,7 +55,9 @@ from motoshop_api.metrics.schemas import (
     SalesSummary,
     SalesSummaryV2Response,
     SalesTrendResponse,
+    SupplierProfileResponse,
 )
+from motoshop_api.metrics.snapshot import get_snapshot_generation, publish_snapshot
 
 router = APIRouter(tags=["metrics"])
 
@@ -125,11 +127,14 @@ def _clear_metrics_cache():
 
 
 def _subtract_years(value: date, years: int) -> date:
+    target_year = value.year - years
+    if target_year < date.min.year:
+        return date.min
     try:
-        return value.replace(year=value.year - years)
+        return value.replace(year=target_year)
     except ValueError:
         # Keep leap-day defaults and range checks valid in non-leap years.
-        return value.replace(year=value.year - years, day=28)
+        return value.replace(year=target_year, day=28)
 
 
 def get_repo(tenant: str = Depends(get_tenant)) -> MetricsRepoProtocol:
@@ -1133,6 +1138,7 @@ def compras_proveedor_detalle(
 
 @router.get(
     "/metrics/compras-proveedor-perfil",
+    response_model=SupplierProfileResponse,
     dependencies=[Depends(require_module("ventas-summary"))],
 )
 @limiter.limit("30/minute")
@@ -1172,6 +1178,47 @@ def compras_proveedor_perfil(
     if result is None:
         raise HTTPException(status_code=404, detail="Proveedor no encontrado en el tenant activo")
     return result
+
+
+@router.get(
+    "/metrics/compras-buscar",
+    response_model=PurchaseSearchResponse,
+    dependencies=[Depends(require_module("ventas-summary"))],
+)
+@limiter.limit("30/minute")
+def compras_buscar(
+    request: Request,
+    q: str = Query(..., min_length=2, max_length=100),
+    fecha_inicio: date | None = Query(default=None),
+    fecha_fin: date | None = Query(default=None),
+    page: int = Query(default=1, ge=1, le=10_000),
+    page_size: int = Query(default=20, ge=1, le=100),
+    repo: DuckDBMetricsRepo = Depends(get_purchase_profile_repo),
+    _user: User = Depends(get_current_user),
+) -> dict:
+    """Search valid purchase documents by supplier, product/SKU, or invoice."""
+    query = q.strip()
+    if len(query) < 2 or any(ord(character) < 32 for character in query):
+        raise HTTPException(
+            status_code=422,
+            detail="La búsqueda debe tener al menos 2 caracteres válidos",
+        )
+    end_date = fecha_fin or date.today()
+    start_date = fecha_inicio or _subtract_years(end_date, 1)
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=422,
+            detail="fecha_inicio no puede ser posterior a fecha_fin",
+        )
+    if start_date < _subtract_years(end_date, 10):
+        raise HTTPException(status_code=422, detail="El rango máximo permitido es de 10 años")
+    return repo.get_compras_buscar(
+        query,
+        start_date.isoformat(),
+        end_date.isoformat(),
+        page=page,
+        page_size=page_size,
+    )
 
 
 # ── V1.21: Análisis de productos y proveedores ──────────────────────────

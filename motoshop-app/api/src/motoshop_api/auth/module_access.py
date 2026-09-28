@@ -157,6 +157,7 @@ ROUTE_MODULES: dict[RouteKey, tuple[str, ...]] = {
         "/api/metrics/purchases-day-grouped",
         "/api/metrics/compras-proveedor-detalle",
         "/api/metrics/compras-proveedor-perfil",
+        "/api/metrics/compras-buscar",
     ),
     # Forecast/projection
     **_routes(
