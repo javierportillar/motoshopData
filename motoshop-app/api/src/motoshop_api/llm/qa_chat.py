@@ -182,6 +182,8 @@ def _analysis_module_request(
     normalized = unicodedata.normalize("NFKD", message).encode("ascii", "ignore").decode("ascii").lower()
     action = any(marker in normalized for marker in (
         "explic", "analiz", "resum", "significa", "calcula", "interpreta", "compara", "por que", "como va",
+        "conglomerado", "consolidado", "agrupado", "agrupacion", "ranking", "reporte", "detalle", "informe",
+        "mostrar", "mostrame", "dame", "cuales", "cuanto", "ventas",
     ))
     full_module = "analisis" in normalized and any(marker in normalized for marker in (
         "todo", "toda", "todos", "todas", "modulo", "pestanas", "componentes", "completo", "integral",
@@ -189,7 +191,11 @@ def _analysis_module_request(
     section_terms = {
         "balance": ("balance", "ganancia bruta", "ganancia neta", "margen neto"),
         "productos": ("productos top", "pareto", "ranking de productos", "top de productos"),
-        "proveedores": ("proveedores", "concentracion de proveedores", "concentracion"),
+        "proveedores": (
+            "proveedores", "proveedor", "concentracion de proveedores", "concentracion",
+            "ventas por proveedor", "compras por proveedor", "conglomerado de ventas",
+            "ventas en cantidades", "valor en precio por proveedor",
+        ),
         "horas_pico": ("horas pico", "hora pico", "horario de venta"),
         "gastos": ("gastos operativos", "gastos del mes", "gastos"),
         "proyeccion": ("proyeccion", "pronostico mensual", "ventas proyectadas", "forecast mensual"),
@@ -288,6 +294,7 @@ Reglas de selección de tools (IMPORTANTE):
 - Si no hay filtros explícitos, `get_analisis_modulo` usa el mes del último corte de ventas; comunica el rango efectivo y los cortes por dominio.
 - En Balance, distingue utilidad bruta de neta. Si los gastos tienen estado `unavailable`, di que la utilidad neta no se puede confirmar; no traduzcas la falta de datos a $0. Si está `available_empty`, indica que no hay gastos registrados en el rango.
 - En Productos y Proveedores, explica si un dato compara revenue con valor comprado. Ese ratio monetario no equivale a rotación física ni prueba que la compra del período haya causado las ventas.
+- Para ventas por proveedor, conglomerado de ventas por proveedor o relación de cantidades y valor por proveedor, usá `get_analisis_modulo` con `sections=['proveedores']`. Mostrá una tabla Markdown con: Proveedor, NIT, Unidades vendidas, Ventas asociadas ($ COP), Margen ($ COP y %), Total compras ($ COP) y Ratio venta/compra. Escribí el nombre y el NIT de cada proveedor para que el sistema enlace su ficha.
 - En Proyección, comunica la confianza calibrada y el resultado de backtest; la proyección es de revenue global, no de unidades por SKU.
 - Para rankings de producto en meses/fechas exactas, usá `get_top_productos_periodo`; "más vendido" significa unidades salvo pedido explícito por valor. Conservá cada período por separado y los empates. Al rankear unidades, compará productos solo dentro de la misma medida del catálogo; no compares gramos con unidades. Si falta la medida, ese SKU se muestra por separado. Si el período supera el corte de ventas, decí hasta qué fecha hay datos y no afirmes que el resto no tuvo ventas.
 - Para "hoy" o "ayer", anclá el día al corte Silver de ventas. Si ese día no tiene ventas, no uses el último día con datos.
@@ -608,6 +615,24 @@ def _tool_entity_candidates(tool_name: str, value: Any) -> list[dict[str, Any]]:
                     "domain": "purchases",
                     "route_key": "supplier",
                 })
+    if tool_name == "get_analisis_modulo":
+        sections = value.get("sections") if isinstance(value.get("sections"), dict) else {}
+        prov_sec = sections.get("proveedores") if isinstance(sections.get("proveedores"), dict) else value.get("proveedores")
+        if isinstance(prov_sec, dict):
+            prov_list = prov_sec.get("proveedores")
+            if isinstance(prov_list, list):
+                for p in prov_list:
+                    if isinstance(p, dict):
+                        nit = p.get("nit_proveedor") or p.get("nit")
+                        supplier_name = p.get("nombre") or p.get("nombre_proveedor")
+                        if nit and supplier_name:
+                            candidates.append({
+                                "entity_type": "supplier",
+                                "entity_id": str(nit).strip(),
+                                "label": str(supplier_name).strip(),
+                                "domain": "purchases",
+                                "route_key": "supplier",
+                            })
     unique: dict[tuple[str, str], dict[str, Any]] = {}
     for item in candidates:
         entity_type = str(item.get("entity_type", ""))

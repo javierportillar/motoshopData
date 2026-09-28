@@ -4748,6 +4748,7 @@ class DuckDBMetricsRepo:
                 "fecha_fin": fecha_fin,
                 "total_proveedores": 0,
                 "total_compras": 0.0,
+                "total_unidades_de_proveedores": 0.0,
                 "total_ventas_de_proveedores": 0.0,
                 "total_margen_de_proveedores": 0.0,
                 "concentracion": {"top1_pct": 0, "top3_pct": 0, "top5_pct": 0, "hhi": 0, "riesgo": "n/a"},
@@ -4778,6 +4779,7 @@ class DuckDBMetricsRepo:
             ventas_producto AS (
                 SELECT
                     v.cod_producto,
+                    SUM(v.cantidad) AS cantidad_vendida,
                     SUM(v.total_detalle) AS revenue,
                     SUM(v.total_detalle - COALESCE(NULLIF(v.costo_producto, 0), cr.costo_producto, 0) * v.cantidad) AS margen,
                     COUNT(DISTINCT v.num_documento) AS num_facturas_venta
@@ -4788,6 +4790,7 @@ class DuckDBMetricsRepo:
             )
             SELECT
                 up.nit_proveedor,
+                ROUND(SUM(vp.cantidad_vendida), 2) AS unidades_vendidas,
                 ROUND(SUM(vp.revenue), 2) AS revenue_periodo,
                 ROUND(SUM(vp.margen), 2) AS margen_periodo,
                 COUNT(DISTINCT vp.cod_producto) AS skus_vendidos,
@@ -4803,6 +4806,7 @@ class DuckDBMetricsRepo:
         from datetime import date
         today = date.today()
         total_general = sum(float(p["total_compras"] or 0) for p in prov_rows)
+        total_unidades_asociadas = sum(float(r.get("unidades_vendidas") or 0) for r in ventas_por_prov_rows)
         total_ventas_asociadas = sum(float(r["revenue_periodo"] or 0) for r in ventas_por_prov_rows)
         total_margen_asociado = sum(float(r["margen_periodo"] or 0) for r in ventas_por_prov_rows)
 
@@ -4826,6 +4830,7 @@ class DuckDBMetricsRepo:
 
             # V1.22: ventas en el período de productos asociados a este proveedor
             v = ventas_by_nit.get(p["nit_proveedor"])
+            unidades_vendidas = float(v.get("unidades_vendidas") or 0) if v else 0.0
             revenue_periodo = float(v["revenue_periodo"] or 0) if v else 0.0
             margen_periodo = float(v["margen_periodo"] or 0) if v else 0.0
             skus_vendidos = int(v["skus_vendidos"]) if v else 0
@@ -4847,6 +4852,7 @@ class DuckDBMetricsRepo:
                 "frecuencia_dias_promedio": frecuencia_dias,
                 "ticket_promedio": round(total / num_docs, 2) if num_docs > 0 else 0.0,
                 # V1.22: lado ventas
+                "unidades_vendidas": round(unidades_vendidas, 2),
                 "revenue_periodo": round(revenue_periodo, 2),
                 "margen_periodo": round(margen_periodo, 2),
                 "margen_pct": margen_pct,
@@ -4903,6 +4909,7 @@ class DuckDBMetricsRepo:
             "total_proveedores": len(proveedores),
             "total_compras": round(total_general, 2),
             # V1.22: totales lado ventas
+            "total_unidades_de_proveedores": round(total_unidades_asociadas, 2),
             "total_ventas_de_proveedores": round(total_ventas_asociadas, 2),
             "total_margen_de_proveedores": round(total_margen_asociado, 2),
             "concentracion": {

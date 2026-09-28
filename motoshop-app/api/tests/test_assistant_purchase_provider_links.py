@@ -1339,3 +1339,96 @@ def test_follow_up_can_reuse_a_verified_purchase_from_conversation_history(
         "domain": "purchases",
         "href": "/dashboards/compras/dia/2026-01-04/documento/77?cod_clase=FC",
     }]
+
+
+def test_analysis_module_supplier_sales_generates_clickable_supplier_links(
+    tenant_databases: TenantDatabases,
+) -> None:
+    from motoshop_api.llm.qa_chat import ConversationManager, QAChat
+
+    repository = InMemoryConversationRepository()
+    conversation = repository.create_conversation("motoshop", "ana")
+
+    class AnalysisExecutor:
+        def get_data_freshness(self) -> dict:
+            return {
+                "fecha_maxima": "2026-03-03",
+                "por_tabla": {
+                    "silver_fact_compras": "2026-02-04",
+                    "silver_fact_ventas": "2026-03-03",
+                },
+            }
+
+        def run(self, name: str, args: dict) -> dict:
+            assert name == "get_analisis_modulo"
+            assert args == {"sections": ["proveedores"]}
+            return {
+                "status": "complete",
+                "respuesta_fallback": (
+                    "Resumen de proveedores (2026-03-01 a 2026-03-03):\n"
+                    "- Proveedores: 1 activos en el período, 2 unidades vendidas\n\n"
+                    "| Proveedor | NIT | Unidades vendidas | Ventas asociadas ($ COP) | Margen ($ COP / %) | Compras ($ COP) | Ratio V/C |\n"
+                    "| :--- | :--- | ---: | ---: | ---: | ---: | ---: |\n"
+                    "| Shared Supplier | NIT: 900111111-1 | 2 | $ 100 | $ 10 (10.0%) | $ 400 | 0.25 |\n"
+                ),
+                "sections": {
+                    "proveedores": {
+                        "total_proveedores": 1,
+                        "proveedores": [{
+                            "nit_proveedor": "900111111-1",
+                            "nombre": "Shared Supplier",
+                            "total_compras": 400.0,
+                            "unidades_vendidas": 2.0,
+                            "revenue_periodo": 100.0,
+                            "margen_periodo": 10.0,
+                            "margen_pct": 10.0,
+                            "ratio_venta_compra": 0.25,
+                        }],
+                    }
+                },
+                "sources": [{
+                    "source_id": "duckdb-analysis-purchases",
+                    "domain": "purchases",
+                    "kind": "duckdb",
+                    "citation": "Silver purchases by supplier",
+                    "cutoff_at": "2026-02-04",
+                    "status": "used",
+                }],
+                "freshness": [{
+                    "domain": "purchases",
+                    "cutoff_at": "2026-02-04",
+                    "status": "current",
+                }],
+            }
+
+    class NoLLM:
+        def complete_with_tools(self, *args, **kwargs):
+            raise AssertionError("Should use direct tool execution")
+
+    chat = QAChat(
+        NoLLM(),
+        ConversationManager(),
+        AnalysisExecutor(),
+        [{"function": {"name": "get_analisis_modulo"}}],
+        tenant_id="motoshop",
+        user_id="ana",
+        repository=repository,
+        tenant_context=_context("motoshop", "purchases", "analyses"),
+    )
+
+    reply = chat.chat(
+        "conglomerado de ventas en cantidades y valor en precio por proveedor",
+        conversation["id"],
+        request_id="supplier-conglomerate-direct",
+    )
+
+    assert reply["status"] == "complete"
+    assert reply["tools_used"] == ["get_analisis_modulo"]
+    assert "Unidades vendidas" in reply["text"]
+    assert "Shared Supplier" in reply["text"]
+    assert len(reply["entity_refs"]) == 1
+    supplier_ref = reply["entity_refs"][0]
+    assert supplier_ref["entity_type"] == "supplier"
+    assert supplier_ref["entity_id"] == "900111111-1"
+    assert supplier_ref["href"] == "/dashboards/compras/proveedores/900111111-1"
+

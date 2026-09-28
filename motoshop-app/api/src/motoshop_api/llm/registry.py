@@ -55,6 +55,7 @@ PURCHASE_REFERENCE_TOOLS = frozenset({
     "get_compras_periodo",
     "buscar_compras_por_proveedor",
     "get_detalle_compra",
+    "get_analisis_modulo",
 })
 _SPANISH_MONTHS = {
     "enero": 1,

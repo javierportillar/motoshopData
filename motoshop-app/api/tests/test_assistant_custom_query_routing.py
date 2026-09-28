@@ -58,6 +58,7 @@ def _chat(executor: _RecordingExecutor) -> QAChat:
         "get_compras_periodo",
         "get_top_productos_periodo",
         "get_productos_para_reponer",
+        "get_analisis_modulo",
     }
     return QAChat(
         _NoProvider(),
@@ -215,3 +216,18 @@ def test_purchase_month_does_not_infer_year_from_sales_cutoff() -> None:
         "date_from": "2025-08-01",
         "date_to": "2025-08-31",
     }
+
+
+def test_supplier_sales_conglomerate_routes_to_analisis_modulo() -> None:
+    executor = _RecordingExecutor()
+    chat = _chat(executor)
+
+    response = chat.chat("conglomerado de ventas en cantidades y valor en precio por proveedor")
+
+    assert executor.calls == [
+        ("get_analisis_modulo", {"sections": ["proveedores"]})
+    ]
+    assert response["status"] == "complete"
+    assert response["tools_used"] == ["get_analisis_modulo"]
+    assert "Query executed: get_analisis_modulo" in response["text"]
+

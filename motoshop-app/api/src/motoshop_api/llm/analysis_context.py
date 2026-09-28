@@ -313,7 +313,7 @@ def build_analysis_context(
                 key: suppliers.get(key)
                 for key in (
                     "fecha_inicio", "fecha_fin", "total_proveedores", "total_compras",
-                    "total_ventas_de_proveedores", "total_margen_de_proveedores",
+                    "total_unidades_de_proveedores", "total_ventas_de_proveedores", "total_margen_de_proveedores",
                     "concentracion", "pareto", "alertas",
                 )
             }
@@ -474,8 +474,10 @@ def _analysis_fallback(
     if suppliers and suppliers.get("concentracion"):
         concentration = suppliers["concentracion"]
         top = (suppliers.get("proveedores") or [{}])[0]
+        unidades_totales = suppliers.get("total_unidades_de_proveedores")
+        unidades_str = f", {unidades_totales:,.0f} unidades vendidas" if unidades_totales is not None else ""
         lines.append(
-            f"- Proveedores: {suppliers.get('total_proveedores', 0)} activos en el período; "
+            f"- Proveedores: {suppliers.get('total_proveedores', 0)} activos en el período{unidades_str}; "
             f"Top 1 concentra {concentration.get('top1_pct', 0)}%, riesgo "
             f"{concentration.get('riesgo', 'n/a')}; mayor compra a {top.get('nombre', '—')}."
         )
@@ -483,9 +485,28 @@ def _analysis_fallback(
         if top_suppliers:
             lines.append("  Top 3 proveedores: " + "; ".join(
                 f"{item.get('nombre', '—')} ${item.get('total_compras', 0):,.0f}, "
-                f"ventas asociadas/compras {item.get('ratio_venta_compra')}"
+                f"{item.get('unidades_vendidas', 0):,.0f} u. vendidas (${item.get('revenue_periodo', 0):,.0f}), "
+                f"ratio {item.get('ratio_venta_compra')}"
                 for item in top_suppliers
             ) + ".")
+        all_suppliers = suppliers.get("proveedores", [])
+        if all_suppliers:
+            lines.append("")
+            lines.append("| Proveedor | NIT | Unidades vendidas | Ventas asociadas ($ COP) | Margen ($ COP / %) | Compras ($ COP) | Ratio V/C |")
+            lines.append("| :--- | :--- | ---: | ---: | ---: | ---: | ---: |")
+            for item in all_suppliers:
+                nit = str(item.get("nit_proveedor", "—")).strip()
+                nombre = str(item.get("nombre", "—")).strip()
+                u_vendidas = float(item.get("unidades_vendidas", 0) or 0)
+                rev = float(item.get("revenue_periodo", 0) or 0)
+                margen = float(item.get("margen_periodo", 0) or 0)
+                pct = item.get("margen_pct")
+                pct_str = f" ({pct}%)" if pct is not None else ""
+                compras = float(item.get("total_compras", 0) or 0)
+                ratio = item.get("ratio_venta_compra") or "n/a"
+                lines.append(
+                    f"| {nombre} | NIT: {nit} | {u_vendidas:,.0f} | ${rev:,.0f} | ${margen:,.0f}{pct_str} | ${compras:,.0f} | {ratio} |"
+                )
     hours = sections.get("horas_pico")
     if hours and hours.get("status") != "unavailable":
         lines.append(
