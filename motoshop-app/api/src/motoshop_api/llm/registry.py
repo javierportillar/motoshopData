@@ -37,7 +37,7 @@ _ROUTES = {
 _ENTITY_SOURCES = {
     "alert": ("gold_alertas_quiebre", "sku"),
 }
-_SAFE_ID = re.compile(r"^[A-Za-z0-9._:/-]{1,120}$")
+_SAFE_ID = re.compile(r"^[A-Za-z0-9._:/-]+(?:\s+[A-Za-z0-9._:/-]+)*$")
 _SAFE_SUPPLIER_NIT = re.compile(
     r"^(?:\d{6,14}|\d{1,3}(?:\.\d{3}){2,4})(?:-\d{1,2})?$"
 )
@@ -56,6 +56,7 @@ PURCHASE_REFERENCE_TOOLS = frozenset({
     "buscar_compras_por_proveedor",
     "get_detalle_compra",
     "get_analisis_modulo",
+    "get_productos_para_reponer",
 })
 _SPANISH_MONTHS = {
     "enero": 1,
@@ -189,15 +190,15 @@ def _resolve_product_ref_batch(
         if masvital else "COALESCE(NULLIF(TRIM(nombre_producto), ''), cod_producto) ASC"
     )
     catalog_sql = f"""
-        SELECT cod_producto,
-               COALESCE(NULLIF(TRIM(nombre_producto), ''), cod_producto) AS label
+        SELECT TRIM(cod_producto, ' \r\n\t') AS cod_producto,
+               COALESCE(NULLIF(TRIM(nombre_producto), ''), TRIM(cod_producto, ' \r\n\t')) AS label
         FROM (
             SELECT cod_producto, nombre_producto,
                    ROW_NUMBER() OVER (
-                       PARTITION BY cod_producto ORDER BY {catalog_order}
+                       PARTITION BY TRIM(cod_producto, ' \r\n\t') ORDER BY {catalog_order}
                    ) AS product_row
             FROM silver_dim_producto
-            WHERE UPPER(cod_producto) IN ({placeholders}) {snapshot_filter}
+            WHERE UPPER(TRIM(cod_producto, ' \r\n\t')) IN ({placeholders}) {snapshot_filter}
         ) AS ranked
         WHERE product_row = 1
         ORDER BY UPPER(cod_producto)
@@ -206,8 +207,13 @@ def _resolve_product_ref_batch(
     cursor = None
     try:
         connection = get_shared_connection(_make_db_path(context.tenant_id))
-        cursor = connection.execute(catalog_sql, parameters)
-        products = cursor.fetchall()
+        is_duckdb = type(connection).__name__ == "DuckDBPyConnection"
+        if is_duckdb:
+            cursor = connection.cursor()
+            products = cursor.execute(catalog_sql, parameters).fetchall()
+        else:
+            result = connection.execute(catalog_sql, parameters)
+            products = result.fetchall() if hasattr(result, "fetchall") else result
     except Exception:
         return []
     finally:
@@ -229,8 +235,13 @@ def _resolve_product_ref_batch(
     cursor = None
     try:
         assert connection is not None
-        cursor = connection.execute(label_sql, labels)
-        label_counts = {str(row[0]).casefold(): int(row[1]) for row in cursor.fetchall()}
+        if is_duckdb:
+            cursor = connection.cursor()
+            rows = cursor.execute(label_sql, labels).fetchall()
+        else:
+            result = connection.execute(label_sql, labels)
+            rows = result.fetchall() if hasattr(result, "fetchall") else result
+        label_counts = {str(row[0]).casefold(): int(row[1]) for row in rows}
     except Exception:
         # If uniqueness cannot be verified, SKU links remain safe but names
         # must not be treated as unambiguous by the UI.
@@ -241,13 +252,14 @@ def _resolve_product_ref_batch(
 
     refs = []
     for entity_id, raw_label in products:
-        label = str(raw_label)
+        label = str(raw_label).strip()
+        clean_entity_id = str(entity_id).strip()
         refs.append(EntityRef(
             entity_type="product",
-            entity_id=str(entity_id),
+            entity_id=clean_entity_id,
             label=label,
             domain="inventory",
-            href=f"/dashboards/productos/{quote(str(entity_id), safe='')}",
+            href=f"/dashboards/productos/{quote(clean_entity_id, safe='')}",
             label_is_unique=label_counts.get(label.casefold(), 0) == 1,
         ))
     return refs
@@ -656,6 +668,8 @@ def supplier_ref_mentioned(text: str, ref: EntityRef) -> bool:
     nit = re.escape(ref.entity_id)
     if re.search(rf"\b(?:NIT|RUT)\s*(?:[:#-]\s*)?{nit}(?![\w])", text, re.IGNORECASE):
         return True
+    if re.search(r"\b(?:NIT|RUT)\b", text, re.IGNORECASE) and re.search(rf"\(\s*{nit}\s*\)", text):
+        return True
     return bool(
         ref.label_is_unique
         and re.search(rf"(?<![\w]){re.escape(ref.label)}(?![\w])", text, re.IGNORECASE)
@@ -771,12 +785,22 @@ def product_ref_mentioned(text: str, ref: EntityRef) -> bool:
         if not ref.entity_id.isdigit():
             return True
         # A numeric SKU can also be an amount or invoice number in prose.
-        # Require its canonical product name in the same line before linking it.
+        # Check if it has SKU label or product name in the line/table.
         line_start = text.rfind("\n", 0, match.start()) + 1
         line_end = text.find("\n", match.end())
         line = text[line_start:] if line_end < 0 else text[line_start:line_end]
+        if re.search(rf"\b(?:SKU|c[oó]digo|cod|EAN)\b", line, re.IGNORECASE):
+            return True
         if re.search(rf"(?<![\w]){re.escape(ref.label)}(?![\w])", line, re.IGNORECASE):
             return True
+        tokens = [
+            re.escape(tok) for tok in re.findall(r"\b[A-Za-z0-9áéíóúñÁÉÍÓÚÑ]{4,}\b", ref.label)
+            if tok.lower() not in {"para", "cada", "unos", "unas", "como"}
+        ]
+        if len(tokens) >= 2:
+            matched = sum(1 for tok in tokens if re.search(rf"\b{tok}\b", line, re.IGNORECASE))
+            if matched >= 2 and matched >= min(len(tokens), 3):
+                return True
     return bool(
         ref.label_is_unique
         and re.search(rf"(?<![\w]){re.escape(ref.label)}(?![\w])", text, re.IGNORECASE)

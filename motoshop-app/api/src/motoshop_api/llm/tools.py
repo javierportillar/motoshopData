@@ -850,11 +850,11 @@ class ToolExecutor:
 
         products = [
             {
-                "sku": str(row[0]), "nombre": str(row[1]),
-                "stock_actual": float(row[2]), "unidad": str(row[3] or "u"),
+                "sku": str(row[0]).strip(" \r\n\t"), "nombre": str(row[1]).strip(" \r\n\t"),
+                "stock_actual": float(row[2]), "unidad": str(row[3] or "u").strip(),
                 "unidades_vendidas": float(row[4]), "valor_vendido": float(row[5]),
-                "cantidad_referencia": float(row[6]), "proveedor": str(row[7]),
-                "nit_proveedor": str(row[8]) if row[8] is not None else None,
+                "cantidad_referencia": float(row[6]), "proveedor": str(row[7]).strip(" \r\n\t"),
+                "nit_proveedor": str(row[8]).strip(" \r\n\t") if row[8] is not None else None,
             }
             for row in rows
         ]

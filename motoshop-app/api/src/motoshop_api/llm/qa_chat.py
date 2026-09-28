@@ -621,13 +621,13 @@ def _product_records(value: Any) -> list[tuple[str, str]]:
         if not isinstance(current, dict):
             continue
         entity_id = next(
-            (str(current[key]).strip() for key in _PRODUCT_ID_FIELDS
-             if isinstance(current.get(key), str) and current[key].strip()),
+            (str(current[key]).strip(" \r\n\t") for key in _PRODUCT_ID_FIELDS
+             if isinstance(current.get(key), str) and current[key].strip(" \r\n\t")),
             "",
         )
         label = next(
-            (str(current[key]).strip() for key in _PRODUCT_LABEL_FIELDS
-             if isinstance(current.get(key), str) and current[key].strip()),
+            (str(current[key]).strip(" \r\n\t") for key in _PRODUCT_LABEL_FIELDS
+             if isinstance(current.get(key), str) and current[key].strip(" \r\n\t")),
             "",
         )
         if entity_id and label:
@@ -699,6 +699,21 @@ def _tool_entity_candidates(tool_name: str, value: Any) -> list[dict[str, Any]]:
                                 "domain": "purchases",
                                 "route_key": "supplier",
                             })
+    if tool_name == "get_productos_para_reponer":
+        products = value.get("productos")
+        if isinstance(products, list):
+            for p in products:
+                if isinstance(p, dict):
+                    nit = str(p.get("nit_proveedor") or "").strip()
+                    supplier_name = str(p.get("proveedor") or "").strip()
+                    if nit and supplier_name and supplier_name.casefold() != "proveedor por verificar":
+                        candidates.append({
+                            "entity_type": "supplier",
+                            "entity_id": nit,
+                            "label": supplier_name,
+                            "domain": "purchases",
+                            "route_key": "supplier",
+                        })
     unique: dict[tuple[str, str], dict[str, Any]] = {}
     for item in candidates:
         entity_type = str(item.get("entity_type", ""))
@@ -782,14 +797,31 @@ def _entity_candidates_mentioned_in_text(
                     text,
                     re.IGNORECASE,
                 )
+                or (
+                    re.search(r"\b(?:NIT|RUT)\b", text, re.IGNORECASE)
+                    and re.search(rf"\(\s*{re.escape(entity_id)}\s*\)", text)
+                )
                 or re.search(rf"(?<![\w]){re.escape(label)}(?![\w])", text, re.IGNORECASE)
             )
         elif entity_type == "product" and entity_id.isdigit():
-            mentioned = any(
-                re.search(rf"(?<![\w]){re.escape(entity_id)}(?![\w])", line, re.IGNORECASE)
-                and re.search(rf"(?<![\w]){re.escape(label)}(?![\w])", line, re.IGNORECASE)
-                for line in text.splitlines()
-            )
+            def _product_line_mentioned(line: str) -> bool:
+                if not re.search(rf"(?<![\w]){re.escape(entity_id)}(?![\w])", line, re.IGNORECASE):
+                    return False
+                if re.search(rf"\b(?:SKU|c[oó]digo|cod|EAN)\b", line, re.IGNORECASE):
+                    return True
+                if re.search(rf"(?<![\w]){re.escape(label)}(?![\w])", line, re.IGNORECASE):
+                    return True
+                tokens = [
+                    re.escape(tok) for tok in re.findall(r"\b[A-Za-z0-9áéíóúñÁÉÍÓÚÑ]{4,}\b", label)
+                    if tok.lower() not in {"para", "cada", "unos", "unas", "como"}
+                ]
+                if len(tokens) >= 2:
+                    matched = sum(1 for tok in tokens if re.search(rf"\b{tok}\b", line, re.IGNORECASE))
+                    if matched >= 2 and matched >= min(len(tokens), 3):
+                        return True
+                return False
+
+            mentioned = any(_product_line_mentioned(line) for line in text.splitlines())
         else:
             mentioned = any(
                 term and re.search(rf"(?<![\w]){re.escape(term)}(?![\w])", text, re.IGNORECASE)

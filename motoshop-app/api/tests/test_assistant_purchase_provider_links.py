@@ -1432,3 +1432,93 @@ def test_analysis_module_supplier_sales_generates_clickable_supplier_links(
     assert supplier_ref["entity_id"] == "900111111-1"
     assert supplier_ref["href"] == "/dashboards/compras/proveedores/900111111-1"
 
+
+def test_replenishment_extracts_suppliers_and_products_with_parenthesized_nit(
+    tenant_databases: TenantDatabases,
+) -> None:
+    from motoshop_api.llm.qa_chat import ConversationManager, QAChat
+
+    repository = InMemoryConversationRepository()
+    conversation = repository.create_conversation("motoshop", "ana")
+
+    class ReplenishExecutor:
+        def get_data_freshness(self) -> dict:
+            return {
+                "fecha_maxima": "2026-03-03",
+                "por_tabla": {
+                    "silver_dim_producto": "2026-03-03",
+                    "silver_fact_compras": "2026-02-04",
+                    "silver_fact_ventas": "2026-03-03",
+                },
+            }
+
+        def run(self, name: str, args: dict) -> dict:
+            assert name == "get_productos_para_reponer"
+            return {
+                "status": "complete",
+                "respuesta_fallback": (
+                    "Productos agotados:\n\n"
+                    "| Proveedor (NIT) | Producto | SKU |\n"
+                    "| :--- | :--- | :--- |\n"
+                    "| Shared Supplier (900111111-1) | Alpha part | SKU-1 |\n"
+                ),
+                "productos": [{
+                    "sku": "SKU-1",
+                    "nombre": "Alpha part",
+                    "stock_actual": 0.0,
+                    "unidad": "UND",
+                    "unidades_vendidas": 10.0,
+                    "valor_vendido": 100.0,
+                    "cantidad_referencia": 5.0,
+                    "proveedor": "Shared Supplier",
+                    "nit_proveedor": "900111111-1",
+                }],
+                "sources": [{
+                    "source_id": "duckdb-replenishment",
+                    "domain": "inventory",
+                    "kind": "duckdb",
+                    "citation": "DuckDB replenishment",
+                    "cutoff_at": "2026-03-03",
+                    "status": "used",
+                }],
+                "freshness": [{
+                    "domain": "inventory",
+                    "cutoff_at": "2026-03-03",
+                    "status": "current",
+                }],
+            }
+
+    class NoLLM:
+        def complete_with_tools(self, *args, **kwargs):
+            raise AssertionError("Should use direct tool execution")
+
+    chat = QAChat(
+        NoLLM(),
+        ConversationManager(),
+        ReplenishExecutor(),
+        [{"function": {"name": "get_productos_para_reponer"}}],
+        tenant_id="motoshop",
+        user_id="ana",
+        repository=repository,
+        tenant_context=_context("motoshop", "purchases", "inventory"),
+    )
+
+    reply = chat.chat(
+        "Quisiera saber qué productos debería comprar ahora que no tengo en stock",
+        conversation["id"],
+        request_id="replenish-suppliers-test",
+    )
+
+    assert reply["status"] == "complete"
+    assert reply["tools_used"] == ["get_productos_para_reponer"]
+    entity_types = {ref["entity_type"] for ref in reply["entity_refs"]}
+    assert "supplier" in entity_types
+    assert "product" in entity_types
+    supplier_ref = next(ref for ref in reply["entity_refs"] if ref["entity_type"] == "supplier")
+    assert supplier_ref["entity_id"] == "900111111-1"
+    assert supplier_ref["href"] == "/dashboards/compras/proveedores/900111111-1"
+    product_ref = next(ref for ref in reply["entity_refs"] if ref["entity_type"] == "product")
+    assert product_ref["entity_id"] == "SKU-1"
+    assert product_ref["href"] == "/dashboards/productos/SKU-1"
+
+
