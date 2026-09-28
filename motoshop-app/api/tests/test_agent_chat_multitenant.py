@@ -58,12 +58,16 @@ def test_chat_tool_catalog_is_scoped_to_tenant(monkeypatch):
         "get_kpis_today",
         "get_kpis_month",
         "get_top_skus",
+        "get_top_productos_periodo",
+        "get_productos_para_reponer",
         "get_dormidos",
         "get_inventory_value",
         "get_data_freshness",
         "search_business_knowledge",
         "get_ultima_compra",
         "get_compras_recientes",
+        "get_top_compras_periodos",
+        "get_compras_periodo",
         "buscar_compras_por_proveedor",
         "get_producto_detalle",
         "get_detalle_compra",
@@ -81,6 +85,10 @@ def test_chat_tool_catalog_is_scoped_to_tenant(monkeypatch):
     moto_names = {item["function"]["name"] for item in moto.tool_defs}
     assert "get_ultima_compra" in moto_names
     assert "get_compras_recientes" in moto_names
+    assert "get_top_compras_periodos" in moto_names
+    assert "get_compras_periodo" in moto_names
+    assert "get_top_productos_periodo" in moto_names
+    assert "get_productos_para_reponer" in moto_names
     assert "search_products" in moto_names
     assert "analizar_compras_periodo" in moto_names
     assert "evaluar_compra_planeada" in moto_names

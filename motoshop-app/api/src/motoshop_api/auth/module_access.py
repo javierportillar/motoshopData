@@ -28,6 +28,8 @@ ASSISTANT_TOOL_DOMAINS: dict[str, frozenset[str]] = {
     "get_kpis_today": frozenset({"sales"}),
     "get_kpis_month": frozenset({"sales"}),
     "get_top_skus": frozenset({"sales"}),
+    "get_top_productos_periodo": frozenset({"sales"}),
+    "get_productos_para_reponer": frozenset({"purchases", "sales", "inventory"}),
     "get_dormidos": frozenset({"dormant_products"}),
     "get_alerts_by_urgency": frozenset({"alerts"}),
     "get_vendedor_performance": frozenset({"analyses"}),
@@ -38,6 +40,8 @@ ASSISTANT_TOOL_DOMAINS: dict[str, frozenset[str]] = {
     "get_data_freshness": frozenset(ASSISTANT_DOMAIN_MODULES),
     "get_ultima_compra": frozenset({"purchases"}),
     "get_compras_recientes": frozenset({"purchases"}),
+    "get_compras_periodo": frozenset({"purchases"}),
+    "get_top_compras_periodos": frozenset({"purchases"}),
     "buscar_compras_por_proveedor": frozenset({"purchases"}),
     "get_producto_detalle": frozenset({"purchases", "inventory", "products"}),
     "get_detalle_compra": frozenset({"purchases"}),
@@ -58,6 +62,7 @@ ASSISTANT_TOOL_DOMAINS: dict[str, frozenset[str]] = {
 ASSISTANT_TOOLS_REQUIRE_ALL_DOMAINS = frozenset({
     "analizar_compras_periodo",
     "evaluar_compra_planeada",
+    "get_productos_para_reponer",
 })
 
 

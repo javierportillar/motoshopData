@@ -35,6 +35,40 @@ _PRODUCT_SEARCH_STOPWORDS = {
     "me", "para", "por", "producto", "qué", "que", "sobre", "un", "una",
 }
 
+_VALID_SALES_CUTOFF_SQL = """
+    WITH candidate_headers AS (
+        SELECT business_date, num_documento, cod_clase,
+               COUNT(*) OVER (
+                   PARTITION BY business_date, cod_clase, num_documento
+               ) AS identity_count
+        FROM silver_fact_ventas
+        WHERE UPPER(TRIM(COALESCE(estado_documento, ''))) != 'A'
+          AND business_date IS NOT NULL
+          AND TRIM(COALESCE(num_documento, '')) != ''
+          AND TRIM(COALESCE(cod_clase, '')) != ''
+    )
+    SELECT MAX(business_date)
+    FROM candidate_headers
+    WHERE identity_count = 1
+"""
+_VALID_PURCHASE_CUTOFF_SQL = """
+    WITH candidate_headers AS (
+        SELECT business_date, num_documento, cod_clase,
+               COUNT(*) OVER (
+                   PARTITION BY business_date, cod_clase, num_documento
+               ) AS identity_count
+        FROM silver_fact_compras
+        WHERE UPPER(TRIM(COALESCE(estado_documento, ''))) != 'A'
+          AND business_date IS NOT NULL
+          AND cod_clase = TRIM(COALESCE(cod_clase, ''))
+          AND num_documento = TRIM(COALESCE(num_documento, ''))
+          AND cod_clase != '' AND num_documento != ''
+    )
+    SELECT MAX(business_date)
+    FROM candidate_headers
+    WHERE identity_count = 1
+"""
+
 
 def _search_tokens(value: str) -> list[str]:
     normalized = unicodedata.normalize("NFKD", str(value or "")).encode(
@@ -76,6 +110,8 @@ PUBLIC_TOOL_NAMES = {
     "get_kpis_today",
     "get_kpis_month",
     "get_top_skus",
+    "get_top_productos_periodo",
+    "get_productos_para_reponer",
     "get_dormidos",
     "get_alerts_by_urgency",
     "get_vendedor_performance",
@@ -87,6 +123,8 @@ PUBLIC_TOOL_NAMES = {
     "search_business_knowledge",
     "get_ultima_compra",
     "get_compras_recientes",
+    "get_compras_periodo",
+    "get_top_compras_periodos",
     "search_products",
     "get_productos_comportamiento",
     "get_top_clientes",
@@ -153,6 +191,22 @@ class ToolExecutor:
                 "SELECT MAX(business_date) FROM gold_mart_ventas_diarias_sku"
             ).fetchone()
             return r[0] if r and r[0] else None
+        except Exception:
+            return None
+
+    def _get_valid_sales_cutoff(self) -> date | None:
+        """Return the latest date with unique, navigable, non-canceled sales headers."""
+        try:
+            row = self._con.execute(_VALID_SALES_CUTOFF_SQL).fetchone()
+            return row[0] if row and row[0] else None
+        except Exception:
+            return None
+
+    def _get_valid_purchase_cutoff(self) -> date | None:
+        """Return the latest date with unique, navigable, non-canceled purchases."""
+        try:
+            row = self._con.execute(_VALID_PURCHASE_CUTOFF_SQL).fetchone()
+            return row[0] if row and row[0] else None
         except Exception:
             return None
 
@@ -230,6 +284,617 @@ class ToolExecutor:
                 {"sku": r[0], "nombre": r[1], "valor": float(r[2]), "cantidad": float(r[3])}
                 for r in rows
             ],
+        }
+
+    def get_top_productos_periodo(
+        self,
+        periods: list[dict[str, str]],
+        metric: str = "units",
+        limit: int = 1,
+    ) -> dict:
+        """Rank products by valid sales over exact requested date ranges."""
+        if metric not in {"units", "revenue"}:
+            raise ValueError("La métrica debe ser units o revenue.")
+        if periods == []:
+            return {
+                "status": "needs_clarification",
+                "respuesta_fallback": "¿Qué mes, rango o fecha exacta querés rankear?",
+                "productos": [],
+                "sources": [],
+                "freshness": [],
+            }
+        if not isinstance(periods, list) or not 1 <= len(periods) <= 6:
+            raise ValueError("Indicá entre uno y seis períodos de ventas.")
+        limit = int(limit)
+        if not 1 <= limit <= 20:
+            raise ValueError(
+                "El ranking debe solicitar entre 1 y 20 posiciones por período y medida."
+            )
+        if len(periods) * limit > 20:
+            raise ValueError("La comparación está limitada a veinte posiciones por respuesta.")
+
+        requested: list[dict[str, object]] = []
+        month_labels = (
+            "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+            "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+        )
+        for period_id, period in enumerate(periods):
+            if not isinstance(period, dict):
+                raise ValueError("Cada período debe incluir fecha de inicio y fin.")
+            try:
+                start = date.fromisoformat(str(period.get("date_from", "")))
+                end = date.fromisoformat(str(period.get("date_to", "")))
+            except ValueError as exc:
+                raise ValueError("Las fechas de ventas deben usar YYYY-MM-DD.") from exc
+            if start > end or (end - start).days > 365:
+                raise ValueError("Cada período debe cubrir como máximo 366 días.")
+            if any(
+                start <= date.fromisoformat(str(existing["date_to"]))
+                and end >= date.fromisoformat(str(existing["date_from"]))
+                for existing in requested
+            ):
+                raise ValueError("Los períodos de comparación no pueden superponerse.")
+            if start == end:
+                label = start.strftime("%d/%m/%Y")
+            elif start.day == 1 and start.month == end.month and start.year == end.year:
+                next_month = date(
+                    start.year + (start.month == 12),
+                    1 if start.month == 12 else start.month + 1,
+                    1,
+                )
+                label = (
+                    f"{month_labels[start.month - 1]} {start.year}"
+                    if end.day == (next_month - timedelta(days=1)).day
+                    else f"{start.isoformat()} a {end.isoformat()}"
+                )
+            else:
+                label = f"{start.isoformat()} a {end.isoformat()}"
+            requested.append({
+                "period_id": period_id, "date_from": start, "date_to": end, "label": label,
+            })
+
+        period_values = ", ".join("(?, ?, ?, ?)" for _ in requested)
+        period_params = [
+            value
+            for period in requested
+            for value in (
+                period["period_id"], period["date_from"], period["date_to"], period["label"]
+            )
+        ]
+        metric_column = "units_sold" if metric == "units" else "revenue"
+        rank_partition = "period_id, unit_group" if metric == "units" else "period_id"
+        query = f"""
+            WITH requested_periods(period_id, date_from, date_to, period_label) AS (
+                VALUES {period_values}
+            ), period_sales_headers AS (
+                SELECT p.period_id, p.period_label,
+                       h.business_date, h.num_documento, h.cod_clase,
+                       COUNT(*) OVER (
+                           PARTITION BY p.period_id, h.business_date, h.cod_clase, h.num_documento
+                       ) AS identity_count
+                FROM requested_periods p
+                INNER JOIN silver_fact_ventas h
+                    ON h.business_date BETWEEN p.date_from AND p.date_to
+                WHERE UPPER(TRIM(COALESCE(h.estado_documento, ''))) != 'A'
+                  AND TRIM(COALESCE(h.num_documento, '')) != ''
+                  AND TRIM(COALESCE(h.cod_clase, '')) != ''
+            ), valid_sales_headers AS (
+                SELECT period_id, period_label, business_date, num_documento, cod_clase
+                FROM period_sales_headers
+                WHERE identity_count = 1
+            ), sales_lines AS (
+                SELECT h.period_id, h.period_label, d.cod_producto AS sku,
+                       COALESCE(NULLIF(TRIM(d.nombre_detalle), ''), d.cod_producto) AS detail_name,
+                       COALESCE(d.cantidad, 0) AS quantity,
+                       COALESCE(d.total_detalle, 0) AS line_revenue
+                FROM valid_sales_headers h
+                INNER JOIN silver_fact_ventas_detalle d
+                    ON h.business_date = d.business_date
+                   AND h.cod_clase = d.cod_clase
+                   AND h.num_documento = d.num_documento
+                WHERE d.cod_producto IS NOT NULL AND TRIM(d.cod_producto) != ''
+            ), catalog AS (
+                SELECT cod_producto, nombre_producto, cod_medida, presentacion
+                FROM (
+                    SELECT cod_producto, nombre_producto, cod_medida, presentacion,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY cod_producto
+                               ORDER BY snapshot_date DESC NULLS LAST,
+                                        fecha_actualizacion DESC NULLS LAST
+                           ) AS snapshot_rank
+                    FROM silver_dim_producto
+                ) latest_catalog
+                WHERE snapshot_rank = 1
+            ), sku_totals AS (
+                SELECT s.period_id, s.period_label, s.sku,
+                       COALESCE(MAX(NULLIF(TRIM(c.nombre_producto), '')),
+                                MAX(NULLIF(TRIM(s.detail_name), '')), s.sku) AS nombre,
+                       MAX(COALESCE(NULLIF(TRIM(c.presentacion), ''),
+                                    NULLIF(TRIM(c.cod_medida), ''))) AS unit_label,
+                       MAX(NULLIF(TRIM(c.cod_medida), '')) AS unit_code,
+                       ROUND(SUM(s.quantity), 2) AS units_sold,
+                       ROUND(SUM(s.line_revenue), 2) AS revenue
+                FROM sales_lines s
+                LEFT JOIN catalog c ON c.cod_producto = s.sku
+                GROUP BY s.period_id, s.period_label, s.sku
+            ), eligible AS (
+                SELECT *,
+                       CASE
+                           WHEN unit_code IS NOT NULL AND TRIM(unit_code) != ''
+                               THEN UPPER(TRIM(unit_code))
+                           WHEN unit_label IS NOT NULL AND TRIM(unit_label) != ''
+                               THEN UPPER(TRIM(unit_label))
+                           ELSE 'UNKNOWN:' || sku
+                       END AS unit_group
+                FROM sku_totals
+                WHERE {metric_column} > 0
+            ), ranked_products AS (
+                SELECT *,
+                       DENSE_RANK() OVER (
+                           PARTITION BY {rank_partition} ORDER BY {metric_column} DESC
+                       ) AS metric_rank,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY {rank_partition}, {metric_column}
+                           ORDER BY units_sold DESC, revenue DESC, sku
+                       ) AS tie_row,
+                       COUNT(*) OVER (
+                           PARTITION BY {rank_partition}, {metric_column}
+                ) AS tie_count
+                FROM eligible
+            ), all_ranked_results AS (
+                SELECT *, COUNT(*) OVER () AS ranked_result_count
+                FROM ranked_products
+                WHERE metric_rank <= ?
+            ), tie_capped_results AS (
+                SELECT *, COUNT(*) OVER () AS tie_capped_result_count
+                FROM all_ranked_results
+                WHERE tie_row <= 25
+            ), bounded_results AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (
+                           ORDER BY period_id, metric_rank,
+                                    CASE WHEN unit_group LIKE 'UNKNOWN:%' THEN 1 ELSE 0 END,
+                                    unit_group, units_sold DESC, revenue DESC, sku
+                       ) AS result_row
+                FROM tie_capped_results
+            )
+            SELECT period_id, period_label, sku, nombre, unit_label, unit_group,
+                   units_sold, revenue, metric_rank, tie_row, tie_count,
+                   ranked_result_count, tie_capped_result_count
+            FROM bounded_results
+            WHERE result_row <= 100
+            ORDER BY period_id, metric_rank,
+                     CASE WHEN unit_group LIKE 'UNKNOWN:%' THEN 1 ELSE 0 END,
+                     unit_group, units_sold DESC, revenue DESC, sku
+        """
+        query_cursor = None
+        try:
+            sales_cutoff = self._get_valid_sales_cutoff()
+            query_cursor = self._con.cursor()
+            rows = query_cursor.execute(query, [*period_params, limit]).fetchall()
+        except Exception as exc:
+            logger.warning(
+                "sales_product_ranking_failed tenant=%s error_type=%s",
+                self.tenant,
+                type(exc).__name__,
+            )
+            return {
+                "status": "unavailable",
+                "respuesta_fallback": (
+                    "No pude verificar el ranking porque la fuente de ventas no respondió."
+                ),
+                "productos": [],
+                "sources": [{
+                    "source_id": "duckdb-sales-detail", "domain": "sales", "kind": "duckdb",
+                    "citation": "DuckDB valid sales headers and detail", "cutoff_at": None,
+                    "status": "failed",
+                }],
+                "freshness": [{"domain": "sales", "cutoff_at": None, "status": "unknown"}],
+            }
+        finally:
+            for cursor in (query_cursor,):
+                if cursor is not None and hasattr(cursor, "close"):
+                    cursor.close()
+
+        products = [
+            {
+                "sku": str(row[2]), "nombre": str(row[3]),
+                "unidad": str(row[4] or "sin unidad"), "unidad_grupo": str(row[5]),
+                "unidades": float(row[6] or 0), "valor": float(row[7] or 0),
+                "rank": int(row[8]), "tie_row": int(row[9]), "tie_count": int(row[10]),
+                "period_id": int(row[0]), "period_label": str(row[1]),
+            }
+            for row in rows
+        ]
+        ranked_result_count = int(rows[0][11]) if rows else 0
+        tie_capped_result_count = int(rows[0][12]) if rows else 0
+        global_truncated = tie_capped_result_count > 100
+        ranking_truncated = ranked_result_count > len(products)
+        period_availability: dict[int, dict[str, str | None]] = {}
+        for period in requested:
+            start = period["date_from"]
+            end = period["date_to"]
+            period_id = int(period["period_id"])
+            if sales_cutoff is None:
+                period_availability[period_id] = {
+                    "status": "unavailable", "available_through": None,
+                }
+            elif start > sales_cutoff:
+                period_availability[period_id] = {
+                    "status": "unavailable", "available_through": None,
+                }
+            elif end > sales_cutoff:
+                period_availability[period_id] = {
+                    "status": "partial", "available_through": sales_cutoff.isoformat(),
+                }
+            else:
+                period_availability[period_id] = {
+                    "status": "complete", "available_through": end.isoformat(),
+                }
+        cutoff_at = sales_cutoff.isoformat() if sales_cutoff else None
+        observed_at = datetime.now(UTC).isoformat()
+        metadata = {
+            "sources": [{
+                "source_id": "duckdb-sales-detail", "domain": "sales", "kind": "duckdb",
+                "citation": "DuckDB valid sales headers and detail", "cutoff_at": cutoff_at,
+                "observed_at": observed_at, "status": "used" if cutoff_at else "failed",
+            }],
+            "freshness": [{"domain": "sales", "cutoff_at": cutoff_at, "observed_at": observed_at,
+                           "status": "current" if cutoff_at else "unknown"}],
+        }
+        by_period: dict[int, list[dict]] = {}
+        for product in products:
+            by_period.setdefault(product["period_id"], []).append(product)
+        metric_label = "unidades por medida" if metric == "units" else "valor facturado"
+        fallback = [
+            f"Ranking por {metric_label}; muestro los empates. "
+            + (
+                "Las medidas distintas no se comparan entre sí; productos sin unidad de catálogo "
+                "se muestran por separado."
+                if metric == "units" else ""
+            )
+        ]
+        if tie_capped_result_count > 100:
+            fallback.append(
+                f"El resultado tiene {tie_capped_result_count} posiciones después de conservar "
+                "empates; muestro hasta 100 "
+                "para mantener la respuesta acotada."
+            )
+        if ranked_result_count > tie_capped_result_count:
+            fallback.append(
+                "Algunos empates superan 25 productos por posición y medida; se acotó la lista."
+            )
+        for period in requested:
+            period_id = int(period["period_id"])
+            availability = period_availability[period_id]
+            winners = by_period.get(period_id, [])
+            if not winners:
+                fallback.extend(["", f"### {period['label'].capitalize()}"])
+                if availability["status"] == "unavailable":
+                    fallback.append(
+                        "No puedo verificar este período: empieza después del corte válido "
+                        f"de ventas ({cutoff_at or 'sin corte disponible'})."
+                    )
+                elif global_truncated:
+                    fallback.append(
+                        "No puedo confirmar si hubo ventas en este período: la respuesta llegó "
+                        "al límite global de resultados. Consultá menos períodos o posiciones."
+                    )
+                elif availability["status"] == "partial":
+                    fallback.append(
+                        f"No encontré ventas válidas hasta {availability['available_through']}; "
+                        "los días posteriores exceden el corte y no están verificados."
+                    )
+                else:
+                    fallback.append(
+                        f"No encontré ventas entre {period['date_from']} y {period['date_to']}; "
+                        "no reemplacé el rango por otra fecha."
+                    )
+                continue
+
+            if availability["status"] == "partial":
+                fallback.extend([
+                    "",
+                    f"Datos disponibles solo hasta {availability['available_through']}; "
+                    "el resto del período no está verificado.",
+                ])
+
+            unit_groups = (
+                sorted({product["unidad_grupo"] for product in winners})
+                if metric == "units" else [None]
+            )
+            for unit_group in unit_groups:
+                group = [
+                    product for product in winners
+                    if unit_group is None or product["unidad_grupo"] == unit_group
+                ]
+                unit_label = group[0]["unidad"] if metric == "units" else None
+                if unit_group and unit_group.startswith("UNKNOWN:"):
+                    unit_label = f"medida no informada · SKU {group[0]['sku']}"
+                fallback.extend([
+                    "",
+                    f"### {period['label'].capitalize()}"
+                    + (f" · {unit_label}" if unit_label is not None else ""),
+                ])
+                if any(
+                    sum(1 for item in group if item["rank"] == rank) < winner["tie_count"]
+                    for winner in group
+                    for rank in {winner["rank"]}
+                ):
+                    fallback.append(
+                        "No se muestran todos los productos empatados por los límites de respuesta."
+                    )
+                for product in group:
+                    total = f"${int(round(product['valor'])):,}".replace(",", ".")
+                    fallback.append(
+                        f"{product['rank']}. SKU {product['sku']} · {product['nombre']} · "
+                        f"{product['unidades']:g} {product['unidad']} · {total} COP"
+                    )
+        if sales_cutoff:
+            fallback.extend(["", f"Corte de ventas válidas: {sales_cutoff.isoformat()}."])
+        return {
+            "status": (
+                "unavailable" if sales_cutoff is None
+                else "partial" if any(
+                    availability["status"] != "complete"
+                    for availability in period_availability.values()
+                ) or ranking_truncated
+                else "complete" if products else "empty"
+            ),
+            "metric": metric,
+            "ranking_result_count": ranked_result_count,
+            "ranking_tie_capped_count": tie_capped_result_count,
+            "ranking_truncated": ranking_truncated,
+            "period_results": [
+                {
+                    **period,
+                    **period_availability[int(period["period_id"])],
+                    "productos": by_period.get(int(period["period_id"]), []),
+                }
+                for period in requested
+            ],
+            "productos": products,
+            "respuesta_fallback": "\n".join(fallback),
+            **metadata,
+        }
+
+    def get_productos_para_reponer(
+        self,
+        target_cover_days: int = 45,
+        sales_window_days: int = 180,
+        limit: int = 50,
+    ) -> dict:
+        """Return zero-stock SKUs with valid recent demand and a bounded coverage guide."""
+        target_cover_days = int(target_cover_days)
+        sales_window_days = int(sales_window_days)
+        limit = int(limit)
+        if not 1 <= target_cover_days <= 365:
+            raise ValueError("La cobertura objetivo debe estar entre 1 y 365 días.")
+        if not 7 <= sales_window_days <= 365:
+            raise ValueError("La ventana de ventas debe estar entre 7 y 365 días.")
+        if not 1 <= limit <= 100:
+            raise ValueError("El listado debe solicitar entre 1 y 100 productos.")
+
+        cutoff_cursor = query_cursor = None
+        try:
+            cutoff_cursor = self._con.cursor()
+            cutoff_row = cutoff_cursor.execute(
+                """
+                SELECT
+                    (SELECT MAX(snapshot_date) FROM silver_dim_producto)
+                """
+            ).fetchone()
+            sales_cutoff = self._get_valid_sales_cutoff()
+            inventory_cutoff = cutoff_row[0] if cutoff_row else None
+            purchase_cutoff = self._get_valid_purchase_cutoff()
+            if sales_cutoff is None or inventory_cutoff is None:
+                raise LookupError("sales_or_inventory_cutoff_missing")
+            sales_start = sales_cutoff - timedelta(days=sales_window_days - 1)
+            query_cursor = self._con.cursor()
+            rows = query_cursor.execute(
+                """
+                WITH valid_sales_headers AS (
+                    SELECT * EXCLUDE (identity_count)
+                    FROM (
+                        SELECT h.business_date, h.cod_clase, h.num_documento,
+                               COUNT(*) OVER (
+                                   PARTITION BY h.business_date, h.cod_clase, h.num_documento
+                               ) AS identity_count
+                        FROM silver_fact_ventas h
+                        WHERE UPPER(TRIM(COALESCE(h.estado_documento, ''))) != 'A'
+                          AND h.business_date IS NOT NULL
+                          AND h.business_date BETWEEN ? AND ?
+                          AND TRIM(COALESCE(h.cod_clase, '')) != ''
+                          AND TRIM(COALESCE(h.num_documento, '')) != ''
+                    ) sales_headers
+                    WHERE identity_count = 1
+                ), demand AS (
+                    SELECT d.cod_producto,
+                           ROUND(SUM(COALESCE(d.cantidad, 0)), 2) AS units_sold,
+                           ROUND(SUM(COALESCE(d.total_detalle, 0)), 2) AS revenue
+                    FROM silver_fact_ventas_detalle d
+                    INNER JOIN valid_sales_headers h
+                        ON h.business_date = d.business_date
+                       AND h.cod_clase = d.cod_clase
+                       AND h.num_documento = d.num_documento
+                     GROUP BY d.cod_producto
+                    HAVING SUM(COALESCE(d.cantidad, 0)) > 0
+                ), latest_products AS (
+                    SELECT cod_producto, nombre_producto, existencia, cod_medida,
+                           presentacion, snapshot_date, nit_proveedor
+                    FROM (
+                        SELECT p.cod_producto, p.nombre_producto, p.existencia,
+                               p.cod_medida, p.presentacion, p.snapshot_date, p.nit_proveedor,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY p.cod_producto
+                                   ORDER BY p.snapshot_date DESC,
+                                            p.fecha_actualizacion DESC NULLS LAST
+                               ) AS snapshot_rank
+                        FROM silver_dim_producto p
+                        WHERE p.snapshot_date = ?
+                    ) ranked_products
+                    WHERE snapshot_rank = 1
+                ), zero_stock_skus AS (
+                    SELECT p.cod_producto
+                    FROM latest_products p
+                    INNER JOIN demand d ON d.cod_producto = p.cod_producto
+                    WHERE p.existencia IS NOT NULL AND p.existencia <= 0
+                ), valid_purchase_headers AS (
+                    SELECT * EXCLUDE (identity_count)
+                    FROM (
+                        SELECT h.business_date, h.cod_clase, h.num_documento,
+                               h.nit_proveedor, h.nombre_proveedor,
+                               COUNT(*) OVER (
+                                   PARTITION BY h.business_date, h.cod_clase, h.num_documento
+                               ) AS identity_count
+                        FROM silver_fact_compras h
+                        WHERE UPPER(TRIM(COALESCE(h.estado_documento, ''))) != 'A'
+                          AND h.business_date IS NOT NULL
+                          AND TRIM(COALESCE(h.cod_clase, '')) != ''
+                          AND TRIM(COALESCE(h.num_documento, '')) != ''
+                          AND h.business_date <= ?
+                    ) purchase_headers
+                    WHERE identity_count = 1
+                ), latest_supplier AS (
+                    SELECT cod_producto, nit_proveedor, nombre_proveedor
+                    FROM (
+                        SELECT d.cod_producto, TRIM(h.nit_proveedor) AS nit_proveedor,
+                               TRIM(h.nombre_proveedor) AS nombre_proveedor,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY d.cod_producto
+                                   ORDER BY h.business_date DESC, h.cod_clase DESC,
+                                            h.num_documento DESC
+                               ) AS supplier_rank
+                        FROM silver_fact_compras_detalle d
+                        INNER JOIN zero_stock_skus z ON z.cod_producto = d.cod_producto
+                        INNER JOIN valid_purchase_headers h
+                            ON h.business_date = d.business_date
+                           AND h.cod_clase = d.cod_clase
+                           AND h.num_documento = d.num_documento
+                        WHERE h.nit_proveedor IS NOT NULL AND TRIM(h.nit_proveedor) != ''
+                    ) ranked_suppliers
+                    WHERE supplier_rank = 1
+                ), candidates AS (
+                    SELECT p.cod_producto AS sku,
+                           COALESCE(NULLIF(TRIM(p.nombre_producto), ''), p.cod_producto) AS nombre,
+                           p.existencia AS stock_actual,
+                           COALESCE(NULLIF(TRIM(p.presentacion), ''), p.cod_medida, 'u') AS unidad,
+                           d.units_sold AS unidades_vendidas,
+                           d.revenue AS valor_vendido,
+                           GREATEST(0, d.units_sold / ? * ? - p.existencia) AS cantidad_referencia,
+                            COALESCE(
+                                NULLIF(s.nombre_proveedor, ''), 'Proveedor por verificar'
+                            ) AS proveedor,
+                           COALESCE(s.nit_proveedor, p.nit_proveedor) AS nit_proveedor
+                    FROM latest_products p
+                    INNER JOIN demand d ON d.cod_producto = p.cod_producto
+                    LEFT JOIN latest_supplier s ON s.cod_producto = p.cod_producto
+                    WHERE p.existencia IS NOT NULL AND p.existencia <= 0
+                )
+                SELECT sku, nombre, stock_actual, unidad, unidades_vendidas,
+                       valor_vendido, ROUND(cantidad_referencia, 2), proveedor, nit_proveedor
+                FROM candidates
+                WHERE cantidad_referencia > 0
+                ORDER BY cantidad_referencia DESC, valor_vendido DESC, sku ASC
+                LIMIT ?
+                """,
+                [
+                    sales_start,
+                    sales_cutoff,
+                    inventory_cutoff,
+                    purchase_cutoff or sales_cutoff,
+                    sales_window_days,
+                    target_cover_days,
+                    limit,
+                ],
+            ).fetchall()
+        except Exception as exc:
+            logger.warning(
+                "replenishment_query_failed tenant=%s error_type=%s",
+                self.tenant,
+                type(exc).__name__,
+            )
+            return {
+                "status": "unavailable",
+                "respuesta_fallback": (
+                    "No pude verificar stock y demanda válidos. No voy a presentar "
+                    "productos como faltantes sin confirmar inventario y ventas."
+                ),
+                "productos": [],
+                "sources": [{
+                    "source_id": "duckdb-replenishment", "domain": "inventory",
+                    "kind": "duckdb", "citation": "DuckDB inventory, sales and purchase snapshots",
+                    "cutoff_at": None, "status": "failed",
+                }],
+                "freshness": [{"domain": "inventory", "cutoff_at": None, "status": "unknown"}],
+            }
+        finally:
+            for cursor in (cutoff_cursor, query_cursor):
+                if cursor is not None and hasattr(cursor, "close"):
+                    cursor.close()
+
+        products = [
+            {
+                "sku": str(row[0]), "nombre": str(row[1]),
+                "stock_actual": float(row[2]), "unidad": str(row[3] or "u"),
+                "unidades_vendidas": float(row[4]), "valor_vendido": float(row[5]),
+                "cantidad_referencia": float(row[6]), "proveedor": str(row[7]),
+                "nit_proveedor": str(row[8]) if row[8] is not None else None,
+            }
+            for row in rows
+        ]
+        cutoffs = {
+            "sales": sales_cutoff.isoformat(),
+            "inventory": inventory_cutoff.isoformat(),
+            "purchases": purchase_cutoff.isoformat() if purchase_cutoff else None,
+        }
+        observed_at = datetime.now(UTC).isoformat()
+        sources = [{
+            "source_id": f"duckdb-{domain}", "domain": domain, "kind": "duckdb",
+            "citation": citation, "cutoff_at": cutoffs[domain], "observed_at": observed_at,
+            "status": "used" if cutoffs[domain] else "failed",
+        } for domain, citation in (
+            ("sales", "Silver valid sales headers and detail"),
+            ("inventory", "silver_dim_producto latest snapshot"),
+            ("purchases", "Valid purchase headers for supplier attribution"),
+        )]
+        freshness = [{
+            "domain": domain, "cutoff_at": cutoffs[domain], "observed_at": observed_at,
+            "status": "current" if cutoffs[domain] else "unknown",
+        } for domain in ("sales", "inventory", "purchases")]
+        fallback_lines = [
+            f"Candidatos a revisar por stock agotado · corte inventario {cutoffs['inventory']} · "
+            f"corte ventas {cutoffs['sales']} · demanda de {sales_window_days} días."
+        ]
+        if not products:
+            fallback_lines.append(
+                "No encontré productos con existencia cero/negativa y ventas positivas "
+                "en esa ventana."
+            )
+        for product in products:
+            supplier = product["proveedor"]
+            if product["nit_proveedor"]:
+                supplier += f" (NIT: {product['nit_proveedor']})"
+            fallback_lines.append(
+                f"- SKU {product['sku']} · {product['nombre']}: stock "
+                f"{product['stock_actual']:g} {product['unidad']}; ventas "
+                f"{product['unidades_vendidas']:g} {product['unidad']} "
+                f"en {sales_window_days} días; "
+                f"referencia {product['cantidad_referencia']:g} {product['unidad']} "
+                f"para {target_cover_days} días; proveedor: {supplier}."
+            )
+        fallback_lines.append(
+            "La cantidad es una referencia por ventas válidas, no una orden: no incluye lead time, "
+            "mínimos, órdenes abiertas, estacionalidad ni stock de seguridad."
+        )
+        return {
+            "status": "complete" if products else "empty",
+            "sales_cutoff": cutoffs["sales"], "inventory_cutoff": cutoffs["inventory"],
+            "purchase_cutoff": cutoffs["purchases"],
+            "sales_window_days": sales_window_days, "target_cover_days": target_cover_days,
+            "productos": products, "count": len(products),
+            "respuesta_fallback": "\n".join(fallback_lines),
+            "sources": sources, "freshness": freshness,
         }
 
     def get_dormidos(self, days_min: int = 90, limit: int = 20) -> dict:
@@ -412,17 +1077,25 @@ class ToolExecutor:
     def get_data_freshness(self) -> dict:
         """Fecha máxima disponible en las tablas de hechos del tenant."""
         tables = (
-            ("gold_mart_ventas_diarias_sku", "business_date"),
-            ("gold_mart_inventario_actual", "snapshot_date"),
-            ("silver_fact_compras", "business_date"),
+            ("gold_mart_ventas_diarias_sku", "business_date", ""),
+            ("gold_mart_inventario_actual", "snapshot_date", ""),
+            ("silver_dim_producto", "snapshot_date", ""),
         )
         result: dict[str, str | None] = {}
-        for table, col in tables:
+        for table, col, where_clause in tables:
             try:
-                row = self._con.execute(f"SELECT MAX({col}) FROM {table}").fetchone()
+                row = self._con.execute(
+                    f"SELECT MAX({col}) FROM {table} {where_clause}"
+                ).fetchone()
                 result[table] = row[0].isoformat() if row and row[0] else None
             except Exception:
                 result[table] = None
+        sales_cutoff = self._get_valid_sales_cutoff()
+        result["silver_fact_ventas"] = sales_cutoff.isoformat() if sales_cutoff else None
+        purchase_cutoff = self._get_valid_purchase_cutoff()
+        result["silver_fact_compras"] = (
+            purchase_cutoff.isoformat() if purchase_cutoff else None
+        )
         dates = [value for value in result.values() if value]
         return {
             "tenant": self.tenant,
@@ -524,6 +1197,366 @@ class ToolExecutor:
             "count": len(rows),
         }
         return {**result, **self._purchase_metadata(rows[0][0])}
+
+    def get_top_compras_periodos(
+        self,
+        periods: list[dict[str, str]],
+        limit: int = 3,
+        supplier_query: str | None = None,
+        limit_capped: bool = False,
+    ) -> dict:
+        """Rank invoices by total independently within each calendar month."""
+        return self._query_purchase_periods(
+            periods, view="top", limit=limit, page=1, supplier_query=supplier_query,
+            limit_capped=limit_capped,
+        )
+
+    def get_compras_periodo(
+        self,
+        periods: list[dict[str, str]],
+        view: str = "list",
+        limit: int = 50,
+        page: int = 1,
+        supplier_query: str | None = None,
+    ) -> dict:
+        """Summarize or page through tenant purchase invoices for calendar months."""
+        if view not in {"list", "summary"}:
+            raise ValueError("La vista debe ser list o summary.")
+        return self._query_purchase_periods(
+            periods, view=view, limit=limit, page=page, supplier_query=supplier_query
+        )
+
+    def _query_purchase_periods(
+        self,
+        periods: list[dict[str, str]],
+        *,
+        view: str,
+        limit: int,
+        page: int,
+        supplier_query: str | None,
+        limit_capped: bool = False,
+    ) -> dict:
+        if periods == []:
+            clarification = (
+                "No tengo un corte válido de compras para inferir el año; indicame el año."
+                if self._get_valid_purchase_cutoff() is None
+                else "¿De qué mes y año querés consultar las compras?"
+            )
+            return {
+                "status": "needs_clarification",
+                "respuesta_fallback": clarification,
+                "compras": [],
+                "sources": [],
+                "freshness": [],
+            }
+        if not isinstance(periods, list) or not 1 <= len(periods) <= 6:
+            raise ValueError("Indicá entre uno y seis meses calendario.")
+        limit, page = int(limit), int(page)
+        max_limit = 20 if view == "top" else 50
+        if not 1 <= limit <= max_limit or not 1 <= page <= 1000:
+            raise ValueError("El límite o la página están fuera del rango permitido.")
+        if view != "list" and page != 1:
+            raise ValueError("La vista solicitada no admite paginación.")
+        if limit_capped and view != "top":
+            raise ValueError("La notificación de límite solo aplica a rankings de compras.")
+        if view != "top" and len(periods) * limit > 100:
+            raise ValueError("El listado está limitado a cien facturas por respuesta.")
+
+        month_names = (
+            "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+            "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+        )
+        normalized = []
+        seen_months: set[str] = set()
+        for period in periods:
+            if not isinstance(period, dict):
+                raise ValueError("Cada período debe ser un mes calendario completo.")
+            try:
+                start = date.fromisoformat(str(period.get("date_from", "")))
+                end = date.fromisoformat(str(period.get("date_to", "")))
+            except ValueError as exc:
+                raise ValueError("Las fechas deben usar YYYY-MM-DD.") from exc
+            next_month = date(start.year + 1, 1, 1) if start.month == 12 else date(start.year, start.month + 1, 1)
+            if (
+                start.day != 1
+                or (start.year, start.month) != (end.year, end.month)
+                or end.day != (next_month - timedelta(days=1)).day
+            ):
+                raise ValueError("Cada período debe cubrir un mes calendario completo.")
+            month = start.strftime("%Y-%m")
+            if month in seen_months:
+                raise ValueError("No repitas el mismo mes en una consulta.")
+            seen_months.add(month)
+            normalized.append({
+                "month": month,
+                "date_from": start.isoformat(),
+                "date_to": end.isoformat(),
+                "label": f"{month_names[start.month - 1]} {start.year}",
+            })
+
+        if supplier_query is not None:
+            supplier_query = str(supplier_query).strip()
+            if len(supplier_query) > 100 or any(ord(char) < 32 for char in supplier_query):
+                raise ValueError("El filtro de proveedor debe tener hasta 100 caracteres válidos.")
+            terms = [term for term in supplier_query.split() if term]
+            if terms and terms[0].casefold() in {"nit", "rut"}:
+                terms = terms[1:]
+            if len(terms) > 10:
+                raise ValueError("Usá hasta diez palabras para buscar el proveedor.")
+        else:
+            terms = []
+
+        header_date_filters = [
+            "(h.business_date >= ? AND h.business_date <= ?)" for _ in normalized
+        ]
+        month_parameters = [
+            value
+            for period in normalized
+            for value in (period["date_from"], period["date_to"])
+        ]
+        supplier_filter = "".join(
+            " AND (POSITION(LOWER(?) IN LOWER(COALESCE(nombre_proveedor, ''))) > 0 "
+            "OR POSITION(LOWER(?) IN LOWER(COALESCE(nit_proveedor, ''))) > 0)"
+            for _ in terms
+        )
+        supplier_parameters = [term for term in terms for _ in range(2)]
+        valid_headers = f"""
+            SELECT * EXCLUDE (identity_count)
+            FROM (
+                SELECT h.*,
+                       COUNT(*) OVER (
+                           PARTITION BY h.business_date, h.cod_clase, h.num_documento
+                       ) AS identity_count
+                FROM silver_fact_compras h
+                WHERE UPPER(TRIM(COALESCE(h.estado_documento, ''))) != 'A'
+                  AND h.business_date IS NOT NULL
+                  AND h.cod_clase = TRIM(COALESCE(h.cod_clase, ''))
+                  AND h.num_documento = TRIM(COALESCE(h.num_documento, ''))
+                  AND h.cod_clase != '' AND h.num_documento != ''
+                  AND ({' OR '.join(header_date_filters)})
+            ) ranked_headers
+            WHERE identity_count = 1
+        """
+        summary_query = f"""
+            WITH valid_headers AS ({valid_headers})
+            SELECT strftime(business_date, '%Y-%m') AS month,
+                   COUNT(*) AS invoice_count,
+                   ROUND(COALESCE(SUM(total_factura), 0), 2) AS total_compras
+            FROM valid_headers
+            WHERE TRUE{supplier_filter}
+            GROUP BY month
+        """
+        sort_order = (
+            "total_factura DESC NULLS LAST, business_date DESC, cod_clase, num_documento"
+            if view == "top"
+            else "business_date DESC, cod_clase, num_documento"
+        )
+        details_query = f"""
+            WITH valid_headers AS ({valid_headers}), ranked AS (
+                SELECT CAST(business_date AS VARCHAR) AS business_date,
+                       cod_clase, num_documento, nit_proveedor, nombre_proveedor,
+                       total_factura, COALESCE(estado_documento, '') AS estado_documento,
+                       strftime(business_date, '%Y-%m') AS month,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY date_trunc('month', business_date)
+                           ORDER BY {sort_order}
+                       ) AS month_rank
+                FROM valid_headers
+                WHERE TRUE{supplier_filter}
+            )
+            SELECT business_date, cod_clase, num_documento, nit_proveedor,
+                   nombre_proveedor, total_factura, estado_documento, month, month_rank
+            FROM ranked
+            WHERE month_rank > ? AND month_rank <= ?
+            ORDER BY month, month_rank
+        """
+        offset = (page - 1) * limit if view == "list" else 0
+        summary_cursor = detail_cursor = None
+        try:
+            cutoff = self._get_valid_purchase_cutoff()
+            summary_cursor = self._con.cursor()
+            summary_rows = summary_cursor.execute(
+                summary_query, [*month_parameters, *supplier_parameters]
+            ).fetchall()
+            rows = []
+            if view != "summary":
+                detail_cursor = self._con.cursor()
+                rows = detail_cursor.execute(
+                    details_query,
+                    [*month_parameters, *supplier_parameters, offset, offset + limit],
+                ).fetchall()
+        except Exception as exc:
+            logger.warning(
+                "purchase_period_query_failed tenant=%s error_type=%s",
+                self.tenant,
+                type(exc).__name__,
+            )
+            return {
+                "status": "unavailable",
+                "respuesta_fallback": (
+                    "No pude consultar las compras del período. La fuente no respondió; "
+                    "no voy a reemplazarla por compras recientes ni pedirte proveedores al azar."
+                ),
+                "compras": [],
+                "sources": [{
+                    "source_id": "duckdb-purchases", "domain": "purchases", "kind": "duckdb",
+                    "citation": "DuckDB purchases snapshot", "cutoff_at": None, "status": "failed",
+                }],
+                "freshness": [{"domain": "purchases", "cutoff_at": None, "status": "unknown"}],
+            }
+        finally:
+            for cursor in (summary_cursor, detail_cursor):
+                if cursor is not None and hasattr(cursor, "close"):
+                    cursor.close()
+
+        summaries = {
+            str(row[0]): {"invoice_count": int(row[1] or 0), "total_compras": float(row[2] or 0)}
+            for row in summary_rows
+        }
+        purchases = [
+            {
+                "business_date": str(row[0]), "fecha": str(row[0]), "cod_clase": str(row[1]),
+                "num_documento": str(row[2]),
+                "nit_proveedor": str(row[3]).strip() if row[3] is not None else None,
+                "proveedor": str(row[4]).strip() if row[4] is not None else None,
+                "total_factura": float(row[5] or 0), "estado_documento": str(row[6]).strip(),
+                "month": str(row[7]), "rank": int(row[8]),
+            }
+            for row in rows
+        ]
+        grouped: dict[str, list[dict]] = {}
+        for purchase in purchases:
+            grouped.setdefault(purchase["month"], []).append(purchase)
+        cutoff_date = date.fromisoformat(cutoff.isoformat()) if cutoff else None
+        metadata = self._purchase_metadata(cutoff_date)
+        period_availability: dict[str, dict[str, str | None]] = {}
+        for period in normalized:
+            start = date.fromisoformat(period["date_from"])
+            end = date.fromisoformat(period["date_to"])
+            if cutoff_date is None or start > cutoff_date:
+                period_availability[period["month"]] = {
+                    "status": "unavailable", "available_through": None,
+                }
+            elif end > cutoff_date:
+                period_availability[period["month"]] = {
+                    "status": "partial", "available_through": cutoff_date.isoformat(),
+                }
+            else:
+                period_availability[period["month"]] = {
+                    "status": "complete", "available_through": end.isoformat(),
+                }
+        fallback = [
+            "Resumen de compras por mes:"
+            if view == "summary"
+            else f"Top {limit} facturas por monto:"
+            if view == "top"
+            else "Compras registradas en el período:"
+        ]
+        if limit_capped:
+            fallback.append(
+                "La solicitud superaba el límite permitido; muestro hasta 20 compras por mes."
+            )
+        for period in normalized:
+            summary = summaries.get(period["month"], {"invoice_count": 0, "total_compras": 0})
+            availability = period_availability[period["month"]]
+            if view == "summary":
+                if availability["status"] == "unavailable":
+                    fallback.append(
+                        f"{period['label'].capitalize()}: no puedo verificar este período; "
+                        "empieza después del último corte válido de compras "
+                        f"({cutoff_date.isoformat() if cutoff_date else 'sin corte disponible'})."
+                    )
+                    continue
+                total = f"${int(round(summary['total_compras'])):,}".replace(",", ".")
+                summary_line = (
+                    f"{period['label'].capitalize()}: "
+                    + (f"sí, {summary['invoice_count']} facturas por {total} COP."
+                       if summary["invoice_count"] else "no encontré compras válidas.")
+                )
+                if availability["status"] == "partial":
+                    summary_line += (
+                        f" Datos disponibles hasta {availability['available_through']}; "
+                        "los días posteriores no están verificados."
+                    )
+                fallback.append(summary_line)
+                continue
+            fallback.extend(["", f"### {period['label'].capitalize()}"])
+            if availability["status"] == "unavailable":
+                fallback.append(
+                    "No puedo verificar este período: empieza después del último corte válido "
+                    f"de compras ({cutoff_date.isoformat() if cutoff_date else 'sin corte disponible'})."
+                )
+                continue
+            if availability["status"] == "partial":
+                fallback.append(
+                    f"Datos disponibles hasta {availability['available_through']}; "
+                    "el resto del período no está verificado."
+                )
+            month_purchases = grouped.get(period["month"], [])
+            if not month_purchases:
+                if availability["status"] == "partial":
+                    fallback.append(
+                        f"No encontré compras válidas hasta {availability['available_through']}; "
+                        "los días posteriores no están verificados."
+                    )
+                else:
+                    fallback.append(
+                        "No encontré compras válidas para este mes."
+                        if not summary["invoice_count"]
+                        else f"No hay más facturas en esta página; el período tiene {summary['invoice_count']}."
+                    )
+                continue
+            if view == "list":
+                fallback.append(
+                    f"Mostrando {len(month_purchases)} de {summary['invoice_count']} facturas (página {page})."
+                )
+            for purchase in month_purchases:
+                total = f"${int(round(purchase['total_factura'])):,}".replace(",", ".")
+                supplier = purchase["proveedor"] or "Proveedor sin nombre"
+                if purchase["nit_proveedor"]:
+                    supplier += f" (NIT: {purchase['nit_proveedor']})"
+                prefix = f"{purchase['rank']}. " if view == "top" else "- "
+                fallback.append(
+                    f"{prefix}Documento: {purchase['num_documento']} · Clase: {purchase['cod_clase']} · "
+                    f"Fecha: {purchase['business_date']} · Proveedor: {supplier} · Total: {total} COP"
+                )
+        if cutoff_date:
+            fallback.extend(["", f"Corte de compras: {cutoff_date.isoformat()}."])
+        total_count = sum(summary["invoice_count"] for summary in summaries.values())
+        has_incomplete_period = any(
+            availability["status"] != "complete"
+            for availability in period_availability.values()
+        )
+        return {
+            "status": (
+                "unavailable" if cutoff_date is None
+                else "partial" if has_incomplete_period
+                else "complete" if total_count else "empty"
+            ),
+            "view": view,
+            "period_results": [
+                {
+                    **period,
+                    **period_availability[period["month"]],
+                    **summaries.get(period["month"], {"invoice_count": 0, "total_compras": 0}),
+                    "compras": grouped.get(period["month"], []) if view != "summary" else [],
+                    "paginacion": {
+                        "page": page, "page_size": limit,
+                        "total_documentos": summaries.get(period["month"], {"invoice_count": 0})["invoice_count"],
+                        "has_more": page * limit < summaries.get(period["month"], {"invoice_count": 0})["invoice_count"],
+                    },
+                }
+                for period in normalized
+            ],
+            "compras": purchases if view != "summary" else [],
+            "count": total_count,
+            "supplier_query": supplier_query,
+            "limit_capped": limit_capped,
+            "page": page,
+            "page_size": limit,
+            "respuesta_fallback": "\n".join(fallback),
+            **metadata,
+        }
 
     def buscar_compras_por_proveedor(self, query: str, limit: int = 10) -> dict:
         """Busca compras por nombre de proveedor (búsqueda parcial, case-insensitive, multi-palabra)."""
@@ -1890,6 +2923,64 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "get_top_productos_periodo",
+            "description": (
+                "Rankea productos por ventas en rangos de fecha exactos o meses calendario. "
+                "'Más vendido' significa unidades, salvo pedido explícito por valor facturado. "
+                "Al rankear unidades, compara por separado cada medida del catálogo y conserva "
+                "los SKU empatados; no compara, por ejemplo, gramos con unidades. Devuelve cada "
+                "período por separado, filtra ventas anuladas y nunca reemplaza un día sin ventas "
+                "por el último día disponible."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "periods": {
+                        "type": "array", "minItems": 1, "maxItems": 6,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "date_from": {"type": "string", "description": "Inicio inclusivo YYYY-MM-DD."},
+                                "date_to": {"type": "string", "description": "Fin inclusivo YYYY-MM-DD."},
+                                "label": {"type": "string", "description": "Etiqueta de período."},
+                            },
+                            "required": ["date_from", "date_to"],
+                        },
+                    },
+                    "metric": {"type": "string", "enum": ["units", "revenue"], "default": "units"},
+                    "limit": {
+                        "type": "integer", "default": 1, "minimum": 1, "maximum": 20,
+                        "description": "Posiciones a devolver por período y por medida de catálogo.",
+                    },
+                },
+                "required": ["periods"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_productos_para_reponer",
+            "description": (
+                "Shortlist de productos con stock cero/negativo en el último snapshot y ventas "
+                "válidas positivas en la ventana solicitada. La cantidad es una referencia de "
+                "cobertura, no una orden, y no conoce compras abiertas ni lead time. Requiere "
+                "permisos de compras, ventas e inventario."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_cover_days": {"type": "integer", "default": 45, "minimum": 1, "maximum": 365},
+                    "sales_window_days": {"type": "integer", "default": 180, "minimum": 7, "maximum": 365},
+                    "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 100},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_dormidos",
             "description": "Productos sin venta hace al menos N días.",
             "parameters": {
@@ -2000,6 +3091,72 @@ TOOL_DEFINITIONS = [
                     }
                 },
                 "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_top_compras_periodos",
+            "description": (
+                "Rankea compras por total de factura dentro de cada mes solicitado; excluye "
+                "anuladas e identidades duplicadas. Acepta filtro opcional por nombre parcial o NIT "
+                "del proveedor. No uses get_compras_recientes como sustituto de un período."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "periods": {
+                        "type": "array", "minItems": 1, "maxItems": 6,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "date_from": {"type": "string"},
+                                "date_to": {"type": "string"},
+                            },
+                            "required": ["date_from", "date_to"],
+                        },
+                    },
+                    "limit": {"type": "integer", "default": 3, "minimum": 1, "maximum": 20},
+                    "limit_capped": {
+                        "type": "boolean", "default": False,
+                        "description": "True only when the parsed user request exceeded the 20-invoice cap.",
+                    },
+                    "supplier_query": {"type": "string", "description": "Nombre parcial o NIT del proveedor."},
+                },
+                "required": ["periods"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_compras_periodo",
+            "description": (
+                "Resume si hubo compras o lista facturas con fecha, proveedor/NIT, número, clase y "
+                "total dentro de los meses seleccionados. Soporta paginación y filtro de proveedor/NIT; "
+                "úsala para 'compras realizadas en agosto' y el seguimiento 'detalla esas compras'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "periods": {
+                        "type": "array", "minItems": 1, "maxItems": 2,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "date_from": {"type": "string"},
+                                "date_to": {"type": "string"},
+                            },
+                            "required": ["date_from", "date_to"],
+                        },
+                    },
+                    "view": {"type": "string", "enum": ["list", "summary"], "default": "list"},
+                    "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 50},
+                    "page": {"type": "integer", "default": 1, "minimum": 1, "maximum": 1000},
+                    "supplier_query": {"type": "string", "description": "Nombre parcial o NIT del proveedor."},
+                },
+                "required": ["periods"],
             },
         },
     },

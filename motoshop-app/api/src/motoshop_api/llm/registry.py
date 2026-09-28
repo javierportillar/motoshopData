@@ -51,6 +51,8 @@ _MAX_PURCHASE_HISTORY_CANDIDATES = 50
 PURCHASE_REFERENCE_TOOLS = frozenset({
     "get_ultima_compra",
     "get_compras_recientes",
+    "get_top_compras_periodos",
+    "get_compras_periodo",
     "buscar_compras_por_proveedor",
     "get_detalle_compra",
 })

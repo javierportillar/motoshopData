@@ -381,6 +381,79 @@ def test_purchase_and_supplier_refs_resolve_in_bounded_batches(
     assert calls[1][1] == ["supplier one", "supplier two"]
 
 
+def test_monthly_purchase_ranking_and_list_keep_provider_filter_and_exact_invoice_identity(
+    tenant_databases: TenantDatabases,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from motoshop_api.llm import tools as tools_module
+    from motoshop_api.llm.tools import ToolExecutor
+
+    path = tenant_databases.paths["motoshop"]
+    with duckdb.connect(str(path)) as connection:
+        connection.executemany(
+            "INSERT INTO silver_fact_compras VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                ("2026-08-10", "150", "FC", "900111111-1", "Shared Supplier", 200, "B"),
+                ("2026-08-11", "151", "FC", "900444444-4", "MILIS MARKET", 800, "B"),
+                ("2026-08-20", "152", "FC", "900555555-5", "MILIS WHOLESALE", 400, "B"),
+                ("2026-08-21", "153", "FC", "900555555-5", "MILIS WHOLESALE", 9000, "A"),
+                ("2026-08-22", "154", "FC", "900555555-5", "MILIS WHOLESALE", 700, "B"),
+                ("2026-08-22", "154", "FC", "900555555-5", "MILIS WHOLESALE", 700, "B"),
+            ],
+        )
+    connection = duckdb.connect(str(path), read_only=True)
+    monkeypatch.setattr(
+        tools_module, "get_shared_connection", lambda _path: _LeasedConnection(connection)
+    )
+    executor = ToolExecutor(duckdb_path=str(path), tenant="motoshop")
+    period = [{"date_from": "2026-08-01", "date_to": "2026-08-31"}]
+
+    ranking = executor.get_top_compras_periodos(
+        periods=period, limit=3, supplier_query="MILIS"
+    )
+    literal_wildcard = executor.get_top_compras_periodos(
+        periods=period, limit=3, supplier_query="%"
+    )
+    invoice_list = executor.get_compras_periodo(
+        periods=period, view="list", limit=2, page=1
+    )
+    next_page = executor.get_compras_periodo(
+        periods=period, view="list", limit=2, page=2
+    )
+    summary = executor.get_compras_periodo(periods=period, view="summary")
+
+    assert [row["num_documento"] for row in ranking["compras"]] == ["151", "152"]
+    assert literal_wildcard["compras"] == []
+    assert [row["num_documento"] for row in invoice_list["compras"]] == ["152", "151"]
+    assert [row["num_documento"] for row in next_page["compras"]] == ["150"]
+    assert summary["period_results"][0]["invoice_count"] == 3
+    assert summary["period_results"][0]["total_compras"] == 1400
+    assert summary["compras"] == []
+    connection.close()
+
+
+def test_purchase_period_tool_failure_never_returns_recent_invoices_as_a_substitute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from motoshop_api.llm import tools as tools_module
+    from motoshop_api.llm.tools import ToolExecutor
+
+    connection = duckdb.connect(":memory:")
+    monkeypatch.setattr(tools_module, "get_shared_connection", lambda _path: connection)
+    executor = ToolExecutor(duckdb_path=":memory:", tenant="motoshop")
+
+    result = executor.get_compras_periodo(
+        periods=[{"date_from": "2026-08-01", "date_to": "2026-08-31"}],
+        view="list",
+    )
+
+    assert result["status"] == "unavailable"
+    assert result["compras"] == []
+    assert "no voy a reemplazarla por compras recientes" in result["respuesta_fallback"].casefold()
+    assert result["sources"][0]["status"] == "failed"
+    connection.close()
+
+
 @pytest.mark.parametrize(
     "document_label",
     ["Factura 77", "Documento: 77", "Comprobante Nro. 77", "Doc. 77"],

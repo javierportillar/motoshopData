@@ -29,6 +29,12 @@ from motoshop_api.llm.registry import (
     supplier_ref_mentioned,
     visible_markdown_text,
 )
+from motoshop_api.llm.inventory_queries import parse_replenishment_request
+from motoshop_api.llm.purchase_queries import (
+    parse_purchase_period_request,
+    parse_purchase_ranking_request,
+)
+from motoshop_api.llm.sales_queries import parse_sales_product_ranking_request
 from motoshop_api.tenants import get_tenant_config
 
 logger = logging.getLogger(__name__)
@@ -53,7 +59,7 @@ _SPANISH_MONTHS = {
 }
 
 
-def _purchase_audit_period(message: str, latest_date: str | None) -> dict | None:
+def _purchase_audit_period(message: str, purchase_cutoff: str | None) -> dict | None:
     """Recognize explicit Spanish purchase-audit requests that can run without an LLM."""
     normalized = unicodedata.normalize("NFKD", message).encode("ascii", "ignore").decode("ascii").lower()
     if "compr" not in normalized or not any(
@@ -77,10 +83,12 @@ def _purchase_audit_period(message: str, latest_date: str | None) -> dict | None
     if explicit_years:
         year = next(iter(explicit_years))
     else:
+        if purchase_cutoff is None:
+            return None
         try:
-            reference = date.fromisoformat(str(latest_date)[:10]) if latest_date else date.today()
+            reference = date.fromisoformat(str(purchase_cutoff)[:10])
         except ValueError:
-            reference = date.today()
+            return None
         # Do not silently analyze a not-yet-arrived month as if it were historical.
         if max(months) > reference.month:
             return None
@@ -163,7 +171,13 @@ def _parse_planned_purchase_lines(message: str) -> list[dict] | None:
     return parsed or None
 
 
-def _analysis_module_request(message: str, latest_date: str | None = None) -> dict | None:
+def _analysis_module_request(
+    message: str,
+    latest_date: str | None = None,
+    *,
+    purchase_cutoff: str | None = None,
+    sales_cutoff: str | None = None,
+) -> dict | None:
     """Recognize dashboard-analysis questions that can use a deterministic fallback."""
     normalized = unicodedata.normalize("NFKD", message).encode("ascii", "ignore").decode("ascii").lower()
     action = any(marker in normalized for marker in (
@@ -203,10 +217,25 @@ def _analysis_module_request(message: str, latest_date: str | None = None) -> di
         if month_numbers and len(years) <= 1:
             year = next(iter(years)) if years else None
             if year is None:
+                relevant_cutoffs = []
+                if full_module or "proveedores" in requested_sections:
+                    if purchase_cutoff is None:
+                        return None
+                    relevant_cutoffs.append(purchase_cutoff)
+                sales_sections = {"balance", "productos", "horas_pico", "proyeccion"}
+                if full_module or sales_sections.intersection(requested_sections):
+                    if sales_cutoff is None:
+                        return None
+                    relevant_cutoffs.append(sales_cutoff)
+                if not relevant_cutoffs:
+                    return None
                 try:
-                    reference = date.fromisoformat(str(latest_date)[:10]) if latest_date else date.today()
+                    references = [date.fromisoformat(value[:10]) for value in relevant_cutoffs]
                 except ValueError:
-                    reference = date.today()
+                    return None
+                if len({reference.year for reference in references}) > 1:
+                    return None
+                reference = min(references)
                 if max(month_numbers) > reference.month:
                     return None
                 year = reference.year
@@ -219,18 +248,27 @@ def _analysis_module_request(message: str, latest_date: str | None = None) -> di
     return args
 
 
-def build_qa_system(tenant_id: str, latest_date: str | None = None) -> str:
+def build_qa_system(
+    tenant_id: str,
+    latest_date: str | None = None,
+    *,
+    purchase_cutoff: str | None = None,
+    sales_cutoff: str | None = None,
+) -> str:
     config = get_tenant_config(tenant_id)
     if config is None:
         raise ValueError(f"Tenant '{tenant_id}' no configurado")
     agent = config.agent
     tools = ", ".join(agent.enabled_tools) if agent.enabled_tools else "las tools disponibles"
     freshness_rule = (
-        f"- La fecha de corte de datos más reciente en la base de datos es {latest_date}. "
-        f"Tomá esa fecha como referencia cuando el usuario pregunte por 'hoy', 'este mes' o datos recientes, "
-        f"y mencioná siempre la fecha de corte en tu respuesta."
+        f"- La fecha máxima general en la base de datos es {latest_date}; no la uses como corte "
+        "de un dominio específico. Consultá y mencioná el corte de la fuente relevante."
         if latest_date
         else "- Si una respuesta depende de actualidad, consultá get_data_freshness y mencioná la fecha disponible."
+    )
+    domain_cutoffs = (
+        f"Cortes válidos por dominio: compras={purchase_cutoff or 'no disponible'}, "
+        f"ventas={sales_cutoff or 'no disponible'}."
     )
     return f"""Sos {agent.display_name}, asistente de {config.nombre}. {agent.business_description}
 
@@ -251,11 +289,15 @@ Reglas de selección de tools (IMPORTANTE):
 - En Balance, distingue utilidad bruta de neta. Si los gastos tienen estado `unavailable`, di que la utilidad neta no se puede confirmar; no traduzcas la falta de datos a $0. Si está `available_empty`, indica que no hay gastos registrados en el rango.
 - En Productos y Proveedores, explica si un dato compara revenue con valor comprado. Ese ratio monetario no equivale a rotación física ni prueba que la compra del período haya causado las ventas.
 - En Proyección, comunica la confianza calibrada y el resultado de backtest; la proyección es de revenue global, no de unidades por SKU.
-- Si el usuario menciona un PROVEEDOR específico (nombre o parte del nombre), usá SIEMPRE buscar_compras_por_proveedor.
+- Para rankings de producto en meses/fechas exactas, usá `get_top_productos_periodo`; "más vendido" significa unidades salvo pedido explícito por valor. Conservá cada período por separado y los empates. Al rankear unidades, compará productos solo dentro de la misma medida del catálogo; no compares gramos con unidades. Si falta la medida, ese SKU se muestra por separado. Si el período supera el corte de ventas, decí hasta qué fecha hay datos y no afirmes que el resto no tuvo ventas.
+- Para "hoy" o "ayer", anclá el día al corte Silver de ventas. Si ese día no tiene ventas, no uses el último día con datos.
+- Si pide productos sin stock para la próxima compra, usá `get_productos_para_reponer` y comunica el corte del snapshot, la ventana de ventas y que la cantidad es sólo una referencia.
+- Si pregunta por historial de un proveedor sin período, usá `buscar_compras_por_proveedor`.
+- Si pide ranking/listado de compras de un período y menciona proveedor o NIT, conserva ese filtro en `get_top_compras_periodos`/`get_compras_periodo`.
 - Si el usuario pide el DETALLE de una compra específica (productos, cantidades, valores), usá get_detalle_compra con el número de documento.
 - Si el usuario pide el enlace de una compra mencionada antes, reutilizá su fecha, clase y número verificados en el historial; en la respuesta nombrá explícitamente "Factura" o "Documento" y el número para adjuntar el enlace autorizado. Nunca inventes una ruta.
 - Si pregunta si las compras de un mes o período fueron necesarias, o pide comparar compras con rotación, ventas acumuladas y stock, usá `analizar_compras_periodo` una sola vez para todo el rango. No hagas una llamada por factura/producto ni encadenes búsquedas de compras recientes.
-- Si nombra meses sin año, inferí el año más reciente disponible en los datos, usa fechas inclusivas y di explícitamente qué año/corte estás analizando. Si más de un año es plausible, preguntá antes de concluir.
+- Si nombra meses sin año, inferí el año solo con el corte del dominio consultado (compras: `silver_fact_compras`; ventas: `silver_fact_ventas`). Si falta ese corte, preguntá el año; nunca uses otro dominio ni la fecha del servidor para inferirlo.
 - Explicá cuántos productos se compraron sin ventas previas en 180 días, cuántos ya tenían stock estimado suficiente, cuáles se movieron después y cuáles conviene revisar. Separa evidencias de conclusiones.
 - El stock histórico devuelto por `analizar_compras_periodo` es reconstruido desde snapshot actual y compras/ventas registradas, no un snapshot contable exacto. Declará esta limitación; no afirmes certeza absoluta de que el comprador se equivocó.
 - Respeta la unidad de medida de cada SKU (unidad, gramo, libra, etc.); no sumes cantidades de presentaciones distintas como si fueran una sola medida.
@@ -283,6 +325,7 @@ Reglas:
   tools en una sola respuesta: primero obtené los datos, después analizalos y respondé
   con tu interpretación. El usuario quiere QUE ANALICES los datos, no solo que los repitas.
 {freshness_rule}
+{domain_cutoffs}
 - La tool generate_report es SOLO para cuando el usuario pida EXPLÍCITAMENTE un archivo descargable (palabras como "excel", "pdf", "word", "planilla", "exportame", "descargame", "mandame el archivo"). Para preguntas sobre datos ("cuáles son", "qué productos", "cuántos", "cuánto hay de stock", "cuál fue la última compra") respondé SIEMPRE en el chat usando las tools de consulta correspondientes, con una lista o resumen legible. NUNCA generes un archivo si el usuario no lo pidió: si el pedido es ambiguo (ej. "dame un reporte de stock"), respondé con los datos en el chat y ofrecé al final exportarlo a Excel/PDF/Word.
 - En los reportes de ventas, comunicá SIEMPRE el período analizado que devuelve generate_report. Si el usuario pide un rango de fechas ("desde julio de 2024", "todo el histórico"), pasalo con date_from/date_to (ISO YYYY-MM-DD) o period='all'. Nunca digas "histórico" o "hasta la fecha" si el reporte no cubre eso.
 - Tono natural en {agent.locale}, directo y conciso. Para auditorías/compras planeadas, usa secciones y tablas breves cuando ayuden a justificar cada recomendación; no sacrifiques evidencia para cumplir un límite fijo de oraciones.
@@ -474,6 +517,8 @@ def _entity_references(
 
 _PRODUCT_REFERENCE_TOOLS = frozenset({
     "get_top_skus",
+    "get_top_productos_periodo",
+    "get_productos_para_reponer",
     "get_dormidos",
     "get_alerts_by_urgency",
     "get_producto_detalle",
@@ -845,16 +890,93 @@ class QAChat:
         session = self.cm.get_or_create(key)
         freshness_fn = getattr(self.executor, "get_data_freshness", None)
         latest_date = None
+        purchase_cutoff = None
+        sales_cutoff = None
         if callable(freshness_fn):
             with suppress(Exception):
-                latest_date = freshness_fn().get("fecha_maxima")
+                freshness_data = freshness_fn()
+                if isinstance(freshness_data, dict):
+                    latest_date = freshness_data.get("fecha_maxima")
+                    cutoffs = freshness_data.get("por_tabla")
+                    if isinstance(cutoffs, dict):
+                        purchase_cutoff = cutoffs.get("silver_fact_compras")
+                        sales_cutoff = cutoffs.get("silver_fact_ventas")
         enabled_tool_names = {
             item.get("function", {}).get("name") for item in self.tool_defs
         }
         direct_tool_name = None
         direct_tool_args = None
-        purchase_period = _purchase_audit_period(message, latest_date)
-        if purchase_period and "analizar_compras_periodo" in enabled_tool_names:
+        purchase_ranking = parse_purchase_ranking_request(
+            message, purchase_cutoff=purchase_cutoff
+        )
+        purchase_listing = None
+        if purchase_ranking is None:
+            purchase_listing = parse_purchase_period_request(
+                message, purchase_cutoff=purchase_cutoff
+            )
+        sales_ranking = parse_sales_product_ranking_request(
+            message, sales_cutoff=sales_cutoff
+        )
+        replenishment = parse_replenishment_request(message)
+        previous_user_message = next(
+            (row for row in reversed(history) if row.get("role") == "user"),
+            None,
+        )
+        if previous_user_message is not None:
+            previous_text = str(previous_user_message.get("content") or "")
+            if purchase_ranking is None and purchase_listing is None:
+                previous_rank = parse_purchase_ranking_request(
+                    previous_text, purchase_cutoff=purchase_cutoff
+                )
+                if previous_rank and previous_rank.periods:
+                    purchase_ranking = parse_purchase_ranking_request(
+                        message,
+                        purchase_cutoff=purchase_cutoff,
+                        inherited_limit=previous_rank.limit,
+                        inherited_supplier_query=previous_rank.supplier_query,
+                        inherited_limit_capped=previous_rank.limit_capped,
+                    )
+                    if purchase_ranking and purchase_ranking.periods:
+                        purchase_listing = parse_purchase_period_request(
+                            message,
+                            purchase_cutoff=purchase_cutoff,
+                            inherited_periods=purchase_ranking.periods,
+                            inherited_supplier_query=purchase_ranking.supplier_query,
+                        )
+                if purchase_ranking is None:
+                    previous_listing = parse_purchase_period_request(
+                        previous_text, purchase_cutoff=purchase_cutoff
+                    )
+                    if previous_listing and previous_listing.periods:
+                        purchase_listing = parse_purchase_period_request(
+                            message,
+                            purchase_cutoff=purchase_cutoff,
+                            inherited_periods=previous_listing.periods,
+                            inherited_supplier_query=previous_listing.supplier_query,
+                        )
+            if purchase_ranking is None and purchase_listing is None and sales_ranking is None:
+                previous_sales = parse_sales_product_ranking_request(
+                    previous_text, sales_cutoff=sales_cutoff
+                )
+                if previous_sales and previous_sales.periods:
+                    sales_ranking = parse_sales_product_ranking_request(
+                        message,
+                        sales_cutoff=sales_cutoff,
+                        inherited_limit=previous_sales.limit,
+                        inherited_metric=previous_sales.metric,
+                    )
+
+        purchase_period = _purchase_audit_period(message, purchase_cutoff)
+        if purchase_ranking and "get_top_compras_periodos" in enabled_tool_names:
+            direct_tool_name = "get_top_compras_periodos"
+            direct_tool_args = purchase_ranking.tool_arguments()
+        elif sales_ranking and "get_top_productos_periodo" in enabled_tool_names:
+            direct_tool_name = "get_top_productos_periodo"
+            direct_tool_args = sales_ranking.tool_arguments()
+        elif purchase_listing and "get_compras_periodo" in enabled_tool_names:
+            direct_tool_name = "get_compras_periodo"
+            direct_tool_args = purchase_listing.tool_arguments()
+        elif purchase_period and "analizar_compras_periodo" in enabled_tool_names:
             direct_tool_name = "analizar_compras_periodo"
             direct_tool_args = purchase_period
         else:
@@ -862,8 +984,16 @@ class QAChat:
             if planned_items and "evaluar_compra_planeada" in enabled_tool_names:
                 direct_tool_name = "evaluar_compra_planeada"
                 direct_tool_args = {"items": planned_items}
+            elif replenishment and "get_productos_para_reponer" in enabled_tool_names:
+                direct_tool_name = "get_productos_para_reponer"
+                direct_tool_args = replenishment.tool_arguments()
             else:
-                analysis_args = _analysis_module_request(message, latest_date)
+                analysis_args = _analysis_module_request(
+                    message,
+                    latest_date,
+                    purchase_cutoff=purchase_cutoff,
+                    sales_cutoff=sales_cutoff,
+                )
                 if analysis_args is not None and "get_analisis_modulo" in enabled_tool_names:
                     direct_tool_name = "get_analisis_modulo"
                     direct_tool_args = analysis_args
@@ -952,7 +1082,12 @@ class QAChat:
                 ).model_dump()
         messages = [{
             "role": "system",
-            "content": build_qa_system(self.tenant_id, latest_date=latest_date),
+            "content": build_qa_system(
+                self.tenant_id,
+                latest_date=latest_date,
+                purchase_cutoff=purchase_cutoff,
+                sales_cutoff=sales_cutoff,
+            ),
         }]
         messages.extend(
             {"role": row["role"], "content": row["content"]}

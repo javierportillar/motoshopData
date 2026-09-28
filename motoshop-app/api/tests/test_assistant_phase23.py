@@ -373,7 +373,10 @@ def test_purchase_audit_months_route_to_deterministic_tool_without_llm() -> None
         args = None
 
         def get_data_freshness(self):
-            return {"fecha_maxima": "2026-09-15"}
+            return {
+                "fecha_maxima": "2026-09-15",
+                "por_tabla": {"silver_fact_compras": "2026-09-15"},
+            }
 
         def run(self, name, args):
             assert name == "analizar_compras_periodo"
@@ -543,6 +546,26 @@ def test_analysis_question_with_one_explicit_date_uses_a_single_day_range() -> N
     }
 
 
+def test_supplier_analysis_uses_purchase_cutoff_not_global_latest_date() -> None:
+    from motoshop_api.llm.qa_chat import _analysis_module_request
+
+    assert _analysis_module_request(
+        "Analiza proveedores de agosto",
+        latest_date="2026-09-26",
+        sales_cutoff="2026-09-26",
+    ) is None
+    assert _analysis_module_request(
+        "Analiza proveedores de agosto",
+        latest_date="2026-09-26",
+        purchase_cutoff="2026-09-10",
+        sales_cutoff="2026-09-26",
+    ) == {
+        "date_from": "2026-08-01",
+        "date_to": "2026-08-31",
+        "sections": ["proveedores"],
+    }
+
+
 def test_deterministic_purchase_audit_links_only_products_mentioned_in_its_answer(monkeypatch) -> None:
     from motoshop_api.llm import qa_chat
     from motoshop_api.auth.tenant_dep import TenantContext
@@ -556,7 +579,10 @@ def test_deterministic_purchase_audit_links_only_products_mentioned_in_its_answe
 
     class _AuditExecutor:
         def get_data_freshness(self):
-            return {"fecha_maxima": "2026-09-26"}
+            return {
+                "fecha_maxima": "2026-09-26",
+                "por_tabla": {"silver_fact_compras": "2026-09-26"},
+            }
 
         def run(self, name, args):
             assert name == "analizar_compras_periodo"
@@ -757,6 +783,13 @@ def test_purchase_analysis_tools_require_purchase_sales_and_inventory_access() -
     assert assistant_tool_allowed(
         "evaluar_compra_planeada", {"purchases", "sales", "inventory"}
     )
+    assert assistant_tool_allowed("get_top_productos_periodo", {"sales"})
+    assert assistant_tool_allowed("get_top_compras_periodos", {"purchases"})
+    assert assistant_tool_allowed("get_compras_periodo", {"purchases"})
+    assert not assistant_tool_allowed("get_productos_para_reponer", {"purchases", "sales"})
+    assert assistant_tool_allowed(
+        "get_productos_para_reponer", {"purchases", "sales", "inventory"}
+    )
 
 
 def test_analysis_context_is_available_to_analysis_or_forecast_users_without_cross_tab_leakage() -> None:
@@ -783,10 +816,19 @@ def test_purchase_analysis_tools_are_public_tool_definitions() -> None:
     from motoshop_api.tenants import get_tenant_config
 
     defined = {item["function"]["name"] for item in TOOL_DEFINITIONS}
+    expected_custom_queries = {
+        "get_top_productos_periodo",
+        "get_top_compras_periodos",
+        "get_compras_periodo",
+        "get_productos_para_reponer",
+    }
+    assert expected_custom_queries <= PUBLIC_TOOL_NAMES
+    assert expected_custom_queries <= defined
     assert {"analizar_compras_periodo", "evaluar_compra_planeada"} <= PUBLIC_TOOL_NAMES
     assert {"analizar_compras_periodo", "evaluar_compra_planeada"} <= defined
     for tenant in ("motoshop", "masvital"):
         enabled = set(get_tenant_config(tenant).agent.enabled_tools)
+        assert expected_custom_queries <= enabled
         assert {"analizar_compras_periodo", "evaluar_compra_planeada"} <= enabled
 
 
