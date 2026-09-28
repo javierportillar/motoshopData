@@ -7,6 +7,7 @@ import unicodedata
 from dataclasses import dataclass
 
 SUPPLIER_HINT_PATTERNS = (
+    re.compile(r"\b(?:por|del?)\s+proveedor(?:a)?\s*[:=]?\s+(.+?)(?=[,;.!?]|$)"),
     re.compile(r"\bproveedor(?:a)?\s*[:=]?\s+(.+?)(?=[,;.!?]|$)"),
     re.compile(r"\b(?:siguiente|proxima)\s+compra\s+(?:a|al)\s+(.+?)(?=[,;.!?]|$)"),
     re.compile(r"\b(?:comprar|compra)\s+(?:a|al)\s+(.+?)(?=[,;.!?]|$)"),
@@ -36,7 +37,10 @@ def _supplier_query(text: str) -> str | None:
         match = pattern.search(text)
         if match:
             supplier = " ".join(match.group(1).split()).strip(" :-")
-            if supplier:
+            if supplier and supplier not in {
+                "que", "los", "las", "el", "la", "un", "una", "unos", "unas",
+                "por proveedor", "proveedor", "proveedores",
+            }:
                 return supplier[:100]
     return None
 
@@ -44,13 +48,13 @@ def _supplier_query(text: str) -> str | None:
 def parse_replenishment_request(message: str) -> ReplenishmentRequest | None:
     text = unicodedata.normalize("NFKD", message).encode("ascii", "ignore").decode("ascii").lower()
     no_stock = re.search(
-        r"\b(?:sin\s+stock|no\s+(?:tengo|hay|queda)\s+(?:nada\s+)?(?:(?:de|en)\s+)?stock|"
-        r"stock\s+(?:cero|agotado)|agotad[oa]s?)\b",
+        r"\b(?:sin\s+stock|no\s+(?:tengo|tenemos|hay|queda)\s+(?:nada\s+)?(?:(?:de|en)\s+)?stock|"
+        r"stock\s+(?:cero|0|agotado)|agotad[oa]s?|acabad[oa]s?)\b",
         text,
     )
     action = re.search(
         r"\b(?:reponer|reabastecer|enlistar|siguiente\s+compra|proxima\s+compra|"
-        r"deberia\s+comprar|debo\s+comprar|comprar)\b",
+        r"deberia\s+comprar|debo\s+comprar|comprar|cuales\s+(?:son|hay)?|que\s+productos|mostrar|mostrame|listar|dame)\b",
         text,
     )
     if no_stock is None or action is None:

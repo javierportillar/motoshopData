@@ -180,6 +180,11 @@ def _analysis_module_request(
 ) -> dict | None:
     """Recognize dashboard-analysis questions that can use a deterministic fallback."""
     normalized = unicodedata.normalize("NFKD", message).encode("ascii", "ignore").decode("ascii").lower()
+    if any(marker in normalized for marker in (
+        "sin stock", "no tenemos en stock", "no hay stock", "stock en 0", "stock cero",
+        "agotado", "agotada", "agotados", "agotadas", "acabado", "acabada", "acabados", "acabadas",
+    )):
+        return None
     action = any(marker in normalized for marker in (
         "explic", "analiz", "resum", "significa", "calcula", "interpreta", "compara", "por que", "como va",
         "conglomerado", "consolidado", "agrupado", "agrupacion", "ranking", "reporte", "detalle", "informe",

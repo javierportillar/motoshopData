@@ -262,3 +262,17 @@ def test_expiry_alerts_routes_deterministically() -> None:
     assert "Query executed: get_expiry_alerts" in response["text"]
 
 
+def test_out_of_stock_products_by_supplier_routes_to_replenishment() -> None:
+    executor = _RecordingExecutor()
+    chat = _chat(executor)
+
+    response = chat.chat("¿Cuáles son los productos que están acabados o que no tenemos en stock por proveedor?")
+
+    assert executor.calls == [
+        ("get_productos_para_reponer", {"target_cover_days": 45, "sales_window_days": 180, "limit": 50})
+    ]
+    assert response["status"] == "complete"
+    assert response["tools_used"] == ["get_productos_para_reponer"]
+
+
+
