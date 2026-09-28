@@ -10,6 +10,7 @@ Si el modelo primario falla, intenta el fallback con su propia API/key.
 from __future__ import annotations
 
 import logging
+import re
 import time
 
 import httpx
@@ -225,7 +226,12 @@ class LLMClient:
                 try:
                     choice = data["choices"][0]
                     msg = choice["message"]
-                    text = msg.get("content") or msg.get("reasoning_content") or ""
+                    raw_text = msg.get("content") or ""
+                    if "<think>" in raw_text:
+                        raw_text = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL)
+                        if "<think>" in raw_text:
+                            raw_text = re.sub(r"<think>.*", "", raw_text, flags=re.DOTALL)
+                    text = raw_text.strip()
                     tool_calls = msg.get("tool_calls", [])
                     usage = data.get("usage", {})
                     if not isinstance(msg, dict) or not isinstance(usage, dict):

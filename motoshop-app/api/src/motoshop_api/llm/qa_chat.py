@@ -399,6 +399,9 @@ Reglas:
 - La tool generate_report es SOLO para cuando el usuario pida EXPLÍCITAMENTE un archivo descargable (palabras como "excel", "pdf", "word", "planilla", "exportame", "descargame", "mandame el archivo"). Para preguntas sobre datos ("cuáles son", "qué productos", "cuántos", "cuánto hay de stock", "cuál fue la última compra") respondé SIEMPRE en el chat usando las tools de consulta correspondientes, con una lista o resumen legible. NUNCA generes un archivo si el usuario no lo pidió: si el pedido es ambiguo (ej. "dame un reporte de stock"), respondé con los datos en el chat y ofrecé al final exportarlo a Excel/PDF/Word.
 - En los reportes de ventas, comunicá SIEMPRE el período analizado que devuelve generate_report. Si el usuario pide un rango de fechas ("desde julio de 2024", "todo el histórico"), pasalo con date_from/date_to (ISO YYYY-MM-DD) o period='all'. Nunca digas "histórico" o "hasta la fecha" si el reporte no cubre eso.
 - Tono natural en {agent.locale}, directo y conciso. Para auditorías/compras planeadas, usa secciones y tablas breves cuando ayuden a justificar cada recomendación; no sacrifiques evidencia para cumplir un límite fijo de oraciones.
+- Idioma estricto: Respondé SIEMPRE en español de Colombia ({agent.locale}). NUNCA generes texto, explicaciones ni razonamientos en inglés bajo ninguna circunstancia.
+- Cero fugas de pensamiento (Chain-of-Thought): NUNCA expongas en la respuesta reflexiones internas, pensamientos preparatorios ni frases en inglés como "The user wants...", "Let me organize...", "I have...". Ve DIRECTO a la respuesta estructurada para el usuario.
+- Agrupación por proveedor: Si el usuario pide agrupar o segmentar productos sin stock o de reposición por cada proveedor ("de todos mis proveedores", "por cada proveedor", "los 5 más urgentes"), organizalos por proveedor en una tabla Markdown concisa o secciones claras (hasta 5 productos por proveedor) para mantener la respuesta completa, legible y sin cortes.
 - Los valores monetarios se expresan en {agent.currency}.
 """
 
@@ -1208,7 +1211,7 @@ class QAChat:
         deterministic_fallback_text = ""
         result: dict = {}
         provider_failure: LLMDependencyError | None = None
-        llm_kwargs: dict = {"max_tokens": 1000}
+        llm_kwargs: dict = {"max_tokens": 3000}
         with suppress(Exception):
             import inspect
             sig = inspect.signature(self.llm.complete_with_tools)

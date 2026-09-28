@@ -91,7 +91,7 @@ class Settings(BaseSettings):
     go_api_base: str = Field(default="https://opencode.ai/zen/go/v1")
     opencode_api_key: str = Field(default="")
     go_model: str = Field(default="deepseek-v4-flash")
-    go_max_tokens: int = Field(default=800)
+    go_max_tokens: int = Field(default=3000)
     zen_api_base: str = Field(default="https://router.huggingface.co/v1")
     opencode_api_key_fallback: str = Field(default="")
     zen_model: str = Field(default="Qwen/Qwen2.5-72B-Instruct")

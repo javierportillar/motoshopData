@@ -33,15 +33,25 @@ class ReplenishmentRequest:
 
 
 def _supplier_query(text: str) -> str | None:
+    generic_prefixes = ("todos", "toda", "cada", "mis ", "sus ", "los ", "las ", "el ", "la ")
+    generic_terms = {
+        "que", "los", "las", "el", "la", "un", "una", "unos", "unas", "mis", "sus",
+        "por proveedor", "proveedor", "proveedores", "a proveedor",
+        "todos", "todos mis proveedores", "todos los proveedores", "todos mis provedores",
+        "mis proveedores", "mis provedores", "cada proveedor", "cada provedor",
+    }
     for pattern in SUPPLIER_HINT_PATTERNS:
         match = pattern.search(text)
         if match:
             supplier = " ".join(match.group(1).split()).strip(" :-")
-            if supplier and supplier not in {
-                "que", "los", "las", "el", "la", "un", "una", "unos", "unas",
-                "por proveedor", "proveedor", "proveedores",
-            }:
-                return supplier[:100]
+            s_lower = supplier.lower()
+            if not supplier or s_lower in generic_terms:
+                continue
+            if s_lower.startswith(generic_prefixes) and any(
+                term in s_lower for term in ("proveedor", "provedor", "proveedores", "provedores")
+            ):
+                continue
+            return supplier[:100]
     return None
 
 
