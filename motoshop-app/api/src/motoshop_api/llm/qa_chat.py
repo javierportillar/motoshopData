@@ -254,6 +254,52 @@ def _analysis_module_request(
     return args
 
 
+def parse_cash_closure_request(message: str, sales_cutoff: str | None = None) -> dict | None:
+    """Recognize daily cash closure and payment method breakdown questions."""
+    normalized = unicodedata.normalize("NFKD", message).encode("ascii", "ignore").decode("ascii").lower()
+    triggers = (
+        "cierre de caja", "arqueo de caja", "arqueo", "cierre caja", "cerro caja", "cerro la caja", "cerrar caja",
+        "cuadre de caja", "formas de pago", "desglose de pago", "desglose por forma", "ventas en efectivo",
+        "ventas por tarjeta", "pago con tarjeta", "pagos del dia", "caja de hoy", "caja de ayer",
+    )
+    is_match = any(trigger in normalized for trigger in triggers) or (
+        "caja" in normalized
+        and any(action in normalized for action in ("cerro", "cierre", "cuadre", "arqueo", "cerrar"))
+    )
+    if not is_match:
+        return None
+    dates = re.findall(r"\b20\d{2}-\d{2}-\d{2}\b", normalized)
+    if dates:
+        return {"date": dates[0]}
+    if "ayer" in normalized and sales_cutoff:
+        try:
+            d = date.fromisoformat(sales_cutoff[:10]) - timedelta(days=1)
+            return {"date": d.isoformat()}
+        except Exception:
+            pass
+    if sales_cutoff:
+        return {"date": sales_cutoff[:10]}
+    return {}
+
+
+def parse_expiry_alerts_request(message: str) -> dict | None:
+    """Recognize lot expiry and expiration alert questions."""
+    normalized = unicodedata.normalize("NFKD", message).encode("ascii", "ignore").decode("ascii").lower()
+    triggers = (
+        "lotes por vencer", "lotes vencidos", "lote vencido", "medicamentos vencidos", "caducidad",
+        "vencimientos", "proximos a vencer", "semaforo de vencimiento", "semaforo de lotes", "alertas de vencimiento",
+    )
+    if not any(trigger in normalized for trigger in triggers):
+        return None
+    days_match = re.search(r"(\d+)\s*(?:dias|días)", normalized)
+    if days_match:
+        return {"days": int(days_match.group(1))}
+    months_match = re.search(r"(\d+)\s*mes(?:es)?", normalized)
+    if months_match:
+        return {"days": int(months_match.group(1)) * 30}
+    return {"days": 90}
+
+
 def build_qa_system(
     tenant_id: str,
     latest_date: str | None = None,
@@ -276,6 +322,16 @@ def build_qa_system(
         f"Cortes válidos por dominio: compras={purchase_cutoff or 'no disponible'}, "
         f"ventas={sales_cutoff or 'no disponible'}."
     )
+    expiry_cap = (
+        "- Vencimientos: alertas y semáforo de lotes de medicamentos próximos a caducar o vencidos (`get_expiry_alerts`).\n"
+        if "get_expiry_alerts" in agent.enabled_tools
+        else ""
+    )
+    expiry_rule = (
+        "- Para control de caducidad, lotes de medicamentos o alertas de vencimiento, usá `get_expiry_alerts`.\n"
+        if "get_expiry_alerts" in agent.enabled_tools
+        else ""
+    )
     return f"""Sos {agent.display_name}, asistente de {config.nombre}. {agent.business_description}
 
 Capacidades:
@@ -286,7 +342,8 @@ Capacidades:
 - Clientes: top clientes por facturación, cohortes de retención.
 - Forecast: resumen de demanda, alertas de drift por categoría.
 - Análisis: balance bruto/neto, gastos registrados, rankings/Pareto de productos, concentración de proveedores, horas pico y proyección mensual con backtest.
-- Reportes: generación de archivos Excel, PDF o Word cuando el usuario lo pida explícitamente.
+- Caja y Pagos: cierre y arqueo de caja del día (`get_cash_closure`), desglose por formas de pago (efectivo, tarjeta, transferencia) y facturas destacadas.
+{expiry_cap}- Reportes: generación de archivos Excel, PDF o Word cuando el usuario lo pida explícitamente.
 - Conocimiento: búsqueda semántica en documentación interna del negocio.
 
 Reglas de selección de tools (IMPORTANTE):
@@ -295,7 +352,8 @@ Reglas de selección de tools (IMPORTANTE):
 - En Balance, distingue utilidad bruta de neta. Si los gastos tienen estado `unavailable`, di que la utilidad neta no se puede confirmar; no traduzcas la falta de datos a $0. Si está `available_empty`, indica que no hay gastos registrados en el rango.
 - En Productos y Proveedores, explica si un dato compara revenue con valor comprado. Ese ratio monetario no equivale a rotación física ni prueba que la compra del período haya causado las ventas.
 - Para ventas por proveedor, conglomerado de ventas por proveedor o relación de cantidades y valor por proveedor, usá `get_analisis_modulo` con `sections=['proveedores']`. Mostrá una tabla Markdown con: Proveedor, NIT, Unidades vendidas, Ventas asociadas ($ COP), Margen ($ COP y %), Total compras ($ COP) y Ratio venta/compra. Escribí el nombre y el NIT de cada proveedor para que el sistema enlace su ficha.
-- En Proyección, comunica la confianza calibrada y el resultado de backtest; la proyección es de revenue global, no de unidades por SKU.
+- Para cierre o arqueo de caja, cuadre del día o desglose de ventas por forma de pago (efectivo, tarjeta, transferencia), usá `get_cash_closure`. Si no especifican fecha, usa el último corte de ventas.
+{expiry_rule}- En Proyección, comunica la confianza calibrada y el resultado de backtest; la proyección es de revenue global, no de unidades por SKU.
 - Para rankings de producto en meses/fechas exactas, usá `get_top_productos_periodo`; "más vendido" significa unidades salvo pedido explícito por valor. Conservá cada período por separado y los empates. Al rankear unidades, compará productos solo dentro de la misma medida del catálogo; no compares gramos con unidades. Si falta la medida, ese SKU se muestra por separado. Si el período supera el corte de ventas, decí hasta qué fecha hay datos y no afirmes que el resto no tuvo ventas.
 - Para "hoy" o "ayer", anclá el día al corte Silver de ventas. Si ese día no tiene ventas, no uses el último día con datos.
 - Si pide productos sin stock para la próxima compra, usá `get_productos_para_reponer` y comunica el corte del snapshot, la ventana de ventas y que la cantidad es sólo una referencia.
@@ -1013,15 +1071,24 @@ class QAChat:
                 direct_tool_name = "get_productos_para_reponer"
                 direct_tool_args = replenishment.tool_arguments()
             else:
-                analysis_args = _analysis_module_request(
-                    message,
-                    latest_date,
-                    purchase_cutoff=purchase_cutoff,
-                    sales_cutoff=sales_cutoff,
-                )
-                if analysis_args is not None and "get_analisis_modulo" in enabled_tool_names:
-                    direct_tool_name = "get_analisis_modulo"
-                    direct_tool_args = analysis_args
+                cash_closure_args = parse_cash_closure_request(message, sales_cutoff=sales_cutoff)
+                expiry_alerts_args = parse_expiry_alerts_request(message)
+                if cash_closure_args is not None and "get_cash_closure" in enabled_tool_names:
+                    direct_tool_name = "get_cash_closure"
+                    direct_tool_args = cash_closure_args
+                elif expiry_alerts_args is not None and "get_expiry_alerts" in enabled_tool_names:
+                    direct_tool_name = "get_expiry_alerts"
+                    direct_tool_args = expiry_alerts_args
+                else:
+                    analysis_args = _analysis_module_request(
+                        message,
+                        latest_date,
+                        purchase_cutoff=purchase_cutoff,
+                        sales_cutoff=sales_cutoff,
+                    )
+                    if analysis_args is not None and "get_analisis_modulo" in enabled_tool_names:
+                        direct_tool_name = "get_analisis_modulo"
+                        direct_tool_args = analysis_args
 
         if direct_tool_name and direct_tool_args is not None:
             direct_started = time.monotonic()

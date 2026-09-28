@@ -79,6 +79,8 @@ def test_chat_tool_catalog_is_scoped_to_tenant(monkeypatch):
         "get_inventario_por_bodega",
         "get_drift_alerts",
         "generate_report",
+        "get_cash_closure",
+        "get_expiry_alerts",
     }
 
     moto = qa_module.get_qa_chat("motoshop", "ana", repository=InMemoryConversationRepository())

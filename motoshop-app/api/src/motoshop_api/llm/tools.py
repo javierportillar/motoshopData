@@ -139,6 +139,8 @@ PUBLIC_TOOL_NAMES = {
     "evaluar_compra_planeada",
     "get_analisis_modulo",
     "generate_report",
+    "get_cash_closure",
+    "get_expiry_alerts",
 }
 
 
@@ -2249,6 +2251,170 @@ class ToolExecutor:
             result["respuesta_fallback"] += f"\n{result['period_note']}"
         return _json_safe(result)
 
+    def get_cash_closure(self, date: str = "") -> dict:
+        """Cierre de caja del día: ventas totales, número de facturas, desglose por forma de pago (efectivo, tarjetas, transferencias) y top 5 facturas."""
+        from datetime import UTC, datetime
+        from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
+
+        target_date = date.strip() if date else ""
+        if not target_date:
+            max_date = self._get_max_date()
+            if not max_date:
+                return {
+                    "status": "empty",
+                    "mensaje": "No hay datos de ventas disponibles para consultar el cierre de caja.",
+                    "sources": [],
+                    "freshness": [],
+                    "respuesta_fallback": "No hay datos de ventas disponibles para consultar el cierre de caja.",
+                }
+            target_date = max_date.isoformat()
+
+        repo = DuckDBMetricsRepo(db_path=self.duckdb_path, tenant=self.tenant)
+        data = repo.get_cash_closure(target_date)
+
+        formas = data.get("formas_pago", [])
+        total_dia = float(data.get("total_dia") or 0.0)
+        total_facturas = int(data.get("total_facturas") or 0)
+
+        lines = [
+            f"Cierre de caja de {self.tenant} para el {target_date}:",
+            f"- Total vendido: ${total_dia:,.0f} COP ({total_facturas} facturas).",
+        ]
+        if formas:
+            lines.append("")
+            lines.append("| Forma de pago | Facturas | Total ventas ($ COP) | % del día | Ticket promedio ($ COP) |")
+            lines.append("| :--- | ---: | ---: | ---: | ---: |")
+            for f in formas:
+                lines.append(
+                    f"| {f.get('nombre', '—')} | {f.get('num_facturas', 0)} | "
+                    f"${float(f.get('total_ventas') or 0):,.0f} | {f.get('porcentaje', 0)}% | "
+                    f"${float(f.get('ticket_promedio') or 0):,.0f} |"
+                )
+
+        top_grandes = data.get("top_facturas_grandes", [])
+        if top_grandes:
+            lines.append("")
+            lines.append(f"Top {len(top_grandes)} facturas destacadas del día:")
+            for item in top_grandes:
+                lines.append(
+                    f"- Factura {item.get('num_documento')}: ${float(item.get('total') or 0):,.0f} "
+                    f"({item.get('nombre_formapago', '—')}) a {item.get('cliente', '—')} "
+                    f"a las {item.get('hora', '—')}"
+                )
+
+        observed_at = datetime.now(UTC).isoformat()
+        sources = [{
+            "source_id": f"duckdb-cash-closure-{self.tenant}",
+            "domain": "sales",
+            "kind": "duckdb",
+            "citation": f"Silver ventas del día {target_date}",
+            "cutoff_at": target_date,
+            "status": "used",
+        }]
+        freshness = [{
+            "domain": "sales",
+            "cutoff_at": target_date,
+            "observed_at": observed_at,
+            "status": "current",
+        }]
+
+        return {
+            "status": "complete",
+            "date": target_date,
+            "total_dia": total_dia,
+            "total_facturas": total_facturas,
+            "formas_pago": formas,
+            "top_facturas_grandes": top_grandes,
+            "sources": sources,
+            "freshness": freshness,
+            "respuesta_fallback": "\n".join(lines),
+        }
+
+    def get_expiry_alerts(self, days: int = 90) -> dict:
+        """Semáforo y alertas de lotes de productos próximos a vencer o vencidos (MasVital)."""
+        from datetime import UTC, date, datetime, timedelta
+        from motoshop_api.expiry.repo import get_expiry_lots_repo
+
+        if self.tenant != "masvital":
+            return {
+                "status": "unavailable",
+                "mensaje": "El control de lotes y fechas de vencimiento está habilitado únicamente para MasVital.",
+                "sources": [],
+                "freshness": [],
+                "respuesta_fallback": "El control de lotes y fechas de vencimiento está disponible exclusivamente para MasVital.",
+            }
+
+        horizon_days = max(1, min(int(days or 90), 730))
+        repo = get_expiry_lots_repo()
+        today = date.today()
+        expires_before = today + timedelta(days=horizon_days)
+
+        try:
+            alerts = repo.list_alerts(tenant=self.tenant, expires_before=expires_before)
+        except Exception as exc:
+            logger.warning("expiry_alerts_failed tenant=%s error_type=%s", self.tenant, type(exc).__name__)
+            return {
+                "status": "unavailable",
+                "mensaje": "No se pudieron consultar los lotes de vencimiento.",
+                "sources": [],
+                "freshness": [],
+                "respuesta_fallback": "La fuente de lotes de vencimiento no está disponible temporalmente.",
+            }
+
+        items = []
+        for item in alerts:
+            exp_date = date.fromisoformat(item["expires_on"])
+            days_left = (exp_date - today).days
+            items.append({
+                **item,
+                "days_until_expiry": days_left,
+                "urgencia": "vencido" if days_left < 0 else ("critico" if days_left <= 30 else "alerta"),
+            })
+
+        lines = [f"Reporte de lotes y vencimientos de {self.tenant} (horizonte {horizon_days} días):"]
+        if not items:
+            lines.append("No se registran lotes por vencer en el período consultado.")
+        else:
+            vencidos = sum(1 for i in items if i["days_until_expiry"] < 0)
+            por_vencer = len(items) - vencidos
+            lines.append(f"- Total lotes en alerta: {len(items)} ({vencidos} ya vencidos, {por_vencer} por vencer).")
+            lines.append("")
+            lines.append("| SKU | Producto | Lote | Vencimiento | Días restantes | Estado | Stock |")
+            lines.append("| :--- | :--- | :--- | :--- | ---: | :--- | ---: |")
+            for i in items[:25]:
+                stock = i.get("units_remaining", i.get("initial_units", 0))
+                lines.append(
+                    f"| {i.get('product_sku', '—')} | {i.get('product_name', '—')} | "
+                    f"{i.get('lot_number', '—')} | {i.get('expires_on', '—')} | "
+                    f"{i.get('days_until_expiry', 0)} d | {i.get('urgencia', '—')} | {stock:,.0f} |"
+                )
+
+        observed_at = datetime.now(UTC).isoformat()
+        sources = [{
+            "source_id": f"supabase-expiry-{self.tenant}",
+            "domain": "expiry",
+            "kind": "supabase",
+            "citation": f"Lotes con vencimiento antes de {expires_before.isoformat()}",
+            "cutoff_at": today.isoformat(),
+            "status": "used",
+        }]
+        freshness = [{
+            "domain": "expiry",
+            "cutoff_at": today.isoformat(),
+            "observed_at": observed_at,
+            "status": "current",
+        }]
+
+        return {
+            "status": "complete",
+            "horizon_days": horizon_days,
+            "total_lotes": len(items),
+            "items": items,
+            "sources": sources,
+            "freshness": freshness,
+            "respuesta_fallback": "\n".join(lines),
+        }
+
     @staticmethod
     def _purchase_metadata(cutoff: date | None) -> dict:
         cutoff_at = cutoff.isoformat() if cutoff else None
@@ -3596,6 +3762,49 @@ TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["format"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_cash_closure",
+            "description": (
+                "Cierre de caja y arqueo del día: ventas totales, número de facturas, desglose por forma de pago "
+                "(efectivo, tarjetas débito/crédito, transferencias bancarias / QR con montos, porcentajes del día "
+                "y ticket promedio), y lista de las facturas más grandes del día. Usala cuando pregunten por el "
+                "cierre de caja, arqueo, cuadre del día, o cómo se pagaron las ventas."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {
+                        "type": "string",
+                        "description": "Fecha del cierre de caja en formato ISO YYYY-MM-DD. Si se omite, se usa el último corte de ventas.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_expiry_alerts",
+            "description": (
+                "Semáforo y alertas de lotes de productos por vencer o vencidos (habilitado para MasVital). "
+                "Lista los productos con SKU, nombre, número de lote, fecha de vencimiento, días restantes y "
+                "unidades disponibles en inventario. Usala cuando pregunten por vencimientos, medicamentos por vencer o lotes."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "Horizonte en días hacia adelante para detectar lotes por vencer (por defecto 90 días).",
+                    },
+                },
+                "required": [],
             },
         },
     },

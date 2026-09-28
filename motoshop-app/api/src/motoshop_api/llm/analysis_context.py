@@ -536,6 +536,13 @@ def _analysis_fallback(
                 lines.append("  Principales categorías: " + "; ".join(
                     f"{item['category']} ${item['amount']:,.0f}" for item in categories
                 ) + ".")
+            all_categories = expenses.get("by_category", [])
+            if all_categories:
+                lines.append("")
+                lines.append("| Categoría | Monto ($ COP) |")
+                lines.append("| :--- | ---: |")
+                for cat in all_categories:
+                    lines.append(f"| {cat.get('category', '—')} | ${float(cat.get('amount') or 0):,.0f} |")
     projection = sections.get("proyeccion")
     if projection and projection.get("current_month"):
         accuracy = projection.get("backtest_accuracy") or {}

@@ -57,6 +57,8 @@ ASSISTANT_TOOL_DOMAINS: dict[str, frozenset[str]] = {
     "get_drift_alerts": frozenset({"forecasts"}),
     "search_business_knowledge": frozenset({"analyses"}),
     "generate_report": frozenset({"sales", "inventory", "dormant_products", "alerts"}),
+    "get_cash_closure": frozenset({"sales"}),
+    "get_expiry_alerts": frozenset({"expiry"}),
 }
 
 ASSISTANT_TOOLS_REQUIRE_ALL_DOMAINS = frozenset({

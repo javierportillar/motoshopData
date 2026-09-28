@@ -59,6 +59,8 @@ def _chat(executor: _RecordingExecutor) -> QAChat:
         "get_top_productos_periodo",
         "get_productos_para_reponer",
         "get_analisis_modulo",
+        "get_cash_closure",
+        "get_expiry_alerts",
     }
     return QAChat(
         _NoProvider(),
@@ -230,4 +232,33 @@ def test_supplier_sales_conglomerate_routes_to_analisis_modulo() -> None:
     assert response["status"] == "complete"
     assert response["tools_used"] == ["get_analisis_modulo"]
     assert "Query executed: get_analisis_modulo" in response["text"]
+
+
+def test_cash_closure_routes_deterministically() -> None:
+    executor = _RecordingExecutor()
+    chat = _chat(executor)
+
+    response = chat.chat("¿Cómo cerró la caja hoy?")
+
+    assert executor.calls == [
+        ("get_cash_closure", {"date": "2026-09-26"})
+    ]
+    assert response["status"] == "complete"
+    assert response["tools_used"] == ["get_cash_closure"]
+    assert "Query executed: get_cash_closure" in response["text"]
+
+
+def test_expiry_alerts_routes_deterministically() -> None:
+    executor = _RecordingExecutor()
+    chat = _chat(executor)
+
+    response = chat.chat("¿Cuáles son los lotes por vencer?")
+
+    assert executor.calls == [
+        ("get_expiry_alerts", {"days": 90})
+    ]
+    assert response["status"] == "complete"
+    assert response["tools_used"] == ["get_expiry_alerts"]
+    assert "Query executed: get_expiry_alerts" in response["text"]
+
 
