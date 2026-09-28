@@ -663,17 +663,22 @@ class ToolExecutor:
         target_cover_days: int = 45,
         sales_window_days: int = 180,
         limit: int = 50,
+        supplier_query: str | None = None,
     ) -> dict:
         """Return zero-stock SKUs with valid recent demand and a bounded coverage guide."""
         target_cover_days = int(target_cover_days)
         sales_window_days = int(sales_window_days)
         limit = int(limit)
+        supplier_query = " ".join((supplier_query or "").split())
         if not 1 <= target_cover_days <= 365:
             raise ValueError("La cobertura objetivo debe estar entre 1 y 365 días.")
         if not 7 <= sales_window_days <= 365:
             raise ValueError("La ventana de ventas debe estar entre 7 y 365 días.")
         if not 1 <= limit <= 100:
             raise ValueError("El listado debe solicitar entre 1 y 100 productos.")
+        if len(supplier_query) > 100 or any(ord(char) < 32 for char in supplier_query):
+            raise ValueError("El filtro de proveedor debe tener hasta 100 caracteres válidos.")
+        normalized_supplier_query = supplier_query.casefold()
 
         cutoff_cursor = query_cursor = None
         try:
@@ -795,6 +800,11 @@ class ToolExecutor:
                        valor_vendido, ROUND(cantidad_referencia, 2), proveedor, nit_proveedor
                 FROM candidates
                 WHERE cantidad_referencia > 0
+                  AND (
+                      ? = ''
+                      OR contains(LOWER(COALESCE(proveedor, '')), LOWER(?))
+                      OR contains(LOWER(COALESCE(nit_proveedor, '')), LOWER(?))
+                  )
                 ORDER BY cantidad_referencia DESC, valor_vendido DESC, sku ASC
                 LIMIT ?
                 """,
@@ -805,6 +815,9 @@ class ToolExecutor:
                     purchase_cutoff or sales_cutoff,
                     sales_window_days,
                     target_cover_days,
+                    normalized_supplier_query,
+                    normalized_supplier_query,
+                    normalized_supplier_query,
                     limit,
                 ],
             ).fetchall()
@@ -866,10 +879,12 @@ class ToolExecutor:
             f"Candidatos a revisar por stock agotado · corte inventario {cutoffs['inventory']} · "
             f"corte ventas {cutoffs['sales']} · demanda de {sales_window_days} días."
         ]
+        if supplier_query:
+            fallback_lines[0] += f" Proveedor solicitado: {supplier_query}."
         if not products:
             fallback_lines.append(
                 "No encontré productos con existencia cero/negativa y ventas positivas "
-                "en esa ventana."
+                f"en esa ventana{f' para {supplier_query}' if supplier_query else ''}."
             )
         for product in products:
             supplier = product["proveedor"]
@@ -892,7 +907,7 @@ class ToolExecutor:
             "sales_cutoff": cutoffs["sales"], "inventory_cutoff": cutoffs["inventory"],
             "purchase_cutoff": cutoffs["purchases"],
             "sales_window_days": sales_window_days, "target_cover_days": target_cover_days,
-            "productos": products, "count": len(products),
+            "productos": products, "count": len(products), "supplier_query": supplier_query or None,
             "respuesta_fallback": "\n".join(fallback_lines),
             "sources": sources, "freshness": freshness,
         }
@@ -2973,6 +2988,10 @@ TOOL_DEFINITIONS = [
                     "target_cover_days": {"type": "integer", "default": 45, "minimum": 1, "maximum": 365},
                     "sales_window_days": {"type": "integer", "default": 180, "minimum": 7, "maximum": 365},
                     "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 100},
+                    "supplier_query": {
+                        "type": "string", "maxLength": 100,
+                        "description": "Opcional: limitar al proveedor o NIT conocido más reciente por SKU.",
+                    },
                 },
                 "required": [],
             },

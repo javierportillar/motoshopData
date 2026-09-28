@@ -129,6 +129,28 @@ def test_replenishment_shortlist_uses_valid_sales_snapshot_and_supplier(
     connection.close()
 
 
+def test_replenishment_filter_matches_latest_supplier_name_or_nit(
+    replenishment_database: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from motoshop_api.llm import tools as tools_module
+    from motoshop_api.llm.tools import ToolExecutor
+
+    connection = duckdb.connect(str(replenishment_database), read_only=True)
+    monkeypatch.setattr(tools_module, "get_shared_connection", lambda _path: connection)
+    executor = ToolExecutor(duckdb_path=str(replenishment_database), tenant="motoshop")
+
+    by_name = executor.get_productos_para_reponer(supplier_query="supplier a")
+    by_nit = executor.get_productos_para_reponer(supplier_query="900444444-4")
+    missing = executor.get_productos_para_reponer(supplier_query="Santo Sano")
+
+    assert [product["sku"] for product in by_name["productos"]] == ["SKU-A"]
+    assert [product["sku"] for product in by_nit["productos"]] == ["SKU-D"]
+    assert missing["productos"] == []
+    assert "Santo Sano" in missing["respuesta_fallback"]
+    connection.close()
+
+
 @pytest.mark.parametrize(
     ("target_cover_days", "sales_window_days", "limit"),
     [(0, 180, 50), (45, 500, 50), (45, 180, 101)],

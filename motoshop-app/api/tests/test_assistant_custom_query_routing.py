@@ -88,6 +88,13 @@ def test_custom_examples_keep_period_metric_and_supplier_filter() -> None:
     replenishment = chat.chat(
         "¿Qué productos no tengo en stock y debería enlistar para mi siguiente compra?"
     )
+    camila_replenishment = chat.chat(
+        "Quiero productos que no tengo en stock para mi siguiente compra a Camila."
+    )
+    santo_sano_replenishment = chat.chat(
+        "Qué productos no tengo en stock y debería enlistar para mi siguiente compra "
+        "con el proveedor Santo Sano"
+    )
 
     assert [name for name, _ in executor.calls] == [
         "get_top_productos_periodo",
@@ -95,6 +102,8 @@ def test_custom_examples_keep_period_metric_and_supplier_filter() -> None:
         "get_compras_periodo",
         "get_compras_periodo",
         "get_compras_periodo",
+        "get_productos_para_reponer",
+        "get_productos_para_reponer",
         "get_productos_para_reponer",
     ]
     assert executor.calls[0][1]["metric"] == "units"
@@ -110,11 +119,15 @@ def test_custom_examples_keep_period_metric_and_supplier_filter() -> None:
         "sales_window_days": 180,
         "limit": 50,
     }
+    assert executor.calls[6][1]["supplier_query"] == "camila"
+    assert executor.calls[7][1]["supplier_query"] == "santo sano"
     assert product_rank["tools_used"] == ["get_top_productos_periodo"]
     assert supplier_rank["tools_used"] == ["get_top_compras_periodos"]
     assert detail_followup["tools_used"] == ["get_compras_periodo"]
     assert summary["tools_used"] == ["get_compras_periodo"]
     assert replenishment["tools_used"] == ["get_productos_para_reponer"]
+    assert camila_replenishment["tools_used"] == ["get_productos_para_reponer"]
+    assert santo_sano_replenishment["tools_used"] == ["get_productos_para_reponer"]
 
 
 def test_today_and_yesterday_rank_the_exact_sales_dates() -> None:

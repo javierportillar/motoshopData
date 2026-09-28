@@ -26,6 +26,22 @@ def test_replenishment_request_accepts_coverage_and_sales_window() -> None:
     assert request.sales_window_days == 90
 
 
+def test_replenishment_request_preserves_named_supplier_filters() -> None:
+    camila = parse_replenishment_request(
+        "Quiero productos que no tengo en stock para mi siguiente compra a Camila, por favor"
+    )
+    santo_sano = parse_replenishment_request(
+        "Qué productos no tengo en stock y debería enlistar para mi siguiente compra "
+        "con el proveedor Santo Sano"
+    )
+
+    assert camila is not None
+    assert camila.supplier_query == "camila"
+    assert camila.tool_arguments()["supplier_query"] == "camila"
+    assert santo_sano is not None
+    assert santo_sano.supplier_query == "santo sano"
+
+
 def test_unqualified_inventory_or_purchase_question_does_not_create_a_replenishment_plan() -> None:
     assert parse_replenishment_request("¿Qué productos no tienen stock?") is None
     assert parse_replenishment_request("¿Qué debo comprar para la próxima semana?") is None

@@ -6,19 +6,39 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+SUPPLIER_HINT_PATTERNS = (
+    re.compile(r"\bproveedor(?:a)?\s*[:=]?\s+(.+?)(?=[,;.!?]|$)"),
+    re.compile(r"\b(?:siguiente|proxima)\s+compra\s+(?:a|al)\s+(.+?)(?=[,;.!?]|$)"),
+    re.compile(r"\b(?:comprar|compra)\s+(?:a|al)\s+(.+?)(?=[,;.!?]|$)"),
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ReplenishmentRequest:
     target_cover_days: int = 45
     sales_window_days: int = 180
     limit: int = 50
+    supplier_query: str | None = None
 
-    def tool_arguments(self) -> dict[str, int]:
-        return {
+    def tool_arguments(self) -> dict[str, int | str]:
+        arguments: dict[str, int | str] = {
             "target_cover_days": self.target_cover_days,
             "sales_window_days": self.sales_window_days,
             "limit": self.limit,
         }
+        if self.supplier_query:
+            arguments["supplier_query"] = self.supplier_query
+        return arguments
+
+
+def _supplier_query(text: str) -> str | None:
+    for pattern in SUPPLIER_HINT_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            supplier = " ".join(match.group(1).split()).strip(" :-")
+            if supplier:
+                return supplier[:100]
+    return None
 
 
 def parse_replenishment_request(message: str) -> ReplenishmentRequest | None:
@@ -40,4 +60,5 @@ def parse_replenishment_request(message: str) -> ReplenishmentRequest | None:
     return ReplenishmentRequest(
         target_cover_days=int(target.group(1)) if target else 45,
         sales_window_days=int(window.group(1)) if window else 180,
+        supplier_query=_supplier_query(text),
     )
