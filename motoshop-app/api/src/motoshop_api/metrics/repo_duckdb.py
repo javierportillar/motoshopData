@@ -8,6 +8,7 @@ Lee de un archivo DuckDB local (en producción, descargado de R2 al startup).
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import logging
 import os
 import shutil
@@ -486,14 +487,15 @@ def _bootstrap_duckdb_from_r2_unlocked(
                     except Exception:
                         r2_mtime = time()  # fallback al wall clock
                 # Publish file + pool eviction/close as one critical section.
-                publish_duckdb_snapshot(tmp_path, db_path)
-                _R2_DOWNLOADED_MTIME[tenant] = r2_mtime
-                # Publish only after the atomic replace. A monotonic generation
-                # prevents an old in-flight query from making stale data visible
-                # if it finishes after physical caches have been cleared.
-                from motoshop_api.metrics.snapshot import publish_snapshot
+                from motoshop_api.metrics.snapshot import publish_snapshot, snapshot_guard
 
-                publish_snapshot(tenant)
+                # Readers that compose several SQL queries hold this same guard.
+                # Advance the generation before releasing it so no response can
+                # mix rows and freshness metadata from opposite sides of the swap.
+                with snapshot_guard(tenant):
+                    publish_duckdb_snapshot(tmp_path, db_path)
+                    _R2_DOWNLOADED_MTIME[tenant] = r2_mtime
+                    publish_snapshot(tenant)
                 logger.info("DuckDB refreshed to %s (r2_mtime=%.0f)", db_path, r2_mtime)
                 return True
             finally:
@@ -522,6 +524,7 @@ class DuckDBMetricsRepo:
 
     def __init__(self, db_path: str | Path | None = None, tenant: str = "motoshop") -> None:
         self._tenant = tenant
+        self._snapshot_read_local = threading.local()
         if db_path is None:
             db_path = _make_db_path(tenant)
         self._path = Path(db_path)
@@ -546,8 +549,28 @@ class DuckDBMetricsRepo:
         """
         # Re-check freshness en cada acceso (esta throttleado a 1/min/tenant,
         # asi que en la practica casi siempre devuelve inmediato sin tocar R2)
-        _bootstrap_duckdb_from_r2(self._path, self._tenant)
+        if not getattr(self._snapshot_read_local, "active", False):
+            _bootstrap_duckdb_from_r2(self._path, self._tenant)
         return get_shared_connection(self._path)
+
+    @contextmanager
+    def product_snapshot_read(self):
+        """Pin composed product queries to one tenant snapshot generation."""
+        if getattr(self._snapshot_read_local, "active", False):
+            yield
+            return
+
+        # Refresh before taking the read guard; while guarded, _con skips its
+        # per-query freshness check so a refresh cannot occur mid-response.
+        _bootstrap_duckdb_from_r2(self._path, self._tenant)
+        from motoshop_api.metrics.snapshot import snapshot_guard
+
+        with snapshot_guard(self._tenant):
+            self._snapshot_read_local.active = True
+            try:
+                yield
+            finally:
+                self._snapshot_read_local.active = False
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -3695,18 +3718,27 @@ class DuckDBMetricsRepo:
                 "ROUND(COALESCE(ct.comprado_total, 0) - COALESCE(vt.vendido_total, 0), 2)"
             )
         return f"""
+            valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE}),
+            valid_purchase_headers AS ({_VALID_PURCHASE_HEADERS_CTE}),
             ventas_validas AS (
                 SELECT d.*
                 FROM silver_fact_ventas_detalle d
-                LEFT JOIN silver_fact_ventas v
-                    ON d.num_documento = v.num_documento
-                    AND d.cod_clase = v.cod_clase
-                    AND d.business_date = v.business_date
-                WHERE COALESCE(v.estado_documento, '') != 'A'
+                INNER JOIN valid_sales_headers h
+                    ON d.business_date = h.business_date
+                   AND d.cod_clase = h.cod_clase
+                   AND d.num_documento = h.num_documento
+            ),
+            compras_validas AS (
+                SELECT d.*
+                FROM silver_fact_compras_detalle d
+                INNER JOIN valid_purchase_headers h
+                    ON d.business_date = h.business_date
+                   AND d.cod_clase = h.cod_clase
+                   AND d.num_documento = h.num_documento
             ),
             compras_tot AS (
                 SELECT cod_producto, SUM(cantidad) AS comprado_total
-                FROM silver_fact_compras_detalle WHERE business_date <= CURRENT_DATE
+                FROM compras_validas WHERE business_date <= CURRENT_DATE
                 GROUP BY cod_producto
             ),
             ventas_tot AS (
@@ -3721,7 +3753,17 @@ class DuckDBMetricsRepo:
                         SUM(d.cantidad) AS unidades_win,
                         SUM(d.total_detalle - COALESCE(NULLIF(d.costo_producto, 0), cref.costo_producto, 0) * d.cantidad) AS margen_win
                 FROM ventas_validas d
-                LEFT JOIN ({COSTO_REF_CTE}) cref ON d.cod_producto = cref.cod_producto
+                LEFT JOIN (
+                    SELECT cod_producto, costo_producto FROM (
+                        SELECT cod_producto, costo_producto,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY cod_producto ORDER BY business_date DESC
+                               ) AS cost_rank
+                        FROM compras_validas
+                        WHERE costo_producto > 0
+                    ) ranked_costs
+                    WHERE cost_rank = 1
+                ) cref ON d.cod_producto = cref.cod_producto
                 WHERE d.business_date >= CURRENT_DATE - INTERVAL '{int(window_days)}' DAY
                   AND d.business_date <= CURRENT_DATE
                 GROUP BY d.cod_producto
@@ -3732,24 +3774,29 @@ class DuckDBMetricsRepo:
             ),
             ultima_compra AS (
                 SELECT cod_producto, MAX(business_date) AS uc
-                FROM silver_fact_compras_detalle GROUP BY cod_producto
+                FROM compras_validas GROUP BY cod_producto
             ),
             costo AS (
                 SELECT cod_producto, costo_producto FROM (
                     SELECT cod_producto, costo_producto,
                            ROW_NUMBER() OVER (PARTITION BY cod_producto ORDER BY business_date DESC) rn
-                    FROM silver_fact_compras_detalle WHERE costo_producto > 0
+                    FROM compras_validas WHERE costo_producto > 0
                 ) WHERE rn = 1
             ),
             proveedor AS (
                 SELECT cod_producto, supplier FROM (
-                    SELECT d.cod_producto, c.nombre_proveedor AS supplier,
-                           ROW_NUMBER() OVER (PARTITION BY d.cod_producto ORDER BY d.business_date DESC) rn
-                    FROM silver_fact_compras_detalle d
-                    INNER JOIN silver_fact_compras c
-                        ON d.num_documento = c.num_documento AND d.cod_clase = c.cod_clase
-                    WHERE c.nombre_proveedor IS NOT NULL AND TRIM(c.nombre_proveedor) != ''
-                ) WHERE rn = 1
+                    SELECT d.cod_producto, h.nombre_proveedor AS supplier,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY d.cod_producto
+                               ORDER BY d.business_date DESC, d.cod_clase DESC, d.num_documento DESC
+                           ) AS supplier_rank
+                    FROM compras_validas d
+                    INNER JOIN valid_purchase_headers h
+                        ON d.business_date = h.business_date
+                       AND d.cod_clase = h.cod_clase
+                       AND d.num_documento = h.num_documento
+                    WHERE h.nombre_proveedor IS NOT NULL AND TRIM(h.nombre_proveedor) != ''
+                ) WHERE supplier_rank = 1
             ),
             base AS (
                 SELECT
@@ -4053,6 +4100,37 @@ class DuckDBMetricsRepo:
         "dormidos": "estado = 'dormido' AND valor_inventario > 0",
     }
 
+    def _product_data_freshness(self) -> dict[str, str | int | None]:
+        """Return the source cutoffs and snapshot generation behind product metrics."""
+        rows = self._query(f"""
+            WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE}),
+            valid_purchase_headers AS ({_VALID_PURCHASE_HEADERS_CTE})
+            SELECT
+                (SELECT MAX(business_date) FROM valid_sales_headers) AS sales_cutoff,
+                (SELECT MAX(business_date) FROM valid_purchase_headers) AS purchase_cutoff,
+                (SELECT MAX(snapshot_date) FROM silver_dim_producto) AS inventory_snapshot
+        """)
+        row = rows[0] if rows else {}
+
+        def as_iso(value: Any) -> str | None:
+            if value is None:
+                return None
+            return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+        from motoshop_api.metrics.snapshot import get_snapshot_generation
+
+        return {
+            "sales_cutoff": as_iso(row.get("sales_cutoff")),
+            "purchase_cutoff": as_iso(row.get("purchase_cutoff")),
+            "inventory_snapshot": as_iso(row.get("inventory_snapshot")),
+            "snapshot_generation": get_snapshot_generation(self._tenant),
+            "stock_source": (
+                "catalog_snapshot"
+                if self._tenant.casefold() == "masvital"
+                else "purchases_minus_sales_estimate"
+            ),
+        }
+
     def get_product_analytics(
         self,
         window_days: int = 180,
@@ -4129,6 +4207,11 @@ class DuckDBMetricsRepo:
 
         for r in rows:
             r["accion"] = self._accion_for(r.get("estado", ""), r.get("abc", "C"))
+            r["stock_source"] = (
+                "catalog_snapshot"
+                if self._tenant.casefold() == "masvital"
+                else "purchases_minus_sales_estimate"
+            )
 
         total = self._query(f"""
             WITH {cte}
@@ -4137,6 +4220,7 @@ class DuckDBMetricsRepo:
 
         return {
             "window_days": window_days,
+            "data_freshness": self._product_data_freshness(),
             "page": page,
             "page_size": page_size,
             "total": int(total or 0),
@@ -4243,19 +4327,32 @@ class DuckDBMetricsRepo:
 
         # Timeline mensual: compras vs ventas (últimos 18 meses)
         timeline = self._query("""
-            WITH ventas_validas AS (
+            WITH valid_sales_headers AS (
+                """ + _VALID_SALES_HEADERS_CTE + """
+            ),
+            valid_purchase_headers AS (
+                """ + _VALID_PURCHASE_HEADERS_CTE + """
+            ),
+            ventas_validas AS (
                 SELECT d.*
                 FROM silver_fact_ventas_detalle d
-                LEFT JOIN silver_fact_ventas v
-                    ON d.num_documento = v.num_documento
-                    AND d.cod_clase = v.cod_clase
-                    AND d.business_date = v.business_date
-                WHERE COALESCE(v.estado_documento, '') != 'A'
+                INNER JOIN valid_sales_headers h
+                    ON d.num_documento = h.num_documento
+                   AND d.cod_clase = h.cod_clase
+                   AND d.business_date = h.business_date
+            ),
+            compras_validas AS (
+                SELECT d.*
+                FROM silver_fact_compras_detalle d
+                INNER JOIN valid_purchase_headers h
+                    ON d.num_documento = h.num_documento
+                   AND d.cod_clase = h.cod_clase
+                   AND d.business_date = h.business_date
             ),
             movimientos_producto AS (
                 SELECT business_date FROM ventas_validas WHERE cod_producto = ?
                 UNION ALL
-                SELECT business_date FROM silver_fact_compras_detalle WHERE cod_producto = ?
+                SELECT business_date FROM compras_validas WHERE cod_producto = ?
             ),
             meses AS (
                 SELECT DISTINCT STRFTIME(business_date, '%Y-%m') AS mes
@@ -4271,7 +4368,7 @@ class DuckDBMetricsRepo:
             compras AS (
                 SELECT STRFTIME(business_date, '%Y-%m') AS mes,
                        SUM(cantidad) AS unidades, ROUND(SUM(total_detalle), 2) AS valor
-                FROM silver_fact_compras_detalle WHERE cod_producto = ?
+                FROM compras_validas WHERE cod_producto = ?
                 GROUP BY 1
             )
             SELECT m.mes,
@@ -4289,24 +4386,37 @@ class DuckDBMetricsRepo:
         # V1.16: antes traía últimos 25 de cada tipo. Eso ocultaba ventas
         # históricas y hacía que el stock pareciera no cuadrar en la ficha.
         movimientos = self._query("""
-            WITH ventas_validas AS (
+            WITH valid_sales_headers AS (
+                """ + _VALID_SALES_HEADERS_CTE + """
+            ),
+            valid_purchase_headers AS (
+                """ + _VALID_PURCHASE_HEADERS_CTE + """
+            ),
+            ventas_validas AS (
                 SELECT d.*
                 FROM silver_fact_ventas_detalle d
-                LEFT JOIN silver_fact_ventas v
-                    ON d.num_documento = v.num_documento
-                    AND d.cod_clase = v.cod_clase
-                    AND d.business_date = v.business_date
-                WHERE COALESCE(v.estado_documento, '') != 'A'
+                INNER JOIN valid_sales_headers h
+                    ON d.num_documento = h.num_documento
+                   AND d.cod_clase = h.cod_clase
+                   AND d.business_date = h.business_date
+            ),
+            compras_validas AS (
+                SELECT d.*
+                FROM silver_fact_compras_detalle d
+                INNER JOIN valid_purchase_headers h
+                    ON d.num_documento = h.num_documento
+                   AND d.cod_clase = h.cod_clase
+                   AND d.business_date = h.business_date
             ),
             ventas AS (
-                SELECT business_date AS fecha, 'venta' AS tipo, cantidad,
-                       ROUND(total_detalle, 2) AS valor, num_documento
-                FROM ventas_validas WHERE cod_producto = ?
+                SELECT d.business_date AS fecha, 'venta' AS tipo, d.cantidad,
+                       ROUND(d.total_detalle, 2) AS valor, d.num_documento, d.cod_clase
+                FROM ventas_validas d WHERE d.cod_producto = ?
             ),
             compras AS (
-                SELECT business_date AS fecha, 'compra' AS tipo, cantidad,
-                       ROUND(total_detalle, 2) AS valor, num_documento
-                FROM silver_fact_compras_detalle WHERE cod_producto = ?
+                SELECT d.business_date AS fecha, 'compra' AS tipo, d.cantidad,
+                       ROUND(d.total_detalle, 2) AS valor, d.num_documento, d.cod_clase
+                FROM compras_validas d WHERE cod_producto = ?
             )
             SELECT * FROM ventas
             UNION ALL
@@ -4317,6 +4427,7 @@ class DuckDBMetricsRepo:
         return {
             "found": True,
             "window_days": window_days,
+            "data_freshness": self._product_data_freshness(),
             "metrics": m,
             "timeline": timeline,
             "movimientos": movimientos,
@@ -5468,15 +5579,37 @@ def _presentacion_to_unidad(presentacion: str | None) -> str:
     return key[:3].lower() if key else "u"
 
 
-_VALID_PURCHASE_HEADERS_CTE = """
+_VALID_SALES_HEADERS_CTE = """
     SELECT * EXCLUDE (identity_count)
     FROM (
         SELECT h.*,
                COUNT(*) OVER (
                    PARTITION BY h.business_date, h.cod_clase, h.num_documento
                ) AS identity_count
+        FROM silver_fact_ventas h
+        WHERE UPPER(TRIM(COALESCE(h.estado_documento, ''))) != 'A'
+          AND h.business_date IS NOT NULL
+          AND h.cod_clase = TRIM(COALESCE(h.cod_clase, ''))
+          AND h.num_documento = TRIM(COALESCE(h.num_documento, ''))
+          AND h.cod_clase != '' AND h.num_documento != ''
+    ) ranked_headers
+    WHERE identity_count = 1
+"""
+
+
+_VALID_PURCHASE_HEADERS_CTE = """
+    SELECT * EXCLUDE (identity_count)
+    FROM (
+        SELECT h.*,
+               COUNT(*) OVER (
+                   PARTITION BY h.business_date, h.cod_clase, h.num_documento
+        ) AS identity_count
         FROM silver_fact_compras h
         WHERE UPPER(TRIM(COALESCE(h.estado_documento, ''))) != 'A'
+          AND h.business_date IS NOT NULL
+          AND h.cod_clase = TRIM(COALESCE(h.cod_clase, ''))
+          AND h.num_documento = TRIM(COALESCE(h.num_documento, ''))
+          AND h.cod_clase != '' AND h.num_documento != ''
     ) ranked_headers
     WHERE identity_count = 1
 """

@@ -784,6 +784,8 @@ def test_purchase_analysis_tools_require_purchase_sales_and_inventory_access() -
         "evaluar_compra_planeada", {"purchases", "sales", "inventory"}
     )
     assert assistant_tool_allowed("get_top_productos_periodo", {"sales"})
+    assert assistant_tool_allowed("get_productos_catalogo", {"inventory"})
+    assert not assistant_tool_allowed("get_productos_catalogo", {"sales"})
     assert assistant_tool_allowed("get_top_compras_periodos", {"purchases"})
     assert assistant_tool_allowed("get_compras_periodo", {"purchases"})
     assert not assistant_tool_allowed("get_productos_para_reponer", {"purchases", "sales"})

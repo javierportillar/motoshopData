@@ -59,6 +59,7 @@ def test_chat_tool_catalog_is_scoped_to_tenant(monkeypatch):
         "get_kpis_month",
         "get_top_skus",
         "get_top_productos_periodo",
+        "get_productos_catalogo",
         "get_productos_para_reponer",
         "get_dormidos",
         "get_inventory_value",
@@ -90,6 +91,7 @@ def test_chat_tool_catalog_is_scoped_to_tenant(monkeypatch):
     assert "get_top_compras_periodos" in moto_names
     assert "get_compras_periodo" in moto_names
     assert "get_top_productos_periodo" in moto_names
+    assert "get_productos_catalogo" in moto_names
     assert "get_productos_para_reponer" in moto_names
     assert "search_products" in moto_names
     assert "analizar_compras_periodo" in moto_names

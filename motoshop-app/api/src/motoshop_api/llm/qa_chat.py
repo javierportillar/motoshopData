@@ -8,16 +8,22 @@ import re
 import time
 import unicodedata
 from contextlib import suppress
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from motoshop_api.auth.tenant_dep import TenantContext
+from motoshop_api.llm.catalog_queries import parse_catalog_list_request
 from motoshop_api.llm.client import (
     LLM_REQUEST_DEADLINE_SECONDS,
     LLMDependencyError,
     TransientLLMError,
 )
 from motoshop_api.llm.contracts import AssistantEnvelope, Attachment, Freshness, SourceEvidence
+from motoshop_api.llm.inventory_queries import parse_replenishment_request
+from motoshop_api.llm.purchase_queries import (
+    parse_purchase_period_request,
+    parse_purchase_ranking_request,
+)
 from motoshop_api.llm.registry import (
     PURCHASE_REFERENCE_TOOLS,
     purchase_document_ref_mentioned,
@@ -28,11 +34,6 @@ from motoshop_api.llm.registry import (
     resolve_supplier_refs,
     supplier_ref_mentioned,
     visible_markdown_text,
-)
-from motoshop_api.llm.inventory_queries import parse_replenishment_request
-from motoshop_api.llm.purchase_queries import (
-    parse_purchase_period_request,
-    parse_purchase_ranking_request,
 )
 from motoshop_api.llm.sales_queries import parse_sales_product_ranking_request
 from motoshop_api.tenants import get_tenant_config
@@ -365,6 +366,7 @@ Reglas de selección de tools (IMPORTANTE):
 - Si pregunta por historial de un proveedor sin período, usá `buscar_compras_por_proveedor`.
 - Si pide ranking/listado de compras de un período y menciona proveedor o NIT, conserva ese filtro en `get_top_compras_periodos`/`get_compras_periodo`.
 - Si el usuario pide el DETALLE de una compra específica (productos, cantidades, valores), usá get_detalle_compra con el número de documento.
+- Si pide listar productos de categoría ABC A/B/C con stock o acción, usá `get_productos_catalogo`; conserva su ventana de 180 días y pagina cuando haya más filas. No lo reemplaces por un resumen Pareto ni por la lista de reposición.
 - Si el usuario pide el enlace de una compra mencionada antes, reutilizá su fecha, clase y número verificados en el historial; en la respuesta nombrá explícitamente "Factura" o "Documento" y el número para adjuntar el enlace autorizado. Nunca inventes una ruta.
 - Si pregunta si las compras de un mes o período fueron necesarias, o pide comparar compras con rotación, ventas acumuladas y stock, usá `analizar_compras_periodo` una sola vez para todo el rango. No hagas una llamada por factura/producto ni encadenes búsquedas de compras recientes.
 - Si nombra meses sin año, inferí el año solo con el corte del dominio consultado (compras: `silver_fact_compras`; ventas: `silver_fact_ventas`). Si falta ese corte, preguntá el año; nunca uses otro dominio ni la fecha del servidor para inferirlo.
@@ -592,6 +594,7 @@ _PRODUCT_REFERENCE_TOOLS = frozenset({
     "get_top_skus",
     "get_top_productos_periodo",
     "get_productos_para_reponer",
+    "get_productos_catalogo",
     "get_dormidos",
     "get_alerts_by_urgency",
     "get_producto_detalle",
@@ -1040,13 +1043,36 @@ class QAChat:
         sales_ranking = parse_sales_product_ranking_request(
             message, sales_cutoff=sales_cutoff
         )
+        catalog_list = parse_catalog_list_request(message)
         replenishment = parse_replenishment_request(message)
-        previous_user_message = next(
-            (row for row in reversed(history) if row.get("role") == "user"),
-            None,
-        )
-        if previous_user_message is not None:
+        previous_user_messages = [row for row in history if row.get("role") == "user"]
+        previous_catalog = None
+        for row in previous_user_messages:
+            previous_text = str(row.get("content") or "")
+            parsed_catalog = parse_catalog_list_request(
+                previous_text,
+                inherited_abc=previous_catalog.abc if previous_catalog else None,
+                inherited_page=previous_catalog.page if previous_catalog else None,
+                inherited_estado=previous_catalog.estado if previous_catalog else None,
+                default_window_days=previous_catalog.window_days if previous_catalog else 180,
+            )
+            # Only a continuous chain of explicit catalog/page turns carries
+            # pagination context; an unrelated request resets it.
+            previous_catalog = parsed_catalog
+        if catalog_list is None and previous_catalog is not None:
+            catalog_list = parse_catalog_list_request(
+                message,
+                inherited_abc=previous_catalog.abc,
+                inherited_page=previous_catalog.page,
+                inherited_estado=previous_catalog.estado,
+                default_window_days=previous_catalog.window_days,
+            )
+        if previous_user_messages:
+            previous_user_message = previous_user_messages[-1]
             previous_text = str(previous_user_message.get("content") or "")
+        else:
+            previous_text = ""
+        if previous_text:
             if purchase_ranking is None and purchase_listing is None:
                 previous_rank = parse_purchase_ranking_request(
                     previous_text, purchase_cutoff=purchase_cutoff
@@ -1090,7 +1116,10 @@ class QAChat:
                     )
 
         purchase_period = _purchase_audit_period(message, purchase_cutoff)
-        if purchase_ranking and "get_top_compras_periodos" in enabled_tool_names:
+        if catalog_list and "get_productos_catalogo" in enabled_tool_names:
+            direct_tool_name = "get_productos_catalogo"
+            direct_tool_args = catalog_list.tool_arguments()
+        elif purchase_ranking and "get_top_compras_periodos" in enabled_tool_names:
             direct_tool_name = "get_top_compras_periodos"
             direct_tool_args = purchase_ranking.tool_arguments()
         elif sales_ranking and "get_top_productos_periodo" in enabled_tool_names:

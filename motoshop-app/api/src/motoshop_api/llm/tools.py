@@ -10,6 +10,7 @@ import logging
 import math
 import re
 import unicodedata
+from contextlib import nullcontext
 from datetime import UTC, date, datetime, timedelta
 from difflib import SequenceMatcher
 
@@ -112,6 +113,7 @@ PUBLIC_TOOL_NAMES = {
     "get_top_skus",
     "get_top_productos_periodo",
     "get_productos_para_reponer",
+    "get_productos_catalogo",
     "get_dormidos",
     "get_alerts_by_urgency",
     "get_vendedor_performance",
@@ -912,6 +914,242 @@ class ToolExecutor:
             "productos": products, "count": len(products), "supplier_query": supplier_query or None,
             "respuesta_fallback": "\n".join(fallback_lines),
             "sources": sources, "freshness": freshness,
+        }
+
+    def get_productos_catalogo(
+        self,
+        abc: str = "A",
+        window_days: int = 180,
+        page: int = 1,
+        page_size: int = 50,
+        estado: str | None = None,
+    ) -> dict:
+        """List a bounded page from the same ABC/stock/action catalog as the UI."""
+        abc = str(abc).strip().upper()
+        window_days, page, page_size = int(window_days), int(page), int(page_size)
+        if abc not in {"A", "B", "C"}:
+            raise ValueError("La categoría ABC debe ser A, B o C.")
+        if not 30 <= window_days <= 720:
+            raise ValueError("La ventana del catálogo debe estar entre 30 y 720 días.")
+        if not 1 <= page <= 1000 or not 1 <= page_size <= 50:
+            raise ValueError("La página debe estar entre 1 y 1000 y el tamaño entre 1 y 50.")
+        allowed_states = {
+            "agotado", "quiebre", "sin_stock", "sobrestock", "dormido",
+            "saludable", "sin_movimiento", "servicio",
+        }
+        estados = [item.strip() for item in estado.split(",")] if estado else []
+        if any(item not in allowed_states for item in estados):
+            raise ValueError("El estado del catálogo no es válido.")
+        normalized_estado = ",".join(dict.fromkeys(estados)) or None
+
+        try:
+            from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
+
+            repository = DuckDBMetricsRepo(db_path=self.duckdb_path, tenant=self.tenant)
+            snapshot_context = getattr(repository, "product_snapshot_read", None)
+            with snapshot_context() if callable(snapshot_context) else nullcontext():
+                catalog = repository.get_product_analytics(
+                    window_days=window_days,
+                    page=page,
+                    page_size=page_size,
+                    q=None,
+                    abc=abc,
+                    estado=normalized_estado,
+                    sort="revenue_win",
+                    order="desc",
+                    preset=None,
+                    rotacion=None,
+                )
+            freshness_data = catalog.get("data_freshness")
+            if not isinstance(freshness_data, dict):
+                freshness_data = self.get_data_freshness()
+        except Exception as exc:
+            logger.warning(
+                "catalog_product_list_failed tenant=%s error_type=%s",
+                self.tenant,
+                type(exc).__name__,
+            )
+            return {
+                "status": "unavailable",
+                "abc": abc,
+                "window_days": window_days,
+                "page": page,
+                "page_size": page_size,
+                "total": 0,
+                "productos": [],
+                "respuesta_fallback": (
+                    "No pude verificar el catálogo ABC con stock y acciones. "
+                    "No voy a sustituirlo por un Pareto resumido ni por una lista de reposición."
+                ),
+                "sources": [],
+                "freshness": [],
+            }
+
+        total = int(catalog.get("total", 0) or 0)
+        total_pages = max(1, math.ceil(total / page_size))
+        source_dates = freshness_data.get("por_tabla", {})
+        if isinstance(source_dates, dict) and source_dates:
+            sales_cutoff = source_dates.get("silver_fact_ventas")
+            purchase_cutoff = source_dates.get("silver_fact_compras")
+            inventory_snapshot = source_dates.get("silver_dim_producto")
+            source_generation = None
+        else:
+            sales_cutoff = freshness_data.get("sales_cutoff")
+            purchase_cutoff = freshness_data.get("purchase_cutoff")
+            inventory_snapshot = freshness_data.get("inventory_snapshot")
+            source_generation = freshness_data.get("snapshot_generation")
+        stock_source = freshness_data.get("stock_source") or (
+            "catalog_snapshot" if self.tenant.casefold() == "masvital"
+            else "purchases_minus_sales_estimate"
+        )
+        if page > total_pages:
+            return {
+                "status": "needs_clarification",
+                "abc": abc,
+                "window_days": window_days,
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": total_pages,
+                "productos": [],
+                "respuesta_fallback": (
+                    f"El catálogo ABC {abc} tiene {total} productos en esta ventana; "
+                    f"solo hay páginas de 1 a {total_pages}."
+                ),
+                "sources": [],
+                "freshness": [],
+            }
+
+        items = catalog.get("items", [])
+        productos = [
+            {
+                "cod_producto": str(item.get("cod_producto", "")),
+                "nombre": str(item.get("nombre", item.get("cod_producto", ""))),
+                "abc": str(item.get("abc", "C")),
+                "stock_actual": float(item.get("cantidad_actual") or 0),
+                "unidades_win": float(item.get("unidades_win") or 0),
+                "velocidad_mensual": float(item.get("velocidad_mensual") or 0),
+                "dias_stock": (
+                    float(item["dias_stock"]) if item.get("dias_stock") is not None else None
+                ),
+                "estado": str(item.get("estado", "sin_movimiento")),
+                "accion": str(item.get("accion", "revisar")),
+                "rank_rev": int(item["rank_rev"]) if item.get("rank_rev") is not None else None,
+            }
+            for item in items
+            if isinstance(item, dict) and item.get("cod_producto")
+        ]
+        metadata = [
+            {
+                "source_id": "duckdb-product-catalog",
+                "domain": "inventory",
+                "kind": "duckdb",
+                "citation": (
+                    "Catalog snapshot and dynamic ABC, estado and action"
+                    if stock_source == "catalog_snapshot"
+                    else "Canonical product catalog and dynamic ABC, estado and action"
+                ),
+                "cutoff_at": inventory_snapshot,
+                "status": "used" if inventory_snapshot else "unknown",
+            },
+            {
+                "source_id": "duckdb-sales-abc-window",
+                "domain": "sales",
+                "kind": "duckdb",
+                "citation": f"Valid sales detail for the {window_days}-day ABC window",
+                "cutoff_at": sales_cutoff,
+                "status": "used" if sales_cutoff else "unknown",
+            },
+        ]
+        if stock_source != "catalog_snapshot":
+            metadata.append({
+                "source_id": "duckdb-purchase-stock-estimate",
+                "domain": "purchases",
+                "kind": "duckdb",
+                "citation": "Valid historical purchase headers used to estimate current stock",
+                "cutoff_at": purchase_cutoff,
+                "status": "used" if purchase_cutoff else "unknown",
+            })
+        display_actions = {
+            "reabastecer": "reabastecer",
+            "liquidar": "liquidar",
+            "revisar": "revisar",
+            "ok": "no comprar ahora",
+            "n/a": "no aplica",
+        }
+        display_states = {
+            "agotado": "agotados",
+            "quiebre": "por agotarse",
+            "sin_stock": "sin stock",
+            "sobrestock": "sobrestock",
+            "dormido": "dormidos",
+            "saludable": "saludables",
+            "sin_movimiento": "sin movimiento",
+            "servicio": "servicios",
+        }
+        filter_label = " o ".join(
+            display_states.get(item, item) for item in normalized_estado.split(",")
+        ) if normalized_estado else None
+        state_suffix = f" · estado {filter_label}" if filter_label else ""
+        fallback_lines = [
+            f"Catálogo ABC {abc}{state_suffix} · ventas de los últimos {window_days} días · "
+            f"página {page}/{total_pages} · {total} productos en total.",
+            (
+                f"Cortes: ventas {sales_cutoff or 'sin corte'} · "
+                f"snapshot inventario {inventory_snapshot or 'sin snapshot'}."
+                if stock_source == "catalog_snapshot"
+                else "Stock estimado con compras hasta "
+                f"{purchase_cutoff or 'sin corte'} menos ventas hasta {sales_cutoff or 'sin corte'}."
+            ),
+        ]
+        if not productos:
+            fallback_lines.append("No encontré productos en esa categoría y ventana.")
+        for item in productos:
+            days = f"{item['dias_stock']:g} días" if item["dias_stock"] is not None else "sin cobertura calculable"
+            fallback_lines.append(
+                f"- SKU {item['cod_producto']} · {item['nombre']}: "
+                f"stock {item['stock_actual']:g}; vendido {item['unidades_win']:g} u; "
+                f"velocidad {item['velocidad_mensual']:g}/mes; {days}; "
+                f"estado {item['estado']}; acción {display_actions.get(item['accion'], 'revisar')}."
+            )
+        required_cutoffs_present = bool(sales_cutoff) and bool(
+            inventory_snapshot if stock_source == "catalog_snapshot" else purchase_cutoff
+        )
+        return {
+            "status": (
+                "unavailable" if not required_cutoffs_present
+                else "complete" if productos else "empty"
+            ),
+            "abc": abc,
+            "window_days": window_days,
+            "stock_source": (
+                "catalog_snapshot" if self.tenant.casefold() == "masvital"
+                else "purchases_minus_sales_estimate"
+            ),
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": total_pages,
+            "data_freshness": {
+                "sales_cutoff": sales_cutoff,
+                "purchase_cutoff": purchase_cutoff,
+                "inventory_snapshot": inventory_snapshot,
+                "snapshot_generation": source_generation,
+                "stock_source": stock_source,
+            },
+            "has_more": page < total_pages,
+            "next_page": page + 1 if page < total_pages else None,
+            "productos": productos,
+            "respuesta_fallback": "\n".join(fallback_lines),
+            "sources": metadata,
+            "freshness": [
+                {
+                    "domain": source["domain"],
+                    "cutoff_at": source["cutoff_at"],
+                    "status": "current" if source["cutoff_at"] else "unknown",
+                }
+                for source in metadata
+            ],
         }
 
     def get_dormidos(self, days_min: int = 90, limit: int = 20) -> dict:
@@ -3157,6 +3395,35 @@ TOOL_DEFINITIONS = [
                     "supplier_query": {
                         "type": "string", "maxLength": 100,
                         "description": "Opcional: limitar al proveedor o NIT conocido más reciente por SKU.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_productos_catalogo",
+            "description": (
+                "Lista una página acotada del catálogo filtrado por categoría ABC, "
+                "con stock, días de cobertura, velocidad, estado y acción sugerida. "
+                "Usa la misma clasificación dinámica de 180 días que la pantalla Catálogo. "
+                "Para productos A con stock y acción, usa esta tool; no la reemplaces por "
+                "un resumen Pareto ni por la lista de productos agotados para reponer. "
+                "Devuelve hasta 50 productos por página y el total disponible."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "abc": {"type": "string", "enum": ["A", "B", "C"], "default": "A"},
+                    "window_days": {"type": "integer", "default": 180, "minimum": 30, "maximum": 720},
+                    "page": {"type": "integer", "default": 1, "minimum": 1, "maximum": 1000},
+                    "page_size": {"type": "integer", "default": 50, "minimum": 1, "maximum": 50},
+                    "estado": {
+                        "type": "string",
+                        "maxLength": 80,
+                        "description": "Opcional: estados explícitos solicitados, separados por coma.",
                     },
                 },
                 "required": [],

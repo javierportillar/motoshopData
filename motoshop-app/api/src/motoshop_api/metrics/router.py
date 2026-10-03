@@ -9,6 +9,7 @@ está configurado; si no, cae a FakeMetricsRepo (datos mock).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date
 from time import time
 from typing import Literal
@@ -120,6 +121,41 @@ def _cached_or_fetch(key: str, fetch_fn, ttl: int = _CACHE_TTL):
     # replacement advances the generation, making this value unreachable.
     _cache[versioned_key] = (now, val)
     return val
+
+
+def _fetch_product_metrics_consistent(
+    tenant: str,
+    fetch_fn: Callable[[], dict],
+    *,
+    max_attempts: int = 2,
+    snapshot_context: Callable[[], object] | None = None,
+) -> dict:
+    """Keep all product queries and their freshness metadata on one snapshot."""
+    context = snapshot_context() if callable(snapshot_context) else None
+
+    def fetch_stable_generation() -> dict:
+        for _attempt in range(max_attempts):
+            generation_before = get_snapshot_generation(tenant)
+            result = fetch_fn()
+            generation_after = get_snapshot_generation(tenant)
+            freshness = result.get("data_freshness")
+            reported_generation = (
+                freshness.get("snapshot_generation") if isinstance(freshness, dict) else None
+            )
+            if (
+                generation_before == generation_after
+                and reported_generation in (None, generation_after)
+            ):
+                return result
+        raise HTTPException(
+            status_code=503,
+            detail="El catálogo se actualizó durante la consulta; reintentá para obtener un corte consistente.",
+        )
+
+    if context is not None:
+        with context:
+            return fetch_stable_generation()
+    return fetch_stable_generation()
 
 
 def _clear_metrics_cache():
@@ -548,7 +584,13 @@ def product_analytics(
     key = f"{tenant}:prod-analytics:{window}:{page}:{page_size}:{q or ''}:{abc or ''}:{estado or ''}:{sort}:{order}:{preset or ''}:{rotacion or ''}"
     return _cached_or_fetch(
         key,
-        lambda: repo.get_product_analytics(window, page, page_size, q, abc, estado, sort, order, preset, rotacion),
+        lambda: _fetch_product_metrics_consistent(
+            tenant,
+            lambda: repo.get_product_analytics(
+                window, page, page_size, q, abc, estado, sort, order, preset, rotacion
+            ),
+            snapshot_context=getattr(repo, "product_snapshot_read", None),
+        ),
         ttl=120,
     )
 
@@ -570,7 +612,11 @@ def product_detail(
     contienen '/' en su nombre y rompen el route matching si van en el path."""
     return _cached_or_fetch(
         f"{tenant}:prod-detail:{sku}:{window}",
-        lambda: repo.get_product_detail(sku, window),
+        lambda: _fetch_product_metrics_consistent(
+            tenant,
+            lambda: repo.get_product_detail(sku, window),
+            snapshot_context=getattr(repo, "product_snapshot_read", None),
+        ),
         ttl=120,
     )
 

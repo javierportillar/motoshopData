@@ -57,6 +57,7 @@ def _chat(executor: _RecordingExecutor) -> QAChat:
         "get_top_compras_periodos",
         "get_compras_periodo",
         "get_top_productos_periodo",
+        "get_productos_catalogo",
         "get_productos_para_reponer",
         "get_analisis_modulo",
         "get_cash_closure",
@@ -131,6 +132,40 @@ def test_custom_examples_keep_period_metric_and_supplier_filter() -> None:
     assert replenishment["tools_used"] == ["get_productos_para_reponer"]
     assert camila_replenishment["tools_used"] == ["get_productos_para_reponer"]
     assert santo_sano_replenishment["tools_used"] == ["get_productos_para_reponer"]
+
+
+def test_abc_catalog_list_routes_to_catalog_tool_and_supports_multiple_next_pages() -> None:
+    executor = _RecordingExecutor()
+    chat = _chat(executor)
+
+    first_page = chat.chat("Lista los productos de categoría A agotados")
+    second_page = chat.chat(
+        "Siguiente página",
+        conversation_id=first_page["conversation_id"],
+    )
+    third_page = chat.chat(
+        "Siguiente página",
+        conversation_id=first_page["conversation_id"],
+    )
+
+    assert [name for name, _ in executor.calls] == [
+        "get_productos_catalogo", "get_productos_catalogo", "get_productos_catalogo",
+    ]
+    assert executor.calls[0][1] == {
+        "abc": "A", "window_days": 180, "page": 1, "page_size": 50,
+        "estado": "agotado,sin_stock",
+    }
+    assert executor.calls[1][1] == {
+        "abc": "A", "window_days": 180, "page": 2, "page_size": 50,
+        "estado": "agotado,sin_stock",
+    }
+    assert executor.calls[2][1] == {
+        "abc": "A", "window_days": 180, "page": 3, "page_size": 50,
+        "estado": "agotado,sin_stock",
+    }
+    assert first_page["tools_used"] == second_page["tools_used"] == third_page["tools_used"] == [
+        "get_productos_catalogo",
+    ]
 
 
 def test_today_and_yesterday_rank_the_exact_sales_dates() -> None:
@@ -239,13 +274,16 @@ def test_cash_closure_routes_deterministically() -> None:
     chat = _chat(executor)
 
     response = chat.chat("¿Cómo cerró la caja hoy?")
+    yesterday = chat.chat("¿Cómo cerró la caja ayer?")
 
     assert executor.calls == [
-        ("get_cash_closure", {"date": "2026-09-26"})
+        ("get_cash_closure", {"date": "2026-09-26"}),
+        ("get_cash_closure", {"date": "2026-09-25"}),
     ]
     assert response["status"] == "complete"
     assert response["tools_used"] == ["get_cash_closure"]
     assert "Query executed: get_cash_closure" in response["text"]
+    assert yesterday["tools_used"] == ["get_cash_closure"]
 
 
 def test_expiry_alerts_routes_deterministically() -> None:
@@ -273,6 +311,3 @@ def test_out_of_stock_products_by_supplier_routes_to_replenishment() -> None:
     ]
     assert response["status"] == "complete"
     assert response["tools_used"] == ["get_productos_para_reponer"]
-
-
-
