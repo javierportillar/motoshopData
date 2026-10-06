@@ -201,10 +201,12 @@ def _calendar_forecast_weights(
         "days_with_sales": rolling_days_with_sales,
         "seasonal_window_days": profile_window_days,
         "note": (
-            "La curva diaria usa el patrón del mismo día de semana en los últimos 90 días "
-            "y del mismo tramo del mes (días 1–7, 8–14, 15–21, 22–28 y 29–fin) en hasta "
-            "365 días. Los días sin factura se cuentan como cero; no hay calendario de festivos. "
-            "El total mensual conserva el nivel del promedio diario base."
+            "El total base usa el promedio diario de 90 días. La curva reparte ese total "
+            "con 75% del patrón del mismo día de semana (90 días) y 25% del mismo tramo del "
+            "mes (1–7, 8–14, 15–21, 22–28 y 29–fin; hasta 365 días), normalizando para que "
+            "la suma diaria coincida con el total mensual. Los días sin factura se cuentan "
+            "como cero; no hay calendario de festivos. La curva con inventario distribuye "
+            "el total limitado por stock, pero no simula agotamiento SKU por SKU cada día."
         ),
     }
 
