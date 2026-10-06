@@ -169,6 +169,7 @@ ROUTE_MODULES: dict[RouteKey, tuple[str, ...]] = {
         "/api/purchase-assessments",
         "/api/purchase-assessments/invoice",
     ),
+    ("POST", "/api/purchase-assessments/{assessment_id}/retry"): ("ventas-summary",),
     # Forecast/projection
     **_routes(
         "forecast",

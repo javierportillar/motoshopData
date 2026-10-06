@@ -20,6 +20,7 @@ class PurchaseAssessmentResponse(BaseModel):
     status: Literal["pending", "processing", "completed", "fallback", "failed"]
     attempt_count: int
     last_error_code: str | None = None
+    next_retry_at: datetime | None = None
     deterministic_metrics: dict[str, Any]
     markdown: str | None = None
     source_cutoffs: dict[str, str | None]

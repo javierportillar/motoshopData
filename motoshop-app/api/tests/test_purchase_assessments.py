@@ -14,7 +14,14 @@ from motoshop_api.purchase_assessments.analyzer import (
     analyze_purchase_invoice,
     discover_purchase_invoices,
 )
+from motoshop_api.purchase_assessments.generator import (
+    MAX_LLM_PRODUCTS,
+    MAX_OUTPUT_TOKENS,
+    _context_metrics,
+    generate_assessment_markdown,
+)
 from motoshop_api.purchase_assessments.repository import (
+    FALLBACK_RETRY_COOLDOWN,
     SupabasePurchaseAssessmentRepository,
     get_purchase_assessment_repository,
 )
@@ -238,6 +245,11 @@ class MemoryAssessmentRepository:
             row["claim_token"] = None
             row["claimed_at"] = None
             row["completed_at"] = datetime.now(UTC).isoformat()
+            row["next_retry_at"] = (
+                (datetime.now(UTC) + FALLBACK_RETRY_COOLDOWN).isoformat()
+                if row["status"] == "fallback"
+                else None
+            )
             return True
 
     def fail(
@@ -281,6 +293,51 @@ class MemoryAssessmentRepository:
         ]
         return max(matches, key=lambda row: row.get("created_at", ""), default=None)
 
+    def get_assessment_by_id(self, tenant_id: str, assessment_id: str) -> dict | None:
+        with self.lock:
+            return next(
+                (
+                    dict(row)
+                    for row in self.rows.values()
+                    if row.get("tenant_id") == tenant_id and row.get("id") == assessment_id
+                ),
+                None,
+            )
+
+    def queue_fallback_retry(self, tenant_id: str, assessment_id: str) -> dict | None:
+        with self.lock:
+            row = next(
+                (
+                    value
+                    for value in self.rows.values()
+                    if value.get("tenant_id") == tenant_id and value.get("id") == assessment_id
+                ),
+                None,
+            )
+            if (
+                not row
+                or row.get("status") != "fallback"
+                or row.get("generation_mode") != "deterministic_fallback"
+            ):
+                return None
+            retry_at = row.get("next_retry_at")
+            if retry_at and datetime.fromisoformat(retry_at) > datetime.now(UTC):
+                return None
+            row.update({
+                "status": "pending",
+                "markdown": None,
+                "generation_mode": None,
+                "provider": None,
+                "model": None,
+                "completed_at": None,
+                "next_retry_at": None,
+                "last_error_code": "manual_retry",
+                "claim_token": None,
+                "claimed_at": None,
+                "updated_at": datetime.now(UTC).isoformat(),
+            })
+            return dict(row)
+
     def list_assessments(
         self, tenant_id: str, date_from: str, date_to: str,
         nit_proveedor: str | None, limit: int,
@@ -300,16 +357,45 @@ class MemoryAssessmentRepository:
 class CountingLLM:
     def __init__(self) -> None:
         self.calls = 0
+        self.session_ids: list[str] = []
 
     def complete(self, prompt: str, **kwargs) -> dict:
         self.calls += 1
-        assert len(prompt) <= 18_500
+        self.session_ids.append(kwargs["session_id"])
+        assert len(prompt) <= 3_250
+        assert kwargs["max_tokens"] == MAX_OUTPUT_TOKENS
         assert "no confiables" in kwargs["system"]
         return {
             "text": "# Evaluación\n\nNarrativa de prueba.",
             "backend": "fake",
             "model": "fake-model",
         }
+
+
+def test_llm_context_limits_product_rows_and_reports_the_omitted_count():
+    metrics = {
+        "products": [{"cod_producto": f"SKU-{index}"} for index in range(15)],
+        "totals": {"productos_distintos": 15},
+    }
+
+    context = _context_metrics(metrics)
+
+    assert len(context["products"]) == MAX_LLM_PRODUCTS
+    assert context["totals"]["productos_en_contexto_llm"] == MAX_LLM_PRODUCTS
+    assert context["totals"]["productos_omitidos_del_contexto_llm"] == 15 - MAX_LLM_PRODUCTS
+
+
+def test_each_assessment_generation_attempt_uses_a_fresh_provider_session():
+    client = CountingLLM()
+    metrics = {"invoice": {"cod_clase": "FC", "num_documento": "P1"}, "products": []}
+
+    first = generate_assessment_markdown(metrics, llm_client=client, tenant_id="motoshop")
+    second = generate_assessment_markdown(metrics, llm_client=client, tenant_id="motoshop")
+
+    assert first["generation_mode"] == "llm"
+    assert second["generation_mode"] == "llm"
+    assert len(client.session_ids) == 2
+    assert client.session_ids[0] != client.session_ids[1]
 
 
 class FailingLLM:
@@ -478,6 +564,70 @@ def test_supabase_repository_reclaims_expired_processing_lease():
     claim_call = client.calls[-1]
     assert claim_call["params"]["status"] == "eq.processing"
     assert claim_call["params"]["claimed_at"].startswith("lt.")
+
+
+def test_supabase_repository_requeues_only_same_tenant_deterministic_fallback():
+    class Response:
+        status_code = 200
+
+        def __init__(self, body: list[dict]) -> None:
+            self.body = body
+
+        def json(self) -> list[dict]:
+            return self.body
+
+    fallback = {
+        "id": "assessment-id",
+        "tenant_id": "tenant-a",
+        "business_date": "2026-09-05",
+        "cod_clase": "FC",
+        "num_documento": "P1",
+        "content_fingerprint": "a" * 64,
+        "assessment_fingerprint": "b" * 64,
+        "status": "fallback",
+        "generation_mode": "deterministic_fallback",
+        "attempt_count": 1,
+        "deterministic_metrics": {"invoice": {}},
+        "markdown": "# deterministic report",
+        "next_retry_at": None,
+    }
+
+    class RetryClient:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:
+            return None
+
+        def request(self, method, url, *, params, json, headers):
+            self.calls.append({"method": method, "params": params, "json": json})
+            if method == "GET":
+                return Response([fallback])
+            return Response([{**fallback, **json}])
+
+    client = RetryClient()
+    repository = SupabasePurchaseAssessmentRepository(lambda: client)
+    found = repository.get_assessment_by_id("tenant-a", "assessment-id")
+    queued = repository.queue_fallback_retry("tenant-a", "assessment-id")
+
+    assert found == fallback
+    assert queued is not None
+    assert queued["status"] == "pending"
+    assert queued["markdown"] is None
+    assert queued["generation_mode"] is None
+    assert queued["deterministic_metrics"] == fallback["deterministic_metrics"]
+    lookup = client.calls[0]["params"]
+    assert lookup == {"id": "eq.assessment-id", "tenant_id": "eq.tenant-a", "limit": "1"}
+    patch = client.calls[1]
+    assert patch["params"]["tenant_id"] == "eq.tenant-a"
+    assert patch["params"]["status"] == "eq.fallback"
+    assert patch["params"]["generation_mode"] == "eq.deterministic_fallback"
+    assert patch["params"]["or"].startswith("(next_retry_at.is.null,next_retry_at.lte.")
+    assert patch["json"]["status"] == "pending"
+    assert patch["json"]["last_error_code"] == "manual_retry"
 
 
 def test_retry_backoff_does_not_block_new_pending_assessments():
@@ -900,11 +1050,11 @@ def test_authenticated_invoice_lookup_is_tenant_scoped(purchase_assessment_db):
         "nit_proveedor": "900",
         "content_fingerprint": "a" * 64,
         "assessment_fingerprint": "b" * 64,
-        "status": "completed",
+        "status": "fallback",
         "attempt_count": 1,
         "deterministic_metrics": metrics,
         "source_cutoffs": metrics["source_cutoffs"],
-        "generation_mode": "llm",
+        "generation_mode": "deterministic_fallback",
         "provider": "fake",
         "model": "fake-model",
         "analyzer_revision": "purchase-invoice-v1",
@@ -914,13 +1064,34 @@ def test_authenticated_invoice_lookup_is_tenant_scoped(purchase_assessment_db):
         "updated_at": now,
         "completed_at": now,
     }
+    own_id = str(uuid4())
+    other_tenant_id = str(uuid4())
+    completed_id = str(uuid4())
+    cooldown_id = str(uuid4())
     repository = MemoryAssessmentRepository([
-        {**shared, "id": str(uuid4()), "tenant_id": "motoshop"},
+        {**shared, "id": own_id, "tenant_id": "motoshop"},
         {
             **shared,
-            "id": str(uuid4()),
+            "id": other_tenant_id,
             "tenant_id": "masvital",
             "markdown": "# private other tenant",
+        },
+        {
+            **shared,
+            "id": completed_id,
+            "tenant_id": "motoshop",
+            "business_date": "2026-09-06",
+            "num_documento": "P2",
+            "status": "completed",
+            "generation_mode": "llm",
+        },
+        {
+            **shared,
+            "id": cooldown_id,
+            "tenant_id": "motoshop",
+            "business_date": "2026-09-07",
+            "num_documento": "P3",
+            "next_retry_at": (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
         },
     ])
     from motoshop_api.auth.hash import hash_password
@@ -964,6 +1135,34 @@ def test_authenticated_invoice_lookup_is_tenant_scoped(purchase_assessment_db):
         assert listing.status_code == 200
         assert len(listing.json()["items"]) == 1
         assert listing.json()["items"][0]["markdown"] == "# tenant document"
+        retry_url = f"/api/purchase-assessments/{own_id}/retry"
+        queued = client.post(retry_url, headers=headers)
+        assert queued.status_code == 202
+        assert queued.json()["status"] == "pending"
+        assert queued.json()["markdown"] is None
+        assert queued.json()["generation_mode"] is None
+        assert queued.json()["deterministic_metrics"] == metrics
+
+        replay = client.post(retry_url, headers=headers)
+        assert replay.status_code == 202
+        assert replay.json()["id"] == own_id
+        assert replay.json()["attempt_count"] == 1
+
+        completed_retry = client.post(
+            f"/api/purchase-assessments/{completed_id}/retry", headers=headers
+        )
+        assert completed_retry.status_code == 409
+        cooldown = client.post(
+            f"/api/purchase-assessments/{cooldown_id}/retry", headers=headers
+        )
+        assert cooldown.status_code == 429
+        assert int(cooldown.headers["Retry-After"]) > 0
+
+        cross_tenant_retry = client.post(
+            f"/api/purchase-assessments/{other_tenant_id}/retry",
+            headers={**headers, "X-Tenant": "masvital"},
+        )
+        assert cross_tenant_retry.status_code == 403
         assert client.get(
             "/api/purchase-assessments/invoice",
             params={"business_date": "2026-09-05", "cod_clase": "FC", "num_documento": "P1"},

@@ -19,6 +19,7 @@ CONFLICT_COLUMNS = "tenant_id,business_date,cod_clase,num_documento,assessment_f
 CLAIM_LEASE = timedelta(minutes=10)
 RETRY_BASE_DELAY = timedelta(minutes=1)
 RETRY_MAX_DELAY = timedelta(hours=1)
+FALLBACK_RETRY_COOLDOWN = timedelta(minutes=5)
 ScanCursor = tuple[str, str, str] | None
 
 
@@ -49,6 +50,12 @@ class PurchaseAssessmentRepository(Protocol):
     def get_invoice(
         self, tenant_id: str, business_date: str, cod_clase: str,
         num_documento: str, nit_proveedor: str | None = None,
+    ) -> dict[str, Any] | None: ...
+    def get_assessment_by_id(
+        self, tenant_id: str, assessment_id: str
+    ) -> dict[str, Any] | None: ...
+    def queue_fallback_retry(
+        self, tenant_id: str, assessment_id: str
     ) -> dict[str, Any] | None: ...
     def list_assessments(
         self, tenant_id: str, date_from: str, date_to: str,
@@ -317,7 +324,13 @@ class SupabasePurchaseAssessmentRepository:
         claim_token: str,
         result: dict[str, Any],
     ) -> bool:
-        now = datetime.now(UTC).isoformat()
+        completed_at = datetime.now(UTC)
+        now = completed_at.isoformat()
+        retry_at = (
+            (completed_at + FALLBACK_RETRY_COOLDOWN).isoformat()
+            if result["generation_mode"] == "deterministic_fallback"
+            else None
+        )
         patch = {
             "status": (
                 "fallback"
@@ -332,7 +345,7 @@ class SupabasePurchaseAssessmentRepository:
             "updated_at": now,
             "claim_token": None,
             "claimed_at": None,
-            "next_retry_at": None,
+            "next_retry_at": retry_at,
             "last_error_code": None,
         }
         with self._client_factory() as client:
@@ -404,6 +417,60 @@ class SupabasePurchaseAssessmentRepository:
             params["nit_proveedor"] = _eq_filter(nit_proveedor)
         with self._client_factory() as client:
             rows = _request(client, "GET", params=params)
+        return rows[0] if rows else None
+
+    def get_assessment_by_id(
+        self,
+        tenant_id: str,
+        assessment_id: str,
+    ) -> dict[str, Any] | None:
+        with self._client_factory() as client:
+            rows = _request(
+                client,
+                "GET",
+                params={
+                    "id": _eq_filter(assessment_id),
+                    "tenant_id": _eq_filter(tenant_id),
+                    "limit": "1",
+                },
+            )
+        return rows[0] if rows else None
+
+    def queue_fallback_retry(
+        self,
+        tenant_id: str,
+        assessment_id: str,
+    ) -> dict[str, Any] | None:
+        """Atomically queue one tenant-owned deterministic fallback for retry."""
+        now = datetime.now(UTC)
+        cutoff = now.isoformat()
+        patch = {
+            "status": "pending",
+            "markdown": None,
+            "generation_mode": None,
+            "provider": None,
+            "model": None,
+            "completed_at": None,
+            "next_retry_at": None,
+            "last_error_code": "manual_retry",
+            "claim_token": None,
+            "claimed_at": None,
+            "updated_at": cutoff,
+        }
+        with self._client_factory() as client:
+            rows = _request(
+                client,
+                "PATCH",
+                params={
+                    "id": _eq_filter(assessment_id),
+                    "tenant_id": _eq_filter(tenant_id),
+                    "status": _eq_filter("fallback"),
+                    "generation_mode": _eq_filter("deterministic_fallback"),
+                    "or": f"(next_retry_at.is.null,next_retry_at.lte.{cutoff})",
+                },
+                json_body=patch,
+                prefer="return=representation",
+            )
         return rows[0] if rows else None
 
     def list_assessments(
