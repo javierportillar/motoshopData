@@ -363,19 +363,19 @@ def test_supabase_repository_uses_tenant_filters_and_conditional_atomic_claim():
         "attempt_count": 0,
     })
 
-    assert client.calls[0]["params"]["tenant_id"] == 'eq."tenant-a"'
+    assert client.calls[0]["params"]["tenant_id"] == "eq.tenant-a"
     claim_call = client.calls[-1]
     assert claim_call["method"] == "PATCH"
     assert claim_call["params"] == {
-        "id": 'eq."assessment-id"',
-        "status": 'eq."pending"',
-        "tenant_id": 'eq."tenant-a"',
+        "id": "eq.assessment-id",
+        "status": "eq.pending",
+        "tenant_id": "eq.tenant-a",
     }
     assert claim_call["json"]["status"] == "processing"
     assert claim_call["json"]["claim_token"]
     assert claimed is not None
     repository.get_invoice("tenant-a", "2026-09-01", "FC", "D-1,(x)")
-    assert client.calls[-1]["params"]["num_documento"] == 'eq."D-1,(x)"'
+    assert client.calls[-1]["params"]["num_documento"] == "eq.D-1,(x)"
 
 
 def test_scan_cursor_advance_is_compare_and_set():
@@ -414,7 +414,7 @@ def test_scan_cursor_advance_is_compare_and_set():
 
     patch = client.calls[-1]
     assert advanced is True
-    assert patch["params"]["tenant_id"] == 'eq."tenant-a"'
+    assert patch["params"]["tenant_id"] == "eq.tenant-a"
     assert patch["params"]["cursor_business_date"] == "is.null"
     assert patch["params"]["cursor_cod_clase"] == "is.null"
     assert patch["params"]["cursor_num_documento"] == "is.null"
@@ -460,11 +460,9 @@ def test_supabase_repository_reclaims_expired_processing_lease():
 
         def request(self, method, url, *, params, json, headers):
             self.calls.append({"method": method, "params": params, "json": json})
-            if method == "GET" and params.get("status") in {
-                'eq."pending"', 'eq."failed"'
-            }:
+            if method == "GET" and params.get("status") in {"eq.pending", "eq.failed"}:
                 return Response([])
-            if method == "GET" and params.get("status") == 'eq."processing"':
+            if method == "GET" and params.get("status") == "eq.processing":
                 return Response([stale_row])
             return Response([{**stale_row, **json}])
 
@@ -478,7 +476,7 @@ def test_supabase_repository_reclaims_expired_processing_lease():
     assert claimed["attempt_count"] == 4
     assert claimed["claim_token"] != "old-token"
     claim_call = client.calls[-1]
-    assert claim_call["params"]["status"] == 'eq."processing"'
+    assert claim_call["params"]["status"] == "eq.processing"
     assert claim_call["params"]["claimed_at"].startswith("lt.")
 
 
@@ -551,9 +549,9 @@ def test_supabase_failed_claim_obeys_retry_time_and_uses_exponential_backoff():
 
         def request(self, method, url, *, params, json, headers):
             self.calls.append({"method": method, "params": params, "json": json})
-            if method == "GET" and params.get("status") == 'eq."pending"':
+            if method == "GET" and params.get("status") == "eq.pending":
                 return Response([])
-            if method == "GET" and params.get("status") == 'eq."failed"':
+            if method == "GET" and params.get("status") == "eq.failed":
                 return Response([due_failed])
             if method == "PATCH":
                 return Response([{**due_failed, **json}])
@@ -569,7 +567,7 @@ def test_supabase_failed_claim_obeys_retry_time_and_uses_exponential_backoff():
     claimed = repository.claim(due[0])
     assert claimed is not None
     claim_params = client.calls[-1]["params"]
-    assert claim_params["next_retry_at"] == f'eq."{due_retry_at}"'
+    assert claim_params["next_retry_at"] == f"eq.{due_retry_at}"
 
     before = datetime.now(UTC)
     repository.fail("tenant-a", "failed-id", "claim-token", "ProviderError", 4)

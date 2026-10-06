@@ -75,9 +75,8 @@ def _client() -> httpx.Client:
 
 
 def _eq_filter(value: str) -> str:
-    """Quote PostgREST scalar values so punctuation cannot alter filter syntax."""
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-    return f'eq."{escaped}"'
+    """Build an equality filter; the HTTP client URL-encodes the scalar value."""
+    return f"eq.{value}"
 
 
 def _request(
