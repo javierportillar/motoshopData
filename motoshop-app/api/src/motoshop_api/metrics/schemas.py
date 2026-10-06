@@ -381,6 +381,48 @@ class SalesForecastBacktestAccuracy(BaseModel):
     note: str
 
 
+class SalesForecastStockAdjustedMonth(BaseModel):
+    month: str
+    observed_amount: float
+    projected_amount: float
+    days_total: int
+
+
+class SalesForecastStockAdjusted(BaseModel):
+    current_month: SalesForecastStockAdjustedMonth
+    next_month: SalesForecastStockAdjustedMonth
+    confidence: Literal["high", "medium", "low"]
+    confidence_note: str
+    inventory_source: str
+    no_future_replenishment: bool
+    inventory_controlled_skus: int
+    uncapped_service_skus: int
+    insufficient_evidence_skus: int
+
+
+class SalesForecastDailyItem(BaseModel):
+    date: date
+    actual_amount: float | None
+    base_projected_amount: float | None
+    stock_adjusted_projected_amount: float | None
+
+
+class SalesForecastSourceCutoffs(BaseModel):
+    sales_date: date | None
+    inventory_date: date | None
+    purchases_date: date | None
+
+
+class SalesForecastStaleness(BaseModel):
+    as_of_date: date
+    sales_days_behind: int | None
+    inventory_days_behind: int | None
+    purchases_days_behind: int | None
+    sales_is_stale: bool
+    inventory_is_stale: bool
+    purchases_are_stale: bool
+
+
 class SalesForecastMonthlyResponse(BaseModel):
     current_month: SalesForecastCurrentMonth
     next_month: SalesForecastNextMonth
@@ -392,6 +434,11 @@ class SalesForecastMonthlyResponse(BaseModel):
     ]
     rate_window: SalesForecastRateWindow | None
     backtest_accuracy: SalesForecastBacktestAccuracy | None = None
+    stock_adjusted: SalesForecastStockAdjusted
+    daily_series: list[SalesForecastDailyItem]
+    source_cutoffs: SalesForecastSourceCutoffs
+    staleness: SalesForecastStaleness
+    business_timezone: str
     model_version: str
     drivers: list[str]
 

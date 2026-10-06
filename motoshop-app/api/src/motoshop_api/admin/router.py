@@ -10,7 +10,7 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -55,10 +55,25 @@ def _get_pipeline_runs_db_path(tenant: str = "motoshop") -> Path:
     return Path(f"/tmp/{suffix}" if os.environ.get("ENV") == "prod" else f"out/{suffix}")
 
 
+def _run_purchase_assessment_refresh(tenant: str, db_path: str) -> None:
+    """Run purchase backfill after the response without coupling it to refresh success."""
+    try:
+        from motoshop_api.purchase_assessments.service import refresh_purchase_assessments
+
+        refresh_purchase_assessments(tenant, db_path)
+    except Exception as exc:
+        logger.warning(
+            "Purchase assessment background task unavailable tenant=%s error_type=%s",
+            tenant,
+            type(exc).__name__,
+        )
+
+
 @router.post("/data/refresh", response_model=RefreshResponse)
 @limiter.limit("3/minute")
 async def data_refresh(
     request: Request,
+    background_tasks: BackgroundTasks,
     tenant: str = Depends(get_tenant),
     _: bool = Depends(require_refresh_token_or_admin),
 ) -> RefreshResponse:
@@ -121,6 +136,8 @@ async def data_refresh(
             freshness = datetime.fromtimestamp(mtime, UTC).isoformat()
         except Exception:
             pass
+
+        background_tasks.add_task(_run_purchase_assessment_refresh, tenant, str(db_path))
 
         return RefreshResponse(
             status="ok",

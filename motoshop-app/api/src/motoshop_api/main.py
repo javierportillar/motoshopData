@@ -39,6 +39,7 @@ from motoshop_api.metrics.repo_duckdb import DuckDBNotReadyError
 from motoshop_api.metrics.router import router as metrics_router
 from motoshop_api.pipeline_runs.router import router as pipeline_runs_router
 from motoshop_api.products.router import router as products_router
+from motoshop_api.purchase_assessments.router import router as purchase_assessments_router
 from motoshop_api.purchase_plans.router import router as purchase_plans_router
 from motoshop_api.push.router import router as push_router
 from motoshop_api.reports.router import router as reports_router
@@ -101,7 +102,13 @@ async def lifespan(app: FastAPI):
     else:
         log.warning("tenants_file_not_found", path=str(tenants_path))
 
+    from motoshop_api.purchase_assessments.worker import start_purchase_assessment_worker
+
+    purchase_assessment_worker = start_purchase_assessment_worker()
+
     yield
+    if purchase_assessment_worker is not None:
+        purchase_assessment_worker.stop()
     # ── Shutdown: cerrar conexiones DuckDB compartidas ────────────────
     from motoshop_api.metrics.repo_duckdb import close_all_shared_connections
     close_all_shared_connections()
@@ -238,6 +245,7 @@ app.include_router(admin_router, prefix="/api")
 app.include_router(alerts_router, prefix="/api", dependencies=module_access)
 app.include_router(app_writes_router, prefix="/api", dependencies=module_access)
 app.include_router(purchase_plans_router, prefix="/api", dependencies=module_access)
+app.include_router(purchase_assessments_router, prefix="/api", dependencies=module_access)
 app.include_router(gastos_router, dependencies=module_access)  # ya tiene prefix=/api/gastos
 app.include_router(expiry_router, prefix="/api", dependencies=module_access)
 app.include_router(users_router)  # ya tiene prefix=/api/admin/users
