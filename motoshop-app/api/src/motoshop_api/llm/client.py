@@ -246,6 +246,15 @@ class LLMClient:
                     last_cause = exc
                     continue
 
+                if not text and not tool_calls:
+                    logger.warning(
+                        "LLM empty completion from %s/%s",
+                        backend["name"],
+                        backend["model"],
+                    )
+                    failures.append(f"{backend['name']}:empty_completion")
+                    continue
+
                 logger.info(
                     "llm_ok: backend=%s model=%s tokens_in=%d tokens_out=%d cost=$0",
                     backend["name"],

@@ -461,15 +461,22 @@ def test_briefing_send_offloads_blocking_work_and_keeps_tenants_isolated(
 
 
 class _StubLLMResponse:
-    def __init__(self, status_code: int, *, malformed: bool = False) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        *,
+        malformed: bool = False,
+        content: str = "ok",
+    ) -> None:
         self.status_code = status_code
         self._malformed = malformed
+        self._content = content
 
     def json(self) -> dict[str, object]:
         if self._malformed:
             raise ValueError("malformed JSON")
         return {
-            "choices": [{"message": {"content": "ok"}}],
+            "choices": [{"message": {"content": self._content}}],
             "usage": {},
         }
 
@@ -484,6 +491,16 @@ class _StubLLMHttp:
         return self._result
 
 
+class _SequenceLLMHttp:
+    def __init__(self, responses: list[_StubLLMResponse]) -> None:
+        self._responses = iter(responses)
+        self.calls = 0
+
+    def post(self, *_args: object, **_kwargs: object) -> _StubLLMResponse:
+        self.calls += 1
+        return next(self._responses)
+
+
 def _stub_llm_client(result: _StubLLMResponse | Exception) -> LLMClient:
     client = object.__new__(LLMClient)
     client._backends = [{
@@ -492,6 +509,31 @@ def _stub_llm_client(result: _StubLLMResponse | Exception) -> LLMClient:
     }]
     client._http = _StubLLMHttp(result)  # type: ignore[assignment]
     return client
+
+
+def _stub_two_backend_llm_client(
+    responses: list[_StubLLMResponse],
+) -> tuple[LLMClient, _SequenceLLMHttp]:
+    client = object.__new__(LLMClient)
+    client._backends = [
+        {
+            "name": "go",
+            "base": "https://primary.provider.test",
+            "key": "primary-test-key",
+            "model": "reasoning-model",
+            "max_tokens": 10,
+        },
+        {
+            "name": "zen",
+            "base": "https://fallback.provider.test",
+            "key": "fallback-test-key",
+            "model": "instruct-model",
+            "max_tokens": 10,
+        },
+    ]
+    http = _SequenceLLMHttp(responses)
+    client._http = http  # type: ignore[assignment]
+    return client, http
 
 
 @pytest.mark.parametrize("status_code", [429, 500, 503])
@@ -552,6 +594,31 @@ def test_llm_client_classifies_permanent_or_malformed_failures_without_retry(
 
     with pytest.raises(PermanentLLMError):
         client.complete("test")
+
+
+def test_llm_client_uses_fallback_backend_after_empty_primary_completion() -> None:
+    client, http = _stub_two_backend_llm_client([
+        _StubLLMResponse(200, content=""),
+        _StubLLMResponse(200, content="Narrative ready"),
+    ])
+
+    result = client.complete("test")
+
+    assert result["backend"] == "zen"
+    assert result["text"] == "Narrative ready"
+    assert http.calls == 2
+
+
+def test_llm_client_raises_when_all_backends_return_empty_completions() -> None:
+    client, http = _stub_two_backend_llm_client([
+        _StubLLMResponse(200, content=""),
+        _StubLLMResponse(200, content=""),
+    ])
+
+    with pytest.raises(PermanentLLMError, match="empty_completion"):
+        client.complete("test")
+
+    assert http.calls == 2
 
 
 def test_briefing_send_rejects_wrong_machine_token(
