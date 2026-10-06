@@ -20,9 +20,15 @@ SHUTDOWN_JOIN_SECONDS = 5
 
 
 def _tenant_snapshot_path(tenant_id: str) -> Path:
-    from motoshop_api.metrics.repo_duckdb import _make_db_path
+    from motoshop_api.metrics.repo_duckdb import (
+        _bootstrap_duckdb_from_r2,
+        _make_db_path,
+    )
 
-    return Path(settings.duckdb_path or _make_db_path(tenant_id))
+    db_path = Path(settings.duckdb_path or _make_db_path(tenant_id))
+    if settings.env.casefold() != "test":
+        _bootstrap_duckdb_from_r2(db_path, tenant_id)
+    return db_path
 
 
 class PeriodicPurchaseAssessmentWorker:

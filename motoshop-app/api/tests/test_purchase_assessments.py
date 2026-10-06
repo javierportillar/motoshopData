@@ -765,6 +765,34 @@ def test_periodic_sweep_advances_past_first_invoice_page_without_refresh(
     assert llm.calls == 2
 
 
+@pytest.mark.parametrize("environment,expected_bootstraps", [("prod", 1), ("test", 0)])
+def test_tenant_snapshot_path_bootstraps_r2_outside_tests(
+    tmp_path,
+    monkeypatch,
+    environment,
+    expected_bootstraps,
+):
+    import motoshop_api.metrics.repo_duckdb as metrics_module
+    import motoshop_api.purchase_assessments.worker as worker_module
+    from motoshop_api.config import settings
+
+    db_path = tmp_path / "motoshop_gold.duckdb"
+    bootstrap_calls = []
+    monkeypatch.setattr(settings, "env", environment)
+    monkeypatch.setattr(settings, "duckdb_path", "")
+    monkeypatch.setattr(metrics_module, "_make_db_path", lambda _tenant: db_path)
+    monkeypatch.setattr(
+        metrics_module,
+        "_bootstrap_duckdb_from_r2",
+        lambda path, tenant: bootstrap_calls.append((path, tenant)),
+    )
+
+    assert worker_module._tenant_snapshot_path("motoshop") == db_path
+    assert len(bootstrap_calls) == expected_bootstraps
+    if expected_bootstraps:
+        assert bootstrap_calls == [(db_path, "motoshop")]
+
+
 @pytest.mark.parametrize("initial_status", ["pending", "processing"])
 def test_periodic_worker_recovers_durable_jobs_without_refresh_or_snapshot(
     purchase_assessment_db,
