@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import duckdb
@@ -31,6 +31,7 @@ def _forecast_repo(
     with_unknown_stock_sku: bool = False,
     with_duplicate_purchase_lines: bool = False,
     with_explicit_service_indicator: bool = False,
+    with_calendar_patterns: bool = False,
 ) -> DuckDBMetricsRepo:
     connection = duckdb.connect(str(path))
     try:
@@ -141,6 +142,28 @@ def _forecast_repo(
                 [date(2026, 7, 19), "FC", "P-DUP-LINES", "SKU-1", 5,
                  date(2026, 7, 19), "FC", "P-DUP-LINES", "SKU-1", 5],
             )
+        if with_calendar_patterns:
+            pattern_start = date(2026, 4, 2)
+            pattern_end = date(2026, 6, 30)
+            weekday_amounts = (180, 240, 310, 390, 520, 90, 0)
+            pattern_headers = []
+            cursor = pattern_start
+            while cursor <= pattern_end:
+                amount = weekday_amounts[cursor.weekday()]
+                if amount:
+                    month_week_bonus = 120 if cursor.day <= 7 else 0
+                    pattern_headers.append((
+                        cursor,
+                        amount + month_week_bonus,
+                        "B",
+                        f"CAL-{cursor.isoformat()}",
+                        "FV",
+                    ))
+                cursor += timedelta(days=1)
+            connection.executemany(
+                "INSERT INTO silver_fact_ventas VALUES (?, ?, ?, ?, ?)",
+                pattern_headers,
+            )
     finally:
         connection.close()
     close_all_shared_connections()
@@ -163,7 +186,8 @@ def test_next_month_compares_with_that_month_last_year(tmp_path: Path) -> None:
     assert result["current_month"]["observed_amount"] == 200
     assert result["stock_adjusted"]["no_future_replenishment"] is True
     assert result["business_timezone"] == "America/Bogota"
-    assert result["model_version"] == "run_rate_v3_calendar_stock_scenario"
+    assert result["model_version"] == "weekday_week_of_month_v1_stock_scenario"
+    assert result["daily_pattern"]["method"] == "flat_daily_fallback"
 
     current_days = [
         item for item in result["daily_series"] if item["date"].strftime("%Y-%m") == "2026-07"
@@ -200,6 +224,44 @@ def test_next_month_compares_with_that_month_last_year(tmp_path: Path) -> None:
     assert all(item["base_projected_amount"] is None for item in observed_days)
     assert all(item["stock_adjusted_projected_amount"] is None for item in observed_days)
     assert all(item["actual_amount"] is None for item in next_days)
+
+
+def test_daily_forecast_varies_by_weekday_and_reconciles_to_monthly_total(
+    tmp_path: Path,
+) -> None:
+    result = _forecast_repo(
+        tmp_path / "weekday-calendar-forecast.duckdb",
+        tenant="masvital",
+        inventory_units=1_000,
+        with_calendar_patterns=True,
+    ).get_sales_forecast_monthly(as_of_date=date(2026, 7, 20))
+
+    current_forecast_days = [
+        item
+        for item in result["daily_series"]
+        if item["date"].strftime("%Y-%m") == "2026-07"
+        and item["base_projected_amount"] is not None
+    ]
+    daily_amounts = [item["base_projected_amount"] for item in current_forecast_days]
+    stock_daily_amounts = [
+        item["stock_adjusted_projected_amount"] for item in current_forecast_days
+    ]
+
+    assert result["daily_pattern"]["method"] == "weekday_week_of_month"
+    assert result["daily_pattern"]["days_with_sales"] >= 28
+    assert "día de semana" in result["daily_pattern"]["note"]
+    assert len({round(amount, 2) for amount in daily_amounts}) > 1
+    assert len({round(amount, 2) for amount in stock_daily_amounts}) > 1
+    assert round(sum(daily_amounts), 2) == round(
+        result["current_month"]["projected_amount"]
+        - result["current_month"]["observed_amount"],
+        2,
+    )
+    assert round(sum(stock_daily_amounts), 2) == round(
+        result["stock_adjusted"]["current_month"]["projected_amount"]
+        - result["stock_adjusted"]["current_month"]["observed_amount"],
+        2,
+    )
 
 
 def test_daily_sales_month_uses_the_same_valid_invoice_headers_as_the_forecast(

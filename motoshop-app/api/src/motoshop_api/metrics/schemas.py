@@ -407,6 +407,14 @@ class SalesForecastDailyItem(BaseModel):
     stock_adjusted_projected_amount: float | None
 
 
+class SalesForecastDailyPattern(BaseModel):
+    method: Literal["weekday_week_of_month", "flat_daily_fallback"]
+    history_days: int
+    days_with_sales: int
+    seasonal_window_days: int
+    note: str
+
+
 class SalesForecastSourceCutoffs(BaseModel):
     sales_date: date | None
     inventory_date: date | None
@@ -436,6 +444,7 @@ class SalesForecastMonthlyResponse(BaseModel):
     backtest_accuracy: SalesForecastBacktestAccuracy | None = None
     stock_adjusted: SalesForecastStockAdjusted
     daily_series: list[SalesForecastDailyItem]
+    daily_pattern: SalesForecastDailyPattern
     source_cutoffs: SalesForecastSourceCutoffs
     staleness: SalesForecastStaleness
     business_timezone: str

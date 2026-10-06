@@ -307,7 +307,7 @@ def sales_forecast_monthly(
     _user: User = Depends(get_current_user),
     tenant: str = Depends(get_tenant),
 ) -> SalesForecastMonthlyResponse:
-    """Proyección de ventas (run-rate) para mes actual y siguiente. Sin LLM."""
+    """Pronóstico mensual y diario con patrón histórico, más escenario con inventario."""
     payload = _cached_or_fetch(
         f"{tenant}:sales-forecast:2",
         repo.get_sales_forecast_monthly,

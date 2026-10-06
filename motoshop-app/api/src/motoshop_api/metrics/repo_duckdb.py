@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import logging
+from math import floor
 import os
 import shutil
 import statistics
@@ -105,6 +106,131 @@ def _split_forecast_amount(amount: float, day_count: int) -> list[float]:
         sign * (quotient + (1 if index < remainder else 0)) / 100
         for index in range(day_count)
     ]
+
+
+def _calendar_forecast_weights(
+    forecast_dates: list[date],
+    daily_sales: dict[date, float],
+    rolling_start: date,
+    rolling_end: date,
+    profile_start: date,
+    profile_end: date,
+    rolling_days_with_sales: int,
+) -> tuple[list[float], dict[str, Any]]:
+    """Build a smoothed day-of-week and week-of-month daily sales profile."""
+    calendar_window_days = (rolling_end - rolling_start).days + 1
+    profile_window_days = (profile_end - profile_start).days + 1
+    if (
+        not forecast_dates
+        or rolling_days_with_sales < 28
+        or calendar_window_days <= 0
+        or profile_window_days <= 0
+    ):
+        return [1.0] * len(forecast_dates), {
+            "method": "flat_daily_fallback",
+            "history_days": max(0, calendar_window_days),
+            "days_with_sales": rolling_days_with_sales,
+            "seasonal_window_days": max(0, profile_window_days),
+            "note": (
+                "Historial insuficiente: se reparte el total previsto de forma uniforme. "
+                "No equivale a una estimación por fecha."
+            ),
+        }
+
+    rolling_calendar = [
+        rolling_start + timedelta(days=offset)
+        for offset in range(calendar_window_days)
+    ]
+    profile_calendar = [
+        profile_start + timedelta(days=offset)
+        for offset in range(profile_window_days)
+    ]
+    rolling_total = sum(daily_sales.get(day, 0.0) for day in rolling_calendar)
+    profile_total = sum(daily_sales.get(day, 0.0) for day in profile_calendar)
+    if rolling_total <= 0 or profile_total <= 0:
+        return [1.0] * len(forecast_dates), {
+            "method": "flat_daily_fallback",
+            "history_days": calendar_window_days,
+            "days_with_sales": rolling_days_with_sales,
+            "seasonal_window_days": profile_window_days,
+            "note": (
+                "No hay importes históricos suficientes para estimar un patrón por fecha; "
+                "se reparte el total previsto de forma uniforme."
+            ),
+        }
+
+    rolling_daily_mean = rolling_total / calendar_window_days
+    profile_daily_mean = profile_total / profile_window_days
+    weekday_totals = [0.0] * 7
+    weekday_days = [0] * 7
+    for day in rolling_calendar:
+        weekday_totals[day.weekday()] += daily_sales.get(day, 0.0)
+        weekday_days[day.weekday()] += 1
+
+    month_week_totals = [0.0] * 5
+    month_week_days = [0] * 5
+    for day in profile_calendar:
+        month_week = min(4, (day.day - 1) // 7)
+        month_week_totals[month_week] += daily_sales.get(day, 0.0)
+        month_week_days[month_week] += 1
+
+    raw_weights: list[float] = []
+    for forecast_date in forecast_dates:
+        weekday = forecast_date.weekday()
+        month_week = min(4, (forecast_date.day - 1) // 7)
+        weekday_mean = (
+            weekday_totals[weekday] + rolling_daily_mean * 3
+        ) / (weekday_days[weekday] + 3)
+        month_week_mean = (
+            month_week_totals[month_week] + profile_daily_mean * 10
+        ) / (month_week_days[month_week] + 10)
+        raw_weights.append(max(0.0, 0.75 * weekday_mean + 0.25 * month_week_mean))
+
+    if sum(raw_weights) <= 0:
+        return [1.0] * len(forecast_dates), {
+            "method": "flat_daily_fallback",
+            "history_days": calendar_window_days,
+            "days_with_sales": rolling_days_with_sales,
+            "seasonal_window_days": profile_window_days,
+            "note": "El patrón histórico no permite distribuir importes; se usa un reparto uniforme.",
+        }
+    weight_total = sum(raw_weights)
+    return [weight / weight_total for weight in raw_weights], {
+        "method": "weekday_week_of_month",
+        "history_days": calendar_window_days,
+        "days_with_sales": rolling_days_with_sales,
+        "seasonal_window_days": profile_window_days,
+        "note": (
+            "La curva diaria usa el patrón del mismo día de semana en los últimos 90 días "
+            "y del mismo tramo del mes (días 1–7, 8–14, 15–21, 22–28 y 29–fin) en hasta "
+            "365 días. Los días sin factura se cuentan como cero; no hay calendario de festivos. "
+            "El total mensual conserva el nivel del promedio diario base."
+        ),
+    }
+
+
+def _spread_amount_by_weights(amount: float, weights: list[float]) -> list[float]:
+    """Distribute a total by calendar weights with exact cent reconciliation."""
+    if not weights:
+        return []
+    weight_total = sum(max(0.0, weight) for weight in weights)
+    if weight_total <= 0:
+        return _split_forecast_amount(amount, len(weights))
+
+    total_cents = round(amount * 100)
+    sign = -1 if total_cents < 0 else 1
+    magnitude = abs(total_cents)
+    quotas = [magnitude * max(0.0, weight) / weight_total for weight in weights]
+    cents = [floor(quota) for quota in quotas]
+    remainder = magnitude - sum(cents)
+    remainder_order = sorted(
+        range(len(weights)),
+        key=lambda index: quotas[index] - cents[index],
+        reverse=True,
+    )
+    for index in remainder_order[:remainder]:
+        cents[index] += 1
+    return [sign * value / 100 for value in cents]
 
 
 def _allocate_stock_adjusted_demand(
@@ -1959,10 +2085,12 @@ class DuckDBMetricsRepo:
     # ── Sales Forecast Monthly (V1.8) ─────────────────────────────────
 
     def get_sales_forecast_monthly(self, as_of_date: date | None = None) -> dict:
-        """Compare the sales run-rate with current-stock-constrained realization.
+        """Forecast current and next month with historical calendar-shaped daily sales.
 
         Both horizons follow the America/Bogota business calendar. Data cutoffs
         describe what is known; they never move the forecast horizon backward.
+        The monthly base level uses a 90-day daily average, while future daily
+        amounts are distributed using weekday and week-of-month history.
         """
         today = as_of_date or datetime.now(ZoneInfo("America/Bogota")).date()
         first_current = today.replace(day=1)
@@ -2045,19 +2173,30 @@ class DuckDBMetricsRepo:
 
         window_end = first_current - timedelta(days=1)
         window_start = window_end - timedelta(days=89)
+        profile_start = window_end - timedelta(days=364)
         rolling_total = 0.0
         rolling_days = 0
+        sales_by_day: dict[date, float] = {}
         if has_sales_headers:
-            rolling_rows = self._query(f"""
+            profile_rows = self._query(f"""
                 WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE})
-                SELECT ROUND(COALESCE(SUM(total_factura), 0), 2) AS amount,
-                       COUNT(DISTINCT business_date) AS days
+                SELECT business_date,
+                       ROUND(COALESCE(SUM(total_factura), 0), 2) AS amount
                 FROM valid_sales_headers
                 WHERE business_date BETWEEN ? AND ?
-            """, [window_start, window_end])
-            if rolling_rows:
-                rolling_total = float(rolling_rows[0]["amount"] or 0.0)
-                rolling_days = int(rolling_rows[0]["days"] or 0)
+                GROUP BY business_date
+            """, [profile_start, window_end])
+            sales_by_day = {
+                date.fromisoformat(str(row["business_date"])[:10]): float(row["amount"] or 0.0)
+                for row in profile_rows
+            }
+            rolling_window_sales = {
+                business_date: amount
+                for business_date, amount in sales_by_day.items()
+                if window_start <= business_date <= window_end
+            }
+            rolling_total = sum(rolling_window_sales.values())
+            rolling_days = len(rolling_window_sales)
 
         rate_basis = "rolling_90d_complete"
         if rolling_days > 0 and rolling_total > 0:
@@ -2304,15 +2443,46 @@ class DuckDBMetricsRepo:
             demand_rows, next_days, current_stock_allocation["remaining_stock"]
         )
 
-        base_current_forecast = _split_forecast_amount(
-            daily_rate * current_forecast_days, current_forecast_days
+        current_forecast_dates = [
+            first_current + timedelta(days=day - 1)
+            for day in range(observed_days + 1, current_days + 1)
+        ]
+        next_forecast_dates = [
+            first_next + timedelta(days=offset) for offset in range(next_days)
+        ]
+        current_daily_weights, _ = _calendar_forecast_weights(
+            current_forecast_dates,
+            sales_by_day,
+            window_start,
+            window_end,
+            profile_start,
+            window_end,
+            rolling_days,
         )
-        stock_current_forecast = _split_forecast_amount(
-            current_stock_allocation["projected_revenue"], current_forecast_days
+        next_daily_weights, daily_pattern = _calendar_forecast_weights(
+            next_forecast_dates,
+            sales_by_day,
+            window_start,
+            window_end,
+            profile_start,
+            window_end,
+            rolling_days,
         )
-        base_next_forecast = _split_forecast_amount(daily_rate * next_days, next_days)
-        stock_next_forecast = _split_forecast_amount(
-            next_stock_allocation["projected_revenue"], next_days
+        base_current_forecast = _spread_amount_by_weights(
+            daily_rate * current_forecast_days,
+            current_daily_weights,
+        )
+        stock_current_forecast = _spread_amount_by_weights(
+            current_stock_allocation["projected_revenue"],
+            current_daily_weights,
+        )
+        base_next_forecast = _spread_amount_by_weights(
+            daily_rate * next_days,
+            next_daily_weights,
+        )
+        stock_next_forecast = _spread_amount_by_weights(
+            next_stock_allocation["projected_revenue"],
+            next_daily_weights,
         )
 
         daily_series = []
@@ -2463,6 +2633,7 @@ class DuckDBMetricsRepo:
             "history": history,
             "backtest_accuracy": forecast_accuracy,
             "rate_basis": rate_basis,
+            "daily_pattern": daily_pattern,
             "rate_window": {
                 "start": str(window_start),
                 "end": str(window_end),
@@ -2505,10 +2676,11 @@ class DuckDBMetricsRepo:
                 "purchases_are_stale": purchases_are_stale,
             },
             "business_timezone": "America/Bogota",
-            "model_version": "run_rate_v3_calendar_stock_scenario",
+            "model_version": "weekday_week_of_month_v1_stock_scenario",
             "drivers": [
-                "rolling_90d_daily_rate",
-                "same_month_last_year",
+                "rolling_90d_monthly_level",
+                daily_pattern["method"],
+                "same_month_last_year_reference",
                 "stock_availability_no_future_replenishment",
             ],
         }
