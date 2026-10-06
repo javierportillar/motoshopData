@@ -15,11 +15,12 @@ import shutil
 import statistics
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from time import monotonic, time
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import duckdb
 
@@ -90,6 +91,70 @@ def _calibrate_forecast_confidence(history: list[dict]) -> dict:
         "sample_months": sample_count,
         "median_absolute_error_pct": median_error,
         "note": note,
+    }
+
+
+def _split_forecast_amount(amount: float, day_count: int) -> list[float]:
+    """Split a monthly amount into cent-rounded daily amounts with no drift."""
+    if day_count <= 0:
+        return []
+    total_cents = round(amount * 100)
+    sign = -1 if total_cents < 0 else 1
+    quotient, remainder = divmod(abs(total_cents), day_count)
+    return [
+        sign * (quotient + (1 if index < remainder else 0)) / 100
+        for index in range(day_count)
+    ]
+
+
+def _allocate_stock_adjusted_demand(
+    demand_rows: list[dict],
+    forecast_days: int,
+    available_units: dict[str, float | None],
+) -> dict:
+    """Realize 90-day SKU demand against stock, leaving services uncapped."""
+    remaining_stock = dict(available_units)
+    realized: dict[str, dict] = {}
+    revenue = 0.0
+
+    for item in demand_rows:
+        sku = str(item["sku"])
+        units_90d = max(0.0, float(item["units_90d"] or 0.0))
+        revenue_90d = max(0.0, float(item["revenue_90d"] or 0.0))
+        if units_90d <= 0:
+            continue
+        demand_units = units_90d / 90 * forecast_days
+        unit_revenue = revenue_90d / units_90d
+        is_service = bool(item["is_service"])
+        stock = remaining_stock.get(sku)
+
+        if is_service:
+            sold_units = demand_units
+            remaining_stock[sku] = None
+            insufficient_evidence = False
+        elif stock is None:
+            sold_units = 0.0
+            insufficient_evidence = True
+        else:
+            sellable = max(0.0, float(stock))
+            sold_units = min(demand_units, sellable)
+            remaining_stock[sku] = max(0.0, sellable - sold_units)
+            insufficient_evidence = False
+
+        sku_revenue = sold_units * unit_revenue
+        revenue += sku_revenue
+        realized[sku] = {
+            "available_units": stock,
+            "projected_units": sold_units,
+            "projected_revenue": sku_revenue,
+            "is_service": is_service,
+            "insufficient_evidence": insufficient_evidence,
+        }
+
+    return {
+        "projected_revenue": round(revenue, 2),
+        "remaining_stock": remaining_stock,
+        "realized": realized,
     }
 
 logger = logging.getLogger(__name__)
@@ -1851,32 +1916,36 @@ class DuckDBMetricsRepo:
         actualizado porque la pipeline exporta las silver primero. El gold se
         quedó sin data de Jun 2026 y nadie corrió la pipeline.
         """
-        max_d = self._con.execute(
-            "SELECT MAX(business_date) FROM silver_fact_ventas WHERE estado_documento != 'A'"
-        ).fetchone()[0]
-        rows = self._con.execute("""
+        max_rows = self._query(f"""
+            WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE})
+            SELECT MAX(business_date) AS max_date
+            FROM valid_sales_headers
+        """)
+        max_d = max_rows[0]["max_date"] if max_rows else None
+        rows = self._query(f"""
+            WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE})
             SELECT business_date,
                    ROUND(COALESCE(SUM(total_factura), 0), 2) AS ventas,
                    COUNT(*) AS facturas,
                    ROUND(COALESCE(SUM(total_factura), 0) / NULLIF(COUNT(*), 0), 2) AS ticket
-            FROM silver_fact_ventas
+            FROM valid_sales_headers
             WHERE STRFTIME(business_date, '%Y-%m') = ?
-              AND estado_documento != 'A'
             GROUP BY business_date
             ORDER BY business_date
-        """, [month]).fetchall()
+        """, [month])
 
         days = []
         accum = 0.0
-        for r in rows:
-            d_str = str(r[0])
-            accum += float(r[1] or 0)
+        for row in rows:
+            d_str = str(row["business_date"])
+            sales = float(row["ventas"] or 0)
+            accum += sales
             days.append({
                 "date": d_str,
                 "day": int(d_str.split("-")[2]),
-                "sales": float(r[1] or 0),
-                "invoices": int(r[2] or 0),
-                "avg_ticket": float(r[3] or 0),
+                "sales": sales,
+                "invoices": int(row["facturas"] or 0),
+                "avg_ticket": float(row["ticket"] or 0),
                 "accumulated": round(accum, 2),
             })
         return {
@@ -1889,178 +1958,507 @@ class DuckDBMetricsRepo:
 
     # ── Sales Forecast Monthly (V1.8) ─────────────────────────────────
 
-    def get_sales_forecast_monthly(self) -> dict:
-        """Proyección run-rate estable: mes actual + siguiente.
+    def get_sales_forecast_monthly(self, as_of_date: date | None = None) -> dict:
+        """Compare the sales run-rate with current-stock-constrained realization.
 
-        V1.23 (2026-06-30): el daily_rate ahora se calcula sobre los últimos
-        90 días COMPLETOS (excluyendo el mes en curso). Antes se basaba en el
-        mes en curso, lo que hacía que el forecast cambiara día a día y
-        arrancara cerca de $0 al inicio del mes. Con este cambio:
-          - El forecast del mes en curso y el siguiente NO cambia durante el mes.
-          - Al cerrar el mes, el rate se actualiza naturalmente con el mes recién terminado.
-          - La parte "observada" del mes en curso sigue siendo real (lo ya vendido).
-        Fallbacks: si los últimos 90d no tienen ventas, cae al mes anterior
-        completo. Si tampoco, al run-rate del mes en curso (comportamiento viejo).
+        Both horizons follow the America/Bogota business calendar. Data cutoffs
+        describe what is known; they never move the forecast horizon backward.
         """
-        from datetime import date
+        today = as_of_date or datetime.now(ZoneInfo("America/Bogota")).date()
+        first_current = today.replace(day=1)
+        first_next = (first_current + timedelta(days=32)).replace(day=1)
+        first_after_next = (first_next + timedelta(days=32)).replace(day=1)
+        current_month = first_current.strftime("%Y-%m")
+        next_month_str = first_next.strftime("%Y-%m")
+        current_days = (first_next - first_current).days
+        next_days = (first_after_next - first_next).days
 
-        max_d = self._con.execute(
-            "SELECT MAX(business_date) FROM silver_fact_ventas WHERE estado_documento != 'A'"
-        ).fetchone()[0]
-        max_date = max_d if max_d else date.today()
-        current_month = max_date.strftime("%Y-%m")
-        day_num = max_date.day
+        tables = {
+            str(row["table_name"]).casefold()
+            for row in self._query(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'main'"
+            )
+        }
+        product_columns = {
+            str(row["column_name"]).casefold()
+            for row in self._query(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'main' AND table_name = 'silver_dim_producto'"
+            )
+        } if "silver_dim_producto" in tables else set()
+        service_column = next(
+            (name for name in ("es_servicio", "is_service") if name in product_columns),
+            None,
+        )
+        has_sales_headers = "silver_fact_ventas" in tables
+        has_sales_lines = "silver_fact_ventas_detalle" in tables
+        has_purchase_headers = "silver_fact_compras" in tables
+        has_purchase_lines = "silver_fact_compras_detalle" in tables
+        has_product_dimension = "silver_dim_producto" in tables
 
-        # Acumulado real del mes en curso (lo ya vendido)
-        curr = self._con.execute("""
-            SELECT ROUND(COALESCE(SUM(total_factura),0),2), COUNT(DISTINCT business_date)
-            FROM silver_fact_ventas
-            WHERE STRFTIME(business_date,'%Y-%m') = ?
-              AND estado_documento != 'A'
-        """, [current_month]).fetchone()
-        accum = float(curr[0] or 0)
-        days_with_sales_curr = int(curr[1] or 0)
+        sales_cutoff = None
+        if has_sales_headers:
+            cutoff_rows = self._query(f"""
+                WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE})
+                SELECT MAX(business_date) AS cutoff
+                FROM valid_sales_headers
+                WHERE business_date <= ?
+            """, [today])
+            sales_cutoff = cutoff_rows[0]["cutoff"] if cutoff_rows else None
 
-        total_days = (max_date.replace(day=1) + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+        purchases_cutoff = None
+        if has_purchase_headers:
+            cutoff_rows = self._query(f"""
+                WITH valid_purchase_headers AS ({_VALID_PURCHASE_HEADERS_CTE})
+                SELECT MAX(business_date) AS cutoff
+                FROM valid_purchase_headers
+                WHERE business_date <= ?
+            """, [today])
+            purchases_cutoff = cutoff_rows[0]["cutoff"] if cutoff_rows else None
 
-        # ── Daily rate estable: últimos 90d COMPLETOS (excluye mes en curso) ──
-        first_of_current = max_date.replace(day=1)
-        window_end = first_of_current - timedelta(days=1)        # último día del mes pasado
-        window_start = window_end - timedelta(days=89)           # 90 días hacia atrás
-        rolling = self._con.execute("""
-            SELECT ROUND(COALESCE(SUM(total_factura),0),2), COUNT(DISTINCT business_date)
-            FROM silver_fact_ventas
-            WHERE business_date BETWEEN ? AND ?
-              AND estado_documento != 'A'
-        """, [window_start, window_end]).fetchone()
-        rolling_total = float(rolling[0] or 0)
-        rolling_days = int(rolling[1] or 0)
+        inventory_cutoff = None
+        if self._tenant.casefold() == "masvital" and has_product_dimension:
+            cutoff_rows = self._query("""
+                SELECT MAX(snapshot_date) AS cutoff
+                FROM silver_dim_producto
+                WHERE snapshot_date <= ?
+            """, [today])
+            inventory_cutoff = cutoff_rows[0]["cutoff"] if cutoff_rows else None
+            inventory_source = "silver_dim_producto.existencia (último snapshot)"
+        else:
+            inventory_cutoff = max(
+                (cutoff for cutoff in (sales_cutoff, purchases_cutoff) if cutoff is not None),
+                default=None,
+            )
+            inventory_source = "compras válidas menos ventas válidas (estimado)"
+
+        def source_lag(cutoff: date | None) -> int | None:
+            return max(0, (today - cutoff).days) if cutoff else None
+
+        sales_lag = source_lag(sales_cutoff)
+        inventory_lag = source_lag(inventory_cutoff)
+        purchases_lag = source_lag(purchases_cutoff)
+        sales_is_stale = sales_lag is None or sales_lag > 1
+        inventory_is_stale = inventory_lag is None or inventory_lag > 1
+        purchases_are_stale = purchases_lag is None or purchases_lag > 1
+
+        window_end = first_current - timedelta(days=1)
+        window_start = window_end - timedelta(days=89)
+        rolling_total = 0.0
+        rolling_days = 0
+        if has_sales_headers:
+            rolling_rows = self._query(f"""
+                WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE})
+                SELECT ROUND(COALESCE(SUM(total_factura), 0), 2) AS amount,
+                       COUNT(DISTINCT business_date) AS days
+                FROM valid_sales_headers
+                WHERE business_date BETWEEN ? AND ?
+            """, [window_start, window_end])
+            if rolling_rows:
+                rolling_total = float(rolling_rows[0]["amount"] or 0.0)
+                rolling_days = int(rolling_rows[0]["days"] or 0)
 
         rate_basis = "rolling_90d_complete"
         if rolling_days > 0 and rolling_total > 0:
-            # Promedio sobre días CALENDARIO de la ventana (90), no sólo días con venta.
-            # Así el rate refleja el throughput real esperado por día (incluye días flojos).
-            window_calendar_days = (window_end - window_start).days + 1
-            daily_rate = rolling_total / window_calendar_days
+            daily_rate = rolling_total / 90
         else:
-            # Fallback 1: mes anterior completo
-            prev_month_last_day = first_of_current - timedelta(days=1)
-            prev_month_str = prev_month_last_day.strftime("%Y-%m")
-            prev_first = prev_month_last_day.replace(day=1)
-            prev_calendar_days = (prev_month_last_day - prev_first).days + 1
-            prev = self._con.execute("""
-                SELECT ROUND(COALESCE(SUM(total_factura),0),2)
-                FROM silver_fact_ventas
-                WHERE STRFTIME(business_date,'%Y-%m') = ?
-                  AND estado_documento != 'A'
-            """, [prev_month_str]).fetchone()
-            prev_total = float(prev[0] or 0)
-            if prev_total > 0:
-                daily_rate = prev_total / prev_calendar_days
+            previous_first = first_current - timedelta(days=1)
+            previous_days = previous_first.day
+            previous_total = 0.0
+            if has_sales_headers:
+                previous_rows = self._query(f"""
+                    WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE})
+                    SELECT ROUND(COALESCE(SUM(total_factura), 0), 2) AS amount
+                    FROM valid_sales_headers
+                    WHERE business_date BETWEEN ? AND ?
+                """, [previous_first.replace(day=1), previous_first])
+                if previous_rows:
+                    previous_total = float(previous_rows[0]["amount"] or 0.0)
+            if previous_total > 0 and sales_cutoff and sales_cutoff >= previous_first:
+                daily_rate = previous_total / previous_days
                 rate_basis = "previous_month_complete"
             else:
-                # Fallback 2 (último recurso): run-rate del mes en curso
-                daily_rate = (accum / max(days_with_sales_curr, 1)) if days_with_sales_curr > 0 else 0.0
+                daily_rate = 0.0
                 rate_basis = "current_month_run_rate"
 
-        # Proyección mes en curso: observado real + rate × días restantes
-        remaining_days = max(0, total_days.day - day_num)
-        projected_current = round(accum + daily_rate * remaining_days, 2)
-
-        # Mes siguiente
-        next_month_num = max_date.month + 1
-        next_year = max_date.year if next_month_num <= 12 else max_date.year + 1
-        next_month_num = next_month_num if next_month_num <= 12 else 1
-        next_month_str = f"{next_year}-{next_month_num:02d}"
-        next_total_days = (date(next_year, next_month_num, 1) + timedelta(days=32)).replace(day=1) - timedelta(days=1)
-
-        # El mismo mes que se proyecta, un año atrás (sólo contexto).
-        # Para Jul -> Ago debe comparar Ago del año anterior, no Jul.
-        ly_month = f"{next_year - 1}-{next_month_num:02d}"
-        ly_sales = self._con.execute("""
-            SELECT ROUND(COALESCE(SUM(total_factura),0),2)
-            FROM silver_fact_ventas WHERE STRFTIME(business_date,'%Y-%m') = ?
-              AND estado_documento != 'A'
-        """, [ly_month]).fetchone()
-        ly_val = float(ly_sales[0] or 0)
-
-        next_projected = round(daily_rate * next_total_days.day, 2)
-
-        # ── Backtest histórico: qué habría proyectado la fórmula para los
-        #    últimos 6 meses CERRADOS, comparado con lo que efectivamente vendió.
-        #    Sirve para que el usuario vea el error real del modelo y calibre
-        #    su confianza en el número proyectado del mes actual.
-        history = []
-        for i in range(1, 7):
-            back_month_num = max_date.month - i
-            back_year = max_date.year
-            while back_month_num <= 0:
-                back_month_num += 12
-                back_year -= 1
-            back_month_str = f"{back_year}-{back_month_num:02d}"
-            back_first = date(back_year, back_month_num, 1)
-            # último día del mes
-            next_first = (back_first + timedelta(days=32)).replace(day=1)
-            back_last = next_first - timedelta(days=1)
-
-            # Real: ventas efectivas del mes
-            real_row = self._con.execute("""
-                SELECT ROUND(COALESCE(SUM(total_factura),0),2)
-                FROM silver_fact_ventas
-                WHERE STRFTIME(business_date,'%Y-%m') = ?
-                  AND estado_documento != 'A'
-            """, [back_month_str]).fetchone()
-            real_amount = float(real_row[0] or 0)
-
-            # Proyección retro: rate rolling-90d de los 90 días previos al mes
-            retro_win_end = back_first - timedelta(days=1)
-            retro_win_start = retro_win_end - timedelta(days=89)
-            retro_row = self._con.execute("""
-                SELECT ROUND(COALESCE(SUM(total_factura),0),2)
-                FROM silver_fact_ventas
+        observed_through = min(today, sales_cutoff) if sales_cutoff else None
+        observed_days = (
+            observed_through.day
+            if observed_through and observed_through.strftime("%Y-%m") == current_month
+            else 0
+        )
+        actual_by_day: dict[str, float] = {}
+        if has_sales_headers and observed_days:
+            actual_rows = self._query(f"""
+                WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE})
+                SELECT CAST(business_date AS VARCHAR) AS business_date,
+                       ROUND(COALESCE(SUM(total_factura), 0), 2) AS amount
+                FROM valid_sales_headers
                 WHERE business_date BETWEEN ? AND ?
-                  AND estado_documento != 'A'
-            """, [retro_win_start, retro_win_end]).fetchone()
-            retro_total = float(retro_row[0] or 0)
-            retro_calendar_days = (retro_win_end - retro_win_start).days + 1
-            retro_daily_rate = (retro_total / retro_calendar_days) if retro_calendar_days > 0 else 0.0
-            back_days_total = (back_last - back_first).days + 1
-            projected_amount = round(retro_daily_rate * back_days_total, 2)
+                GROUP BY business_date
+            """, [first_current, observed_through])
+            actual_by_day = {
+                str(row["business_date"])[:10]: float(row["amount"] or 0.0)
+                for row in actual_rows
+            }
 
-            # Error: % de diferencia entre real y proyectado (positivo = vendió más de lo esperado)
-            if real_amount > 0:
-                error_pct = round((real_amount - projected_amount) / real_amount * 100, 1)
+        observed_amount = sum(
+            actual_by_day.get(f"{current_month}-{day:02d}", 0.0)
+            for day in range(1, observed_days + 1)
+        )
+        if rate_basis == "current_month_run_rate":
+            current_days_with_sales = sum(
+                1 for amount in actual_by_day.values() if amount != 0
+            )
+            daily_rate = (
+                observed_amount / current_days_with_sales
+                if current_days_with_sales > 0
+                else 0.0
+            )
+        current_forecast_days = current_days - observed_days
+
+        demand_rows: list[dict] = []
+        demand_source_ready = has_sales_headers and has_sales_lines
+        purchase_source_ready = has_purchase_headers and has_purchase_lines
+        if demand_source_ready:
+            latest_snapshot_join = ""
+            product_stock_cte = """
+                product_stock AS (
+                    SELECT NULL::VARCHAR AS sku, NULL::DOUBLE AS stock_units
+                    WHERE FALSE
+                )
+            """
+            # Service status must come from an explicit boolean catalog field;
+            # the absence of purchase history is not evidence of a service SKU.
+            service_expression = "FALSE"
+            service_join = ""
+            if service_column:
+                service_expression = "COALESCE(sp.is_service, FALSE)"
+                service_join = f"""
+                    LEFT JOIN (
+                        SELECT CAST(cod_producto AS VARCHAR) AS sku,
+                               BOOL_OR(TRY_CAST({service_column} AS BOOLEAN) IS TRUE) AS is_service
+                        FROM silver_dim_producto
+                        GROUP BY cod_producto
+                    ) sp USING (sku)
+                """
+            stock_expression = (
+                "CASE WHEN pt.purchased_total IS NULL THEN NULL::DOUBLE "
+                "ELSE GREATEST(pt.purchased_total - COALESCE(st.sold_total, 0), 0) END"
+                if purchase_source_ready
+                else "NULL::DOUBLE"
+            )
+            purchase_headers_cte = (
+                _VALID_PURCHASE_HEADERS_CTE
+                if has_purchase_headers
+                else "SELECT NULL::DATE AS business_date, NULL::VARCHAR AS cod_clase, "
+                     "NULL::VARCHAR AS num_documento WHERE FALSE"
+            )
+            purchase_lines_cte = """
+                purchase_lines AS (
+                    SELECT CAST(d.cod_producto AS VARCHAR) AS sku,
+                           d.business_date, d.cod_clase, d.num_documento, d.cantidad
+                    FROM silver_fact_compras_detalle d
+                    INNER JOIN valid_purchase_headers h
+                        ON d.business_date = h.business_date
+                       AND d.cod_clase = h.cod_clase
+                       AND d.num_documento = h.num_documento
+                    WHERE d.business_date <= ?
+                ),
+            """ if purchase_source_ready else """
+                purchase_lines AS (
+                    SELECT NULL::VARCHAR AS sku, NULL::DATE AS business_date,
+                           NULL::VARCHAR AS cod_clase, NULL::VARCHAR AS num_documento,
+                           NULL::DOUBLE AS cantidad
+                    WHERE FALSE
+                ),
+            """
+            if self._tenant.casefold() == "masvital":
+                stock_expression = "ps.stock_units"
+                latest_snapshot_join = """
+                    LEFT JOIN product_stock ps USING (sku)
+                """
+                if has_product_dimension:
+                    product_stock_cte = """
+                        product_stock AS (
+                            SELECT sku, stock_units
+                            FROM (
+                                SELECT CAST(cod_producto AS VARCHAR) AS sku,
+                                       COALESCE(existencia, 0) AS stock_units,
+                                       ROW_NUMBER() OVER (
+                                           PARTITION BY cod_producto
+                                           ORDER BY COALESCE(existencia, 0) DESC,
+                                               COALESCE(
+                                                   NULLIF(TRIM(nombre_producto), ''),
+                                                   cod_producto
+                                               ) ASC
+                                       ) AS stock_rank
+                                FROM silver_dim_producto
+                                WHERE snapshot_date = (
+                                    SELECT MAX(snapshot_date)
+                                    FROM silver_dim_producto
+                                    WHERE snapshot_date <= ?
+                                )
+                            ) ranked_stock
+                            WHERE stock_rank = 1
+                        )
+                    """
+                else:
+                    inventory_source = "silver_dim_producto.existencia (sin snapshot disponible)"
+            elif not purchase_source_ready:
+                inventory_source = "sin evidencia suficiente para estimar inventario"
+
+            demand_params = [today, today]
+            if purchase_source_ready:
+                demand_params.append(today)
+            demand_params.extend([window_start, window_end])
+            if self._tenant.casefold() == "masvital" and has_product_dimension:
+                demand_params.append(today)
+
+            demand_rows = self._query(f"""
+                WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE}),
+                valid_purchase_headers AS ({purchase_headers_cte}),
+                invoice_line_totals AS (
+                    SELECT d.business_date, d.cod_clase, d.num_documento,
+                           SUM(COALESCE(d.total_detalle, 0)) AS detail_total,
+                           SUM(COALESCE(d.valor_unitario, 0) * COALESCE(d.cantidad, 0))
+                               AS unit_value_total,
+                           COUNT(*) AS line_count
+                    FROM silver_fact_ventas_detalle d
+                    INNER JOIN valid_sales_headers h
+                        ON d.business_date = h.business_date
+                       AND d.cod_clase = h.cod_clase
+                       AND d.num_documento = h.num_documento
+                    WHERE d.business_date <= ?
+                    GROUP BY d.business_date, d.cod_clase, d.num_documento
+                ),
+                sales_lines AS (
+                    SELECT CAST(d.cod_producto AS VARCHAR) AS sku,
+                           d.business_date, d.cod_clase, d.num_documento,
+                           d.cantidad,
+                            CASE
+                                WHEN COALESCE(it.detail_total, 0) <> 0
+                                THEN h.total_factura * COALESCE(d.total_detalle, 0)
+                                    / it.detail_total
+                                WHEN COALESCE(it.unit_value_total, 0) <> 0
+                                THEN h.total_factura * COALESCE(d.valor_unitario * d.cantidad, 0)
+                                    / it.unit_value_total
+                                ELSE h.total_factura / it.line_count
+                            END AS allocated_revenue
+                    FROM silver_fact_ventas_detalle d
+                    INNER JOIN valid_sales_headers h
+                        ON d.business_date = h.business_date
+                       AND d.cod_clase = h.cod_clase
+                       AND d.num_documento = h.num_documento
+                    INNER JOIN invoice_line_totals it
+                        ON d.business_date = it.business_date
+                       AND d.cod_clase = it.cod_clase
+                       AND d.num_documento = it.num_documento
+                    WHERE d.business_date <= ?
+                ),
+                {purchase_lines_cte}
+                demand AS (
+                    SELECT sku,
+                           SUM(cantidad) AS units_90d,
+                           SUM(allocated_revenue) AS revenue_90d
+                    FROM sales_lines
+                    WHERE business_date BETWEEN ? AND ?
+                    GROUP BY sku
+                    HAVING SUM(cantidad) > 0
+                ),
+                sales_totals AS (
+                    SELECT sku, SUM(cantidad) AS sold_total
+                    FROM sales_lines
+                    GROUP BY sku
+                ),
+                purchase_totals AS (
+                    SELECT sku, SUM(cantidad) AS purchased_total
+                    FROM purchase_lines
+                    GROUP BY sku
+                ),
+                {product_stock_cte}
+                SELECT d.sku, d.units_90d, d.revenue_90d,
+                       {service_expression} AS is_service,
+                       {stock_expression} AS available_units
+                FROM demand d
+                LEFT JOIN sales_totals st USING (sku)
+                LEFT JOIN purchase_totals pt USING (sku)
+                {latest_snapshot_join}
+                {service_join}
+                ORDER BY d.sku
+            """, demand_params)
+
+        available_units = {
+            str(row["sku"]): (
+                float(row["available_units"])
+                if row.get("available_units") is not None
+                else None
+            )
+            for row in demand_rows
+        }
+        current_stock_allocation = _allocate_stock_adjusted_demand(
+            demand_rows, current_forecast_days, available_units
+        )
+        next_stock_allocation = _allocate_stock_adjusted_demand(
+            demand_rows, next_days, current_stock_allocation["remaining_stock"]
+        )
+
+        base_current_forecast = _split_forecast_amount(
+            daily_rate * current_forecast_days, current_forecast_days
+        )
+        stock_current_forecast = _split_forecast_amount(
+            current_stock_allocation["projected_revenue"], current_forecast_days
+        )
+        base_next_forecast = _split_forecast_amount(daily_rate * next_days, next_days)
+        stock_next_forecast = _split_forecast_amount(
+            next_stock_allocation["projected_revenue"], next_days
+        )
+
+        daily_series = []
+        base_current_daily: list[float] = []
+        stock_current_daily: list[float] = []
+        future_index = 0
+        for day in range(1, current_days + 1):
+            day_date = first_current + timedelta(days=day - 1)
+            actual = None
+            if day <= observed_days:
+                actual = actual_by_day.get(day_date.isoformat(), 0.0)
+                base_amount = None
+                stock_amount = None
             else:
-                error_pct = None
-
-            history.append({
-                "month": back_month_str,
-                "actual_amount": real_amount,
-                "projected_amount": projected_amount,
-                "error_pct": error_pct,
-                "days_total": back_days_total,
+                base_amount = base_current_forecast[future_index]
+                stock_amount = stock_current_forecast[future_index]
+                future_index += 1
+            base_current_daily.append((actual or 0.0) + (base_amount or 0.0))
+            stock_current_daily.append((actual or 0.0) + (stock_amount or 0.0))
+            daily_series.append({
+                "date": day_date,
+                "actual_amount": actual,
+                "base_projected_amount": base_amount,
+                "stock_adjusted_projected_amount": stock_amount,
             })
-        # Meses en orden cronológico ascendente para render natural
+
+        base_next_daily: list[float] = []
+        stock_next_daily: list[float] = []
+        for day in range(next_days):
+            day_date = first_next + timedelta(days=day)
+            base_amount = base_next_forecast[day]
+            stock_amount = stock_next_forecast[day]
+            base_next_daily.append(base_amount)
+            stock_next_daily.append(stock_amount)
+            daily_series.append({
+                "date": day_date,
+                "actual_amount": None,
+                "base_projected_amount": base_amount,
+                "stock_adjusted_projected_amount": stock_amount,
+            })
+
+        projected_current = round(sum(base_current_daily), 2)
+        next_projected = round(sum(base_next_daily), 2)
+        stock_projected_current = round(sum(stock_current_daily), 2)
+        stock_projected_next = round(sum(stock_next_daily), 2)
+
+        ly_rows = []
+        if has_sales_headers:
+            ly_rows = self._query(f"""
+                WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE})
+                SELECT ROUND(COALESCE(SUM(total_factura), 0), 2) AS amount
+                FROM valid_sales_headers
+                WHERE STRFTIME(business_date, '%Y-%m') = ?
+            """, [f"{first_next.year - 1}-{first_next.month:02d}"])
+        ly_val = float(ly_rows[0]["amount"] or 0.0) if ly_rows else 0.0
+
+        history = []
+        back_month_end = first_current - timedelta(days=1)
+        for _ in range(6):
+            back_first = back_month_end.replace(day=1)
+            back_days_total = back_month_end.day
+            if sales_cutoff and back_month_end <= sales_cutoff and has_sales_headers:
+                real_rows = self._query(f"""
+                    WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE})
+                    SELECT ROUND(COALESCE(SUM(total_factura), 0), 2) AS amount
+                    FROM valid_sales_headers
+                    WHERE business_date BETWEEN ? AND ?
+                """, [back_first, back_month_end])
+                real_amount = float(real_rows[0]["amount"] or 0.0) if real_rows else 0.0
+                retro_end = back_first - timedelta(days=1)
+                retro_start = retro_end - timedelta(days=89)
+                retro_rows = self._query(f"""
+                    WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE})
+                    SELECT ROUND(COALESCE(SUM(total_factura), 0), 2) AS amount
+                    FROM valid_sales_headers
+                    WHERE business_date BETWEEN ? AND ?
+                """, [retro_start, retro_end])
+                retro_total = float(retro_rows[0]["amount"] or 0.0) if retro_rows else 0.0
+                retro_daily_rate = retro_total / 90
+                retro_projection = sum(
+                    _split_forecast_amount(retro_daily_rate * back_days_total, back_days_total)
+                )
+                error_pct = (
+                    round((real_amount - retro_projection) / real_amount * 100, 1)
+                    if real_amount > 0
+                    else None
+                )
+                history.append({
+                    "month": back_first.strftime("%Y-%m"),
+                    "actual_amount": real_amount,
+                    "projected_amount": retro_projection,
+                    "error_pct": error_pct,
+                    "days_total": back_days_total,
+                })
+            back_month_end = back_first - timedelta(days=1)
+
         history.reverse()
         forecast_accuracy = _calibrate_forecast_confidence(history)
-        calibrated_confidence = forecast_accuracy["confidence"]
+        confidence_note = (
+            "Sin snapshots históricos de inventario, este escenario no tiene un "
+            "backtest honesto ni una puntuación de precisión. Es una simulación "
+            "sin compras futuras; los SKUs sin evidencia suficiente se excluyen."
+        )
+
+        if self._tenant.casefold() == "masvital":
+            inventory_source = (
+                "silver_dim_producto.existencia (último snapshot)"
+                if inventory_cutoff
+                else "silver_dim_producto.existencia (sin snapshot disponible)"
+            )
+
+        profile_flags = {
+            str(row["sku"]): {
+                "is_service": bool(row["is_service"]),
+                "available_units": row.get("available_units"),
+            }
+            for row in demand_rows
+        }
+        inventory_controlled_skus = sum(
+            1 for item in profile_flags.values()
+            if not item["is_service"] and item["available_units"] is not None
+        )
+        uncapped_service_skus = sum(
+            1 for item in profile_flags.values() if item["is_service"]
+        )
+        insufficient_evidence_skus = sum(
+            1 for item in profile_flags.values()
+            if not item["is_service"] and item["available_units"] is None
+        )
 
         return {
             "current_month": {
                 "month": current_month,
-                "observed_amount": accum,
+                "observed_amount": observed_amount,
                 "projected_amount": projected_current,
                 "daily_rate": round(daily_rate, 2),
-                "days_observed": day_num,
-                "days_total": total_days.day,
-                "confidence": calibrated_confidence,
+                "days_observed": observed_days,
+                "days_total": current_days,
+                "confidence": forecast_accuracy["confidence"],
             },
             "next_month": {
                 "month": next_month_str,
                 "projected_amount": next_projected,
-                "days_total": next_total_days.day,
+                "days_total": next_days,
                 "last_year_same_month": ly_val,
-                "confidence": calibrated_confidence,
+                "confidence": forecast_accuracy["confidence"],
             },
             "history": history,
             "backtest_accuracy": forecast_accuracy,
@@ -2070,8 +2468,49 @@ class DuckDBMetricsRepo:
                 "end": str(window_end),
                 "days_with_sales": rolling_days,
             } if rate_basis == "rolling_90d_complete" else None,
-            "model_version": "run_rate_v2_rolling90_bt",
-            "drivers": ["rolling_90d_daily_rate", "same_month_last_year"],
+            "stock_adjusted": {
+                "current_month": {
+                    "month": current_month,
+                    "observed_amount": observed_amount,
+                    "projected_amount": stock_projected_current,
+                    "days_total": current_days,
+                },
+                "next_month": {
+                    "month": next_month_str,
+                    "observed_amount": 0.0,
+                    "projected_amount": stock_projected_next,
+                    "days_total": next_days,
+                },
+                "confidence": "low",
+                "confidence_note": confidence_note,
+                "inventory_source": inventory_source,
+                "no_future_replenishment": True,
+                "inventory_controlled_skus": inventory_controlled_skus,
+                "uncapped_service_skus": uncapped_service_skus,
+                "insufficient_evidence_skus": insufficient_evidence_skus,
+            },
+            "daily_series": daily_series,
+            "source_cutoffs": {
+                "sales_date": sales_cutoff,
+                "inventory_date": inventory_cutoff,
+                "purchases_date": purchases_cutoff,
+            },
+            "staleness": {
+                "as_of_date": today,
+                "sales_days_behind": sales_lag,
+                "inventory_days_behind": inventory_lag,
+                "purchases_days_behind": purchases_lag,
+                "sales_is_stale": sales_is_stale,
+                "inventory_is_stale": inventory_is_stale,
+                "purchases_are_stale": purchases_are_stale,
+            },
+            "business_timezone": "America/Bogota",
+            "model_version": "run_rate_v3_calendar_stock_scenario",
+            "drivers": [
+                "rolling_90d_daily_rate",
+                "same_month_last_year",
+                "stock_availability_no_future_replenishment",
+            ],
         }
 
 
