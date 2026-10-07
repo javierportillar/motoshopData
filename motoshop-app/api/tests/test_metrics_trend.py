@@ -1,15 +1,32 @@
 """Pruebas del endpoint /api/metrics/sales-trend con FakeMetricsRepo."""
 from __future__ import annotations
 
+from datetime import date, timedelta
+
+import duckdb
 import pytest
 from fastapi.testclient import TestClient
 
+from motoshop_api.metrics.repo import FakeMetricsRepo
+from motoshop_api.metrics.router import get_repo
+from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo, close_all_shared_connections
 from motoshop_api.main import app
 
 
 @pytest.fixture()
 def client():
     return TestClient(app, raise_server_exceptions=False)
+
+
+@pytest.fixture(autouse=True)
+def fake_metrics_repository():
+    previous = app.dependency_overrides.get(get_repo)
+    app.dependency_overrides[get_repo] = lambda: FakeMetricsRepo()
+    yield
+    if previous is None:
+        app.dependency_overrides.pop(get_repo, None)
+    else:
+        app.dependency_overrides[get_repo] = previous
 
 
 @pytest.fixture()
@@ -120,3 +137,57 @@ class TestSalesTrend:
                 assert curr["month"] > prev["month"], f"Months out of order at index {i}"
             else:
                 assert curr["year"] > prev["year"], f"Years out of order at index {i}"
+
+
+def test_fake_sales_trend_uses_consecutive_calendar_months() -> None:
+    response = FakeMetricsRepo().get_sales_trend(periods=6)
+    month_indices = [item.year * 12 + item.month - 1 for item in response.items]
+
+    assert len(response.items) == 6
+    assert all(
+        month_indices[index] + 1 == month_indices[index + 1]
+        for index in range(len(month_indices) - 1)
+    )
+
+
+@pytest.mark.parametrize("periods", [1, 3, 6, 24])
+def test_duckdb_sales_trend_returns_exact_month_window(
+    tmp_path,
+    monkeypatch,
+    periods: int,
+) -> None:
+    db_path = tmp_path / "trend.duckdb"
+    today = date.today()
+    current_index = today.year * 12 + today.month - 1
+    months = []
+    for offset in range(periods - 1, -1, -1):
+        year, month_index = divmod(current_index - offset, 12)
+        months.append(date(year, month_index + 1, 1))
+
+    connection = duckdb.connect(str(db_path))
+    connection.execute(
+        "CREATE TABLE silver_fact_ventas "
+        "(business_date DATE, total_factura DOUBLE, estado_documento VARCHAR)"
+    )
+    connection.executemany(
+        "INSERT INTO silver_fact_ventas VALUES (?, ?, ?)",
+        [(month, 100.0, "B") for month in months]
+        + [(today + timedelta(days=1), 10_000.0, "B")]
+        + [(months[0] - timedelta(days=1), 10_000.0, "B")],
+    )
+    connection.close()
+    monkeypatch.setattr(
+        "motoshop_api.metrics.repo_duckdb._bootstrap_duckdb_from_r2",
+        lambda *_args: None,
+    )
+
+    try:
+        response = DuckDBMetricsRepo(db_path=db_path, tenant="trend-test").get_sales_trend(periods)
+    finally:
+        close_all_shared_connections()
+
+    returned_months = [(item.year, item.month) for item in response.items]
+    expected_months = [(month.year, month.month) for month in months]
+    assert returned_months == expected_months
+    assert response.periods == periods
+    assert all(item.total_ventas == 100.0 for item in response.items)

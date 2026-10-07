@@ -302,16 +302,20 @@ class FakeMetricsRepo:
     def get_sales_trend(self, periods: int = 6, year: int | None = None) -> SalesTrendResponse:
         """Genera tendencia mensual mock con leve crecimiento."""
         items: list[SalesTrendItem] = []
-        now = datetime.now()
-        for i in range(periods - 1, -1, -1):
-            d = (now.replace(day=1) - timedelta(days=i * 31)).replace(day=1)
+        current_month = datetime.now().replace(day=1)
+        current_index = current_month.year * 12 + current_month.month - 1
+        for offset in range(periods - 1, -1, -1):
+            year_month = current_index - offset
+            month_year, month_index = divmod(year_month, 12)
+            d = datetime(month_year, month_index + 1, 1)
             if year is not None and d.year != year:
                 continue
+            growth_index = periods - 1 - offset
             items.append(SalesTrendItem(
                 year=d.year, month=d.month,
-                total_ventas=48_000_000.0 + (periods - 1 - i) * 500_000.0,
-                num_facturas=780 + (periods - 1 - i) * 8,
-                ticket_promedio=62_000.0 + (periods - 1 - i) * 150.0,
+                total_ventas=48_000_000.0 + growth_index * 500_000.0,
+                num_facturas=780 + growth_index * 8,
+                ticket_promedio=62_000.0 + growth_index * 150.0,
             ))
         return SalesTrendResponse(periods=periods, items=items)
 
@@ -972,7 +976,10 @@ class RealMetricsRepo:
                     SUM(num_facturas) AS num_facturas,
                     ROUND(SUM(valor_total) / NULLIF(SUM(num_facturas), 0), 2) AS ticket_promedio
             FROM motoshop.gold.mart_ventas_diarias_sku
-            WHERE business_date >= ADD_MONTHS(CURRENT_DATE(), -:periods)
+            WHERE business_date >= DATE_TRUNC(
+                    'MONTH', ADD_MONTHS(CURRENT_DATE(), 1 - :periods)
+                  )
+              AND business_date <= CURRENT_DATE()
             """ + where_year + """
             GROUP BY YEAR(business_date), MONTH(business_date)
             ORDER BY year, month

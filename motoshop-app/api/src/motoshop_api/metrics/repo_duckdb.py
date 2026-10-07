@@ -1562,6 +1562,7 @@ class DuckDBMetricsRepo:
         # silver_fact_ventas para consistencia automatica.
         periods_int = max(1, min(int(periods), 24))
         where_year = f"AND YEAR(business_date) = {int(year)}" if year is not None else ""
+        first_month_offset = periods_int - 1
         rows = self._query(f"""
             SELECT YEAR(business_date) AS year,
                     MONTH(business_date) AS month,
@@ -1569,7 +1570,9 @@ class DuckDBMetricsRepo:
                     COUNT(*) AS num_facturas,
                     ROUND(SUM(total_factura) / NULLIF(COUNT(*), 0), 2) AS ticket_promedio
             FROM silver_fact_ventas
-            WHERE business_date >= CURRENT_DATE - INTERVAL '{periods_int}' MONTH
+            WHERE business_date >= DATE_TRUNC('month', CURRENT_DATE)
+                    - INTERVAL '{first_month_offset}' MONTH
+              AND business_date <= CURRENT_DATE
               AND estado_documento != 'A'
             {where_year}
             GROUP BY YEAR(business_date), MONTH(business_date)
