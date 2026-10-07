@@ -4,12 +4,25 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from motoshop_api.forecast.repo import DuckDBForecastRepo, FakeForecastRepo
+from motoshop_api.forecast.router import get_repo
 from motoshop_api.main import app
 
 
 @pytest.fixture()
 def client():
     return TestClient(app, raise_server_exceptions=False)
+
+
+@pytest.fixture(autouse=True)
+def fake_forecast_repository():
+    previous = app.dependency_overrides.get(get_repo)
+    app.dependency_overrides[get_repo] = lambda: FakeForecastRepo()
+    yield
+    if previous is None:
+        app.dependency_overrides.pop(get_repo, None)
+    else:
+        app.dependency_overrides[get_repo] = previous
 
 
 @pytest.fixture()
@@ -37,6 +50,21 @@ class TestForecastUnauthenticated:
 
 
 class TestForecastAuthenticated:
+    def test_duckdb_forecast_endpoint_is_gone(self, client, admin_token, monkeypatch) -> None:
+        monkeypatch.setitem(
+            app.dependency_overrides,
+            get_repo,
+            lambda: DuckDBForecastRepo(),
+        )
+
+        resp = client.get(
+            "/api/forecast/MOTS1297?horizon=7",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+
+        assert resp.status_code == 410
+        assert "descontinuado" in resp.json()["detail"]
+
     def test_forecast_known_sku_returns_200(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(
             "/api/forecast/MOTS1297?horizon=7",

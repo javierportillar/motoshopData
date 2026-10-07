@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from motoshop_api.auth.hash import hash_password
 from motoshop_api.auth.users import _users_cache
 from motoshop_api.tenants import Tenant, _tenants_cache
 from motoshop_api.users import router as users_router
+from motoshop_api.users.schemas import UserCreate
 from motoshop_api.users import supabase_repo
 
 
@@ -203,6 +205,10 @@ def test_empty_supabase_table_still_lists_legacy_admin(
 def test_create_rejects_invalid_scope(
     client, admin_token, fake_store, payload: dict, expected_fragment: str
 ) -> None:
+    with pytest.raises(ValidationError) as validation_error:
+        UserCreate.model_validate(payload)
+    assert expected_fragment in str(validation_error.value).lower()
+
     response = client.post(
         "/api/admin/users",
         json=payload,
@@ -210,7 +216,7 @@ def test_create_rejects_invalid_scope(
     )
 
     assert response.status_code == 422, response.text
-    assert expected_fragment in response.text.lower()
+    assert response.json() == {"detail": "Invalid request"}
 
 
 def test_deactivated_user_cannot_login(client, admin_token, fake_store) -> None:

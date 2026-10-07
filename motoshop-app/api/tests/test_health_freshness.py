@@ -32,7 +32,7 @@ class TestDataFreshness:
             mock_settings.databricks_token = "dapi_test"
             mock_settings.databricks_volume_path = "/Volumes/motoshop/bronze/_landing"
 
-            with patch("motoshop_api.health.router.WorkspaceClient") as MockWC:
+            with patch("databricks.sdk.WorkspaceClient") as MockWC:
                 mock_w = MagicMock()
                 MockWC.return_value = mock_w
                 mock_w.files.list_directory_contents.return_value = [manifest]
@@ -55,7 +55,7 @@ class TestDataFreshness:
             mock_settings.databricks_token = "dapi_test"
             mock_settings.databricks_volume_path = "/Volumes/motoshop/bronze/_landing"
 
-            with patch("motoshop_api.health.router.WorkspaceClient") as MockWC:
+            with patch("databricks.sdk.WorkspaceClient") as MockWC:
                 mock_w = MagicMock()
                 MockWC.return_value = mock_w
                 mock_w.files.list_directory_contents.return_value = [manifest]
@@ -77,7 +77,7 @@ class TestDataFreshness:
             mock_settings.databricks_token = "dapi_test"
             mock_settings.databricks_volume_path = "/Volumes/motoshop/bronze/_landing"
 
-            with patch("motoshop_api.health.router.WorkspaceClient") as MockWC:
+            with patch("databricks.sdk.WorkspaceClient") as MockWC:
                 mock_w = MagicMock()
                 MockWC.return_value = mock_w
                 mock_w.files.list_directory_contents.return_value = [manifest]
@@ -99,7 +99,7 @@ class TestDataFreshness:
             mock_settings.databricks_token = "dapi_test"
             mock_settings.databricks_volume_path = "/Volumes/motoshop/bronze/_landing"
 
-            with patch("motoshop_api.health.router.WorkspaceClient") as MockWC:
+            with patch("databricks.sdk.WorkspaceClient") as MockWC:
                 mock_w = MagicMock()
                 MockWC.return_value = mock_w
                 mock_w.files.list_directory_contents.return_value = [manifest]
@@ -117,7 +117,7 @@ class TestDataFreshness:
             mock_settings.databricks_token = "dapi_test"
             mock_settings.databricks_volume_path = "/Volumes/motoshop/bronze/_landing"
 
-            with patch("motoshop_api.health.router.WorkspaceClient") as MockWC:
+            with patch("databricks.sdk.WorkspaceClient") as MockWC:
                 mock_w = MagicMock()
                 MockWC.return_value = mock_w
                 mock_w.files.list_directory_contents.return_value = []
@@ -147,7 +147,7 @@ class TestDataFreshness:
             mock_settings.databricks_token = "dapi_test"
             mock_settings.databricks_volume_path = "/Volumes/motoshop/bronze/_landing"
 
-            with patch("motoshop_api.health.router.WorkspaceClient") as MockWC:
+            with patch("databricks.sdk.WorkspaceClient") as MockWC:
                 mock_w = MagicMock()
                 MockWC.return_value = mock_w
                 mock_w.files.list_directory_contents.side_effect = Exception("Timeout")

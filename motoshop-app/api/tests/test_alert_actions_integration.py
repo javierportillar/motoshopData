@@ -248,7 +248,12 @@ class TestRealRepoDockerMySQL:
         )
         assert True
 
-    def test_create_through_http_endpoint(self) -> None:
+    def test_create_through_http_endpoint(
+        self,
+        real_repo: RealAlertActionsRepo,
+        audit_repo: AuditRepo,
+        monkeypatch,
+    ) -> None:
         """End-to-end: FastAPI → RealAlertActionsRepo via HTTP."""
         import uuid
 
@@ -256,6 +261,16 @@ class TestRealRepoDockerMySQL:
         from motoshop_api.auth.users import _users_cache, User
         from motoshop_api.main import app
 
+        monkeypatch.setitem(
+            app.dependency_overrides,
+            get_alert_actions_repo,
+            lambda: real_repo,
+        )
+        monkeypatch.setitem(
+            app.dependency_overrides,
+            get_audit_repo,
+            lambda: audit_repo,
+        )
         _users_cache.clear()
         _users_cache["admin"] = User(
             username="admin",
@@ -263,9 +278,6 @@ class TestRealRepoDockerMySQL:
             email="admin@test.com",
             role="admin",
         )
-
-        app.dependency_overrides[get_alert_actions_repo] = lambda: RealAlertActionsRepo()
-        app.dependency_overrides[get_audit_repo] = lambda: AuditRepo()
 
         client = TestClient(app, raise_server_exceptions=False)
         token = client.post(

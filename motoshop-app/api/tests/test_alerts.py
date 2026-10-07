@@ -4,12 +4,25 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from motoshop_api.alerts.repo import FakeAlertsRepo
+from motoshop_api.alerts.router import get_repo
 from motoshop_api.main import app
 
 
 @pytest.fixture()
 def client():
     return TestClient(app, raise_server_exceptions=False)
+
+
+@pytest.fixture(autouse=True)
+def fake_alerts_repository():
+    previous = app.dependency_overrides.get(get_repo)
+    app.dependency_overrides[get_repo] = lambda: FakeAlertsRepo()
+    yield
+    if previous is None:
+        app.dependency_overrides.pop(get_repo, None)
+    else:
+        app.dependency_overrides[get_repo] = previous
 
 
 @pytest.fixture()
@@ -90,6 +103,18 @@ class TestAlertsAuthenticated:
         assert resp.status_code == 200
         for a in resp.json()["alerts"]:
             assert a["urgencia"] == "baja"
+
+    def test_legacy_urgencia_filter_remains_supported(
+        self, client: TestClient, admin_token: str
+    ) -> None:
+        resp = client.get(
+            "/api/alerts/stockout?urgencia=media",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 2
+        assert all(item["urgencia"] == "media" for item in resp.json()["alerts"])
 
     def test_alerts_invalid_urgency_returns_400(self, client: TestClient, admin_token: str) -> None:
         resp = client.get(

@@ -85,7 +85,11 @@ def get_repo(tenant: str = Depends(get_tenant)) -> AlertsRepoProtocol:
 
 @router.get("/alerts/stockout", response_model=AlertsResponse)
 def stockout_alerts(
-    urgencia: str | None = Query(default=None, description="Filtrar por urgencia: alta, media, baja"),
+    urgency: str | None = Query(
+        default=None,
+        description="Filter by urgency: alta, media, baja",
+    ),
+    urgencia: str | None = Query(default=None, include_in_schema=False),
     repo: AlertsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
     tenant: str = Depends(get_tenant),
@@ -93,19 +97,33 @@ def stockout_alerts(
     """Alertas de quiebre de stock, ordenadas por urgencia (alta → baja) y días hasta quiebre ASC.
 
     - Sin filtro: devuelve todas las alertas
-    - `?urgencia=alta`: solo alertas críticas
-    - `?urgencia=media`: solo alertas medias
-    - `?urgencia=baja`: solo alertas bajas
+    - `?urgency=alta`: solo alertas críticas
+    - `?urgency=media`: solo alertas medias
+    - `?urgency=baja`: solo alertas bajas
+    - `?urgencia=...`: alias legado de `urgency`
     """
-    if urgencia and urgencia not in ("alta", "media", "baja"):
+    if urgency and urgencia and urgency != urgencia:
         from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="Conflicting urgency filters")
+    selected_urgency = urgency if urgency is not None else urgencia
+    if selected_urgency and selected_urgency not in ("alta", "media", "baja"):
+        from fastapi import HTTPException
+
         raise HTTPException(
             status_code=400,
-            detail=f"Urgency must be one of: alta, media, baja (got '{urgencia}')",
+            detail=(
+                "Urgency must be one of: alta, media, baja "
+                f"(got '{selected_urgency}')"
+            ),
         )
 
-    cache_key = f"alerts:stockout:{urgencia or 'all'}"
-    result = _cached_or_fetch(tenant, cache_key, lambda: repo.get_stockout_alerts(urgencia))
+    cache_key = f"alerts:stockout:{selected_urgency or 'all'}"
+    result = _cached_or_fetch(
+        tenant,
+        cache_key,
+        lambda: repo.get_stockout_alerts(selected_urgency),
+    )
     return result
 
 
