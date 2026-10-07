@@ -18,6 +18,7 @@ from motoshop_api.purchase_assessments.generator import (
     MAX_LLM_PRODUCTS,
     MAX_OUTPUT_TOKENS,
     _context_metrics,
+    deterministic_fallback,
     generate_assessment_markdown,
 )
 from motoshop_api.purchase_assessments.repository import (
@@ -366,7 +367,7 @@ class CountingLLM:
         assert kwargs["max_tokens"] == MAX_OUTPUT_TOKENS
         assert "no confiables" in kwargs["system"]
         return {
-            "text": "# Evaluación\n\nNarrativa de prueba.",
+            "text": "- La evidencia previa muestra distintos patrones de reposición.",
             "backend": "fake",
             "model": "fake-model",
         }
@@ -396,6 +397,201 @@ def test_each_assessment_generation_attempt_uses_a_fresh_provider_session():
     assert second["generation_mode"] == "llm"
     assert len(client.session_ids) == 2
     assert client.session_ids[0] != client.session_ids[1]
+
+
+def test_report_keeps_full_product_verdict_when_large_product_is_removed_from_llm_context():
+    class RecordingLLM(CountingLLM):
+        prompt = ""
+
+        def complete(self, prompt: str, **kwargs) -> dict:
+            self.prompt = prompt
+            return super().complete(prompt, **kwargs)
+
+    metrics = {
+        "invoice": {"cod_clase": "FC", "num_documento": "LARGE", "business_date": "2026-09-01"},
+        "totals": {"productos_distintos": 1, "total_lineas_cop": 10},
+        "assessment_summary": {
+            "senal_global": "alineada_con_evidencia_disponible",
+            "skus_alineados_con_referencia": 1,
+            "skus_requieren_revision": 0,
+            "skus_no_evaluables": 0,
+            "valor_en_senales_de_revision_cop": 0,
+            "porcentaje_valor_en_senales_de_revision": 0,
+        },
+        "parameters": {"objetivo_cobertura_dias": 45},
+        "source_cutoffs": {
+            "purchases": "2026-09-08",
+            "sales": "2026-09-09",
+            "inventory": "2026-09-10",
+            "abc": "2026-09",
+        },
+        "evidence_notes": ["El stock previo es una reconstrucción estimada."],
+        "products": [{
+            "cod_producto": "SKU-LARGE",
+            "nombre": "Producto " + "x" * 3_500,
+            "unidad": "UND",
+            "cantidad_comprada": 1,
+            "ventas_previas_180d_unidades": 1,
+            "stock_previo_estimado": 0,
+            "stock_actual": 0,
+            "cantidad_referencia_objetivo": 45,
+            "veredicto_compra_etiqueta": "Alineada con referencia",
+            "razon_veredicto_compra": "Compra dentro de referencia.",
+        }],
+    }
+    llm = RecordingLLM()
+
+    report = generate_assessment_markdown(metrics, llm_client=llm)
+
+    assert '"productos_en_contexto_llm":0' in llm.prompt
+    assert "SKU-LARGE" in report["markdown"]
+    assert "Alineada con referencia" in report["markdown"]
+    assert "## Comentario complementario" not in report["markdown"]
+    assert "**Compras:** 2026-09-08" in report["markdown"]
+    assert "El stock previo es una reconstrucción estimada." in report["markdown"]
+
+
+def test_deterministic_fallback_includes_product_verdicts_past_previous_25_row_limit():
+    metrics = {
+        "invoice": {"cod_clase": "FC", "num_documento": "MANY", "business_date": "2026-09-01"},
+        "totals": {"productos_distintos": 30, "total_lineas_cop": 300},
+        "assessment_summary": {"senal_global": "mixta_con_senales_de_revision"},
+        "parameters": {"objetivo_cobertura_dias": 45},
+        "products": [
+            {
+                "cod_producto": f"SKU-{index}",
+                "nombre": f"Product {index}",
+                "unidad": "UND",
+                "cantidad_comprada": 1,
+                "veredicto_compra_etiqueta": "Alineada con referencia",
+                "razon_veredicto_compra": "Compra dentro de referencia.",
+            }
+            for index in range(30)
+        ],
+    }
+
+    report = deterministic_fallback(metrics)
+
+    assert "SKU-29 Product 29" in report
+    assert "Se muestran 30 productos" not in report
+
+
+def test_overlong_llm_commentary_is_omitted_without_losing_deterministic_findings():
+    class VerboseLLM:
+        def complete(self, prompt: str, **kwargs) -> dict:
+            return {
+                "text": "Interpretación global\n\n- " + "detalle " * 50,
+                "backend": "fake",
+                "model": "fake-model",
+            }
+
+    metrics = {
+        "invoice": {"cod_clase": "FC", "num_documento": "LONG", "business_date": "2026-09-01"},
+        "totals": {"productos_distintos": 1, "total_lineas_cop": 10},
+        "assessment_summary": {
+            "senal_global": "requiere_revision",
+            "skus_requieren_revision": 1,
+            "valor_en_senales_de_revision_cop": 10,
+            "porcentaje_valor_en_senales_de_revision": 100,
+        },
+        "parameters": {"objetivo_cobertura_dias": 45},
+        "source_cutoffs": {"inventory": "2026-09-10"},
+        "products": [{
+            "cod_producto": "SKU-LONG",
+            "nombre": "Product",
+            "unidad": "UND",
+            "cantidad_comprada": 1,
+            "veredicto_compra_etiqueta": "Revisar: compra sobre referencia",
+            "razon_veredicto_compra": "La cantidad supera la referencia.",
+        }],
+    }
+
+    result = generate_assessment_markdown(metrics, llm_client=VerboseLLM())
+
+    assert result["generation_mode"] == "llm"
+    assert "# Dictamen de compra" in result["markdown"]
+    assert "SKU-LONG Product" in result["markdown"]
+    assert "## Comentario complementario" not in result["markdown"]
+    assert "detalle detalle" not in result["markdown"]
+
+
+def test_global_review_conclusion_names_non_positive_net_quantity():
+    metrics = {
+        "invoice": {"cod_clase": "FC", "num_documento": "NEGATIVE", "business_date": "2026-09-01"},
+        "totals": {
+            "lineas_factura": 1,
+            "productos_distintos": 1,
+            "total_lineas_cop": 10,
+            "lineas_sin_codigo_producto": 0,
+        },
+        "parameters": {"ventana_velocidad_previa_dias": 180, "objetivo_cobertura_dias": 45},
+        "products": [{
+            "cod_producto": "SKU-NEG",
+            "nombre": "Net negative line",
+            "unidad": "UND",
+            "lineas_factura": 1,
+            "cantidad_comprada": -1,
+            "valor_lineas_compra_cop": 10,
+            "ventas_previas_180d_unidades": 10,
+            "stock_previo_estimado": 0,
+            "stock_actual": 0,
+            "cantidad_referencia_objetivo": 2.5,
+        }],
+    }
+
+    report = deterministic_fallback(metrics)
+
+    assert "Requiere revisión" in report
+    assert "cantidad neta no positiva" in report
+
+
+def test_one_short_llm_bullet_is_kept_as_optional_commentary():
+    class ConciseLLM:
+        def complete(self, prompt: str, **kwargs) -> dict:
+            return {
+                "text": "- La ausencia de historial concentra parte de las señales de revisión.",
+                "backend": "fake",
+                "model": "fake-model",
+            }
+
+    metrics = {
+        "invoice": {"cod_clase": "FC", "num_documento": "SHORT", "business_date": "2026-09-01"},
+        "totals": {"productos_distintos": 0, "total_lineas_cop": 0},
+        "assessment_summary": {"senal_global": "evidencia_insuficiente"},
+        "parameters": {"objetivo_cobertura_dias": 45},
+        "products": [],
+    }
+
+    result = generate_assessment_markdown(metrics, llm_client=ConciseLLM())
+
+    assert result["markdown"].endswith(
+        "## Comentario complementario\n"
+        "- La ausencia de historial concentra parte de las señales de revisión."
+    )
+
+
+def test_llm_commentary_confusing_prior_sales_with_prior_purchases_is_omitted():
+    class ConfusedLLM:
+        def complete(self, prompt: str, **kwargs) -> dict:
+            return {
+                "text": "- Predominan SKU sin compras previas en la ventana analizada.",
+                "backend": "fake",
+                "model": "fake-model",
+            }
+
+    metrics = {
+        "invoice": {"cod_clase": "FC", "num_documento": "CONFUSED", "business_date": "2026-09-01"},
+        "totals": {"productos_distintos": 0, "total_lineas_cop": 0},
+        "assessment_summary": {"senal_global": "evidencia_insuficiente"},
+        "parameters": {"objetivo_cobertura_dias": 45},
+        "products": [],
+    }
+
+    result = generate_assessment_markdown(metrics, llm_client=ConfusedLLM())
+
+    assert result["generation_mode"] == "llm"
+    assert "## Comentario complementario" not in result["markdown"]
+    assert "sin compras previas" not in result["markdown"]
 
 
 class FailingLLM:
@@ -778,6 +974,242 @@ def test_unknown_snapshot_stock_is_insufficient_evidence_not_service(purchase_as
     assert product["control_evidence"] == "insufficient_evidence"
     assert product["senal_deterministica"] == "insufficient_evidence"
     assert product["cantidad_referencia_objetivo"] is None
+    connection.close()
+
+
+def test_analyzer_returns_explainable_verdict_for_purchase_above_restock_reference(
+    purchase_assessment_db,
+):
+    connection = duckdb.connect(str(purchase_assessment_db), read_only=True)
+    invoice = next(
+        row for row in discover_purchase_invoices(connection) if row.num_documento == "P2"
+    )
+
+    metrics = analyze_purchase_invoice(connection, invoice)
+    product = metrics["products"][0]
+
+    assert product["senal_deterministica"] == "cantidad_superior_a_referencia"
+    assert product["veredicto_compra"] == "review_above_reference"
+    assert product["veredicto_compra_etiqueta"] == "Revisar: compra sobre referencia"
+    assert "3 UND" in product["razon_veredicto_compra"]
+    assert metrics["assessment_summary"]["skus_requieren_revision"] == 1
+    assert metrics["assessment_summary"]["skus_compra_sobre_referencia"] == 1
+    assert metrics["assessment_summary"]["senal_global"] == "requiere_revision"
+    assert "1 sobre referencia" in deterministic_fallback(metrics)
+    connection.close()
+
+
+def test_analyzer_counts_unidentified_line_value_as_unassessed_purchase_evidence(
+    purchase_assessment_db,
+):
+    connection = duckdb.connect(str(purchase_assessment_db))
+    connection.execute(
+        "UPDATE gold_mart_inventario_actual SET cantidad_actual = 100 WHERE cod_producto = 'SKU1'"
+    )
+    connection.execute(
+        "INSERT INTO silver_fact_compras VALUES "
+        "('P4', 'FC', '2026-09-15', '900', 'Proveedor', 120, 'B')"
+    )
+    connection.execute(
+        "INSERT INTO silver_fact_compras_detalle VALUES "
+        "('P4', 'FC', '2026-09-15', 'SKU1', 'Filtro', 100, 1, 100, 0.5), "
+        "('P4', 'FC', '2026-09-15', NULL, 'Línea sin código A', 1, 60, 60, NULL), "
+        "('P4', 'FC', '2026-09-15', NULL, 'Línea sin código B', -1, 40, -40, NULL)"
+    )
+    invoice = next(
+        row for row in discover_purchase_invoices(connection) if row.num_documento == "P4"
+    )
+
+    metrics = analyze_purchase_invoice(connection, invoice)
+    summary = metrics["assessment_summary"]
+    report = deterministic_fallback(metrics)
+
+    assert metrics["totals"]["total_lineas_cop"] == 120
+    assert summary["valor_productos_codificados_cop"] == 100
+    assert summary["lineas_sin_codigo_producto"] == 2
+    assert summary["valor_lineas_sin_codigo_producto_cop"] == 20
+    assert summary["valor_exposicion_lineas_sin_codigo_producto_cop"] == 100
+    assert summary["porcentaje_valor_en_senales_de_revision"] == 50
+    assert summary["porcentaje_valor_sin_evidencia_suficiente"] == 50
+    assert summary["senal_global"] == "evidencia_insuficiente"
+    assert (
+        "**Líneas sin código de producto:** 2 · neto $20 COP · "
+        "exposición bruta $100 COP"
+    ) in report
+    connection.close()
+
+
+def test_negative_line_amount_cannot_make_review_signal_look_aligned(purchase_assessment_db):
+    connection = duckdb.connect(str(purchase_assessment_db))
+    connection.execute(
+        "UPDATE gold_mart_inventario_actual SET cantidad_actual = 1 WHERE cod_producto = 'SKU1'"
+    )
+    connection.execute(
+        "INSERT INTO gold_mart_inventario_actual VALUES "
+        "('SKU-NEG', 0, '2026-09-16')"
+    )
+    connection.execute(
+        "INSERT INTO silver_fact_compras VALUES "
+        "('P5', 'FC', '2026-09-15', '900', 'Proveedor', 90, 'B')"
+    )
+    connection.execute(
+        "INSERT INTO silver_fact_compras_detalle VALUES "
+        "('P5', 'FC', '2026-09-15', 'SKU1', 'Filtro', 1, 100, 100, 80), "
+        "('P5', 'FC', '2026-09-15', 'SKU-NEG', 'Ajuste neto', -1, 10, -10, 8)"
+    )
+    invoice = next(
+        row for row in discover_purchase_invoices(connection) if row.num_documento == "P5"
+    )
+
+    metrics = analyze_purchase_invoice(connection, invoice)
+    summary = metrics["assessment_summary"]
+    report = deterministic_fallback(metrics)
+
+    assert [product["veredicto_compra"] for product in metrics["products"]] == [
+        "aligned_with_reference",
+        "review_non_positive_quantity",
+    ]
+    assert summary["valor_lineas_compra_cop"] == 90
+    assert summary["valor_base_exposicion_lineas_cop"] == 110
+    assert summary["valor_en_senales_de_revision_cop"] == 10
+    assert summary["porcentaje_valor_en_senales_de_revision"] == pytest.approx(9.1)
+    assert summary["senal_global"] == "mixta_con_senales_de_revision"
+    assert "**Exposición bruta de líneas:** $110 COP" in report
+    connection.close()
+
+
+def test_generator_upgrades_legacy_metrics_before_rendering_pending_assessment(
+    purchase_assessment_db,
+):
+    connection = duckdb.connect(str(purchase_assessment_db), read_only=True)
+    invoice = next(
+        row for row in discover_purchase_invoices(connection) if row.num_documento == "P2"
+    )
+    metrics = analyze_purchase_invoice(connection, invoice)
+    connection.close()
+    legacy_metrics = {
+        **metrics,
+        "products": [
+            {
+                key: value
+                for key, value in product.items()
+                if key not in {
+                    "veredicto_compra",
+                    "veredicto_compra_etiqueta",
+                    "razon_veredicto_compra",
+                }
+            }
+            for product in metrics["products"]
+        ],
+        "assessment_summary": {
+            key: value
+            for key, value in metrics["assessment_summary"].items()
+            if key not in {
+                "skus_compra_sobre_referencia",
+                "skus_stock_previo_sobre_objetivo",
+                "skus_cantidad_neta_no_positiva",
+                "lineas_sin_codigo_producto",
+                "valor_lineas_sin_codigo_producto_cop",
+                "valor_productos_codificados_cop",
+                "skus_omitidos_del_detalle",
+            }
+        },
+    }
+
+    report = deterministic_fallback(legacy_metrics)
+
+    assert "Revisar: compra sobre referencia" in report
+    assert "3 UND" in report
+    assert "1 sobre referencia" in report
+    assert "No evaluable" not in report
+
+
+def test_analyzer_marks_purchase_aligned_when_quantity_fits_sales_and_stock_reference(
+    purchase_assessment_db,
+):
+    connection = duckdb.connect(str(purchase_assessment_db))
+    connection.execute(
+        "UPDATE gold_mart_inventario_actual SET cantidad_actual = 1 WHERE cod_producto = 'SKU1'"
+    )
+    connection.close()
+    connection = duckdb.connect(str(purchase_assessment_db), read_only=True)
+    invoice = next(
+        row for row in discover_purchase_invoices(connection) if row.num_documento == "P2"
+    )
+
+    product = analyze_purchase_invoice(connection, invoice)["products"][0]
+
+    assert product["veredicto_compra"] == "aligned_with_reference"
+    assert product["veredicto_compra_etiqueta"] == "Alineada con referencia"
+    assert "180 días previos" in product["razon_veredicto_compra"]
+    connection.close()
+
+
+def test_analyzer_marks_product_without_prior_sales_for_review(purchase_assessment_db):
+    connection = duckdb.connect(str(purchase_assessment_db))
+    connection.execute(
+        "INSERT INTO silver_fact_compras VALUES "
+        "('P3', 'FC', '2026-09-15', '900', 'Proveedor', 30, 'B')"
+    )
+    connection.execute(
+        "INSERT INTO silver_fact_compras_detalle VALUES "
+        "('P3', 'FC', '2026-09-15', 'SKU-NEW', 'Producto nuevo', 3, 10, 30, 8)"
+    )
+    connection.execute(
+        "INSERT INTO gold_mart_inventario_actual VALUES "
+        "('SKU-NEW', 3, '2026-09-16')"
+    )
+    invoice = next(
+        row for row in discover_purchase_invoices(connection) if row.num_documento == "P3"
+    )
+
+    metrics = analyze_purchase_invoice(connection, invoice)
+    product = metrics["products"][0]
+
+    assert product["stock_previo_estimado"] == 0
+    assert product["ventas_previas_180d_unidades"] == 0
+    assert product["veredicto_compra"] == "review_no_prior_sales"
+    assert "180 días previos" in product["razon_veredicto_compra"]
+    assert metrics["assessment_summary"]["skus_sin_historial_previo_180d"] == 1
+    assert "1 sin ventas previas en 180 días" in deterministic_fallback(metrics)
+    assert metrics["assessment_summary"]["senal_global"] == "requiere_revision"
+    connection.close()
+
+
+def test_analyzer_keeps_all_120_product_verdicts_in_deterministic_metrics(purchase_assessment_db):
+    connection = duckdb.connect(str(purchase_assessment_db))
+    connection.execute(
+        "INSERT INTO silver_fact_compras VALUES "
+        "('P120', 'FC', '2026-09-15', '900', 'Proveedor', 120, 'B')"
+    )
+    details = [
+        ("P120", "FC", "2026-09-15", f"SKU-{index:03}", f"Product {index}", 1, 1, 1, 0.5)
+        for index in range(120)
+    ]
+    connection.executemany(
+        "INSERT INTO silver_fact_compras_detalle VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        details,
+    )
+    inventory = [
+        (f"SKU-{index:03}", 1, "2026-09-16")
+        for index in range(120)
+    ]
+    connection.executemany(
+        "INSERT INTO gold_mart_inventario_actual VALUES (?, ?, ?)",
+        inventory,
+    )
+    invoice = next(
+        row for row in discover_purchase_invoices(connection) if row.num_documento == "P120"
+    )
+
+    metrics = analyze_purchase_invoice(connection, invoice)
+
+    assert metrics["totals"]["productos_distintos"] == 120
+    assert metrics["totals"]["productos_mostrados"] == 120
+    assert len(metrics["products"]) == 120
+    assert any(product["cod_producto"] == "SKU-119" for product in metrics["products"])
+    assert all("veredicto_compra" in product for product in metrics["products"])
+    assert "SKU-119 Product 119" in deterministic_fallback(metrics)
     connection.close()
 
 

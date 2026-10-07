@@ -10,9 +10,9 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
-ANALYZER_REVISION = "purchase-invoice-v1"
+ANALYZER_REVISION = "purchase-invoice-v4-unclassified-lines"
 DEFAULT_TARGET_COVER_DAYS = 45
-MAX_STORED_PRODUCT_RESULTS = 100
+MAX_STORED_PRODUCT_RESULTS = 500
 
 
 @dataclass(frozen=True)
@@ -61,6 +61,305 @@ def _number(value: Any) -> float | None:
 
 def _round(value: float | None, digits: int = 2) -> float | None:
     return round(value, digits) if value is not None else None
+
+
+def _purchase_verdict(
+    *,
+    signal: str,
+    quantity: float,
+    unit: str,
+    prior_units: float,
+    stock_before: float | None,
+    prior_cover_days: float | None,
+    suggested_quantity: float | None,
+    target_cover_days: int,
+    stock_reconstructed_negative: bool,
+) -> tuple[str, str, str]:
+    """Turn stock and sales signals into an explainable, non-profitability verdict."""
+    if signal == "insufficient_evidence":
+        reason = (
+            "La reconstrucción del stock previo fue negativa; no se puede evaluar la reposición."
+            if stock_reconstructed_negative
+            else "No hay stock previo confiable para contrastar la compra con las ventas."
+        )
+        return "not_evaluable", "No evaluable", reason
+
+    if quantity <= 0:
+        return (
+            "review_non_positive_quantity",
+            "Revisar: cantidad no positiva",
+            f"La cantidad neta comprada es {quantity:g} {unit}; "
+            "no se clasifica como reposición normal.",
+        )
+
+    if prior_units <= 0:
+        return (
+            "review_no_prior_sales",
+            "Revisar: sin ventas previas",
+            "No hay unidades vendidas registradas en los 180 días previos; "
+            "la demanda no se puede validar.",
+        )
+
+    if signal == "stock_previo_estimado_superaba_objetivo":
+        cover = (
+            f" ({prior_cover_days:g} días de cobertura estimada)"
+            if prior_cover_days is not None
+            else ""
+        )
+        return (
+            "review_excess_stock",
+            "Revisar: stock previo alto",
+            f"Antes de esta compra había {stock_before:g} {unit}{cover}; supera el objetivo de "
+            f"{target_cover_days} días por más del margen de tolerancia del análisis.",
+        )
+
+    if signal == "cantidad_superior_a_referencia":
+        reference = suggested_quantity if suggested_quantity is not None else 0.0
+        return (
+            "review_above_reference",
+            "Revisar: compra sobre referencia",
+            f"Se compraron {quantity:g} {unit} frente a una referencia de reposición de "
+            f"{reference:g} {unit}, calculada con ventas previas y stock estimado.",
+        )
+
+    reference = suggested_quantity if suggested_quantity is not None else 0.0
+    return (
+        "aligned_with_reference",
+        "Alineada con referencia",
+        f"La compra de {quantity:g} {unit} no supera la referencia de {reference:g} {unit}; "
+        f"se observaron {prior_units:g} {unit} vendidos en los 180 días previos y "
+        f"{stock_before:g} {unit} de stock previo estimado.",
+    )
+
+
+def normalize_purchase_assessment_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Upgrade persisted assessment payloads to the current product-verdict contract."""
+    normalized = dict(metrics)
+    totals = dict(metrics.get("totals") or {})
+    summary = dict(metrics.get("assessment_summary") or {})
+    parameters = dict(metrics.get("parameters") or {})
+    window_days = max(1, int(parameters.get("ventana_velocidad_previa_dias") or 180))
+    target_days = max(1, min(int(parameters.get("objetivo_cobertura_dias") or 45), 365))
+    products = [dict(product) for product in (metrics.get("products") or [])]
+
+    for product in products:
+        quantity = _number(product.get("cantidad_comprada")) or 0.0
+        prior_sales = _number(product.get("ventas_previas_180d_unidades")) or 0.0
+        stock_before = _number(product.get("stock_previo_estimado"))
+        daily_velocity = prior_sales / window_days
+        target_units = daily_velocity * target_days
+        suggested_quantity = _number(product.get("cantidad_referencia_objetivo"))
+        if suggested_quantity is None and stock_before is not None:
+            suggested_quantity = max(0.0, target_units - stock_before)
+            product["cantidad_referencia_objetivo"] = _round(suggested_quantity)
+
+        if stock_before is None:
+            signal = "insufficient_evidence"
+        elif quantity <= 0:
+            signal = "cantidad_no_positiva"
+        elif prior_sales <= 0:
+            signal = "sin_ventas_previas_en_180d"
+        elif stock_before > target_units * 1.2:
+            signal = "stock_previo_estimado_superaba_objetivo"
+        elif suggested_quantity is not None and quantity > suggested_quantity:
+            signal = "cantidad_superior_a_referencia"
+        else:
+            signal = "cantidad_en_rango_de_referencia"
+
+        verdict, label, reason = _purchase_verdict(
+            signal=signal,
+            quantity=quantity,
+            unit=str(product.get("unidad") or "SIN_DATO"),
+            prior_units=prior_sales,
+            stock_before=stock_before,
+            prior_cover_days=_number(product.get("cobertura_stock_previo_estimada_dias")),
+            suggested_quantity=suggested_quantity,
+            target_cover_days=target_days,
+            stock_reconstructed_negative=bool(product.get("stock_reconstruido_negativo")),
+        )
+        product.update({
+            "senal_deterministica": signal,
+            "veredicto_compra": verdict,
+            "veredicto_compra_etiqueta": label,
+            "razon_veredicto_compra": reason,
+        })
+
+    product_count = int(_number(totals.get("productos_distintos")) or len(products))
+    omitted_products = max(0, product_count - len(products))
+    visible_product_value = sum(
+        float(product.get("valor_lineas_compra_cop") or 0) for product in products
+    )
+    visible_product_exposures: list[float] = []
+    exposure_complete = omitted_products == 0
+    for product in products:
+        exposure = _number(product.get("valor_exposicion_lineas_compra_cop"))
+        if exposure is None:
+            net_value = float(product.get("valor_lineas_compra_cop") or 0)
+            line_count = int(_number(product.get("lineas_factura")) or 1)
+            exposure = abs(net_value)
+            if line_count > 1:
+                exposure_complete = False
+            product["valor_exposicion_lineas_compra_cop"] = _round(exposure)
+        visible_product_exposures.append(exposure)
+    stored_coded_value = _number(summary.get("valor_productos_codificados_cop"))
+    if stored_coded_value is None and omitted_products:
+        stored_coded_value = _number(summary.get("valor_lineas_compra_cop"))
+    coded_value = (
+        stored_coded_value if stored_coded_value is not None else visible_product_value
+    )
+    stored_coded_exposure = _number(
+        summary.get("valor_exposicion_productos_codificados_cop")
+    )
+    if stored_coded_exposure is None:
+        if omitted_products:
+            exposure_complete = False
+            coded_exposure = sum(visible_product_exposures)
+        else:
+            coded_exposure = sum(visible_product_exposures)
+    else:
+        coded_exposure = stored_coded_exposure
+    line_value = _number(totals.get("total_lineas_cop"))
+    if line_value is None:
+        line_value = coded_value
+    total_exposure = _number(totals.get("valor_exposicion_lineas_cop"))
+    unclassified_value = _number(summary.get("valor_lineas_sin_codigo_producto_cop"))
+    if unclassified_value is None and not omitted_products:
+        unclassified_value = max(0.0, line_value - coded_value)
+    uncoded_count = _number(totals.get("lineas_sin_codigo_producto"))
+    if uncoded_count is None:
+        uncoded_count = _number(summary.get("lineas_sin_codigo_producto"))
+    uncoded_exposure = _number(
+        summary.get("valor_exposicion_lineas_sin_codigo_producto_cop")
+    )
+    if uncoded_exposure is None:
+        if uncoded_count in (None, 0):
+            uncoded_exposure = 0.0 if uncoded_count == 0 else None
+        elif uncoded_count == 1 and unclassified_value is not None:
+            uncoded_exposure = abs(unclassified_value)
+        else:
+            exposure_complete = False
+    if total_exposure is None:
+        if exposure_complete and uncoded_exposure is not None:
+            total_exposure = coded_exposure + uncoded_exposure
+        else:
+            exposure_complete = False
+    elif total_exposure < 0:
+        exposure_complete = False
+    unknown_product_value = sum(
+        float(product.get("valor_exposicion_lineas_compra_cop") or 0)
+        for product in products
+        if product["veredicto_compra"] == "not_evaluable"
+    )
+    unassessed_value = unknown_product_value + (uncoded_exposure or 0.0)
+    if omitted_products and total_exposure is not None:
+        unassessed_value += max(
+            0.0,
+            total_exposure - sum(visible_product_exposures) - (uncoded_exposure or 0.0),
+        )
+
+    review_verdicts = {
+        "review_above_reference",
+        "review_excess_stock",
+        "review_no_prior_sales",
+        "review_non_positive_quantity",
+    }
+    review_value = sum(
+        float(product.get("valor_exposicion_lineas_compra_cop") or 0)
+        for product in products
+        if product["veredicto_compra"] in review_verdicts
+    )
+    risk_value = sum(
+        float(product.get("valor_exposicion_lineas_compra_cop") or 0)
+        for product in products
+        if product["senal_deterministica"] in {
+            "stock_previo_estimado_superaba_objetivo",
+            "cantidad_superior_a_referencia",
+        }
+    )
+    aligned_count = sum(
+        product["veredicto_compra"] == "aligned_with_reference" for product in products
+    )
+    review_count = sum(
+        product["veredicto_compra"] in review_verdicts for product in products
+    )
+    not_evaluable_count = sum(
+        product["veredicto_compra"] == "not_evaluable" for product in products
+    )
+    uncoded_count_value = int(uncoded_count) if uncoded_count is not None else None
+
+    if (
+        not products
+        or total_exposure is None
+        or total_exposure <= 0
+        or not exposure_complete
+        or omitted_products > 0
+        or unassessed_value / max(total_exposure, 1.0) >= 0.5
+    ):
+        overall_signal = "evidencia_insuficiente"
+    elif review_value / total_exposure >= 0.5:
+        overall_signal = "requiere_revision"
+    elif review_value > 0 or unassessed_value > 0 or (uncoded_count_value or 0) > 0:
+        overall_signal = "mixta_con_senales_de_revision"
+    else:
+        overall_signal = "alineada_con_evidencia_disponible"
+
+    normalized["products"] = products
+    totals.update({
+        "lineas_sin_codigo_producto": uncoded_count_value,
+        "productos_omitidos": omitted_products,
+        "productos_mostrados": len(products),
+    })
+    summary.update({
+        "senal_global": overall_signal,
+        "skus_evaluados": len(products),
+        "skus_sin_historial_previo_180d": sum(
+            product["senal_deterministica"] == "sin_ventas_previas_en_180d"
+            for product in products
+        ),
+        "skus_stock_previo_sobre_objetivo": sum(
+            product["senal_deterministica"] == "stock_previo_estimado_superaba_objetivo"
+            for product in products
+        ),
+        "skus_compra_sobre_referencia": sum(
+            product["senal_deterministica"] == "cantidad_superior_a_referencia"
+            for product in products
+        ),
+        "skus_cantidad_neta_no_positiva": sum(
+            product["senal_deterministica"] == "cantidad_no_positiva"
+            for product in products
+        ),
+        "skus_alineados_con_referencia": aligned_count,
+        "skus_requieren_revision": review_count,
+        "skus_no_evaluables": not_evaluable_count,
+        "skus_omitidos_del_detalle": omitted_products,
+        "lineas_sin_codigo_producto": uncoded_count_value,
+        "valor_lineas_sin_codigo_producto_cop": _round(unclassified_value),
+        "valor_exposicion_lineas_sin_codigo_producto_cop": _round(uncoded_exposure),
+        "valor_productos_codificados_cop": _round(coded_value),
+        "valor_exposicion_productos_codificados_cop": _round(coded_exposure),
+        "valor_lineas_compra_cop": _round(line_value),
+        "valor_base_exposicion_lineas_cop": _round(total_exposure),
+        "valor_en_senales_de_revision_cop": _round(review_value),
+        "porcentaje_valor_en_senales_de_revision": _round(
+            review_value / total_exposure * 100
+            if total_exposure and exposure_complete and not omitted_products
+            else None,
+            1,
+        ),
+        "valor_en_senales_cuantitativas_de_exceso_cop": _round(risk_value),
+        "valor_sin_evidencia_suficiente_cop": _round(unassessed_value),
+        "porcentaje_valor_sin_evidencia_suficiente": _round(
+            unassessed_value / total_exposure * 100
+            if total_exposure and exposure_complete and not omitted_products
+            else None,
+            1,
+        ),
+        "exposicion_completa": exposure_complete and not omitted_products,
+    })
+    normalized["totals"] = totals
+    normalized["assessment_summary"] = summary
+    normalized["parameters"] = parameters
+    return normalized
 
 
 def _fingerprint(header: dict[str, Any], lines: list[dict[str, Any]]) -> str:
@@ -461,8 +760,12 @@ def analyze_purchase_invoice(
 
     groups: dict[str, dict[str, Any]] = {}
     line_total = 0.0
+    line_exposure_value = 0.0
     source_line_count = len(invoice.lines)
     line_total_derived_count = 0
+    lines_without_product_code = 0
+    value_without_product_code = 0.0
+    exposure_without_product_code = 0.0
     for line in invoice.lines:
         quantity = _number(line.get("cantidad")) or 0.0
         unit_price = _number(line.get("valor_unitario"))
@@ -471,13 +774,18 @@ def analyze_purchase_invoice(
             raw_total = quantity * unit_price if unit_price is not None else 0.0
             line_total_derived_count += 1
         line_total += raw_total
+        line_exposure_value += abs(raw_total)
         code_value = line.get("cod_producto")
         if code_value is None or not str(code_value).strip():
+            lines_without_product_code += 1
+            value_without_product_code += raw_total
+            exposure_without_product_code += abs(raw_total)
             continue
         code = str(code_value).strip()
         item = groups.setdefault(code, {
             "quantity": 0.0,
             "purchase_amount": 0.0,
+            "purchase_amount_abs": 0.0,
             "purchase_unit_price_weighted": 0.0,
             "purchase_unit_price_quantity": 0.0,
             "unit_cost_weighted": 0.0,
@@ -486,6 +794,7 @@ def analyze_purchase_invoice(
         })
         item["quantity"] += quantity
         item["purchase_amount"] += raw_total
+        item["purchase_amount_abs"] += abs(raw_total)
         item["line_count"] += 1
         if unit_price is not None:
             item["purchase_unit_price_weighted"] += unit_price * quantity
@@ -590,6 +899,8 @@ def analyze_purchase_invoice(
             )
         if stock_before_estimate is None:
             purchase_signal = "insufficient_evidence"
+        elif quantity <= 0:
+            purchase_signal = "cantidad_no_positiva"
         elif prior_units <= 0:
             purchase_signal = "sin_ventas_previas_en_180d"
         elif stock_before_estimate > target_units * 1.2:
@@ -598,6 +909,20 @@ def analyze_purchase_invoice(
             purchase_signal = "cantidad_superior_a_referencia"
         else:
             purchase_signal = "cantidad_en_rango_de_referencia"
+        purchase_verdict, purchase_verdict_label, purchase_verdict_reason = _purchase_verdict(
+            signal=purchase_signal,
+            quantity=quantity,
+            unit=unit,
+            prior_units=prior_units,
+            stock_before=stock_before_estimate,
+            prior_cover_days=pre_purchase_cover_days,
+            suggested_quantity=suggested_quantity,
+            target_cover_days=target_cover_days,
+            stock_reconstructed_negative=(
+                reconstructed_stock_before_day is not None
+                and reconstructed_stock_before_day < 0
+            ),
+        )
         products.append({
             "cod_producto": code[:100],
             "nombre": str(
@@ -616,6 +941,7 @@ def analyze_purchase_invoice(
             "lineas_factura": grouped["line_count"],
             "cantidad_comprada": _round(quantity),
             "valor_lineas_compra_cop": _round(grouped["purchase_amount"]),
+            "valor_exposicion_lineas_compra_cop": _round(grouped["purchase_amount_abs"]),
             "precio_unitario_compra_promedio_cop": _round(unit_price, 4),
             "costo_producto_unitario_promedio_cop": _round(unit_cost, 4),
             "costo_unitario_referencia_margen_cop": _round(margin_cost, 4),
@@ -649,6 +975,9 @@ def analyze_purchase_invoice(
             "ultima_venta_posterior": _as_iso(max((d for d, _, _ in post_sales), default=None)),
             "margen_bruto_referencia_pct": _round(margin_proxy, 1),
             "senal_deterministica": purchase_signal,
+            "veredicto_compra": purchase_verdict,
+            "veredicto_compra_etiqueta": purchase_verdict_label,
+            "razon_veredicto_compra": purchase_verdict_reason,
         })
         quantity_by_unit[unit] += quantity
 
@@ -665,24 +994,51 @@ def analyze_purchase_invoice(
     }
     uncertain_signals = {
         "insufficient_evidence",
-        "sin_ventas_previas_en_180d",
     }
-    line_value = sum(float(product["valor_lineas_compra_cop"] or 0) for product in products)
+    coded_line_value = sum(
+        float(product["valor_lineas_compra_cop"] or 0) for product in products
+    )
+    coded_exposure_value = sum(
+        float(product["valor_exposicion_lineas_compra_cop"] or 0) for product in products
+    )
     risk_value = sum(
-        float(product["valor_lineas_compra_cop"] or 0)
+        float(product["valor_exposicion_lineas_compra_cop"] or 0)
         for product in products
         if product["senal_deterministica"] in risk_signals
     )
     uncertain_value = sum(
-        float(product["valor_lineas_compra_cop"] or 0)
+        float(product["valor_exposicion_lineas_compra_cop"] or 0)
         for product in products
         if product["senal_deterministica"] in uncertain_signals
     )
-    if not products or line_value <= 0 or uncertain_value / max(line_value, 1.0) >= 0.5:
+    unassessed_value = uncertain_value + exposure_without_product_code
+    review_verdicts = {
+        "review_above_reference",
+        "review_excess_stock",
+        "review_no_prior_sales",
+        "review_non_positive_quantity",
+    }
+    review_value = sum(
+        float(product["valor_exposicion_lineas_compra_cop"] or 0)
+        for product in products
+        if product["veredicto_compra"] in review_verdicts
+    )
+    aligned_count = sum(
+        product["veredicto_compra"] == "aligned_with_reference" for product in products
+    )
+    review_count = sum(product["veredicto_compra"] in review_verdicts for product in products)
+    not_evaluable_count = sum(
+        product["veredicto_compra"] == "not_evaluable" for product in products
+    )
+    if (
+        not products
+        or line_exposure_value <= 0
+        or unassessed_value / max(line_exposure_value, 1.0) >= 0.5
+    ):
         overall_signal = "evidencia_insuficiente"
-    elif risk_value / line_value >= 0.5:
+    elif review_value / line_exposure_value >= 0.5:
         overall_signal = "requiere_revision"
-    elif risk_value > 0:
+    elif review_value > 0 or unassessed_value > 0 or lines_without_product_code > 0:
         overall_signal = "mixta_con_senales_de_revision"
     else:
         overall_signal = "alineada_con_evidencia_disponible"
@@ -698,14 +1054,44 @@ def analyze_purchase_invoice(
             product["senal_deterministica"] == "sin_ventas_previas_en_180d"
             for product in products
         ),
-        "valor_lineas_compra_cop": _round(line_value),
-        "valor_en_senales_de_revision_cop": _round(risk_value),
+        "skus_stock_previo_sobre_objetivo": sum(
+            product["senal_deterministica"] == "stock_previo_estimado_superaba_objetivo"
+            for product in products
+        ),
+        "skus_compra_sobre_referencia": sum(
+            product["senal_deterministica"] == "cantidad_superior_a_referencia"
+            for product in products
+        ),
+        "skus_cantidad_neta_no_positiva": sum(
+            product["senal_deterministica"] == "cantidad_no_positiva"
+            for product in products
+        ),
+        "skus_alineados_con_referencia": aligned_count,
+        "skus_requieren_revision": review_count,
+        "skus_no_evaluables": not_evaluable_count,
+        "lineas_sin_codigo_producto": lines_without_product_code,
+        "valor_lineas_sin_codigo_producto_cop": _round(value_without_product_code),
+        "valor_exposicion_lineas_sin_codigo_producto_cop": _round(
+            exposure_without_product_code
+        ),
+        "valor_productos_codificados_cop": _round(coded_line_value),
+        "valor_exposicion_productos_codificados_cop": _round(coded_exposure_value),
+        "valor_lineas_compra_cop": _round(line_total),
+        "valor_base_exposicion_lineas_cop": _round(line_exposure_value),
+        "valor_en_senales_de_revision_cop": _round(review_value),
         "porcentaje_valor_en_senales_de_revision": _round(
-            risk_value / line_value * 100 if line_value else None, 1
+            review_value / line_exposure_value * 100 if line_exposure_value else None, 1
+        ),
+        "valor_en_senales_cuantitativas_de_exceso_cop": _round(risk_value),
+        "valor_sin_evidencia_suficiente_cop": _round(unassessed_value),
+        "porcentaje_valor_sin_evidencia_suficiente": _round(
+            unassessed_value / line_exposure_value * 100 if line_exposure_value else None, 1
         ),
         "limitacion": (
-            "Clasificación cuantitativa orientativa por valor de líneas; no es una conclusión "
-            "contable ni atribuye causalidad a las ventas posteriores."
+            "La alineación es una referencia de reposición según ventas previas y stock estimado; "
+            "las líneas sin código quedan sin asignación a SKU; la conclusión no demuestra "
+            "rentabilidad ni conveniencia contable. Los porcentajes de revisión se ponderan por "
+            "exposición bruta absoluta de líneas y no atribuyen causalidad a ventas posteriores."
         ),
     }
     visible_products = products[:MAX_STORED_PRODUCT_RESULTS]
@@ -721,6 +1107,7 @@ def analyze_purchase_invoice(
         },
         "totals": {
             "lineas_factura": source_line_count,
+            "lineas_sin_codigo_producto": lines_without_product_code,
             "productos_distintos": len(groups),
             "productos_mostrados": len(visible_products),
             "productos_omitidos": max(0, len(products) - len(visible_products)),
@@ -730,6 +1117,7 @@ def analyze_purchase_invoice(
             "total_lineas_cop": _round(line_total),
             "lineas_total_calculado_por_cantidad_precio": line_total_derived_count,
             "diferencia_factura_menos_lineas_cop": _round(mismatch),
+            "valor_exposicion_lineas_cop": _round(line_exposure_value),
             "diferencia_factura_menos_lineas_pct": (
                 _round(mismatch / abs(header_total) * 100, 2)
                 if mismatch is not None and header_total else None
