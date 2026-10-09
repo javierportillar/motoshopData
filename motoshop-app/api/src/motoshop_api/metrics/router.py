@@ -9,10 +9,13 @@ está configurado; si no, cae a FakeMetricsRepo (datos mock).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
-from datetime import date
+from copy import deepcopy
+from datetime import date, datetime
 from time import time
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from slowapi import Limiter
@@ -22,6 +25,15 @@ from motoshop_api.auth.deps import get_current_user, require_module, require_rol
 from motoshop_api.auth.tenant_dep import get_tenant
 from motoshop_api.auth.users import User
 from motoshop_api.config import settings
+from motoshop_api.metrics.forecast_vintages import (
+    SalesForecastRepositoryError,
+    SalesForecastVintageStore,
+    SupabaseSalesForecastVintageStore,
+    apply_persisted_current_vintage,
+    mark_current_vintage_unavailable,
+    persist_backtest_samples,
+    persist_current_vintage,
+)
 from motoshop_api.metrics.repo import (
     MetricsRepoProtocol,
     RealMetricsRepo,
@@ -61,6 +73,7 @@ from motoshop_api.metrics.schemas import (
 from motoshop_api.metrics.snapshot import get_snapshot_generation, publish_snapshot
 
 router = APIRouter(tags=["metrics"])
+logger = logging.getLogger(__name__)
 
 
 def _rate_limit_key(request: Request) -> str:
@@ -198,6 +211,54 @@ def get_purchase_profile_repo(tenant: str = Depends(get_tenant)) -> DuckDBMetric
     return _duckdb_repos[tenant]
 
 
+def get_sales_forecast_vintage_store() -> SalesForecastVintageStore:
+    """Build the server-only repository; configuration is checked on first use."""
+    return SupabaseSalesForecastVintageStore()
+
+
+def _fetch_sales_forecast_payload(
+    repo: DuckDBMetricsRepo,
+    tenant: str,
+    vintage_store: SalesForecastVintageStore,
+) -> dict:
+    today = datetime.now(ZoneInfo("America/Bogota")).date()
+    before_month = today.replace(day=1).isoformat()
+    try:
+        training_samples = vintage_store.list_training_samples(tenant, before_month)
+    except SalesForecastRepositoryError as exc:
+        logger.warning("Sales forecast vintages unavailable error=%s", type(exc).__name__)
+        result = repo.get_sales_forecast_monthly(
+            as_of_date=today,
+            calibration_samples=[],
+        )
+        result["_vintage_storage_available"] = False
+        return result
+
+    result = repo.get_sales_forecast_monthly(
+        as_of_date=today,
+        calibration_samples=training_samples or None
+    )
+    try:
+        persist_backtest_samples(result, tenant, vintage_store)
+        # Read back append-only evaluations before applying calibration. This makes
+        # persisted forecast/actual pairs, not the replaceable DuckDB file, the
+        # training source on subsequent requests.
+        training_samples = vintage_store.list_training_samples(tenant, before_month)
+        result = repo.get_sales_forecast_monthly(
+            as_of_date=today,
+            calibration_samples=training_samples
+        )
+        result["_vintage_storage_available"] = True
+    except SalesForecastRepositoryError as exc:
+        logger.warning("Sales forecast vintage write unavailable error=%s", type(exc).__name__)
+        result = repo.get_sales_forecast_monthly(
+            as_of_date=today,
+            calibration_samples=[],
+        )
+        result["_vintage_storage_available"] = False
+    return result
+
+
 @router.get(
     "/metrics/sales-summary",
     response_model=SalesSummary,
@@ -306,12 +367,26 @@ def sales_forecast_monthly(
     repo: MetricsRepoProtocol = Depends(get_repo),
     _user: User = Depends(get_current_user),
     tenant: str = Depends(get_tenant),
+    vintage_store: SalesForecastVintageStore = Depends(get_sales_forecast_vintage_store),
 ) -> SalesForecastMonthlyResponse:
     """Pronóstico mensual y diario con patrón histórico, más escenario con inventario."""
-    payload = _cached_or_fetch(
+    cached_payload = _cached_or_fetch(
         f"{tenant}:sales-forecast:2",
-        repo.get_sales_forecast_monthly,
+        lambda: _fetch_sales_forecast_payload(repo, tenant, vintage_store),
     )
+    payload = deepcopy(cached_payload)
+    if payload.pop("_vintage_storage_available", False):
+        try:
+            vintage = persist_current_vintage(payload, tenant, vintage_store)
+            payload = apply_persisted_current_vintage(payload, vintage)
+        except SalesForecastRepositoryError as exc:
+            logger.warning(
+                "Current sales forecast vintage unavailable error=%s",
+                type(exc).__name__,
+            )
+            payload = mark_current_vintage_unavailable(payload)
+    else:
+        payload = mark_current_vintage_unavailable(payload)
     return SalesForecastMonthlyResponse(**payload)
 
 

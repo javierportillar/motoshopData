@@ -32,6 +32,7 @@ def _forecast_repo(
     with_duplicate_purchase_lines: bool = False,
     with_explicit_service_indicator: bool = False,
     with_calendar_patterns: bool = False,
+    without_prior_sales: bool = False,
 ) -> DuckDBMetricsRepo:
     connection = duckdb.connect(str(path))
     try:
@@ -91,6 +92,15 @@ def _forecast_repo(
                 ('2026-07-20', 'FC', 'P-CANCELED-LATE', 'SKU-1', 100);
             """
         )
+        if without_prior_sales:
+            connection.execute(
+                "DELETE FROM silver_fact_ventas WHERE business_date < ?",
+                [date(2026, 7, 1)],
+            )
+            connection.execute(
+                "DELETE FROM silver_fact_ventas_detalle WHERE business_date < ?",
+                [date(2026, 7, 1)],
+            )
         if with_explicit_service_indicator:
             connection.execute(
                 "ALTER TABLE silver_dim_producto ADD COLUMN es_servicio BOOLEAN"
@@ -178,6 +188,8 @@ def test_next_month_compares_with_that_month_last_year(tmp_path: Path) -> None:
 
     assert result["next_month"]["month"] == "2026-08"
     assert result["next_month"]["last_year_same_month"] == 222
+    assert result["next_month"]["forecast_model_version"] == result["model_version"]
+    assert result["next_month"]["calibration_version"] == result["calibration_version"]
     previous = next(item for item in result["history"] if item["month"] == "2026-06")
     assert "projected_amount" in previous
     assert previous["projected_amount"] >= 0
@@ -195,12 +207,20 @@ def test_next_month_compares_with_that_month_last_year(tmp_path: Path) -> None:
     next_days = [
         item for item in result["daily_series"] if item["date"].strftime("%Y-%m") == "2026-08"
     ]
-    assert round(sum(
-        (item["actual_amount"] or 0) + (item["base_projected_amount"] or 0)
-        for item in current_days
-    ), 2) == (
-        result["current_month"]["projected_amount"]
+    assert round(sum(item["base_projected_amount"] or 0 for item in current_days), 2) == (
+        result["current_month"]["initial_forecast_amount"]
     )
+    assert round(sum(item["actual_amount"] or 0 for item in current_days), 2) == (
+        result["current_month"]["observed_amount"]
+    )
+    assert round(sum(item["revised_projected_amount"] or 0 for item in current_days), 2) == (
+        result["current_month"]["remaining_forecast_amount"]
+    )
+    assert round(
+        result["current_month"]["observed_amount"]
+        + result["current_month"]["remaining_forecast_amount"],
+        2,
+    ) == result["current_month"]["projected_amount"]
     assert round(sum(
         (item["actual_amount"] or 0) + (item["base_projected_amount"] or 0)
         for item in next_days
@@ -221,7 +241,7 @@ def test_next_month_compares_with_that_month_last_year(tmp_path: Path) -> None:
     )
     observed_days = [item for item in current_days if item["actual_amount"] is not None]
     assert observed_days
-    assert all(item["base_projected_amount"] is None for item in observed_days)
+    assert all(item["base_projected_amount"] is not None for item in observed_days)
     assert all(item["stock_adjusted_projected_amount"] is None for item in observed_days)
     assert all(item["actual_amount"] is None for item in next_days)
 
@@ -245,6 +265,7 @@ def test_daily_forecast_varies_by_weekday_and_reconciles_to_monthly_total(
     daily_amounts = [item["base_projected_amount"] for item in current_forecast_days]
     stock_daily_amounts = [
         item["stock_adjusted_projected_amount"] for item in current_forecast_days
+        if item["stock_adjusted_projected_amount"] is not None
     ]
 
     assert result["daily_pattern"]["method"] == "weekday_week_of_month"
@@ -253,10 +274,11 @@ def test_daily_forecast_varies_by_weekday_and_reconciles_to_monthly_total(
     assert len({round(amount, 2) for amount in daily_amounts}) > 1
     assert len({round(amount, 2) for amount in stock_daily_amounts}) > 1
     assert round(sum(daily_amounts), 2) == round(
-        result["current_month"]["projected_amount"]
-        - result["current_month"]["observed_amount"],
-        2,
+        result["current_month"]["initial_forecast_amount"], 2
     )
+    assert round(sum(
+        item["revised_projected_amount"] or 0 for item in current_forecast_days
+    ), 2) == round(result["current_month"]["remaining_forecast_amount"], 2)
     assert round(sum(stock_daily_amounts), 2) == round(
         result["stock_adjusted"]["current_month"]["projected_amount"]
         - result["stock_adjusted"]["current_month"]["observed_amount"],
@@ -302,6 +324,29 @@ def test_old_sales_cutoff_does_not_move_calendar_horizon_backwards(tmp_path: Pat
         for item in october_days
     ), 2) == (
         result["current_month"]["projected_amount"]
+    )
+
+
+def test_current_month_run_rate_never_leaks_into_the_original_vintage(
+    tmp_path: Path,
+) -> None:
+    result = _forecast_repo(
+        tmp_path / "no-prior-sales-forecast.duckdb",
+        without_prior_sales=True,
+    ).get_sales_forecast_monthly(as_of_date=date(2026, 7, 20))
+
+    july_days = [
+        item for item in result["daily_series"]
+        if item["date"].strftime("%Y-%m") == "2026-07"
+    ]
+
+    assert result["rate_basis"] == "current_month_run_rate"
+    assert result["current_month"]["observed_amount"] == 200
+    assert result["current_month"]["initial_forecast_amount"] == 0
+    assert result["current_month"]["remaining_forecast_amount"] > 0
+    assert all(item["base_projected_amount"] == 0 for item in july_days)
+    assert result["current_month"]["projected_amount"] > (
+        result["current_month"]["initial_forecast_amount"]
     )
 
 

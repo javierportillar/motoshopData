@@ -346,6 +346,13 @@ class SalesForecastCurrentMonth(BaseModel):
     month: str
     observed_amount: float
     projected_amount: float
+    initial_forecast_amount: float | None = None
+    remaining_forecast_amount: float | None = None
+    forecast_origin_date: date | None = None
+    forecast_status: Literal["issued", "reconstructed", "frozen", "provisional"] | None = None
+    vintage_persisted: bool = False
+    forecast_model_version: str | None = None
+    calibration_version: str | None = None
     daily_rate: float
     days_observed: int
     days_total: int
@@ -355,6 +362,12 @@ class SalesForecastCurrentMonth(BaseModel):
 class SalesForecastNextMonth(BaseModel):
     month: str
     projected_amount: float
+    initial_forecast_amount: float | None = None
+    remaining_forecast_amount: float | None = None
+    forecast_origin_date: date | None = None
+    forecast_status: Literal["provisional"] | None = None
+    forecast_model_version: str | None = None
+    calibration_version: str | None = None
     days_total: int
     last_year_same_month: float
     confidence: Literal["high", "medium", "low"]
@@ -404,6 +417,7 @@ class SalesForecastDailyItem(BaseModel):
     date: date
     actual_amount: float | None
     base_projected_amount: float | None
+    revised_projected_amount: float | None = None
     stock_adjusted_projected_amount: float | None
 
 
@@ -412,6 +426,19 @@ class SalesForecastDailyPattern(BaseModel):
     history_days: int
     days_with_sales: int
     seasonal_window_days: int
+    note: str
+
+
+class SalesForecastCalibration(BaseModel):
+    status: Literal["calibrated", "baseline_retained", "insufficient_history"]
+    training_months: int
+    holdout_months: int
+    monthly_level_factor: float
+    weekday_factors: list[float]
+    week_of_month_factors: list[float]
+    baseline_wape_pct: float | None = None
+    calibrated_wape_pct: float | None = None
+    last_training_month: str | None = None
     note: str
 
 
@@ -445,6 +472,7 @@ class SalesForecastMonthlyResponse(BaseModel):
     stock_adjusted: SalesForecastStockAdjusted
     daily_series: list[SalesForecastDailyItem]
     daily_pattern: SalesForecastDailyPattern
+    calibration: SalesForecastCalibration | None = None
     source_cutoffs: SalesForecastSourceCutoffs
     staleness: SalesForecastStaleness
     business_timezone: str

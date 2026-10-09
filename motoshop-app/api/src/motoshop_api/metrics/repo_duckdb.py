@@ -8,15 +8,17 @@ Lee de un archivo DuckDB local (en producción, descargado de R2 al startup).
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+import hashlib
+import json
 import logging
-from math import floor
 import os
 import shutil
 import statistics
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from math import floor
 from pathlib import Path
 from time import monotonic, time
 from typing import Any
@@ -54,11 +56,11 @@ from motoshop_api.metrics.schemas import (
     SalesTrendItem,
     SalesTrendResponse,
     TopSkuItem,
-    VendedoresSummaryResponse,
-    VendedorItem,
     VendedorCategoriaItem,
     VendedorComparacion,
     VendedorDetailResponse,
+    VendedoresSummaryResponse,
+    VendedorItem,
 )
 
 
@@ -233,6 +235,262 @@ def _spread_amount_by_weights(amount: float, weights: list[float]) -> list[float
     for index in remainder_order[:remainder]:
         cents[index] += 1
     return [sign * value / 100 for value in cents]
+
+
+_DAILY_BACKTEST_MONTHS = 6
+_CALIBRATION_MIN_TRAINING_MONTHS = 3
+_CALIBRATION_MIN_HOLDOUT_MONTHS = 2
+_CALIBRATION_SHRINKAGE_MONTHS = 3.0
+
+
+def _shift_month_start(month_start: date, offset: int) -> date:
+    """Move a month-start date by a calendar-month offset."""
+    month_index = month_start.year * 12 + month_start.month - 1 + offset
+    year, month_index = divmod(month_index, 12)
+    return date(year, month_index + 1, 1)
+
+
+def _build_daily_backtest_samples(
+    daily_sales: dict[date, float],
+    sales_cutoff: date | None,
+    current_month_start: date,
+    *,
+    month_count: int = _DAILY_BACKTEST_MONTHS,
+) -> list[dict[str, Any]]:
+    """Reconstruct leak-free base forecasts for completed months before the current month."""
+    if sales_cutoff is None:
+        return []
+
+    samples: list[dict[str, Any]] = []
+    for month_offset in range(month_count, 0, -1):
+        month_start = _shift_month_start(current_month_start, -month_offset)
+        next_month_start = _shift_month_start(month_start, 1)
+        month_end = next_month_start - timedelta(days=1)
+        if sales_cutoff < month_end:
+            continue
+
+        training_end = month_start - timedelta(days=1)
+        rolling_start = training_end - timedelta(days=89)
+        profile_start = training_end - timedelta(days=364)
+        rolling_days = sum(
+            rolling_start <= day <= training_end for day in daily_sales
+        )
+        rolling_total = sum(
+            amount
+            for day, amount in daily_sales.items()
+            if rolling_start <= day <= training_end
+        )
+        if rolling_total > 0:
+            daily_rate = rolling_total / 90
+        else:
+            previous_month_end = training_end
+            previous_month_start = previous_month_end.replace(day=1)
+            previous_total = sum(
+                amount
+                for day, amount in daily_sales.items()
+                if previous_month_start <= day <= previous_month_end
+            )
+            daily_rate = (
+                previous_total / previous_month_end.day
+                if previous_total > 0
+                else 0.0
+            )
+
+        forecast_dates = [
+            month_start + timedelta(days=offset)
+            for offset in range((next_month_start - month_start).days)
+        ]
+        weights, _pattern = _calendar_forecast_weights(
+            forecast_dates,
+            daily_sales,
+            rolling_start,
+            training_end,
+            profile_start,
+            training_end,
+            rolling_days,
+        )
+        monthly_forecast = daily_rate * len(forecast_dates)
+        daily_forecast = _spread_amount_by_weights(monthly_forecast, weights)
+        actual_daily = [daily_sales.get(day, 0.0) for day in forecast_dates]
+        samples.append({
+            "month": month_start.strftime("%Y-%m"),
+            "dates": forecast_dates,
+            "forecast_daily": daily_forecast,
+            "actual_daily": actual_daily,
+            "forecast_total": sum(daily_forecast),
+            "actual_total": sum(actual_daily),
+        })
+    return samples
+
+
+def _derive_daily_calibration(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    """Estimate shrinkage-regularized monthly and calendar-shape correction factors."""
+    usable = [
+        sample for sample in samples
+        if sample["forecast_total"] > 0 and sample["actual_total"] > 0
+    ]
+    total_forecast = sum(sample["forecast_total"] for sample in usable)
+    total_actual = sum(sample["actual_total"] for sample in usable)
+    if total_forecast <= 0:
+        monthly_factor = 1.0
+    else:
+        shrinkage = _CALIBRATION_SHRINKAGE_MONTHS
+        monthly_factor = (
+            total_actual + shrinkage * total_forecast
+        ) / (total_forecast * (1 + shrinkage))
+        monthly_factor = min(1.15, max(0.85, monthly_factor))
+
+    weekday_actual = [0.0] * 7
+    weekday_forecast = [0.0] * 7
+    week_actual = [0.0] * 5
+    week_forecast = [0.0] * 5
+    for sample in usable:
+        actual_total = sample["actual_total"]
+        forecast_total = sample["forecast_total"]
+        for day, actual, predicted in zip(
+            sample["dates"], sample["actual_daily"], sample["forecast_daily"],
+            strict=True,
+        ):
+            weekday = day.weekday()
+            week_of_month = min(4, (day.day - 1) // 7)
+            weekday_actual[weekday] += actual / actual_total
+            weekday_forecast[weekday] += predicted / forecast_total
+            week_actual[week_of_month] += actual / actual_total
+            week_forecast[week_of_month] += predicted / forecast_total
+
+    def factors(actual_shares: list[float], forecast_shares: list[float]) -> list[float]:
+        output = []
+        shrinkage = _CALIBRATION_SHRINKAGE_MONTHS
+        for actual_share, forecast_share in zip(
+            actual_shares, forecast_shares, strict=True
+        ):
+            if forecast_share <= 0:
+                output.append(1.0)
+                continue
+            factor = (
+                actual_share + shrinkage * forecast_share
+            ) / (forecast_share * (1 + shrinkage))
+            output.append(min(1.25, max(0.75, factor)))
+        return output
+
+    return {
+        "monthly_level_factor": monthly_factor,
+        "weekday_factors": factors(weekday_actual, weekday_forecast),
+        "week_of_month_factors": factors(week_actual, week_forecast),
+        "training_months": len(usable),
+    }
+
+
+def _apply_daily_calibration(
+    weights: list[float],
+    forecast_dates: list[date],
+    calibration: dict[str, Any],
+) -> list[float]:
+    """Apply weekday and week-of-month factors, then renormalize to the monthly total."""
+    weekday_factors = calibration.get("weekday_factors") or [1.0] * 7
+    week_factors = calibration.get("week_of_month_factors") or [1.0] * 5
+    adjusted = [
+        weight * (max(0.0, weekday_factors[day.weekday()])
+                  * max(0.0, week_factors[min(4, (day.day - 1) // 7)])) ** 0.5
+        for day, weight in zip(forecast_dates, weights, strict=True)
+    ]
+    total = sum(adjusted)
+    if total <= 0:
+        return weights
+    return [weight / total for weight in adjusted]
+
+
+def _backtest_daily_calibration(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    """Promote calibration only if a chronological holdout beats the baseline WAPE."""
+    evaluation_samples = [
+        sample for sample in samples if sample["forecast_total"] > 0
+    ]
+    baseline_errors: list[float] = []
+    calibrated_errors: list[float] = []
+    actual_total = 0.0
+    holdout_months: list[str] = []
+    for index in range(_CALIBRATION_MIN_TRAINING_MONTHS, len(evaluation_samples)):
+        sample = evaluation_samples[index]
+        calibration = _derive_daily_calibration(evaluation_samples[:index])
+        if calibration["training_months"] < _CALIBRATION_MIN_TRAINING_MONTHS:
+            continue
+        forecast_total = sample["forecast_total"] * calibration["monthly_level_factor"]
+        base_weights = [
+            amount / sample["forecast_total"]
+            for amount in sample["forecast_daily"]
+        ] if sample["forecast_total"] > 0 else []
+        calibrated_weights = _apply_daily_calibration(
+            base_weights,
+            sample["dates"],
+            calibration,
+        )
+        calibrated_daily = _spread_amount_by_weights(forecast_total, calibrated_weights)
+        baseline_errors.extend(
+            abs(actual - predicted)
+            for actual, predicted in zip(
+                sample["actual_daily"], sample["forecast_daily"], strict=True
+            )
+        )
+        calibrated_errors.extend(
+            abs(actual - predicted)
+            for actual, predicted in zip(
+                sample["actual_daily"], calibrated_daily, strict=True
+            )
+        )
+        actual_total += sample["actual_total"]
+        holdout_months.append(sample["month"])
+
+    baseline_wape = (
+        sum(baseline_errors) / actual_total * 100 if actual_total > 0 else None
+    )
+    calibrated_wape = (
+        sum(calibrated_errors) / actual_total * 100 if actual_total > 0 else None
+    )
+    final_calibration = _derive_daily_calibration(evaluation_samples)
+    enough_data = (
+        final_calibration["training_months"] >= _CALIBRATION_MIN_TRAINING_MONTHS
+        and len(holdout_months) >= _CALIBRATION_MIN_HOLDOUT_MONTHS
+        and actual_total > 0
+    )
+    calibration = final_calibration if enough_data else {
+        "monthly_level_factor": 1.0,
+        "weekday_factors": [1.0] * 7,
+        "week_of_month_factors": [1.0] * 5,
+        "training_months": final_calibration["training_months"],
+    }
+    promoted = bool(
+        enough_data
+        and baseline_wape is not None
+        and calibrated_wape is not None
+        and calibrated_wape < baseline_wape
+    )
+    if not promoted:
+        calibration = {
+            **calibration,
+            "monthly_level_factor": 1.0,
+            "weekday_factors": [1.0] * 7,
+            "week_of_month_factors": [1.0] * 5,
+        }
+    return {
+        **calibration,
+        "status": "calibrated" if promoted else (
+            "baseline_retained" if enough_data else "insufficient_history"
+        ),
+        "holdout_months": len(holdout_months),
+        "baseline_wape_pct": round(baseline_wape, 2) if baseline_wape is not None else None,
+        "calibrated_wape_pct": (
+            round(calibrated_wape, 2) if calibrated_wape is not None else None
+        ),
+        "last_training_month": (
+            evaluation_samples[-1]["month"] if evaluation_samples else None
+        ),
+        "note": (
+            "Factores aprendidos con evaluación temporal; se conserva la calibración solo si "
+            "mejora WAPE frente al baseline."
+            if promoted
+            else "Se usa el perfil base: aún no hay evidencia suficiente o la calibración no mejora el baseline."
+        ),
+    }
 
 
 def _allocate_stock_adjusted_demand(
@@ -2089,7 +2347,12 @@ class DuckDBMetricsRepo:
 
     # ── Sales Forecast Monthly (V1.8) ─────────────────────────────────
 
-    def get_sales_forecast_monthly(self, as_of_date: date | None = None) -> dict:
+    def get_sales_forecast_monthly(
+        self,
+        as_of_date: date | None = None,
+        *,
+        calibration_samples: list[dict[str, Any]] | None = None,
+    ) -> dict:
         """Forecast current and next month with historical calendar-shaped daily sales.
 
         Both horizons follow the America/Bogota business calendar. Data cutoffs
@@ -2179,6 +2442,9 @@ class DuckDBMetricsRepo:
         window_end = first_current - timedelta(days=1)
         window_start = window_end - timedelta(days=89)
         profile_start = window_end - timedelta(days=364)
+        backtest_history_start = profile_start - timedelta(
+            days=_DAILY_BACKTEST_MONTHS * 31
+        )
         rolling_total = 0.0
         rolling_days = 0
         sales_by_day: dict[date, float] = {}
@@ -2190,7 +2456,7 @@ class DuckDBMetricsRepo:
                 FROM valid_sales_headers
                 WHERE business_date BETWEEN ? AND ?
                 GROUP BY business_date
-            """, [profile_start, window_end])
+            """, [backtest_history_start, window_end])
             sales_by_day = {
                 date.fromisoformat(str(row["business_date"])[:10]): float(row["amount"] or 0.0)
                 for row in profile_rows
@@ -2225,6 +2491,23 @@ class DuckDBMetricsRepo:
             else:
                 daily_rate = 0.0
                 rate_basis = "current_month_run_rate"
+
+        # Preserve the month-start rate before falling back to an in-month run
+        # rate. The latter may inform the revised estimate, but must never leak
+        # observed current-month sales into the original-vintage benchmark.
+        initial_daily_rate = daily_rate
+        backtest_samples = _build_daily_backtest_samples(
+            sales_by_day,
+            sales_cutoff,
+            first_current,
+        )
+        training_samples = (
+            calibration_samples if calibration_samples is not None else backtest_samples
+        )
+        daily_calibration = _backtest_daily_calibration(training_samples)
+        monthly_level_factor = float(daily_calibration["monthly_level_factor"])
+        daily_rate *= monthly_level_factor
+        initial_daily_rate *= monthly_level_factor
 
         observed_through = min(today, sales_cutoff) if sales_cutoff else None
         observed_days = (
@@ -2452,9 +2735,31 @@ class DuckDBMetricsRepo:
             first_current + timedelta(days=day - 1)
             for day in range(observed_days + 1, current_days + 1)
         ]
+        current_vintage_dates = [
+            first_current + timedelta(days=day)
+            for day in range(current_days)
+        ]
         next_forecast_dates = [
             first_next + timedelta(days=offset) for offset in range(next_days)
         ]
+        current_vintage_weights, _ = _calendar_forecast_weights(
+            current_vintage_dates,
+            sales_by_day,
+            window_start,
+            window_end,
+            profile_start,
+            window_end,
+            rolling_days,
+        )
+        current_vintage_weights = _apply_daily_calibration(
+            current_vintage_weights,
+            current_vintage_dates,
+            daily_calibration,
+        )
+        initial_month_forecast = _spread_amount_by_weights(
+            initial_daily_rate * current_days,
+            current_vintage_weights,
+        )
         current_daily_weights, _ = _calendar_forecast_weights(
             current_forecast_dates,
             sales_by_day,
@@ -2463,6 +2768,11 @@ class DuckDBMetricsRepo:
             profile_start,
             window_end,
             rolling_days,
+        )
+        current_daily_weights = _apply_daily_calibration(
+            current_daily_weights,
+            current_forecast_dates,
+            daily_calibration,
         )
         next_daily_weights, daily_pattern = _calendar_forecast_weights(
             next_forecast_dates,
@@ -2473,6 +2783,12 @@ class DuckDBMetricsRepo:
             window_end,
             rolling_days,
         )
+        next_daily_weights = _apply_daily_calibration(
+            next_daily_weights,
+            next_forecast_dates,
+            daily_calibration,
+        )
+        daily_pattern["note"] = f"{daily_pattern['note']} {daily_calibration['note']}"
         base_current_forecast = _spread_amount_by_weights(
             daily_rate * current_forecast_days,
             current_daily_weights,
@@ -2496,21 +2812,25 @@ class DuckDBMetricsRepo:
         future_index = 0
         for day in range(1, current_days + 1):
             day_date = first_current + timedelta(days=day - 1)
+            baseline_amount = initial_month_forecast[day - 1]
             actual = None
             if day <= observed_days:
                 actual = actual_by_day.get(day_date.isoformat(), 0.0)
-                base_amount = None
+                revised_amount = None
                 stock_amount = None
+                base_current_daily.append(actual)
+                stock_current_daily.append(actual)
             else:
-                base_amount = base_current_forecast[future_index]
+                revised_amount = base_current_forecast[future_index]
                 stock_amount = stock_current_forecast[future_index]
+                base_current_daily.append(revised_amount)
+                stock_current_daily.append(stock_amount)
                 future_index += 1
-            base_current_daily.append((actual or 0.0) + (base_amount or 0.0))
-            stock_current_daily.append((actual or 0.0) + (stock_amount or 0.0))
             daily_series.append({
                 "date": day_date,
                 "actual_amount": actual,
-                "base_projected_amount": base_amount,
+                "base_projected_amount": baseline_amount,
+                "revised_projected_amount": revised_amount,
                 "stock_adjusted_projected_amount": stock_amount,
             })
 
@@ -2526,6 +2846,7 @@ class DuckDBMetricsRepo:
                 "date": day_date,
                 "actual_amount": None,
                 "base_projected_amount": base_amount,
+                "revised_projected_amount": None,
                 "stock_adjusted_projected_amount": stock_amount,
             })
 
@@ -2617,12 +2938,37 @@ class DuckDBMetricsRepo:
             1 for item in profile_flags.values()
             if not item["is_service"] and item["available_units"] is None
         )
+        model_version = (
+            "weekday_week_of_month_v2_error_calibrated_stock_scenario"
+            if daily_calibration["status"] == "calibrated"
+            else "weekday_week_of_month_v1_stock_scenario"
+        )
+        calibration_fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "status": daily_calibration["status"],
+                    "monthly_level_factor": daily_calibration["monthly_level_factor"],
+                    "weekday_factors": daily_calibration["weekday_factors"],
+                    "week_of_month_factors": daily_calibration["week_of_month_factors"],
+                    "last_training_month": daily_calibration["last_training_month"],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()[:12]
+        calibration_version = f"daily-calibration-v1-{calibration_fingerprint}"
 
         return {
             "current_month": {
                 "month": current_month,
                 "observed_amount": observed_amount,
                 "projected_amount": projected_current,
+                "initial_forecast_amount": round(sum(initial_month_forecast), 2),
+                "remaining_forecast_amount": round(sum(base_current_forecast), 2),
+                "forecast_origin_date": window_end,
+                "forecast_status": "issued" if today == first_current else "reconstructed",
+                "forecast_model_version": model_version,
+                "calibration_version": calibration_version,
                 "daily_rate": round(daily_rate, 2),
                 "days_observed": observed_days,
                 "days_total": current_days,
@@ -2631,6 +2977,12 @@ class DuckDBMetricsRepo:
             "next_month": {
                 "month": next_month_str,
                 "projected_amount": next_projected,
+                "initial_forecast_amount": next_projected,
+                "remaining_forecast_amount": next_projected,
+                "forecast_origin_date": today,
+                "forecast_status": "provisional",
+                "forecast_model_version": model_version,
+                "calibration_version": calibration_version,
                 "days_total": next_days,
                 "last_year_same_month": ly_val,
                 "confidence": forecast_accuracy["confidence"],
@@ -2639,6 +2991,7 @@ class DuckDBMetricsRepo:
             "backtest_accuracy": forecast_accuracy,
             "rate_basis": rate_basis,
             "daily_pattern": daily_pattern,
+            "calibration": daily_calibration,
             "rate_window": {
                 "start": str(window_start),
                 "end": str(window_end),
@@ -2666,6 +3019,9 @@ class DuckDBMetricsRepo:
                 "insufficient_evidence_skus": insufficient_evidence_skus,
             },
             "daily_series": daily_series,
+            # Internal-only payload consumed by the route's persistence layer. The
+            # Pydantic response model intentionally omits this backfill material.
+            "_backtest_samples": backtest_samples,
             "source_cutoffs": {
                 "sales_date": sales_cutoff,
                 "inventory_date": inventory_cutoff,
@@ -2681,10 +3037,12 @@ class DuckDBMetricsRepo:
                 "purchases_are_stale": purchases_are_stale,
             },
             "business_timezone": "America/Bogota",
-            "model_version": "weekday_week_of_month_v1_stock_scenario",
+            "model_version": model_version,
+            "calibration_version": calibration_version,
             "drivers": [
                 "rolling_90d_monthly_level",
                 daily_pattern["method"],
+                daily_calibration["status"],
                 "same_month_last_year_reference",
                 "stock_availability_no_future_replenishment",
             ],

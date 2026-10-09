@@ -1,0 +1,33 @@
+output: reponova-out
+repos:
+  - name: motoshopData
+    path: .
+
+exclude_common: true
+incremental: true
+exclude:
+  - ".claude/**"
+  - ".atl/**"
+  - "reponova-out/**"
+  - "coverage/**"
+
+docs:
+  enabled: true
+
+embeddings:
+  enabled: true
+
+html: true
+
+outlines:
+  enabled: true
+plugins:
+  python:
+    enabled: true
+  json:
+    maxGenericKeys: 200
+    enabled: true
+  sql:
+    enabled: true
+  javascript:
+    enabled: true
