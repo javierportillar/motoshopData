@@ -430,5 +430,92 @@ def test_cumulative_and_compound_ranking_queries_do_not_hijack_to_single_month_a
     assert top_all["top_por_valor"][0]["cod_producto"] == "SKU-VAL"
     assert top_all["top_por_valor"][0]["valor"] == 115600.0
     assert top_all["top_por_transacciones"][0]["num_facturas"] == 2
+
+    top_ytd = executor.get_top_skus(period="ytd", limit=5)
+    assert top_ytd["period"] == "ytd"
+    assert top_ytd["date_from"] == "2026-01-01"
+    assert top_ytd["date_to"] == "2026-09-26"
+    assert "top_por_unidades" in top_ytd
+    assert "top_por_valor" in top_ytd
+    assert "top_por_transacciones" in top_ytd
+    assert "mes_actual_en_curso" in top_ytd
+
+    # Multi-metric YTD with "plata facturada" routes to LLM (returns None)
+    assert (
+        parse_sales_product_ranking_request(
+            "haz el mismo analisis pero ahora desde este año, pasame al menos 10 por los más vendidos y 10 por los más plata facturada",
+            sales_cutoff="2026-10-12",
+        )
+        is None
+    )
+    # Single-metric YTD routes deterministically to 2026-01-01..cutoff
+    ytd_single = parse_sales_product_ranking_request(
+        "cual es el producto más vendido de este año?",
+        sales_cutoff="2026-10-12",
+    )
+    assert ytd_single is not None
+    assert ytd_single.metric == "units"
+    assert ytd_single.tool_arguments()["periods"] == [
+        {"date_from": "2026-01-01", "date_to": "2026-10-12", "label": "año 2026"}
+    ]
     connection.close()
+
+
+def test_product_ref_and_candidate_mention_matching_with_whitespace_accents_and_aliases() -> None:
+    from motoshop_api.llm.contracts import EntityRef
+    from motoshop_api.llm.qa_chat import _entity_candidates_mentioned_in_text
+    from motoshop_api.llm.registry import product_ref_mentioned
+
+    service_ref = EntityRef(
+        entity_type="product",
+        entity_id="MOTS1430",
+        label="SERVICIO-TECNICO MANTENIMIENTO DE MOTOS",
+        label_is_unique=True,
+        domain="inventory",
+        href="/dashboards/productos/MOTS1430",
+    )
+    oil_ref = EntityRef(
+        entity_type="product",
+        entity_id="601325",
+        label="AC MAGNA 4T 20W50 MA2/SL CJ 12/L / 700102/12",
+        label_is_unique=True,
+        domain="inventory",
+        href="/dashboards/productos/601325",
+    )
+    battery_ref = EntityRef(
+        entity_type="product",
+        entity_id="171501",
+        label="BATERIA MOTO AGM_12V_6.5AH_MAGNA_POL (+ -)_MF- YT",
+        label_is_unique=True,
+        domain="inventory",
+        href="/dashboards/productos/171501",
+    )
+    brake_ref = EntityRef(
+        entity_type="product",
+        entity_id="2283",
+        label="LIQUIDO DE FRENOS MOTO; DOT4; CAJA X 24 unds 150",
+        label_is_unique=True,
+        domain="inventory",
+        href="/dashboards/productos/2283",
+    )
+
+    assert product_ref_mentioned("El ítem #1 es SERVICIO-TÉCNICO MANTENIMIENTO DE MOTOS.", service_ref)
+    assert product_ref_mentioned("Destaca AC MAGNA 4T 20W50 MA2/SL CJ 12/L en lubricantes.", oil_ref)
+    assert product_ref_mentioned("BATERIA MOTO AGM 12V 6.5AH MAGNA MF-YT tuvo alta facturación.", battery_ref)
+    assert product_ref_mentioned("LIQUIDO DE FRENOS MOTO DOT4 rotó en 11 facturas.", brake_ref)
+
+    candidates = [
+        {"entity_type": "product", "entity_id": r.entity_id, "label": r.label, "domain": "inventory"}
+        for r in (service_ref, oil_ref, battery_ref, brake_ref)
+    ]
+    text = (
+        "| Producto |\n| --- |\n"
+        "| SERVICIO-TÉCNICO MANTENIMIENTO DE MOTOS |\n"
+        "| AC MAGNA 4T 20W50 MA2/SL CJ 12/L |\n"
+        "| BATERIA MOTO AGM 12V 6.5AH MAGNA MF-YT |\n"
+        "| LIQUIDO DE FRENOS MOTO DOT4 |\n"
+    )
+    matched = _entity_candidates_mentioned_in_text(text, candidates)
+    assert {c["entity_id"] for c in matched} == {"MOTS1430", "601325", "171501", "2283"}
+
 

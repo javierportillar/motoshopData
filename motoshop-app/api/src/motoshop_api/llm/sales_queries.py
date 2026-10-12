@@ -12,7 +12,7 @@ from motoshop_api.llm.purchase_queries import PurchasePeriod, parse_cutoff, reso
 _RANKING_TERMS = re.compile(r"\b(?:mas\s+vend\w*|vend\w*\s+mas|top|ranking)\b")
 _PRODUCT_TERMS = re.compile(r"\b(?:product\w*|sku)\b")
 _REVENUE_TERMS = re.compile(
-    r"\b(?:por\s+valor|valor\s+vendido|facturaci\w*|revenue|ingresos?|mayor\s+venta|generad\w*\s+mayor\s+venta)\b"
+    r"\b(?:por\s+valor|valor\s+vendido|facturad\w*|facturaci\w*|plata|revenue|ingresos?|mayor\s+venta|generad\w*\s+mayor\s+venta)\b"
 )
 _CUMULATIVE_OR_FREQUENCY_TERMS = re.compile(
     r"\b(?:hasta\s+(?:este\s+mes|el\s+mes|hoy|ahora|la\s+fecha|el\s+momento)|"
@@ -138,6 +138,13 @@ def _exact_periods(text: str, cutoff: date | None) -> tuple[PurchasePeriod, ...]
             raise ValueError("multiple_years")
         year = next(iter(years), cutoff.year)
         return (_day_period(date(year, cutoff.month, int(day_only.group(1)))),)
+
+    if cutoff is not None and re.search(
+        r"\b(?:desde\s+este\s+ano|este\s+ano|en\s+lo\s+que\s+va\s+del\s+ano|del\s+ano|ano\s+actual|todo\s+el\s+ano)\b",
+        text,
+    ):
+        start = date(cutoff.year, 1, 1)
+        return (PurchasePeriod(start.strftime("%Y-%m"), start.isoformat(), cutoff.isoformat(), f"año {cutoff.year}"),)
     return None
 
 

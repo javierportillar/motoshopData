@@ -153,7 +153,10 @@ class LLMClient:
             backends_left = len(self._backends) - backend_index
             # A slow primary must not consume the whole chat deadline and starve
             # the fallback. Fast failures still pass all remaining time onward.
-            backend_budget = remaining / backends_left
+            if tools is not None and backends_left > 1:
+                backend_budget = max(remaining * 0.75, min(remaining, 45.0))
+            else:
+                backend_budget = remaining / backends_left
             try:
                 mt = max_tokens if max_tokens is not None else backend["max_tokens"]
                 body = {

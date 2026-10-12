@@ -14,7 +14,7 @@ from contextlib import nullcontext
 from datetime import UTC, date, datetime, timedelta
 from difflib import SequenceMatcher
 
-from motoshop_api.metrics.repo_duckdb import get_shared_connection
+from motoshop_api.metrics.repo_duckdb import get_shared_connection, _identified_customer_sql
 
 logger = logging.getLogger(__name__)
 
@@ -301,7 +301,7 @@ class ToolExecutor:
         }
 
     def get_top_skus(self, period: str = "day", limit: int = 10, metric: str = "all") -> dict:
-        """Top SKUs vendidos en el período (day, week, month, current_month, all) por unidades, valor facturado y transacciones (veces vendido)."""
+        """Top SKUs vendidos en el período (day, week, month, current_month, ytd, all) por unidades, valor facturado y transacciones (veces vendido)."""
         d = self._get_valid_sales_cutoff() or self._get_max_date()
         if d is None:
             return {"period": period, "skus": []}
@@ -312,6 +312,8 @@ class ToolExecutor:
             since = (d - timedelta(days=30)).isoformat()
         elif period == "current_month":
             since = d.replace(day=1).isoformat()
+        elif period in ("ytd", "year"):
+            since = d.replace(month=1, day=1).isoformat()
         elif period == "all":
             since = "1900-01-01"
 
@@ -372,7 +374,7 @@ class ToolExecutor:
                     {
                         "sku": str(r[0]),
                         "cod_producto": str(r[0]),
-                        "nombre": str(r[1]),
+                        "nombre": re.sub(r"\s+", " ", str(r[1]).strip()),
                         "unidad": "UNIDAD" if str(r[2]) in ("001", "UND", "UNIDAD") else str(r[2]),
                         "valor": float(r[3] or 0),
                         "cantidad": float(r[4] or 0),
@@ -423,7 +425,7 @@ class ToolExecutor:
                     "status": "current",
                 }],
             }
-            if period == "all":
+            if period in ("all", "ytd", "year"):
                 month_start = d.replace(day=1).isoformat()
                 payload["mes_actual_en_curso"] = {
                     "mes": d.strftime("%Y-%m"),
@@ -451,7 +453,7 @@ class ToolExecutor:
                 "skus": [
                     {
                         "sku": r[0],
-                        "nombre": r[1],
+                        "nombre": re.sub(r"\s+", " ", str(r[1]).strip()),
                         "valor": float(r[2]),
                         "cantidad": float(r[3]),
                         "num_facturas": int(r[4] or 0),
@@ -2947,7 +2949,7 @@ class ToolExecutor:
         comprar = [
             {
                 "sku": it["cod_producto"],
-                "nombre": it["nom_producto"],
+                "nombre": re.sub(r"\s+", " ", str(it.get("nom_producto") or "").strip()),
                 "stock": it["stock"],
                 "accion": it["accion"],
                 "sugerido_comprar": it["sugerido_comprar"],
@@ -2966,7 +2968,7 @@ class ToolExecutor:
         vender_rapido = [
             {
                 "sku": it["cod_producto"],
-                "nombre": it["nom_producto"],
+                "nombre": re.sub(r"\s+", " ", str(it.get("nom_producto") or "").strip()),
                 "stock": it["stock"],
                 "accion": it["accion"],
                 "cobertura_dias": it.get("cobertura_dias"),
@@ -3025,12 +3027,19 @@ class ToolExecutor:
         ]
         if comprar:
             fallback_lines.append("\nTop productos prioritarios para COMPRAR:")
-            for c in comprar[:5]:
-                fallback_lines.append(f"  • {c['sku']} - {c['nombre']}: Stock={c['stock']}, Sugerido={c['sugerido_comprar']} uds (Venta perdida est: ${c['ingreso_perdido_estimado_mes']:,.0f} COP)")
+            for c in comprar[:limit]:
+                fallback_lines.append(
+                    f"  • SKU {c['sku']} - {c['nombre']}: Stock={c['stock']}, Sugerido={c['sugerido_comprar']} uds "
+                    f"(Venta perdida est: ${c['ingreso_perdido_estimado_mes']:,.0f} COP)"
+                )
         if vender_rapido:
             fallback_lines.append("\nTop productos prioritarios para VENDER RÁPIDO / LIQUIDAR:")
-            for v in vender_rapido[:5]:
-                fallback_lines.append(f"  • {v['sku']} - {v['nombre']}: Stock={v['stock']} uds, Acción={v['accion']} (Capital inmovilizado: ${v['capital_inmovilizado']:,.0f} COP)")
+            for v in vender_rapido[:limit]:
+                dias_str = v["dias_sin_venta"] if v.get("dias_sin_venta") is not None else "sin ventas históricas"
+                fallback_lines.append(
+                    f"  • SKU {v['sku']} - {v['nombre']}: Stock={v['stock']} uds, Acción={v['accion']}, "
+                    f"Días sin venta={dias_str} (Capital inmovilizado: ${v['capital_inmovilizado']:,.0f} COP)"
+                )
 
         return {
             "status": "complete",
@@ -3245,7 +3254,13 @@ class ToolExecutor:
         }
 
     def get_top_clientes(self, period: str = "month", limit: int = 10) -> dict:
-        """Top clientes por total facturado. Filtrable por período (day, week, month, all)."""
+        """Top clientes identificados por total facturado (day, week, month, all).
+
+        Agrupa por identificador normalizado y elige un nombre determinista, de
+        modo que variantes de escritura del mismo cliente no generan filas
+        duplicadas. El cliente genérico (NIT 222222222) y los NIT vacíos se
+        reportan aparte como ventas sin identificar y quedan fuera del ranking.
+        """
         d = self._get_max_date()
         if d is None:
             return {"clientes": []}
@@ -3261,25 +3276,69 @@ class ToolExecutor:
         else:  # month
             since = d.replace(day=1).isoformat()
 
+        identified = _identified_customer_sql("nit_cliente")
         rows = self._con.execute(
-            """
-            SELECT COALESCE(NULLIF(nit_cliente,''),'SIN_ASIGNAR') AS nit,
-                   COALESCE(NULLIF(nombre_cliente,''),'Sin asignar') AS nombre,
-                   COUNT(*) AS facturas, ROUND(SUM(total_factura),2) AS total
-            FROM silver_fact_ventas
-            WHERE business_date >= ? AND business_date <= ?
-              AND COALESCE(estado_documento, '') != 'A'
-            GROUP BY nit_cliente, nombre_cliente
-            ORDER BY total DESC LIMIT ?
-        """,
+            f"""
+            WITH period_headers AS (
+                SELECT *, TRIM(COALESCE(nit_cliente, '')) AS cid
+                FROM silver_fact_ventas
+                WHERE business_date >= ? AND business_date <= ?
+                  AND UPPER(TRIM(COALESCE(estado_documento, ''))) != 'A'
+            ),
+            identified_headers AS (
+                SELECT * FROM period_headers WHERE {_identified_customer_sql("cid")}
+            ),
+            canonical_names AS (
+                SELECT cid, nombre FROM (
+                    SELECT cid, nombre_cliente AS nombre,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY cid
+                               ORDER BY business_date DESC,
+                                        cod_clase DESC,
+                                        num_documento DESC
+                           ) AS rn
+                    FROM identified_headers
+                    WHERE TRIM(COALESCE(nombre_cliente, '')) != ''
+                ) ranked
+                WHERE rn = 1
+            ),
+            customer_agg AS (
+                SELECT h.cid,
+                       COALESCE(MAX(cn.nombre), h.cid) AS nombre,
+                       COUNT(*) AS facturas,
+                       ROUND(SUM(h.total_factura), 2) AS total
+                FROM identified_headers h
+                LEFT JOIN canonical_names cn ON cn.cid = h.cid
+                GROUP BY h.cid
+            )
+            SELECT cid, nombre, facturas, total
+            FROM customer_agg
+            ORDER BY total DESC, cid ASC
+            LIMIT ?
+            """,
             [since, d.isoformat(), limit],
         ).fetchall()
+
+        unidentified = self._con.execute(
+            f"""
+            SELECT COUNT(*) AS facturas, COALESCE(SUM(total_factura), 0) AS total
+            FROM silver_fact_ventas
+            WHERE business_date >= ? AND business_date <= ?
+              AND UPPER(TRIM(COALESCE(estado_documento, ''))) != 'A'
+              AND NOT {identified}
+            """,
+            [since, d.isoformat()],
+        ).fetchone()
         return {
             "period": period,
             "clientes": [
                 {"nit": r[0], "nombre": r[1], "facturas": int(r[2]), "total": float(r[3])}
                 for r in rows
             ],
+            "sin_identificar": {
+                "facturas": int(unidentified[0]) if unidentified else 0,
+                "total": float(unidentified[1] or 0) if unidentified else 0.0,
+            },
         }
 
     def get_inventario_por_bodega(self, limit: int = 20) -> dict:
@@ -3732,19 +3791,20 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "get_top_skus",
             "description": (
-                "Top SKUs más vendidos en un período (day, week, month, current_month, all). "
-                "Usá 'all' para ranking histórico acumulado ('hasta este mes', 'histórico', 'desde siempre'). "
+                "Top SKUs más vendidos en un período (day, week, month, current_month, ytd, all). "
+                "Usá 'ytd' para el acumulado del año actual desde el 1 de enero ('este año', 'desde este año', 'en lo que va del año') "
+                "y 'all' para ranking histórico acumulado ('hasta este mes', 'histórico', 'desde siempre'). "
                 "Devuelve simultáneamente `top_por_unidades` (cantidad vendida), `top_por_valor` (mayor venta/facturación COP) "
                 "y `top_por_transacciones` ('vendido en más veces' = `num_facturas` distintas), además de `mes_actual_en_curso` "
-                "cuando period='all'."
+                "cuando period='all' o period='ytd'."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "period": {
                         "type": "string",
-                        "enum": ["day", "week", "month", "current_month", "all"],
-                        "description": "Ventana temporal: day (último día), week (7d), month (30d), current_month (mes calendario actual), all (histórico acumulado + resumen del mes actual).",
+                        "enum": ["day", "week", "month", "current_month", "ytd", "all"],
+                        "description": "Ventana temporal: day (último día), week (7d), month (30d), current_month (mes calendario actual), ytd (acumulado del año actual desde el 1 de enero), all (histórico acumulado + resumen del mes actual).",
                     },
                     "limit": {"type": "integer", "default": 10},
                     "metric": {

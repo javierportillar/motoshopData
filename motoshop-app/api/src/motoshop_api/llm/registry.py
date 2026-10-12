@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import date
 from urllib.parse import quote
 
@@ -46,7 +47,7 @@ _PRODUCT_CODE_TOKEN = re.compile(
 )
 _MARKDOWN_LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")
 _RAW_URL = re.compile(r"https?://[^\s)]+", re.IGNORECASE)
-_MAX_TEXT_PRODUCT_CANDIDATES = 50
+_MAX_TEXT_PRODUCT_CANDIDATES = 100
 _MAX_PURCHASE_HISTORY_CANDIDATES = 50
 PURCHASE_REFERENCE_TOOLS = frozenset({
     "get_ultima_compra",
@@ -171,7 +172,7 @@ def _resolve_product_ref_batch(
         code.strip() for code in entity_ids
         if isinstance(code, str) and code.strip() and _SAFE_ID.fullmatch(code.strip())
         and "://" not in code
-    ))[:50]
+    ))[:100]
     if not codes:
         return []
 
@@ -222,13 +223,15 @@ def _resolve_product_ref_batch(
     if not products:
         return []
 
-    labels = list(dict.fromkeys(str(row[1]).strip().casefold() for row in products))
+    labels = list(dict.fromkeys(
+        re.sub(r"\s+", " ", str(row[1]).strip()).casefold() for row in products
+    ))
     label_placeholders = ",".join("?" for _ in labels)
     label_sql = f"""
-        SELECT LOWER(TRIM(COALESCE(NULLIF(TRIM(nombre_producto), ''), cod_producto))) AS label,
+        SELECT REGEXP_REPLACE(LOWER(TRIM(COALESCE(NULLIF(TRIM(nombre_producto), ''), cod_producto))), '\\s+', ' ', 'g') AS label,
                COUNT(DISTINCT cod_producto) AS sku_count
         FROM silver_dim_producto
-        WHERE LOWER(TRIM(COALESCE(NULLIF(TRIM(nombre_producto), ''), cod_producto)))
+        WHERE REGEXP_REPLACE(LOWER(TRIM(COALESCE(NULLIF(TRIM(nombre_producto), ''), cod_producto))), '\\s+', ' ', 'g')
               IN ({label_placeholders}) {snapshot_filter}
         GROUP BY 1
     """
@@ -241,7 +244,10 @@ def _resolve_product_ref_batch(
         else:
             result = connection.execute(label_sql, labels)
             rows = result.fetchall() if hasattr(result, "fetchall") else result
-        label_counts = {str(row[0]).casefold(): int(row[1]) for row in rows}
+        label_counts = {
+            re.sub(r"\s+", " ", str(row[0]).strip()).casefold(): int(row[1])
+            for row in rows
+        }
     except Exception:
         # If uniqueness cannot be verified, SKU links remain safe but names
         # must not be treated as unambiguous by the UI.
@@ -252,15 +258,15 @@ def _resolve_product_ref_batch(
 
     refs = []
     for entity_id, raw_label in products:
-        label = str(raw_label).strip()
+        clean_label = re.sub(r"\s+", " ", str(raw_label).strip())
         clean_entity_id = str(entity_id).strip()
         refs.append(EntityRef(
             entity_type="product",
             entity_id=clean_entity_id,
-            label=label,
+            label=clean_label,
             domain="inventory",
             href=f"/dashboards/productos/{quote(clean_entity_id, safe='')}",
-            label_is_unique=label_counts.get(label.casefold(), 0) == 1,
+            label_is_unique=label_counts.get(clean_label.casefold(), 0) == 1,
         ))
     return refs
 
@@ -270,10 +276,10 @@ def is_valid_supplier_nit(value: str) -> bool:
 
 
 def resolve_product_refs(
-    context: TenantContext, entity_ids: list[str], *, batch_size: int = 50
+    context: TenantContext, entity_ids: list[str], *, batch_size: int = 100
 ) -> list[EntityRef]:
     """Resolve many product entities without one catalog lookup per SKU."""
-    batch_size = max(1, min(int(batch_size), 50))
+    batch_size = max(1, min(int(batch_size), 100))
     codes = list(dict.fromkeys(
         str(code).strip() for code in entity_ids
         if isinstance(code, str) and code.strip()
@@ -748,14 +754,12 @@ def resolve_entity_ref(
 
 
 def resolve_product_refs_in_text(
-    context: TenantContext, text: str, *, limit: int = 30
+    context: TenantContext, text: str, *, limit: int = 100
 ) -> list[EntityRef]:
     """Resolve a bounded number of exact SKU tokens in old assistant text."""
-    if not context.allows("inventory") or not text:
+    if not context.allows("inventory") or not text or int(limit) <= 0:
         return []
-    candidate_limit = min(max(int(limit), 0), _MAX_TEXT_PRODUCT_CANDIDATES)
-    if candidate_limit == 0:
-        return []
+    candidate_limit = max(1, min(int(limit), 200))
     text = visible_markdown_text(text)
 
     codes: list[str] = []
@@ -772,6 +776,74 @@ def resolve_product_refs_in_text(
     if not codes:
         return []
     return resolve_product_refs(context, codes, batch_size=_MAX_TEXT_PRODUCT_CANDIDATES)
+
+
+def normalize_product_match_text(value: str) -> str:
+    """Collapse whitespace and strip diacritics for product mention matching."""
+    stripped = "".join(
+        ch for ch in unicodedata.normalize("NFKD", str(value or ""))
+        if not unicodedata.combining(ch)
+    )
+    return re.sub(r"\s+", " ", stripped).strip()
+
+
+def _clean_product_alias(value: str) -> str:
+    cleaned = re.sub(r"_?POL\s*\([+-]\s*[+-]\)_?", " ", value, flags=re.IGNORECASE)
+    cleaned = cleaned.replace("_", " ")
+    cleaned = re.sub(r"\bMF-\s+", "MF-", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(\d+X)\s+(\d+[A-Za-z]+)", r"\1\2", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'(\d+/\d+)\s+"', r'\1"', cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def product_label_variants(label: str) -> list[str]:
+    """Generate normalized candidate label variants for product matching."""
+    norm = normalize_product_match_text(label)
+    if not norm:
+        return []
+    variants: list[str] = [norm]
+
+    def _add(candidate: str) -> None:
+        c = re.sub(r"\s+", " ", candidate).strip()
+        if c and len(c) >= 4 and c not in variants:
+            variants.append(c)
+
+    if " / " in norm:
+        before_slash = norm.split(" / ")[0].strip()
+        if len(before_slash.split()) >= 2:
+            _add(before_slash)
+            _add(_clean_product_alias(before_slash))
+
+    if ";" in norm:
+        _add(re.sub(r"\s*;\s*", " ", norm))
+        parts = [p.strip() for p in norm.split(";") if p.strip()]
+        if len(parts) >= 2:
+            _add(f"{parts[0]} {parts[1]}")
+
+    _add(_clean_product_alias(norm))
+    return variants
+
+
+def product_label_mentioned_in_text(text: str, label: str, *, allow_token_overlap: bool = False) -> bool:
+    """Return True if any normalized variant of label appears in text."""
+    norm_text = normalize_product_match_text(text)
+    if not norm_text:
+        return False
+    for variant in product_label_variants(label):
+        if re.search(rf"(?<![\w]){re.escape(variant)}(?![\w])", norm_text, re.IGNORECASE):
+            return True
+    if allow_token_overlap:
+        norm_label = normalize_product_match_text(label)
+        tokens = [
+            re.escape(tok)
+            for tok in re.findall(r"\b[A-Za-z0-9]{4,}\b", norm_label)
+            if tok.lower() not in {"para", "cada", "unos", "unas", "como"}
+        ]
+        if len(tokens) >= 2:
+            matched = sum(1 for tok in tokens if re.search(rf"\b{tok}\b", norm_text, re.IGNORECASE))
+            if matched >= 2 and matched >= min(len(tokens), 3):
+                return True
+    return False
 
 
 def product_ref_mentioned(text: str, ref: EntityRef) -> bool:
@@ -791,17 +863,9 @@ def product_ref_mentioned(text: str, ref: EntityRef) -> bool:
         line = text[line_start:] if line_end < 0 else text[line_start:line_end]
         if re.search(rf"\b(?:SKU|c[oó]digo|cod|EAN)\b", line, re.IGNORECASE):
             return True
-        if re.search(rf"(?<![\w]){re.escape(ref.label)}(?![\w])", line, re.IGNORECASE):
+        if product_label_mentioned_in_text(line, ref.label, allow_token_overlap=True):
             return True
-        tokens = [
-            re.escape(tok) for tok in re.findall(r"\b[A-Za-z0-9áéíóúñÁÉÍÓÚÑ]{4,}\b", ref.label)
-            if tok.lower() not in {"para", "cada", "unos", "unas", "como"}
-        ]
-        if len(tokens) >= 2:
-            matched = sum(1 for tok in tokens if re.search(rf"\b{tok}\b", line, re.IGNORECASE))
-            if matched >= 2 and matched >= min(len(tokens), 3):
-                return True
     return bool(
         ref.label_is_unique
-        and re.search(rf"(?<![\w]){re.escape(ref.label)}(?![\w])", text, re.IGNORECASE)
+        and product_label_mentioned_in_text(text, ref.label, allow_token_overlap=False)
     )

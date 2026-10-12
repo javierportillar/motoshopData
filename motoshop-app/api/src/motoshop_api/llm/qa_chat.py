@@ -26,6 +26,7 @@ from motoshop_api.llm.purchase_queries import (
 )
 from motoshop_api.llm.registry import (
     PURCHASE_REFERENCE_TOOLS,
+    product_label_mentioned_in_text,
     purchase_document_ref_mentioned,
     resolve_entity_ref,
     resolve_product_refs,
@@ -359,7 +360,9 @@ Reglas de selección de tools (IMPORTANTE):
 - En Productos y Proveedores, explica si un dato compara revenue con valor comprado. Ese ratio monetario no equivale a rotación física ni prueba que la compra del período haya causado las ventas.
 - Para ventas por proveedor, conglomerado de ventas por proveedor o relación de cantidades y valor por proveedor, usá `get_analisis_modulo` con `sections=['proveedores']`. Mostrá una tabla Markdown con: Proveedor, NIT, Unidades vendidas, Ventas asociadas ($ COP), Margen ($ COP y %), Total compras ($ COP) y Ratio venta/compra. Escribí el nombre y el NIT de cada proveedor para que el sistema enlace su ficha.
 - Diagnóstico de Inventario por Proveedor / Qué Comprar vs Qué Vender Rápido:
-  Para preguntas sobre qué comprar, qué reponer o qué vender rápido, liquidar, estancados o sobrestock (ya sea a nivel general o de un proveedor específico como ATMOPEL), usá `get_inventario_overview` con `supplier_query` y opcionalmente `accion`.
+  Para preguntas sobre qué comprar, qué reponer o qué vender rápido, liquidar, estancados, "productos más malos", "los peores" o sobrestock (tanto a nivel general del catálogo sin proveedor como de un proveedor específico como ATMOPEL), usá `get_inventario_overview` en UNA SOLA llamada con `limit=N` (hasta 50), `supplier_query` (si aplica) y opcionalmente `accion`.
+  * Si el usuario pide específicamente productos que **no se han vendido y aún están en stock** ("zombies", "nunca vendidos con existencia"), pasá `accion='zombie_con_stock'` y `limit=N` (hasta 50).
+  * Si pregunta en general por "productos más malos", "para vender rápido", "liquidar" o "los N peores", llamá una sola vez a `get_inventario_overview(limit=N)` — NO llames `get_dormidos` y `get_inventario_overview` juntas.
   * 'Qué comprar / reposición': se enfoca en las acciones `comprar_ya` (quiebres con ventas recientes) y `comprar_pronto` (cobertura baja < 7 días).
   * 'Qué vender rápido / liquidar / estancados': se enfoca en `liquidar` (stock con 0 ventas en 90 días), `sobrestock` (cobertura > 180 días) y `zombie_con_stock` (stock sin ventas históricas).
   Estructurá tu respuesta con:
@@ -371,11 +374,14 @@ Reglas de selección de tools (IMPORTANTE):
 - Para cierre o arqueo de caja, cuadre del día o desglose de ventas por forma de pago (efectivo, tarjeta, transferencia), usá `get_cash_closure`. Si no especifican fecha, usa el último corte de ventas.
 {expiry_rule}- En Proyección, comunica la confianza calibrada y el resultado de backtest; la proyección es de revenue global, no de unidades por SKU.
 - Para rankings de producto en meses/fechas exactas de una sola métrica, usá `get_top_productos_periodo`; "más vendido" significa unidades salvo pedido explícito por valor. Conservá cada período por separado y los empates. Al rankear unidades, compará productos solo dentro de la misma medida del catálogo; no compares gramos con unidades. Si falta la medida, ese SKU se muestra por separado. Si el período supera el corte de ventas, decí hasta qué fecha hay datos y no afirmes que el resto no tuvo ventas.
-- Rankings acumulados, multimétrica o por frecuencia de venta ('hasta este mes', 'histórico', 'más vendido y mayor venta', 'vendido en más veces'):
-  * Usá `get_top_skus(period='all', limit=10)` en una sola llamada. Esta tool devuelve simultáneamente `top_por_unidades` (unidades vendidas), `top_por_valor` (mayor facturación COP), `top_por_transacciones` ('en más veces' = `num_facturas` de venta válidas distintas) y `mes_actual_en_curso` (desempeño de este mes hasta la fecha de corte).
+- Rankings acumulados, multimétrica o por frecuencia de venta ('hasta este mes', 'histórico', 'este año', 'desde este año', 'más vendido y mayor venta', 'vendido en más veces'):
+  * Para consultas acumuladas históricas ('hasta este mes', 'histórico', 'desde siempre'), usá `get_top_skus(period='all', limit=...)` en una sola llamada.
+  * Para consultas del año en curso ('desde este año', 'en lo que va del año', 'este año', 'acumulado del año'), usá `get_top_skus(period='ytd', limit=...)` en una sola llamada.
+  * `get_top_skus` devuelve simultáneamente `top_por_unidades` (unidades vendidas), `top_por_valor` (mayor facturación COP), `top_por_transacciones` ('en más veces' = `num_facturas` de venta válidas distintas) y `mes_actual_en_curso` (desempeño de este mes hasta la fecha de corte).
   * Si el usuario dice "hasta este mes", presentá PRIMERO el acumulado histórico hasta el corte actual y ADEMÁS el desglose del mes actual en curso (`mes_actual_en_curso`) para que no quede ninguna ambigüedad.
-  * Si el usuario pregunta varias métricas en el mismo mensaje (ej. "producto más vendido y el que generó mayor venta"), respondé AMBAS preguntas claramente separando el ranking por UNIDADES del ranking por VALOR FACTURADO ($ COP). Si en el top aparece un servicio técnico (ej. `MOTS1430`), mencionalo y aclarale cuál es el #1 en producto físico inventariable.
+  * Si el usuario pregunta varias métricas en el mismo mensaje (ej. "producto más vendido y el que generó mayor venta" o "10 por más vendidos y 10 por más plata facturada"), respondé AMBAS preguntas claramente separando el ranking por UNIDADES del ranking por VALOR FACTURADO ($ COP). Si en el top aparece un servicio técnico (ej. `MOTS1430`), mencionalo y aclarale cuál es el #1 en producto físico inventariable.
   * Conteo de ventas/transacciones consistente: diferenciá siempre `num_facturas` / `total_facturas_distintas` (facturas de venta únicas donde aparece el SKU) de `total_lineas_detalle` (líneas facturadas) y `dias_con_venta` (días calendario con movimiento). Cuando pregunten "en cuántas ventas" o "en más veces", la métrica canónica es facturas distintas (`num_facturas`).
+  * Formato de productos para enlaces (OBLIGATORIO): En todas las tablas o listas de productos, incluí SIEMPRE la columna `SKU` con el código exacto y copiá el nombre del producto tal cual lo devuelve la tool (sin abreviarlo ni quitarle partes) para garantizar que el SKU y el nombre queden con enlace clickeable.
 - Para "hoy" o "ayer", anclá el día al corte Silver de ventas. Si ese día no tiene ventas, no uses el último día con datos.
 - Si pide productos sin stock para la próxima compra, usá `get_productos_para_reponer` y comunica el corte del snapshot, la ventana de ventas y que la cantidad es sólo una referencia.
 - Si pregunta por historial de un proveedor sin período, usá `buscar_compras_por_proveedor`.
@@ -645,7 +651,7 @@ def _product_records(value: Any) -> list[tuple[str, str]]:
             "",
         )
         label = next(
-            (str(current[key]).strip(" \r\n\t") for key in _PRODUCT_LABEL_FIELDS
+            (re.sub(r"\s+", " ", str(current[key]).strip(" \r\n\t")) for key in _PRODUCT_LABEL_FIELDS
              if isinstance(current.get(key), str) and current[key].strip(" \r\n\t")),
             "",
         )
@@ -828,19 +834,24 @@ def _entity_candidates_mentioned_in_text(
                     return False
                 if re.search(rf"\b(?:SKU|c[oó]digo|cod|EAN)\b", line, re.IGNORECASE):
                     return True
-                if re.search(rf"(?<![\w]){re.escape(label)}(?![\w])", line, re.IGNORECASE):
+                if product_label_mentioned_in_text(line, label, allow_token_overlap=True):
                     return True
-                tokens = [
-                    re.escape(tok) for tok in re.findall(r"\b[A-Za-z0-9áéíóúñÁÉÍÓÚÑ]{4,}\b", label)
-                    if tok.lower() not in {"para", "cada", "unos", "unas", "como"}
-                ]
-                if len(tokens) >= 2:
-                    matched = sum(1 for tok in tokens if re.search(rf"\b{tok}\b", line, re.IGNORECASE))
-                    if matched >= 2 and matched >= min(len(tokens), 3):
-                        return True
                 return False
 
-            mentioned = any(_product_line_mentioned(line) for line in text.splitlines())
+            has_id_token = bool(
+                re.search(rf"(?<![\w]){re.escape(entity_id)}(?![\w])", text, re.IGNORECASE)
+            )
+            mentioned = any(_product_line_mentioned(line) for line in text.splitlines()) or (
+                not has_id_token
+                and bool(label)
+                and label.casefold() != entity_id.casefold()
+                and product_label_mentioned_in_text(text, label, allow_token_overlap=False)
+            )
+        elif entity_type == "product":
+            mentioned = bool(
+                (entity_id and re.search(rf"(?<![\w]){re.escape(entity_id)}(?![\w])", text, re.IGNORECASE))
+                or (label and product_label_mentioned_in_text(text, label, allow_token_overlap=False))
+            )
         else:
             mentioned = any(
                 term and re.search(rf"(?<![\w]){re.escape(term)}(?![\w])", text, re.IGNORECASE)
