@@ -5586,6 +5586,403 @@ class DuckDBMetricsRepo:
             "margen_neto_pct": margen_neto_pct,
         }
 
+    # ── V1.22: Directorio y perfiles de clientes ─────────────────────────
+
+    def get_clientes(
+        self,
+        fecha_inicio: str,
+        fecha_fin: str,
+        q: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+        sort_by: str = "ventas",
+        sort_order: str = "desc",
+    ) -> dict:
+        """Directorio de clientes identificados por ventas facturadas válidas.
+
+        - Ranking por suma de facturas válidas en el rango (desc por defecto).
+        - El cliente genérico (NIT 222222222) y los NIT vacíos cuentan como
+          NO identificados: van al resumen, no al ranking ni a los perfiles.
+        - El Top-10 se calcula sobre el ranking completo del rango y no cambia
+          con la búsqueda, la página ni el orden.
+        """
+        page = max(1, min(int(page), 10_000))
+        page_size = max(1, min(int(page_size), 100))
+        sort_columns = {
+            "ventas": "ventas_total",
+            "facturas": "facturas",
+            "ticket_promedio": "ticket_promedio",
+            "ultima_compra": "ultima_compra",
+        }
+        sort_column = sort_columns.get(str(sort_by), "ventas_total")
+        direction = "ASC" if str(sort_order).lower() == "asc" else "DESC"
+
+        identified = _identified_customer_sql("h.nit_cliente")
+        unidentified_factura = _identified_customer_sql("nit_cliente")
+        base_cte = f"""
+            WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE}),
+            period_headers AS (
+                SELECT *, TRIM(COALESCE(nit_cliente, '')) AS cid
+                FROM valid_sales_headers
+                WHERE business_date BETWEEN ? AND ?
+            ),
+            identified_headers AS (
+                SELECT * FROM period_headers
+                WHERE {_identified_customer_sql("cid")}
+            ),
+            canonical_names AS (
+                SELECT cid, nombre FROM (
+                    SELECT cid,
+                           regexp_replace(TRIM(nombre_cliente), '\\s+', ' ', 'g') AS nombre,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY cid
+                               ORDER BY business_date DESC,
+                                        cod_clase DESC,
+                                        num_documento DESC
+                           ) AS rn
+                    FROM identified_headers
+                    WHERE TRIM(COALESCE(nombre_cliente, '')) != ''
+                ) ranked
+                WHERE rn = 1
+            ),
+            customer_agg AS (
+                SELECT h.cid,
+                       COALESCE(MAX(cn.nombre), h.cid) AS nombre_canonico,
+                       SUM(h.total_factura) AS ventas_total,
+                       COUNT(*) AS facturas,
+                       ROUND(AVG(h.total_factura), 2) AS ticket_promedio,
+                       CAST(MIN(h.business_date) AS VARCHAR) AS primera_compra,
+                       CAST(MAX(h.business_date) AS VARCHAR) AS ultima_compra
+                FROM identified_headers h
+                LEFT JOIN canonical_names cn ON cn.cid = h.cid
+                GROUP BY h.cid
+            )
+        """
+
+        summary_row = self._query(
+            base_cte + f"""
+            , top10 AS (
+                SELECT ventas_total FROM customer_agg
+                ORDER BY ventas_total DESC LIMIT 10
+            )
+            SELECT
+                (SELECT COUNT(*) FROM customer_agg) AS clientes_identificados,
+                (SELECT COALESCE(SUM(total_factura), 0) FROM period_headers)
+                    AS ventas_totales_validas,
+                (SELECT COALESCE(SUM(ventas_total), 0) FROM customer_agg)
+                    AS ventas_identificadas,
+                (SELECT COUNT(*) FROM period_headers) AS facturas_totales,
+                (SELECT COALESCE(SUM(total_factura), 0) FROM period_headers
+                 WHERE NOT {unidentified_factura}) AS ventas_sin_identificar,
+                (SELECT COUNT(*) FROM period_headers
+                 WHERE NOT {unidentified_factura}) AS facturas_sin_identificar,
+                (SELECT COALESCE(SUM(ventas_total), 0) FROM (
+                    SELECT ventas_total FROM customer_agg
+                    ORDER BY ventas_total DESC LIMIT 10
+                )) AS top10_ventas_suma
+            """,
+            [fecha_inicio, fecha_fin],
+        )[0]
+
+        summary_params: list = [fecha_inicio, fecha_fin]
+        search_clause = ""
+        query_text = str(q or "").strip()
+        if query_text:
+            needle = query_text.lower()
+            search_clause = (
+                "WHERE contains(lower(nombre_canonico), ?) OR contains(lower(cid), ?)"
+            )
+            summary_params += [needle, needle]
+
+        total_rows = int(
+            self._query(
+                base_cte
+                + f"""
+                , filtered AS (SELECT * FROM customer_agg {search_clause})
+                SELECT COUNT(*) AS total FROM filtered
+                """,
+                summary_params,
+            )[0]["total"]
+            or 0
+        )
+
+        item_rows = self._query(
+            base_cte
+            + f"""
+            , filtered AS (SELECT * FROM customer_agg {search_clause})
+            SELECT cid AS customer_id,
+                   nombre_canonico,
+                   ROUND(ventas_total, 2) AS ventas_total,
+                   facturas,
+                   ticket_promedio,
+                   primera_compra,
+                   ultima_compra
+            FROM filtered
+            ORDER BY {sort_column} {direction}, cid ASC
+            LIMIT ? OFFSET ?
+            """,
+            summary_params + [page_size, (page - 1) * page_size],
+        )
+
+        ventas_totales = float(summary_row["ventas_totales_validas"] or 0)
+        facturas_totales = int(summary_row["facturas_totales"] or 0)
+        top10_suma = float(summary_row["top10_ventas_suma"] or 0)
+        return {
+            "periodo": {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin},
+            "resumen": {
+                "clientes_identificados": int(summary_row["clientes_identificados"] or 0),
+                "ventas_totales_validas": round(ventas_totales, 2),
+                "ventas_identificadas": round(float(summary_row["ventas_identificadas"] or 0), 2),
+                "facturas_totales": facturas_totales,
+                "ticket_promedio_global": (
+                    round(ventas_totales / facturas_totales, 2) if facturas_totales else 0.0
+                ),
+                "top10_ventas_suma": round(top10_suma, 2),
+                "top10_participacion": (
+                    round(top10_suma / ventas_totales, 6) if ventas_totales else 0.0
+                ),
+                "ventas_sin_identificar": round(float(summary_row["ventas_sin_identificar"] or 0), 2),
+                "facturas_sin_identificar": int(summary_row["facturas_sin_identificar"] or 0),
+            },
+            "items": [
+                {
+                    "customer_id": row["customer_id"],
+                    "nombre_canonico": row["nombre_canonico"] or row["customer_id"],
+                    "ventas_total": float(row["ventas_total"] or 0),
+                    "facturas": int(row["facturas"] or 0),
+                    "ticket_promedio": float(row["ticket_promedio"] or 0),
+                    "primera_compra": row["primera_compra"],
+                    "ultima_compra": row["ultima_compra"],
+                }
+                for row in item_rows
+            ],
+            "paginacion": {
+                "pagina": page,
+                "tamano_pagina": page_size,
+                "total_filas": total_rows,
+                "total_paginas": (total_rows + page_size - 1) // page_size if total_rows else 0,
+            },
+        }
+
+    def get_cliente_perfil(
+        self, customer_id: str, fecha_inicio: str, fecha_fin: str
+    ) -> dict | None:
+        """Perfil de un cliente identificado: resumen + productos más comprados.
+
+        Devuelve None (→ 404) cuando el identificador no existe en el tenant o
+        corresponde al cliente genérico. Las ventas se agregan desde cabeceras;
+        los productos desde el detalle, sin re-sumar totales de cabecera.
+        """
+        customer_id = str(customer_id).strip()
+        if not customer_id or customer_id.upper() in _UNIDENTIFIED_CUSTOMER_IDS:
+            return None
+
+        name_rows = self._query(
+            f"""
+            WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE})
+            SELECT COALESCE(
+                       (SELECT regexp_replace(TRIM(nombre_cliente), '\\s+', ' ', 'g')
+                        FROM valid_sales_headers
+                        WHERE {_identified_customer_sql("nit_cliente")}
+                          AND TRIM(COALESCE(nit_cliente, '')) = ?
+                          AND TRIM(COALESCE(nombre_cliente, '')) != ''
+                        ORDER BY business_date DESC, cod_clase DESC, num_documento DESC
+                        LIMIT 1),
+                       ?
+                   ) AS nombre_canonico,
+                   COUNT(*) AS total_facturas
+            FROM valid_sales_headers
+            WHERE {_identified_customer_sql("nit_cliente")}
+              AND TRIM(COALESCE(nit_cliente, '')) = ?
+            """,
+            [customer_id, customer_id, customer_id],
+        )[0]
+        if int(name_rows["total_facturas"] or 0) == 0:
+            return None
+
+        stats = self._query(
+            f"""
+            WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE})
+            SELECT COALESCE(SUM(total_factura), 0) AS ventas_total,
+                   COUNT(*) AS facturas,
+                   COALESCE(AVG(total_factura), 0) AS ticket_promedio,
+                   CAST(MIN(business_date) AS VARCHAR) AS primera_compra,
+                   CAST(MAX(business_date) AS VARCHAR) AS ultima_compra
+            FROM valid_sales_headers
+            WHERE TRIM(COALESCE(nit_cliente, '')) = ?
+              AND business_date BETWEEN ? AND ?
+            """,
+            [customer_id, fecha_inicio, fecha_fin],
+        )[0]
+
+        units = self._query(
+            f"""
+            WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE}),
+            customer_invoices AS (
+                SELECT business_date, cod_clase, num_documento
+                FROM valid_sales_headers
+                WHERE TRIM(COALESCE(nit_cliente, '')) = ?
+                  AND business_date BETWEEN ? AND ?
+            )
+            SELECT COALESCE(SUM(d.cantidad), 0) AS unidades
+            FROM silver_fact_ventas_detalle d
+            INNER JOIN customer_invoices h
+              ON h.business_date = d.business_date
+             AND h.cod_clase = d.cod_clase
+             AND h.num_documento = d.num_documento
+            """,
+            [customer_id, fecha_inicio, fecha_fin],
+        )[0]
+
+        top_products = self._query(
+            f"""
+            WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE}),
+            customer_invoices AS (
+                SELECT business_date, cod_clase, num_documento
+                FROM valid_sales_headers
+                WHERE TRIM(COALESCE(nit_cliente, '')) = ?
+                  AND business_date BETWEEN ? AND ?
+            )
+            SELECT d.cod_producto AS sku,
+                   COALESCE(
+                       NULLIF(TRIM(p.nombre_producto), ''),
+                       NULLIF(TRIM(d.nombre_detalle), ''),
+                       d.cod_producto
+                   ) AS nombre_producto,
+                   ROUND(COALESCE(SUM(d.cantidad), 0), 2) AS unidades,
+                   ROUND(COALESCE(SUM(d.total_detalle), 0), 2) AS ventas_valor,
+                   COUNT(DISTINCT CAST(h.business_date AS VARCHAR) || '|'
+                         || h.cod_clase || '|' || h.num_documento) AS facturas
+            FROM customer_invoices h
+            INNER JOIN silver_fact_ventas_detalle d
+              ON d.business_date = h.business_date
+             AND d.cod_clase = h.cod_clase
+             AND d.num_documento = h.num_documento
+            LEFT JOIN silver_dim_producto p ON p.cod_producto = d.cod_producto
+            GROUP BY d.cod_producto,
+                     COALESCE(
+                         NULLIF(TRIM(p.nombre_producto), ''),
+                         NULLIF(TRIM(d.nombre_detalle), ''),
+                         d.cod_producto
+                     )
+            ORDER BY unidades DESC, ventas_valor DESC, d.cod_producto ASC
+            LIMIT 10
+            """,
+            [customer_id, fecha_inicio, fecha_fin],
+        )
+
+        return {
+            "cliente": {
+                "customer_id": customer_id,
+                "nombre_canonico": name_rows["nombre_canonico"] or customer_id,
+            },
+            "resumen": {
+                "ventas_total": round(float(stats["ventas_total"] or 0), 2),
+                "facturas": int(stats["facturas"] or 0),
+                "ticket_promedio": round(float(stats["ticket_promedio"] or 0), 2),
+                "primera_compra": stats["primera_compra"],
+                "ultima_compra": stats["ultima_compra"],
+                "unidades_vendidas": round(float(units["unidades"] or 0), 2),
+            },
+            "productos_top": [
+                {
+                    "sku": row["sku"],
+                    "nombre_producto": row["nombre_producto"] or (row["sku"] or ""),
+                    "unidades": float(row["unidades"] or 0),
+                    "ventas_valor": float(row["ventas_valor"] or 0),
+                    "facturas": int(row["facturas"] or 0),
+                }
+                for row in top_products
+            ],
+            "periodo": {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin},
+        }
+
+    def get_cliente_facturas(
+        self,
+        customer_id: str,
+        fecha_inicio: str,
+        fecha_fin: str,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict | None:
+        """Página de facturas válidas de un cliente identificado en el rango."""
+        customer_id = str(customer_id).strip()
+        if not customer_id or customer_id.upper() in _UNIDENTIFIED_CUSTOMER_IDS:
+            return None
+        page = max(1, min(int(page), 10_000))
+        page_size = max(1, min(int(page_size), 100))
+
+        exists = self._query(
+            f"""
+            WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE})
+            SELECT COUNT(*) AS total
+            FROM valid_sales_headers
+            WHERE {_identified_customer_sql("nit_cliente")}
+              AND TRIM(COALESCE(nit_cliente, '')) = ?
+            """,
+            [customer_id],
+        )[0]
+        if int(exists["total"] or 0) == 0:
+            return None
+
+        total = int(
+            self._query(
+                f"""
+                WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE})
+                SELECT COUNT(*) AS total
+                FROM valid_sales_headers
+                WHERE TRIM(COALESCE(nit_cliente, '')) = ?
+                  AND business_date BETWEEN ? AND ?
+                """,
+                [customer_id, fecha_inicio, fecha_fin],
+            )[0]["total"]
+            or 0
+        )
+
+        rows = self._query(
+            f"""
+            WITH valid_sales_headers AS ({_VALID_SALES_HEADERS_CTE}),
+            customer_invoices AS (
+                SELECT business_date, cod_clase, num_documento, total_factura
+                FROM valid_sales_headers
+                WHERE TRIM(COALESCE(nit_cliente, '')) = ?
+                  AND business_date BETWEEN ? AND ?
+            )
+            SELECT CAST(h.business_date AS VARCHAR) AS fecha_negocio,
+                   h.cod_clase,
+                   h.num_documento,
+                   ROUND(COALESCE(h.total_factura, 0), 2) AS total_factura,
+                   (
+                       SELECT COUNT(*) FROM silver_fact_ventas_detalle d
+                       WHERE d.business_date = h.business_date
+                         AND d.cod_clase = h.cod_clase
+                         AND d.num_documento = h.num_documento
+                   ) AS lineas
+            FROM customer_invoices h
+            ORDER BY h.business_date DESC, h.cod_clase DESC, h.num_documento DESC
+            LIMIT ? OFFSET ?
+            """,
+            [customer_id, fecha_inicio, fecha_fin, page_size, (page - 1) * page_size],
+        )
+
+        return {
+            "items": [
+                {
+                    "fecha_negocio": row["fecha_negocio"],
+                    "cod_clase": row["cod_clase"],
+                    "num_documento": row["num_documento"],
+                    "total_factura": float(row["total_factura"] or 0),
+                    "lineas": int(row["lineas"] or 0),
+                }
+                for row in rows
+            ],
+            "total": total,
+            "total_lineas": sum(int(row["lineas"] or 0) for row in rows),
+            "total_paginas": (total + page_size - 1) // page_size if total else 0,
+            "pagina": page,
+            "tamano_pagina": page_size,
+        }
+
     # ── V1.21: Análisis de productos y proveedores (sección Análisis) ────
 
     def get_analisis_productos(self, fecha_inicio: str, fecha_fin: str, limit: int = 50) -> dict:
@@ -6569,6 +6966,28 @@ _VALID_SALES_HEADERS_CTE = """
     ) ranked_headers
     WHERE identity_count = 1
 """
+
+
+# Customer identifiers that represent the generic walk-in buyer rather than a
+# real, trackable customer. NIT 222222222 ("CONSUMIDOR FINAL") dominates the
+# raw invoice volume, so treating it as a normal customer would make the whole
+# ranking meaningless. Null/empty identifiers are handled by the SQL predicate.
+_UNIDENTIFIED_CUSTOMER_IDS: tuple[str, ...] = ("222222222",)
+
+
+def _identified_customer_sql(raw_column: str = "nit_cliente") -> str:
+    """Build a SQL predicate that is true only for identified customers.
+
+    ``raw_column`` is an internal, developer-authored expression — never user
+    input — so interpolating it is safe. Values are a fixed constant tuple.
+    """
+    sentinels = ", ".join(f"'{value}'" for value in _UNIDENTIFIED_CUSTOMER_IDS)
+    return f"TRIM(COALESCE({raw_column}, '')) NOT IN ('', {sentinels})"
+
+
+def _unidentified_customer_sql(raw_column: str = "nit_cliente") -> str:
+    """Inverse of :func:`_identified_customer_sql` (for the unidentified bucket)."""
+    return f"NOT ({_identified_customer_sql(raw_column)})"
 
 
 _VALID_PURCHASE_HEADERS_CTE = """

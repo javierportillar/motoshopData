@@ -17,7 +17,7 @@ from time import time
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -46,6 +46,9 @@ from motoshop_api.metrics.schemas import (
     ActionRecommendationsResponse,
     BalanceResponse,
     CashClosureResponse,
+    ClienteFacturasResponse,
+    ClientePerfilResponse,
+    ClientesResponse,
     CohortesDetailResponse,
     CohortesResponse,
     DormidosResponse,
@@ -206,6 +209,13 @@ def get_repo(tenant: str = Depends(get_tenant)) -> MetricsRepoProtocol:
 
 def get_purchase_profile_repo(tenant: str = Depends(get_tenant)) -> DuckDBMetricsRepo:
     """Use the tenant's local purchase snapshot for the purchase profile."""
+    if tenant not in _duckdb_repos:
+        _duckdb_repos[tenant] = DuckDBMetricsRepo(tenant=tenant)
+    return _duckdb_repos[tenant]
+
+
+def get_customer_repo(tenant: str = Depends(get_tenant)) -> DuckDBMetricsRepo:
+    """Use the tenant's local snapshot for the customer directory and profiles."""
     if tenant not in _duckdb_repos:
         _duckdb_repos[tenant] = DuckDBMetricsRepo(tenant=tenant)
     return _duckdb_repos[tenant]
@@ -1389,3 +1399,156 @@ def analisis_proveedores(
         lambda: repo.get_analisis_proveedores(fecha_inicio, fecha_fin),
         ttl=300,
     )
+
+
+# ── V1.22: Directorio y perfiles de clientes ────────────────────────────
+#
+# "Mejores clientes" = clientes identificados ordenados por ventas facturadas
+# válidas del período. Las ventas se agregan desde cabeceras de factura; los
+# productos desde el detalle. El cliente genérico (NIT 222222222) y los NIT
+# vacíos quedan fuera del ranking y se reportan aparte como sin identificar.
+
+_CLIENTE_SORT_FIELDS = {"ventas", "facturas", "ticket_promedio", "ultima_compra"}
+
+
+def _resolve_cliente_range(
+    fecha_inicio: date | None, fecha_fin: date | None
+) -> tuple[date, date]:
+    """Resolve the default 12-month window and enforce a bounded range."""
+    end_date = fecha_fin or date.today()
+    start_date = fecha_inicio or _subtract_years(end_date, 1)
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=422,
+            detail="fecha_inicio no puede ser posterior a fecha_fin",
+        )
+    if start_date < _subtract_years(end_date, 10):
+        raise HTTPException(status_code=422, detail="El rango máximo permitido es de 10 años")
+    return start_date, end_date
+
+
+def _validate_cliente_id(customer_id: str) -> str:
+    """Validate an opaque customer identifier used as a path segment."""
+    value = str(customer_id).strip()
+    if not 1 <= len(value) <= 64:
+        raise HTTPException(status_code=422, detail="Identificador de cliente inválido")
+    if any(ord(character) < 32 for character in value):
+        raise HTTPException(status_code=422, detail="Identificador de cliente inválido")
+    return value
+
+
+@router.get(
+    "/metrics/clientes",
+    response_model=ClientesResponse,
+    dependencies=[Depends(require_module("ventas-summary"))],
+)
+@limiter.limit("30/minute")
+def clientes(
+    request: Request,
+    fecha_inicio: date | None = Query(default=None),
+    fecha_fin: date | None = Query(default=None),
+    q: str | None = Query(default=None, max_length=100),
+    page: int = Query(default=1, ge=1, le=10_000),
+    page_size: int = Query(default=20, ge=1, le=100),
+    sort_by: str = Query(default="ventas"),
+    sort_order: Literal["asc", "desc"] = Query(default="desc"),
+    repo: DuckDBMetricsRepo = Depends(get_customer_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+) -> dict:
+    """Directorio de clientes identificados por ventas facturadas válidas."""
+    start_date, end_date = _resolve_cliente_range(fecha_inicio, fecha_fin)
+    if sort_by not in _CLIENTE_SORT_FIELDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"sort_by inválido. Permitidos: {', '.join(sorted(_CLIENTE_SORT_FIELDS))}",
+        )
+    search = (q or "").strip() or None
+    return _cached_or_fetch(
+        (
+            f"{tenant}:clientes:{start_date.isoformat()}:{end_date.isoformat()}"
+            f":{search or ''}:{page}:{page_size}:{sort_by}:{sort_order}"
+        ),
+        lambda: repo.get_clientes(
+            start_date.isoformat(),
+            end_date.isoformat(),
+            q=search,
+            page=page,
+            page_size=page_size,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        ),
+        ttl=300,
+    )
+
+
+@router.get(
+    "/metrics/clientes/{customer_id}/perfil",
+    response_model=ClientePerfilResponse,
+    dependencies=[Depends(require_module("ventas-summary"))],
+)
+@limiter.limit("30/minute")
+def cliente_perfil(
+    request: Request,
+    customer_id: str = Path(..., min_length=1, max_length=64),
+    fecha_inicio: date | None = Query(default=None),
+    fecha_fin: date | None = Query(default=None),
+    repo: DuckDBMetricsRepo = Depends(get_customer_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+) -> dict:
+    """Perfil de un cliente: resumen de ventas + productos más comprados."""
+    cliente_id = _validate_cliente_id(customer_id)
+    start_date, end_date = _resolve_cliente_range(fecha_inicio, fecha_fin)
+    result = _cached_or_fetch(
+        (
+            f"{tenant}:cliente-perfil:{cliente_id}"
+            f":{start_date.isoformat()}:{end_date.isoformat()}"
+        ),
+        lambda: repo.get_cliente_perfil(
+            cliente_id, start_date.isoformat(), end_date.isoformat()
+        ),
+        ttl=300,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado en el tenant activo")
+    return result
+
+
+@router.get(
+    "/metrics/clientes/{customer_id}/facturas",
+    response_model=ClienteFacturasResponse,
+    dependencies=[Depends(require_module("ventas-summary"))],
+)
+@limiter.limit("30/minute")
+def cliente_facturas(
+    request: Request,
+    customer_id: str = Path(..., min_length=1, max_length=64),
+    fecha_inicio: date | None = Query(default=None),
+    fecha_fin: date | None = Query(default=None),
+    page: int = Query(default=1, ge=1, le=10_000),
+    page_size: int = Query(default=20, ge=1, le=100),
+    repo: DuckDBMetricsRepo = Depends(get_customer_repo),
+    _user: User = Depends(get_current_user),
+    tenant: str = Depends(get_tenant),
+) -> dict:
+    """Facturas válidas de un cliente identificado en el rango, paginadas."""
+    cliente_id = _validate_cliente_id(customer_id)
+    start_date, end_date = _resolve_cliente_range(fecha_inicio, fecha_fin)
+    result = _cached_or_fetch(
+        (
+            f"{tenant}:cliente-facturas:{cliente_id}"
+            f":{start_date.isoformat()}:{end_date.isoformat()}:{page}:{page_size}"
+        ),
+        lambda: repo.get_cliente_facturas(
+            cliente_id,
+            start_date.isoformat(),
+            end_date.isoformat(),
+            page=page,
+            page_size=page_size,
+        ),
+        ttl=300,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado en el tenant activo")
+    return result

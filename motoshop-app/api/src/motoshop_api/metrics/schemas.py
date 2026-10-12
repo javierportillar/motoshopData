@@ -820,3 +820,106 @@ class BalanceResponse(BaseModel):
     total_ganancia_neta: float
     margen_bruto_pct: float | None = None
     margen_neto_pct: float | None = None
+
+# ── Customer directory and profiles (V1.22) ──────────────────────────────
+#
+# "Best customers" = identified customers ranked by valid invoiced sales in the
+# selected period. Invoiced sales are aggregated from invoice HEADERS
+# (silver_fact_ventas) so one invoice total is counted once even when it has
+# many product lines. Product-level aggregation reads the detail table
+# (silver_fact_ventas_detalle) and never re-sums header totals after the join.
+#
+# The generic walk-in customer (NIT 222222222 / "CONSUMIDOR FINAL") and rows
+# with a null/empty identifier are treated as UNIDENTIFIED: they are excluded
+# from the ranking and profiles and reported only in the summary counters.
+
+
+class ClientePeriodo(BaseModel):
+    fecha_inicio: date
+    fecha_fin: date
+
+
+class ClienteItem(BaseModel):
+    customer_id: str
+    nombre_canonico: str
+    ventas_total: float
+    facturas: int
+    ticket_promedio: float
+    primera_compra: date | None = None
+    ultima_compra: date | None = None
+
+
+class ClientesResumen(BaseModel):
+    clientes_identificados: int
+    ventas_totales_validas: float
+    ventas_identificadas: float
+    facturas_totales: int
+    ticket_promedio_global: float
+    # Top-10 is computed over the full identified-customer ranking for the
+    # period; it is independent of search, page, and sort.
+    top10_ventas_suma: float
+    # Share of ALL valid sales in the period (unidentified included) as a 0..1
+    # ratio. Multiply by 100 for a percentage in the UI.
+    top10_participacion: float
+    ventas_sin_identificar: float
+    facturas_sin_identificar: int
+
+
+class ClientesPaginacion(BaseModel):
+    pagina: int
+    tamano_pagina: int
+    total_filas: int
+    total_paginas: int
+
+
+class ClientesResponse(BaseModel):
+    periodo: ClientePeriodo
+    resumen: ClientesResumen
+    items: list[ClienteItem]
+    paginacion: ClientesPaginacion
+
+
+class ClientePerfilResumen(BaseModel):
+    ventas_total: float
+    facturas: int
+    ticket_promedio: float
+    primera_compra: date | None = None
+    ultima_compra: date | None = None
+    unidades_vendidas: float
+
+
+class ClienteProductoTop(BaseModel):
+    sku: str | None = None
+    nombre_producto: str
+    unidades: float
+    ventas_valor: float
+    facturas: int
+
+
+class ClientePerfil(BaseModel):
+    customer_id: str
+    nombre_canonico: str
+
+
+class ClientePerfilResponse(BaseModel):
+    cliente: ClientePerfil
+    resumen: ClientePerfilResumen
+    productos_top: list[ClienteProductoTop]
+    periodo: ClientePeriodo
+
+
+class ClienteFacturaItem(BaseModel):
+    fecha_negocio: date
+    cod_clase: str
+    num_documento: str
+    total_factura: float = 0.0
+    lineas: int = 0
+
+
+class ClienteFacturasResponse(BaseModel):
+    items: list[ClienteFacturaItem]
+    total: int
+    total_lineas: int = 0
+    total_paginas: int
+    pagina: int
+    tamano_pagina: int

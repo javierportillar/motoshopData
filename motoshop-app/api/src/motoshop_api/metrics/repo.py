@@ -119,9 +119,31 @@ class MetricsRepoProtocol(Protocol):
     def get_plan_compras(self) -> PlanComprasResponse: ...
     def get_forecast_categoria(self) -> ForecastCategoriaResponse: ...
     def get_abc_detalle(self, bucket: str, limit: int = 20) -> AbcDetalleResponse: ...
+    # V1.22: customer directory and profiles
+    def get_clientes(
+        self,
+        fecha_inicio: str,
+        fecha_fin: str,
+        q: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+        sort_by: str = "ventas",
+        sort_order: str = "desc",
+    ) -> dict: ...
+    def get_cliente_perfil(
+        self, customer_id: str, fecha_inicio: str, fecha_fin: str
+    ) -> dict | None: ...
+    def get_cliente_facturas(
+        self, customer_id: str, fecha_inicio: str, fecha_fin: str,
+        page: int = 1, page_size: int = 20,
+    ) -> dict | None: ...
 
 
 # ── Fake (mock) ──────────────────────────────────────────────────────────
+
+# Customer identifiers with mock data available in FakeMetricsRepo. Any other
+# identifier (including the generic NIT 222222222) resolves to None → 404.
+_MOCK_CLIENTE_IDS: frozenset[str] = frozenset({"1085320887", "87949439"})
 
 _MONTH = datetime.now().strftime("%Y-%m")
 _this_month = datetime.now().replace(day=1)
@@ -504,6 +526,115 @@ class FakeMetricsRepo:
             wape_promedio=round(wape, 2),
             cobertura_pct=99.9,
         )
+
+    # V1.22: customer directory and profiles (mock data for tests/local without DuckDB).
+    def get_clientes(
+        self,
+        fecha_inicio: str,
+        fecha_fin: str,
+        q: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+        sort_by: str = "ventas",
+        sort_order: str = "desc",
+    ) -> dict:
+        items = [
+            {
+                "customer_id": "1085320887",
+                "nombre_canonico": "MARIA CONSUELO GOMEZ",
+                "ventas_total": 2_450_000.0,
+                "facturas": 12,
+                "ticket_promedio": 204_166.67,
+                "primera_compra": "2024-03-04",
+                "ultima_compra": "2026-02-18",
+            },
+            {
+                "customer_id": "87949439",
+                "nombre_canonico": "TALLER MOTO REPUESTOS EL RAYO",
+                "ventas_total": 1_890_000.0,
+                "facturas": 8,
+                "ticket_promedio": 236_250.0,
+                "primera_compra": "2024-06-21",
+                "ultima_compra": "2026-01-30",
+            },
+        ]
+        ventas_identificadas = sum(i["ventas_total"] for i in items)
+        ventas_totales = ventas_identificadas * 1.25
+        return {
+            "periodo": {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin},
+            "resumen": {
+                "clientes_identificados": len(items),
+                "ventas_totales_validas": round(ventas_totales, 2),
+                "ventas_identificadas": round(ventas_identificadas, 2),
+                "facturas_totales": 40,
+                "ticket_promedio_global": 108_500.0,
+                "top10_ventas_suma": round(ventas_identificadas, 2),
+                "top10_participacion": round(ventas_identificadas / ventas_totales, 6),
+                "ventas_sin_identificar": round(ventas_totales - ventas_identificadas, 2),
+                "facturas_sin_identificar": 20,
+            },
+            "items": items,
+            "paginacion": {
+                "pagina": page,
+                "tamano_pagina": page_size,
+                "total_filas": len(items),
+                "total_paginas": 1,
+            },
+        }
+
+    def get_cliente_perfil(
+        self, customer_id: str, fecha_inicio: str, fecha_fin: str
+    ) -> dict | None:
+        if customer_id not in _MOCK_CLIENTE_IDS:
+            return None
+        return {
+            "cliente": {"customer_id": customer_id, "nombre_canonico": "MARIA CONSUELO GOMEZ"},
+            "resumen": {
+                "ventas_total": 2_450_000.0,
+                "facturas": 12,
+                "ticket_promedio": 204_166.67,
+                "primera_compra": "2024-03-04",
+                "ultima_compra": "2026-02-18",
+                "unidades_vendidas": 34.0,
+            },
+            "productos_top": [
+                {
+                    "sku": "MOTS1297",
+                    "nombre_producto": "ACEITE 20W50 MOTUL 1L",
+                    "unidades": 10.0,
+                    "ventas_valor": 250_000.0,
+                    "facturas": 8,
+                }
+            ],
+            "periodo": {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin},
+        }
+
+    def get_cliente_facturas(
+        self,
+        customer_id: str,
+        fecha_inicio: str,
+        fecha_fin: str,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict | None:
+        if customer_id not in _MOCK_CLIENTE_IDS:
+            return None
+        return {
+            "items": [
+                {
+                    "fecha_negocio": "2026-02-18",
+                    "cod_clase": "FV",
+                    "num_documento": "12345",
+                    "total_factura": 250_000.0,
+                    "lineas": 3,
+                }
+            ],
+            "total": 1,
+            "total_lineas": 3,
+            "total_paginas": 1,
+            "pagina": page,
+            "tamano_pagina": page_size,
+        }
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
