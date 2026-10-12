@@ -14,7 +14,13 @@ from contextlib import nullcontext
 from datetime import UTC, date, datetime, timedelta
 from difflib import SequenceMatcher
 
-from motoshop_api.metrics.repo_duckdb import get_shared_connection, _identified_customer_sql
+from motoshop_api.metrics.repo_duckdb import get_shared_connection
+
+try:
+    from motoshop_api.metrics.repo_duckdb import _identified_customer_sql
+except ImportError:
+    def _identified_customer_sql(raw_column: str = "nit_cliente") -> str:
+        return f"TRIM(COALESCE({raw_column}, '')) NOT IN ('', '222222222')"
 
 logger = logging.getLogger(__name__)
 
@@ -3290,7 +3296,8 @@ class ToolExecutor:
             ),
             canonical_names AS (
                 SELECT cid, nombre FROM (
-                    SELECT cid, nombre_cliente AS nombre,
+                    SELECT cid,
+                           regexp_replace(TRIM(nombre_cliente), '\\s+', ' ', 'g') AS nombre,
                            ROW_NUMBER() OVER (
                                PARTITION BY cid
                                ORDER BY business_date DESC,
