@@ -22,7 +22,7 @@ Make purchase documents and suppliers returned by the governed assistant navigab
 ### Frontend
 
 - Extend the governed assistant entity renderer with `purchase_document` and `supplier` references in the `purchases` domain.
-- Validate purchase links against the existing route `/dashboards/compras/dia/{date}/documento/{documentNumber}?cod_clase={classCode}` and validate supplier links against `/dashboards/compras/proveedores/{nit}`.
+- Validate purchase links against the existing route `/dashboards/compras/dia/{date}/documento/{documentNumber}?cod_clase={classCode}` and validate supplier links against `/dashboards/proveedores/{nit}`.
 - Add the supplier profile page; default to the most recent 12-month range, expose date filters, and paginate document history. Show loading, empty, invalid-NIT, and API-error states.
 - Add a Compras search tab for supplier name/NIT, product name/SKU, and invoice number with a selectable bounded date range and paginated document results.
 - Make the entire daily purchase-document header a link to its exact detail page; keep the expand/collapse control separate to avoid nested interactive elements.
