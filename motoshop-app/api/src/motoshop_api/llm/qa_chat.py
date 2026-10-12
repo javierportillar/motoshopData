@@ -358,9 +358,24 @@ Reglas de selección de tools (IMPORTANTE):
 - En Balance, distingue utilidad bruta de neta. Si los gastos tienen estado `unavailable`, di que la utilidad neta no se puede confirmar; no traduzcas la falta de datos a $0. Si está `available_empty`, indica que no hay gastos registrados en el rango.
 - En Productos y Proveedores, explica si un dato compara revenue con valor comprado. Ese ratio monetario no equivale a rotación física ni prueba que la compra del período haya causado las ventas.
 - Para ventas por proveedor, conglomerado de ventas por proveedor o relación de cantidades y valor por proveedor, usá `get_analisis_modulo` con `sections=['proveedores']`. Mostrá una tabla Markdown con: Proveedor, NIT, Unidades vendidas, Ventas asociadas ($ COP), Margen ($ COP y %), Total compras ($ COP) y Ratio venta/compra. Escribí el nombre y el NIT de cada proveedor para que el sistema enlace su ficha.
+- Diagnóstico de Inventario por Proveedor / Qué Comprar vs Qué Vender Rápido:
+  Para preguntas sobre qué comprar, qué reponer o qué vender rápido, liquidar, estancados o sobrestock (ya sea a nivel general o de un proveedor específico como ATMOPEL), usá `get_inventario_overview` con `supplier_query` y opcionalmente `accion`.
+  * 'Qué comprar / reposición': se enfoca en las acciones `comprar_ya` (quiebres con ventas recientes) y `comprar_pronto` (cobertura baja < 7 días).
+  * 'Qué vender rápido / liquidar / estancados': se enfoca en `liquidar` (stock con 0 ventas en 90 días), `sobrestock` (cobertura > 180 días) y `zombie_con_stock` (stock sin ventas históricas).
+  Estructurá tu respuesta con:
+  1. Resumen de cartera: total SKUs, distribución de acciones, capital inmovilizado total y ventas perdidas mensuales.
+  2. Prioridades de COMPRA (tabla o lista con SKU, Nombre, Stock actual, Sugerido a comprar e Impacto económico).
+  3. Prioridades de VENTA RÁPIDA / LIQUIDACIÓN (tabla o lista con SKU, Nombre, Stock actual, Acción y Capital inmovilizado).
+  NO encadenes múltiples herramientas de búsqueda si `get_inventario_overview` ya te devuelve este diagnóstico completo en una sola llamada.
+- Eficiencia en Tools: Resolvé la consulta con 1 o a lo sumo 2 tool calls dirigidas. No llames herramientas redundantes ni encadenes búsquedas especulativas.
 - Para cierre o arqueo de caja, cuadre del día o desglose de ventas por forma de pago (efectivo, tarjeta, transferencia), usá `get_cash_closure`. Si no especifican fecha, usa el último corte de ventas.
 {expiry_rule}- En Proyección, comunica la confianza calibrada y el resultado de backtest; la proyección es de revenue global, no de unidades por SKU.
-- Para rankings de producto en meses/fechas exactas, usá `get_top_productos_periodo`; "más vendido" significa unidades salvo pedido explícito por valor. Conservá cada período por separado y los empates. Al rankear unidades, compará productos solo dentro de la misma medida del catálogo; no compares gramos con unidades. Si falta la medida, ese SKU se muestra por separado. Si el período supera el corte de ventas, decí hasta qué fecha hay datos y no afirmes que el resto no tuvo ventas.
+- Para rankings de producto en meses/fechas exactas de una sola métrica, usá `get_top_productos_periodo`; "más vendido" significa unidades salvo pedido explícito por valor. Conservá cada período por separado y los empates. Al rankear unidades, compará productos solo dentro de la misma medida del catálogo; no compares gramos con unidades. Si falta la medida, ese SKU se muestra por separado. Si el período supera el corte de ventas, decí hasta qué fecha hay datos y no afirmes que el resto no tuvo ventas.
+- Rankings acumulados, multimétrica o por frecuencia de venta ('hasta este mes', 'histórico', 'más vendido y mayor venta', 'vendido en más veces'):
+  * Usá `get_top_skus(period='all', limit=10)` en una sola llamada. Esta tool devuelve simultáneamente `top_por_unidades` (unidades vendidas), `top_por_valor` (mayor facturación COP), `top_por_transacciones` ('en más veces' = `num_facturas` de venta válidas distintas) y `mes_actual_en_curso` (desempeño de este mes hasta la fecha de corte).
+  * Si el usuario dice "hasta este mes", presentá PRIMERO el acumulado histórico hasta el corte actual y ADEMÁS el desglose del mes actual en curso (`mes_actual_en_curso`) para que no quede ninguna ambigüedad.
+  * Si el usuario pregunta varias métricas en el mismo mensaje (ej. "producto más vendido y el que generó mayor venta"), respondé AMBAS preguntas claramente separando el ranking por UNIDADES del ranking por VALOR FACTURADO ($ COP). Si en el top aparece un servicio técnico (ej. `MOTS1430`), mencionalo y aclarale cuál es el #1 en producto físico inventariable.
+  * Conteo de ventas/transacciones consistente: diferenciá siempre `num_facturas` / `total_facturas_distintas` (facturas de venta únicas donde aparece el SKU) de `total_lineas_detalle` (líneas facturadas) y `dias_con_venta` (días calendario con movimiento). Cuando pregunten "en cuántas ventas" o "en más veces", la métrica canónica es facturas distintas (`num_facturas`).
 - Para "hoy" o "ayer", anclá el día al corte Silver de ventas. Si ese día no tiene ventas, no uses el último día con datos.
 - Si pide productos sin stock para la próxima compra, usá `get_productos_para_reponer` y comunica el corte del snapshot, la ventana de ventas y que la cantidad es sólo una referencia.
 - Si pregunta por historial de un proveedor sin período, usá `buscar_compras_por_proveedor`.
@@ -607,6 +622,7 @@ _PRODUCT_REFERENCE_TOOLS = frozenset({
     "get_abc_xyz_distribution",
     "get_abc_distribution",
     "get_analisis_modulo",
+    "get_inventario_overview",
 })
 _PRODUCT_ID_FIELDS = ("cod_producto", "codigo", "sku", "entity_id")
 _PRODUCT_LABEL_FIELDS = ("nom_producto", "nombre_producto", "nombre", "label")
@@ -1291,11 +1307,13 @@ class QAChat:
             ):
                 llm_kwargs["deadline"] = deadline
         try:
-            for _ in range(MAX_TOOL_ITERATIONS):
+            for iteration in range(MAX_TOOL_ITERATIONS):
                 if time.monotonic() >= deadline:
                     raise TransientLLMError("LLM request deadline exceeded")
+                # En la última iteración, si ya se ejecutaron tools, forzar síntesis pasando tools=[]
+                current_tools = [] if (iteration == MAX_TOOL_ITERATIONS - 1 and tool_calls_used) else self.tool_defs
                 result = self.llm.complete_with_tools(
-                    messages, self.tool_defs, **llm_kwargs
+                    messages, current_tools, **llm_kwargs
                 )
                 if time.monotonic() >= deadline:
                     raise TransientLLMError("LLM request deadline exceeded")
@@ -1324,10 +1342,11 @@ class QAChat:
                         tool_result = self.executor.run(name, args)
                     tool_calls_used.append(name)
                     if isinstance(tool_result, dict):
-                        deterministic_fallback_text = (
-                            str(tool_result.get("respuesta_fallback") or "").strip()
-                            or deterministic_fallback_text
-                        )
+                        if not deterministic_fallback_text:
+                            deterministic_fallback_text = (
+                                str(tool_result.get("respuesta_fallback") or "").strip()
+                                or deterministic_fallback_text
+                            )
                         if tool_result.get("status") in {
                             "partial", "empty", "needs_clarification", "unavailable"
                         }:
@@ -1379,7 +1398,13 @@ class QAChat:
             logger.warning(
                 "qa_provider_error tenant=%s error=%s", self.tenant_id, type(exc).__name__
             )
-            if deterministic_fallback_text:
+            if len(tool_calls_used) == 1 and deterministic_fallback_text:
+                final_text = deterministic_fallback_text
+                response_status = "partial"
+            elif tool_calls_used and deterministic_fallback_text:
+                final_text = f"El servicio de lenguaje experimentó una demora, pero se recuperaron los siguientes datos clave:\n\n{deterministic_fallback_text}"
+                response_status = "partial"
+            elif deterministic_fallback_text:
                 final_text = deterministic_fallback_text
                 response_status = "partial"
             else:

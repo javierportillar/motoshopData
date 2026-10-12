@@ -82,6 +82,7 @@ def test_chat_tool_catalog_is_scoped_to_tenant(monkeypatch):
         "generate_report",
         "get_cash_closure",
         "get_expiry_alerts",
+        "get_inventario_overview",
     }
 
     moto = qa_module.get_qa_chat("motoshop", "ana", repository=InMemoryConversationRepository())
@@ -102,6 +103,7 @@ def test_chat_tool_catalog_is_scoped_to_tenant(monkeypatch):
     assert "get_abc_xyz_distribution" in moto_names
     assert "get_cohortes_clientes" in moto_names
     assert "get_drift_alerts" in moto_names
+    assert "get_inventario_overview" in moto_names
 
 
 def test_tool_executor_does_not_inherit_global_duckdb(monkeypatch):
@@ -600,3 +602,186 @@ def test_qa_chat_requires_explicit_file_intent_and_reuses_duplicate_envelope():
 
     duplicate = chat.chat("Dame un reporte de stock", result["conversation_id"], "duplicate-1")
     assert duplicate == result
+
+
+def test_tool_get_inventario_overview_filters_and_structures_data(monkeypatch):
+    import duckdb
+    from motoshop_api.llm.tools import ToolExecutor
+    import motoshop_api.metrics.repo_duckdb as repo_duckdb
+
+    sample_items = [
+        {
+            "cod_producto": "ATM-1",
+            "nom_producto": "Pastilla Freno ATMOPEL",
+            "stock": 0.0,
+            "accion": "comprar_ya",
+            "sugerido_comprar": 15.0,
+            "rotacion_diaria": 0.5,
+            "ingreso_perdido_estimado": 500000.0,
+            "precio_venta": 35000.0,
+            "capital_inmovilizado": 0.0,
+            "costo_unit": 20000.0,
+            "cobertura_dias": 0.0,
+            "dias_desde_venta": 2,
+            "nombre_proveedor": "ATMOPEL S.A.S",
+            "nit_proveedor": "890920782",
+        },
+        {
+            "cod_producto": "ATM-2",
+            "nom_producto": "Filtro Aceite ATMOPEL",
+            "stock": 2.0,
+            "accion": "comprar_pronto",
+            "sugerido_comprar": 10.0,
+            "rotacion_diaria": 0.3,
+            "ingreso_perdido_estimado": 0.0,
+            "precio_venta": 15000.0,
+            "capital_inmovilizado": 0.0,
+            "costo_unit": 8000.0,
+            "cobertura_dias": 6.6,
+            "dias_desde_venta": 1,
+            "nombre_proveedor": "ATMOPEL S.A.S",
+            "nit_proveedor": "890920782",
+        },
+        {
+            "cod_producto": "ATM-3",
+            "nom_producto": "Cilindro ATMOPEL",
+            "stock": 10.0,
+            "accion": "liquidar",
+            "sugerido_comprar": 0.0,
+            "rotacion_diaria": 0.01,
+            "ingreso_perdido_estimado": 0.0,
+            "precio_venta": 120000.0,
+            "capital_inmovilizado": 750000.0,
+            "costo_unit": 75000.0,
+            "cobertura_dias": 1000.0,
+            "dias_desde_venta": 120,
+            "nombre_proveedor": "ATMOPEL S.A.S",
+            "nit_proveedor": "890920782",
+        },
+        {
+            "cod_producto": "ATM-4",
+            "nom_producto": "Accesorio Zombie ATMOPEL",
+            "stock": 5.0,
+            "accion": "zombie_con_stock",
+            "sugerido_comprar": 0.0,
+            "rotacion_diaria": 0.0,
+            "ingreso_perdido_estimado": 0.0,
+            "precio_venta": 50000.0,
+            "capital_inmovilizado": 150000.0,
+            "costo_unit": 30000.0,
+            "cobertura_dias": 9999.0,
+            "dias_desde_venta": None,
+            "nombre_proveedor": "ATMOPEL S.A.S",
+            "nit_proveedor": "890920782",
+        },
+        {
+            "cod_producto": "OTHER-1",
+            "nom_producto": "Batería Otro Proveedor",
+            "stock": 1.0,
+            "accion": "comprar_ya",
+            "sugerido_comprar": 5.0,
+            "rotacion_diaria": 0.2,
+            "ingreso_perdido_estimado": 200000.0,
+            "precio_venta": 80000.0,
+            "capital_inmovilizado": 0.0,
+            "costo_unit": 45000.0,
+            "cobertura_dias": 0.0,
+            "dias_desde_venta": 5,
+            "nombre_proveedor": "OTRO PROVEEDOR S.A.",
+            "nit_proveedor": "900123456",
+        },
+    ]
+
+    class FakeRepo:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def get_inventario_overview(self, **kwargs):
+            return {"items": sample_items}
+
+    monkeypatch.setattr(repo_duckdb, "DuckDBMetricsRepo", FakeRepo)
+
+    con = duckdb.connect(":memory:")
+    con.execute("CREATE TABLE gold_mart_inventario_actual (snapshot_date DATE)")
+    con.execute("INSERT INTO gold_mart_inventario_actual VALUES ('2026-10-12')")
+    con.execute("CREATE TABLE silver_fact_ventas (business_date DATE, num_documento VARCHAR, cod_clase VARCHAR, estado_documento VARCHAR)")
+    con.execute("INSERT INTO silver_fact_ventas VALUES ('2026-10-12', '1', 'FC', 'B')")
+
+    executor = object.__new__(ToolExecutor)
+    executor.tenant = "motoshop"
+    executor.duckdb_path = ":memory:"
+    executor._con = con
+
+    result = executor.get_inventario_overview(supplier_query="ATMOPEL", limit=5)
+
+    assert result["status"] == "complete"
+    assert result["proveedor"] == "ATMOPEL S.A.S"
+    assert result["total_skus"] == 4
+    assert result["resumen_acciones"] == {
+        "comprar_ya": 1,
+        "comprar_pronto": 1,
+        "liquidar": 1,
+        "zombie_con_stock": 1,
+    }
+    assert result["capital_inmovilizado_total_cop"] == 900000.0
+    assert result["ingreso_perdido_mensual_estimado_cop"] == 500000.0
+
+    comprar_skus = [p["sku"] for p in result["productos_para_comprar"]]
+    assert "ATM-1" in comprar_skus
+    assert "ATM-2" in comprar_skus
+    assert "OTHER-1" not in comprar_skus
+
+    vender_skus = [p["sku"] for p in result["productos_para_vender_rapido"]]
+    assert "ATM-3" in vender_skus
+    assert "ATM-4" in vender_skus
+    assert "OTHER-1" not in vender_skus
+
+    assert "Diagnóstico de Inventario y Cartera para ATMOPEL S.A.S" in result["respuesta_fallback"]
+    assert "Top productos prioritarios para COMPRAR" in result["respuesta_fallback"]
+    assert "Top productos prioritarios para VENDER RÁPIDO / LIQUIDAR" in result["respuesta_fallback"]
+
+
+def test_tool_get_dormidos_with_supplier_query():
+    import duckdb
+    from motoshop_api.llm.tools import ToolExecutor
+
+    con = duckdb.connect(":memory:")
+    con.execute(
+        """
+        CREATE TABLE silver_fact_compras (
+            business_date DATE, num_documento VARCHAR, cod_clase VARCHAR,
+            nit_proveedor VARCHAR, nombre_proveedor VARCHAR
+        )
+        """
+    )
+    con.execute(
+        """
+        CREATE TABLE silver_fact_compras_detalle (
+            cod_producto VARCHAR, business_date DATE, num_documento VARCHAR, cod_clase VARCHAR
+        )
+        """
+    )
+    con.execute(
+        """
+        CREATE TABLE gold_mart_productos_dormidos (
+            cod_producto VARCHAR, nom_producto VARCHAR, stock_actual DOUBLE, dias_sin_venta INTEGER
+        )
+        """
+    )
+
+    con.execute("INSERT INTO silver_fact_compras VALUES ('2026-05-01', 'F1', 'FC', '890920782', 'ATMOPEL S.A.S')")
+    con.execute("INSERT INTO silver_fact_compras VALUES ('2026-05-01', 'F2', 'FC', '900123456', 'OTRO PROVEEDOR')")
+    con.execute("INSERT INTO silver_fact_compras_detalle VALUES ('SKU-ATM', '2026-05-01', 'F1', 'FC')")
+    con.execute("INSERT INTO silver_fact_compras_detalle VALUES ('SKU-OTHER', '2026-05-01', 'F2', 'FC')")
+    con.execute("INSERT INTO gold_mart_productos_dormidos VALUES ('SKU-ATM', 'Producto Dormido ATMOPEL', 5.0, 150)")
+    con.execute("INSERT INTO gold_mart_productos_dormidos VALUES ('SKU-OTHER', 'Producto Dormido Otro', 2.0, 200)")
+
+    executor = object.__new__(ToolExecutor)
+    executor._con = con
+
+    res = executor.get_dormidos(days_min=90, supplier_query="ATMOPEL")
+    assert res["total"] == 1
+    assert res["proveedor_filtrado"] == "ATMOPEL"
+    assert res["dormidos"][0]["sku"] == "SKU-ATM"
+    assert res["dormidos"][0]["proveedor"] == "ATMOPEL S.A.S"
+

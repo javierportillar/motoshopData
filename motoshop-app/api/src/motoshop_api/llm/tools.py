@@ -143,6 +143,7 @@ PUBLIC_TOOL_NAMES = {
     "generate_report",
     "get_cash_closure",
     "get_expiry_alerts",
+    "get_inventario_overview",
 }
 
 
@@ -218,9 +219,29 @@ class ToolExecutor:
 
     def get_kpis_today(self) -> dict:
         """KPIs del último día con datos: ventas, facturas, ticket promedio."""
-        d = self._get_max_date()
+        d = self._get_valid_sales_cutoff() or self._get_max_date()
         if d is None:
             return {"mensaje": "No hay datos de ventas disponibles.", "fecha": None, "ventas": 0, "facturas": 0, "ticket_promedio": 0}
+        try:
+            r = self._con.execute(
+                """
+                SELECT ROUND(COALESCE(SUM(total_factura), 0), 2) AS ventas,
+                       COUNT(*) AS facturas,
+                       ROUND(COALESCE(SUM(total_factura), 0) / NULLIF(COUNT(*), 0), 2) AS ticket
+                FROM silver_fact_ventas
+                WHERE business_date = ? AND COALESCE(estado_documento, '') != 'A'
+                """,
+                [d.isoformat()],
+            ).fetchone()
+            if r and int(r[1] or 0) > 0:
+                return {
+                    "fecha": d.isoformat(),
+                    "ventas": float(r[0] or 0),
+                    "facturas": int(r[1] or 0),
+                    "ticket_promedio": float(r[2] or 0),
+                }
+        except Exception:
+            pass
         r = self._con.execute(
             """
             SELECT ROUND(COALESCE(SUM(valor_total),0),2) AS ventas,
@@ -240,8 +261,28 @@ class ToolExecutor:
     def get_kpis_month(self, month: str | None = None) -> dict:
         """KPIs mensuales: ventas totales, facturas, ticket promedio."""
         if not month:
-            d = self._get_max_date()
+            d = self._get_valid_sales_cutoff() or self._get_max_date()
             month = d.strftime("%Y-%m") if d else date.today().strftime("%Y-%m")
+        try:
+            r = self._con.execute(
+                """
+                SELECT ROUND(COALESCE(SUM(total_factura), 0), 2) AS ventas,
+                       COUNT(*) AS facturas,
+                       ROUND(COALESCE(SUM(total_factura), 0) / NULLIF(COUNT(*), 0), 2) AS ticket
+                FROM silver_fact_ventas
+                WHERE STRFTIME(business_date, '%Y-%m') = ? AND COALESCE(estado_documento, '') != 'A'
+                """,
+                [month],
+            ).fetchone()
+            if r and int(r[1] or 0) > 0:
+                return {
+                    "month": month,
+                    "ventas": float(r[0] or 0),
+                    "facturas": int(r[1] or 0),
+                    "ticket_promedio": float(r[2] or 0),
+                }
+        except Exception:
+            pass
         r = self._con.execute(
             """
             SELECT ROUND(COALESCE(SUM(valor_total),0),2) AS ventas,
@@ -259,9 +300,9 @@ class ToolExecutor:
             "ticket_promedio": float(r[2] or 0),
         }
 
-    def get_top_skus(self, period: str = "day", limit: int = 10) -> dict:
-        """Top SKUs vendidos en el período (day, week, month, all)."""
-        d = self._get_max_date()
+    def get_top_skus(self, period: str = "day", limit: int = 10, metric: str = "all") -> dict:
+        """Top SKUs vendidos en el período (day, week, month, current_month, all) por unidades, valor facturado y transacciones (veces vendido)."""
+        d = self._get_valid_sales_cutoff() or self._get_max_date()
         if d is None:
             return {"period": period, "skus": []}
         since = d.isoformat()
@@ -269,26 +310,155 @@ class ToolExecutor:
             since = (d - timedelta(days=7)).isoformat()
         elif period == "month":
             since = (d - timedelta(days=30)).isoformat()
+        elif period == "current_month":
+            since = d.replace(day=1).isoformat()
         elif period == "all":
             since = "1900-01-01"
 
         limit = max(1, min(int(limit), 50))
-        rows = self._con.execute(
-            """
-            SELECT cod_producto, nom_producto, ROUND(SUM(valor_total),2) AS valor, ROUND(SUM(cantidad_total),2) AS cantidad
-            FROM gold_mart_ventas_diarias_sku
-            WHERE business_date >= ?
-            GROUP BY cod_producto, nom_producto ORDER BY valor DESC LIMIT ?
-        """,
-            [since, limit],
-        ).fetchall()
-        return {
-            "period": period,
-            "skus": [
-                {"sku": r[0], "nombre": r[1], "valor": float(r[2]), "cantidad": float(r[3])}
-                for r in rows
-            ],
-        }
+        try:
+            def _fetch_silver_ranking(date_from: str, order_expr: str, top_n: int) -> list[dict]:
+                q_rows = self._con.execute(
+                    f"""
+                    WITH valid_sales_headers AS (
+                        SELECT * EXCLUDE (identity_count)
+                        FROM (
+                            SELECT h.business_date, h.cod_clase, h.num_documento,
+                                   COUNT(*) OVER (
+                                       PARTITION BY h.business_date, h.cod_clase, h.num_documento
+                                   ) AS identity_count
+                            FROM silver_fact_ventas h
+                            WHERE UPPER(TRIM(COALESCE(h.estado_documento, ''))) != 'A'
+                              AND h.business_date IS NOT NULL
+                              AND h.business_date >= ?
+                              AND TRIM(COALESCE(h.cod_clase, '')) != ''
+                              AND TRIM(COALESCE(h.num_documento, '')) != ''
+                        ) sales_headers
+                        WHERE identity_count = 1
+                    ), latest_products AS (
+                        SELECT cod_producto, nombre_producto, cod_medida, presentacion
+                        FROM (
+                            SELECT p.cod_producto, p.nombre_producto, p.cod_medida, p.presentacion,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY p.cod_producto
+                                       ORDER BY p.snapshot_date DESC NULLS LAST,
+                                                p.fecha_actualizacion DESC NULLS LAST
+                                   ) AS snapshot_rank
+                            FROM silver_dim_producto p
+                        ) ranked_products
+                        WHERE snapshot_rank = 1
+                    )
+                    SELECT d.cod_producto,
+                           ANY_VALUE(COALESCE(p.nombre_producto, d.nombre_detalle, d.cod_producto)) AS nombre,
+                           ANY_VALUE(COALESCE(NULLIF(TRIM(p.presentacion), ''), NULLIF(TRIM(p.cod_medida), ''), 'UND')) AS unidad,
+                           ROUND(COALESCE(SUM(d.total_detalle), 0), 2) AS valor,
+                           ROUND(COALESCE(SUM(d.cantidad), 0), 2) AS cantidad,
+                           COUNT(DISTINCT (d.business_date, d.cod_clase, d.num_documento)) AS num_facturas,
+                           COUNT(DISTINCT d.business_date) AS dias_con_venta
+                    FROM silver_fact_ventas_detalle d
+                    INNER JOIN valid_sales_headers v
+                      ON d.num_documento = v.num_documento
+                     AND d.cod_clase = v.cod_clase
+                     AND d.business_date = v.business_date
+                    LEFT JOIN latest_products p ON p.cod_producto = d.cod_producto
+                    WHERE COALESCE(d.cantidad, 0) > 0
+                    GROUP BY d.cod_producto
+                    ORDER BY {order_expr}
+                    LIMIT ?
+                    """,
+                    [date_from, top_n],
+                ).fetchall()
+                return [
+                    {
+                        "sku": str(r[0]),
+                        "cod_producto": str(r[0]),
+                        "nombre": str(r[1]),
+                        "unidad": "UNIDAD" if str(r[2]) in ("001", "UND", "UNIDAD") else str(r[2]),
+                        "valor": float(r[3] or 0),
+                        "cantidad": float(r[4] or 0),
+                        "num_facturas": int(r[5] or 0),
+                        "dias_con_venta": int(r[6] or 0),
+                        "es_servicio": "SERVICIO" in str(r[1]).upper(),
+                    }
+                    for r in q_rows
+                ]
+
+            top_valor = _fetch_silver_ranking(since, "valor DESC, cantidad DESC", limit)
+            top_unidades = _fetch_silver_ranking(since, "cantidad DESC, valor DESC", limit)
+            top_transacciones = _fetch_silver_ranking(since, "num_facturas DESC, cantidad DESC", limit)
+
+            primary = (
+                top_unidades if metric == "units"
+                else top_transacciones if metric == "transactions"
+                else top_valor
+            )
+            observed_at = datetime.now(UTC).isoformat()
+            cutoff_iso = d.isoformat()
+            payload = {
+                "status": "complete",
+                "period": period,
+                "date_from": since,
+                "date_to": cutoff_iso,
+                "nota_conteo": (
+                    "num_facturas indica el número de ventas/facturas distintas válidas en las que aparece el SKU "
+                    "('vendido en más veces'); cantidad es el total de unidades vendidas y valor el total facturado en COP."
+                ),
+                "skus": primary,
+                "top_por_unidades": top_unidades,
+                "top_por_valor": top_valor,
+                "top_por_transacciones": top_transacciones,
+                "sources": [{
+                    "source_id": "duckdb-sales-detail",
+                    "domain": "sales",
+                    "kind": "duckdb",
+                    "citation": "Silver valid sales headers and detail",
+                    "cutoff_at": cutoff_iso,
+                    "observed_at": observed_at,
+                    "status": "used",
+                }],
+                "freshness": [{
+                    "domain": "sales",
+                    "cutoff_at": cutoff_iso,
+                    "observed_at": observed_at,
+                    "status": "current",
+                }],
+            }
+            if period == "all":
+                month_start = d.replace(day=1).isoformat()
+                payload["mes_actual_en_curso"] = {
+                    "mes": d.strftime("%Y-%m"),
+                    "date_from": month_start,
+                    "date_to": cutoff_iso,
+                    "top_por_unidades": _fetch_silver_ranking(month_start, "cantidad DESC, valor DESC", min(limit, 5)),
+                    "top_por_valor": _fetch_silver_ranking(month_start, "valor DESC, cantidad DESC", min(limit, 5)),
+                    "top_por_transacciones": _fetch_silver_ranking(month_start, "num_facturas DESC, cantidad DESC", min(limit, 5)),
+                }
+            return payload
+        except Exception:
+            rows = self._con.execute(
+                """
+                SELECT cod_producto, nom_producto, ROUND(SUM(valor_total),2) AS valor,
+                       ROUND(SUM(cantidad_total),2) AS cantidad,
+                       COALESCE(SUM(num_facturas), COUNT(*)) AS num_facturas
+                FROM gold_mart_ventas_diarias_sku
+                WHERE business_date >= ?
+                GROUP BY cod_producto, nom_producto ORDER BY valor DESC LIMIT ?
+            """,
+                [since, limit],
+            ).fetchall()
+            return {
+                "period": period,
+                "skus": [
+                    {
+                        "sku": r[0],
+                        "nombre": r[1],
+                        "valor": float(r[2]),
+                        "cantidad": float(r[3]),
+                        "num_facturas": int(r[4] or 0),
+                    }
+                    for r in rows
+                ],
+            }
 
     def get_top_productos_periodo(
         self,
@@ -1152,10 +1322,52 @@ class ToolExecutor:
             ],
         }
 
-    def get_dormidos(self, days_min: int = 90, limit: int = 20) -> dict:
-        """Productos sin venta hace al menos days_min días. Excluye never-sold (sentinel >5000)."""
+    def get_dormidos(
+        self, days_min: int = 90, limit: int = 20, supplier_query: str | None = None
+    ) -> dict:
+        """Productos sin venta hace al menos days_min días. Excluye never-sold (sentinel >5000).
+        Soporta filtro opcional por proveedor o NIT más reciente.
+        """
         days_min = max(0, min(int(days_min), 3650))
         limit = max(1, min(int(limit), 100))
+        if supplier_query and supplier_query.strip():
+            sq_clean = f"%{supplier_query.strip().upper()}%"
+            rows = self._con.execute(
+                """
+                WITH latest_supplier AS (
+                    SELECT d.cod_producto,
+                           ARG_MAX(h.nombre_proveedor, d.business_date) AS nombre_proveedor,
+                           ARG_MAX(h.nit_proveedor, d.business_date) AS nit_proveedor
+                    FROM silver_fact_compras_detalle d
+                    INNER JOIN silver_fact_compras h
+                      ON h.num_documento = d.num_documento
+                     AND h.cod_clase = d.cod_clase
+                     AND h.business_date = d.business_date
+                    GROUP BY d.cod_producto
+                )
+                SELECT p.cod_producto, p.nom_producto, p.stock_actual, p.dias_sin_venta, s.nombre_proveedor
+                FROM gold_mart_productos_dormidos p
+                JOIN latest_supplier s ON s.cod_producto = p.cod_producto
+                WHERE p.dias_sin_venta >= ? AND p.dias_sin_venta < 5000
+                  AND (UPPER(s.nombre_proveedor) LIKE ? OR s.nit_proveedor = ?)
+                ORDER BY p.dias_sin_venta DESC LIMIT ?
+            """,
+                [days_min, sq_clean, supplier_query.strip(), limit],
+            ).fetchall()
+            return {
+                "dormidos": [
+                    {
+                        "sku": r[0],
+                        "nombre": r[1],
+                        "stock": float(r[2]),
+                        "dias_sin_venta": int(r[3] if r[3] else 99999),
+                        "proveedor": r[4],
+                    }
+                    for r in rows
+                ],
+                "total": len(rows),
+                "proveedor_filtrado": supplier_query.strip(),
+            }
         rows = self._con.execute(
             """
             SELECT cod_producto, nom_producto, stock_actual, dias_sin_venta
@@ -2093,6 +2305,28 @@ class ToolExecutor:
                 "deben interpretarse como la ficha operativa completa."
             ),
         }
+        if hasattr(self._con, "cursor"):
+            try:
+                det_row = self._con.execute(
+                    """
+                    SELECT COUNT(DISTINCT (v.business_date, v.cod_clase, v.num_documento)),
+                           COUNT(*),
+                           COUNT(DISTINCT v.business_date)
+                    FROM silver_fact_ventas_detalle d
+                    JOIN silver_fact_ventas v
+                      ON d.num_documento = v.num_documento
+                     AND d.cod_clase = v.cod_clase
+                     AND d.business_date = v.business_date
+                    WHERE d.cod_producto = ? AND COALESCE(v.estado_documento, '') != 'A'
+                    """,
+                    [codigo],
+                ).fetchone()
+                if det_row and det_row[0] is not None:
+                    resultado["ventas"]["total_facturas_distintas"] = int(det_row[0] or 0)
+                    resultado["ventas"]["total_lineas_detalle"] = int(det_row[1] or 0)
+                    resultado["ventas"]["dias_con_venta"] = int(det_row[2] or 0)
+            except Exception:
+                pass
         # Reutilizar el cálculo canónico del dashboard evita que el asistente
         # informe stock, costos o estados distintos a los de la ficha web.
         try:
@@ -2653,6 +2887,165 @@ class ToolExecutor:
             "respuesta_fallback": "\n".join(lines),
         }
 
+    def get_inventario_overview(
+        self,
+        supplier_query: str | None = None,
+        accion: str | None = None,
+        limit: int = 15,
+        lead_time_dias: int = 7,
+        colchon_dias: int = 14,
+        umbral_sobrestock_dias: int = 180,
+    ) -> dict:
+        """Diagnóstico integral de inventario: qué comprar vs qué vender rápido/liquidar/sobrestock.
+        Soporta filtro por proveedor o NIT, y por acción específica (comprar_ya, comprar_pronto,
+        liquidar, sobrestock, zombie_con_stock, ok).
+        """
+        from collections import Counter
+        from contextlib import suppress
+        from motoshop_api.metrics.repo_duckdb import DuckDBMetricsRepo
+
+        lead_time_dias = max(1, min(int(lead_time_dias), 60))
+        colchon_dias = max(0, min(int(colchon_dias), 90))
+        umbral_sobrestock_dias = max(30, min(int(umbral_sobrestock_dias), 365))
+        limit = max(1, min(int(limit), 50))
+
+        repo = DuckDBMetricsRepo(db_path=self.duckdb_path, tenant=self.tenant)
+        raw_overview = repo.get_inventario_overview(
+            lead_time_dias=lead_time_dias,
+            colchon_dias=colchon_dias,
+            umbral_sobrestock_dias=umbral_sobrestock_dias,
+        )
+        items = raw_overview.get("items", [])
+
+        proveedor_nombre_encontrado = None
+        if supplier_query and supplier_query.strip():
+            sq = supplier_query.strip().upper()
+            items = [
+                it for it in items
+                if sq in str(it.get("nombre_proveedor") or "").upper()
+                or sq == str(it.get("nit_proveedor") or "").strip()
+            ]
+            if items:
+                proveedor_nombre_encontrado = items[0].get("nombre_proveedor") or supplier_query.strip()
+
+        if accion and accion.strip():
+            allowed_actions = {a.strip().lower() for a in accion.split(",") if a.strip()}
+            items = [it for it in items if it.get("accion") in allowed_actions]
+
+        total_skus = len(items)
+        conteo_acciones = dict(Counter(it.get("accion") for it in items))
+
+        capital_inmovilizado_total = sum(
+            it.get("capital_inmovilizado", 0) for it in items
+            if it.get("accion") in ("liquidar", "sobrestock", "zombie_con_stock")
+        )
+        ingreso_perdido_mensual_total = sum(
+            it.get("ingreso_perdido_estimado", 0) for it in items
+            if it.get("accion") == "comprar_ya"
+        )
+
+        comprar = [
+            {
+                "sku": it["cod_producto"],
+                "nombre": it["nom_producto"],
+                "stock": it["stock"],
+                "accion": it["accion"],
+                "sugerido_comprar": it["sugerido_comprar"],
+                "rotacion_diaria": it["rotacion_diaria"],
+                "ingreso_perdido_estimado_mes": it["ingreso_perdido_estimado"],
+                "precio_venta": it["precio_venta"],
+                "proveedor": it.get("nombre_proveedor"),
+            }
+            for it in sorted(
+                [x for x in items if x.get("accion") in ("comprar_ya", "comprar_pronto")],
+                key=lambda x: x.get("ingreso_perdido_estimado", 0),
+                reverse=True,
+            )[:limit]
+        ]
+
+        vender_rapido = [
+            {
+                "sku": it["cod_producto"],
+                "nombre": it["nom_producto"],
+                "stock": it["stock"],
+                "accion": it["accion"],
+                "cobertura_dias": it.get("cobertura_dias"),
+                "capital_inmovilizado": it["capital_inmovilizado"],
+                "dias_sin_venta": it.get("dias_desde_venta"),
+                "costo_unit": it["costo_unit"],
+                "proveedor": it.get("nombre_proveedor"),
+            }
+            for it in sorted(
+                [x for x in items if x.get("accion") in ("liquidar", "sobrestock", "zombie_con_stock")],
+                key=lambda x: x.get("capital_inmovilizado", 0),
+                reverse=True,
+            )[:limit]
+        ]
+
+        inv_cutoff = None
+        with suppress(Exception):
+            r = self._con.execute("SELECT MAX(snapshot_date) FROM gold_mart_inventario_actual").fetchone()
+            inv_cutoff = r[0] if r else None
+
+        sales_cutoff = self._get_valid_sales_cutoff()
+        observed_at = datetime.now(UTC).isoformat()
+
+        sources = [
+            {
+                "source_id": "duckdb-inventory",
+                "domain": "inventory",
+                "kind": "duckdb",
+                "citation": "gold_mart_inventario_actual",
+                "cutoff_at": inv_cutoff.isoformat() if inv_cutoff else None,
+                "observed_at": observed_at,
+                "status": "used",
+            },
+            {
+                "source_id": "duckdb-sales",
+                "domain": "sales",
+                "kind": "duckdb",
+                "citation": "silver_fact_ventas_detalle",
+                "cutoff_at": sales_cutoff.isoformat() if sales_cutoff else None,
+                "observed_at": observed_at,
+                "status": "used",
+            },
+        ]
+        freshness = [
+            {"domain": "inventory", "cutoff_at": inv_cutoff.isoformat() if inv_cutoff else None, "observed_at": observed_at, "status": "current"},
+            {"domain": "sales", "cutoff_at": sales_cutoff.isoformat() if sales_cutoff else None, "observed_at": observed_at, "status": "current"},
+        ]
+
+        prov_label = f" para {proveedor_nombre_encontrado}" if proveedor_nombre_encontrado else ""
+        fallback_lines = [
+            f"Diagnóstico de Inventario y Cartera{prov_label}:",
+            f"- Total productos analizados: {total_skus}",
+            f"- Distribución de acciones: {conteo_acciones.get('comprar_ya', 0)} comprar ya, {conteo_acciones.get('comprar_pronto', 0)} comprar pronto, {conteo_acciones.get('liquidar', 0)} liquidar, {conteo_acciones.get('zombie_con_stock', 0)} zombies con stock, {conteo_acciones.get('sobrestock', 0)} sobrestock, {conteo_acciones.get('ok', 0)} nivel saludable.",
+            f"- Capital inmovilizado en riesgo: ${capital_inmovilizado_total:,.0f} COP.",
+            f"- Ventas perdidas mensuales estimadas por quiebres: ${ingreso_perdido_mensual_total:,.0f} COP.",
+        ]
+        if comprar:
+            fallback_lines.append("\nTop productos prioritarios para COMPRAR:")
+            for c in comprar[:5]:
+                fallback_lines.append(f"  • {c['sku']} - {c['nombre']}: Stock={c['stock']}, Sugerido={c['sugerido_comprar']} uds (Venta perdida est: ${c['ingreso_perdido_estimado_mes']:,.0f} COP)")
+        if vender_rapido:
+            fallback_lines.append("\nTop productos prioritarios para VENDER RÁPIDO / LIQUIDAR:")
+            for v in vender_rapido[:5]:
+                fallback_lines.append(f"  • {v['sku']} - {v['nombre']}: Stock={v['stock']} uds, Acción={v['accion']} (Capital inmovilizado: ${v['capital_inmovilizado']:,.0f} COP)")
+
+        return {
+            "status": "complete",
+            "proveedor": proveedor_nombre_encontrado or supplier_query,
+            "total_skus": total_skus,
+            "resumen_acciones": conteo_acciones,
+            "capital_inmovilizado_total_cop": capital_inmovilizado_total,
+            "ingreso_perdido_mensual_estimado_cop": ingreso_perdido_mensual_total,
+            "productos_para_comprar": comprar,
+            "productos_para_vender_rapido": vender_rapido,
+            "respuesta_fallback": "\n".join(fallback_lines),
+            "sources": sources,
+            "freshness": freshness,
+        }
+
     @staticmethod
     def _purchase_metadata(cutoff: date | None) -> dict:
         cutoff_at = cutoff.isoformat() if cutoff else None
@@ -2760,14 +3153,23 @@ class ToolExecutor:
         ventas_rows = self._con.execute(
             f"""
             SELECT cod_producto, ROUND(SUM(valor_total),2) AS valor, ROUND(SUM(cantidad_total),2) AS cantidad,
-                   COUNT(*) AS num_ventas
+                   COALESCE(SUM(num_facturas), COUNT(*)) AS num_ventas,
+                   COUNT(*) AS dias_con_venta
             FROM gold_mart_ventas_diarias_sku
             WHERE cod_producto IN ({placeholders}) AND business_date >= ?
             GROUP BY cod_producto
         """,
             skus + [since],
         ).fetchall()
-        ventas_map = {r[0]: {"valor_vendido": float(r[1] or 0), "unidades_vendidas": float(r[2] or 0), "num_ventas": int(r[3])} for r in ventas_rows}
+        ventas_map = {
+            r[0]: {
+                "valor_vendido": float(r[1] or 0),
+                "unidades_vendidas": float(r[2] or 0),
+                "num_ventas": int(r[3] or 0),
+                "dias_con_venta": int(r[4] or 0),
+            }
+            for r in ventas_rows
+        }
 
         # Stock actual
         stock_rows = self._con.execute(
@@ -2830,6 +3232,7 @@ class ToolExecutor:
                 "valor_vendido_periodo": v.get("valor_vendido", 0),
                 "unidades_vendidas_periodo": v.get("unidades_vendidas", 0),
                 "num_ventas_periodo": v.get("num_ventas", 0),
+                "dias_con_venta_periodo": v.get("dias_con_venta", 0),
                 "dias_sin_venta": dorm,
                 "alerta_quiebre": a,
             }
@@ -3328,12 +3731,28 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_top_skus",
-            "description": "Top SKUs más vendidos en un período (day, week, month, all). Use 'all' para ranking histórico completo desde el inicio de operaciones.",
+            "description": (
+                "Top SKUs más vendidos en un período (day, week, month, current_month, all). "
+                "Usá 'all' para ranking histórico acumulado ('hasta este mes', 'histórico', 'desde siempre'). "
+                "Devuelve simultáneamente `top_por_unidades` (cantidad vendida), `top_por_valor` (mayor venta/facturación COP) "
+                "y `top_por_transacciones` ('vendido en más veces' = `num_facturas` distintas), además de `mes_actual_en_curso` "
+                "cuando period='all'."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "period": {"type": "string", "enum": ["day", "week", "month", "all"]},
+                    "period": {
+                        "type": "string",
+                        "enum": ["day", "week", "month", "current_month", "all"],
+                        "description": "Ventana temporal: day (último día), week (7d), month (30d), current_month (mes calendario actual), all (histórico acumulado + resumen del mes actual).",
+                    },
                     "limit": {"type": "integer", "default": 10},
+                    "metric": {
+                        "type": "string",
+                        "enum": ["all", "units", "revenue", "transactions"],
+                        "default": "all",
+                        "description": "Métrica principal de ordenamiento en `items`: units (unidades), revenue (valor facturado), transactions (facturas distintas / en más veces) o all.",
+                    },
                 },
                 "required": [],
             },
@@ -3434,12 +3853,16 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_dormidos",
-            "description": "Productos sin venta hace al menos N días.",
+            "description": "Productos sin venta hace al menos N días. Soporta filtro opcional por proveedor o NIT.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "days_min": {"type": "integer", "default": 90},
-                    "limit": {"type": "integer", "default": 20},
+                    "days_min": {"type": "integer", "default": 90, "description": "Días mínimos sin venta."},
+                    "limit": {"type": "integer", "default": 20, "description": "Límite de productos (1-100)."},
+                    "supplier_query": {
+                        "type": "string",
+                        "description": "Opcional: filtrar por nombre o NIT del proveedor más reciente del producto.",
+                    },
                 },
                 "required": [],
             },
@@ -4069,6 +4492,53 @@ TOOL_DEFINITIONS = [
                     "days": {
                         "type": "integer",
                         "description": "Horizonte en días hacia adelante para detectar lotes por vencer (por defecto 90 días).",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_inventario_overview",
+            "description": (
+                "Diagnóstico integral y estratégico de inventario (misma fuente que la pantalla Inventario/Optimizar/Comprar). "
+                "Responde en una sola llamada qué productos comprar y cuáles vender rápido/liquidar/sobrestock. "
+                "Soporta filtrar por proveedor (ej. 'ATMOPEL') o NIT, y por acción ('comprar_ya', 'comprar_pronto', "
+                "'liquidar', 'sobrestock', 'zombie_con_stock', 'ok'). Devuelve resumen de acciones, capital inmovilizado "
+                "en riesgo, ventas perdidas estimadas y los top productos priorizados para comprar y para liquidar."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "supplier_query": {
+                        "type": "string",
+                        "description": "Opcional: limitar al proveedor o NIT especificado (ej. 'ATMOPEL', '890920782').",
+                    },
+                    "accion": {
+                        "type": "string",
+                        "description": "Opcional: filtrar por una o más acciones separadas por coma (ej. 'comprar_ya,comprar_pronto' o 'liquidar,sobrestock,zombie_con_stock').",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 15,
+                        "description": "Cantidad máxima de productos a devolver por lista (para comprar y para liquidar).",
+                    },
+                    "lead_time_dias": {
+                        "type": "integer",
+                        "default": 7,
+                        "description": "Días de entrega del proveedor (por defecto 7).",
+                    },
+                    "colchon_dias": {
+                        "type": "integer",
+                        "default": 14,
+                        "description": "Días de stock de seguridad / colchón (por defecto 14).",
+                    },
+                    "umbral_sobrestock_dias": {
+                        "type": "integer",
+                        "default": 180,
+                        "description": "Días de cobertura a partir de los cuales se considera sobrestock (por defecto 180).",
                     },
                 },
                 "required": [],

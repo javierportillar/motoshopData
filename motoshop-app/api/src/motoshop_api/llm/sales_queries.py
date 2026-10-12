@@ -12,7 +12,11 @@ from motoshop_api.llm.purchase_queries import PurchasePeriod, parse_cutoff, reso
 _RANKING_TERMS = re.compile(r"\b(?:mas\s+vend\w*|vend\w*\s+mas|top|ranking)\b")
 _PRODUCT_TERMS = re.compile(r"\b(?:product\w*|sku)\b")
 _REVENUE_TERMS = re.compile(
-    r"\b(?:por\s+valor|valor\s+vendido|facturaci\w*|revenue|ingresos?)\b"
+    r"\b(?:por\s+valor|valor\s+vendido|facturaci\w*|revenue|ingresos?|mayor\s+venta|generad\w*\s+mayor\s+venta)\b"
+)
+_CUMULATIVE_OR_FREQUENCY_TERMS = re.compile(
+    r"\b(?:hasta\s+(?:este\s+mes|el\s+mes|hoy|ahora|la\s+fecha|el\s+momento)|"
+    r"acumulad\w*|historic\w*|en\s+mas\s+veces|mas\s+veces|mas\s+transaccion\w*)\b"
 )
 _FOLLOWUP_DATE_TERMS = re.compile(
     r"\b(?:hoy|ayer|dia\s+\d{1,2}|fecha\s+20\d{2}-\d{2}-\d{2}|"
@@ -146,6 +150,16 @@ def parse_sales_product_ranking_request(
 ) -> SalesProductRankingRequest | None:
     """Parse a product ranking into exact dates or independently ranked months."""
     text = _normalize(message)
+    if _CUMULATIVE_OR_FREQUENCY_TERMS.search(text) is not None:
+        return None
+    if (
+        "mas vendid" in text
+        and _REVENUE_TERMS.search(text) is not None
+        and not re.search(
+            r"mas\s+vend\w*\s+por\s+(?:valor|facturaci\w*|ingresos?|revenue)", text
+        )
+    ):
+        return None
     cutoff = parse_cutoff(sales_cutoff)
     intent = (
         _RANKING_TERMS.search(text) is not None

@@ -380,3 +380,55 @@ def test_sales_ranking_caps_ties_and_global_results_without_claiming_later_month
     assert fully_covered["ranking_truncated"] is True
     assert fully_covered["status"] == "partial"
     connection.close()
+
+
+def test_cumulative_and_compound_ranking_queries_do_not_hijack_to_single_month_and_get_top_skus_returns_all_metrics(
+    sales_database: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from motoshop_api.llm import tools as tools_module
+    from motoshop_api.llm.sales_queries import parse_sales_product_ranking_request
+    from motoshop_api.llm.tools import ToolExecutor
+
+    # Cumulative and compound multi-metric questions must go through the LLM + get_top_skus
+    assert (
+        parse_sales_product_ranking_request(
+            "cual es el producto más vendido hasta este mes? y el producto que me haya generado mayor venta?",
+            sales_cutoff="2026-10-12",
+        )
+        is None
+    )
+    assert (
+        parse_sales_product_ranking_request(
+            "y cual es el producto que se ha vendido en mas veces?",
+            sales_cutoff="2026-10-12",
+        )
+        is None
+    )
+    # Exact single-month / single-metric still routes deterministically
+    exact_month = parse_sales_product_ranking_request(
+        "cual es el producto más vendido de este mes?",
+        sales_cutoff="2026-10-12",
+    )
+    assert exact_month is not None
+    assert exact_month.metric == "units"
+    assert exact_month.tool_arguments()["periods"] == [{"date_from": "2026-10-01", "date_to": "2026-10-31", "label": "octubre 2026"}]
+
+    connection = duckdb.connect(str(sales_database), read_only=True)
+    monkeypatch.setattr(tools_module, "get_shared_connection", lambda _path: connection)
+    executor = ToolExecutor(duckdb_path=str(sales_database), tenant="motoshop")
+
+    top_all = executor.get_top_skus(period="all", limit=5)
+    assert top_all["period"] == "all"
+    assert "top_por_unidades" in top_all
+    assert "top_por_valor" in top_all
+    assert "top_por_transacciones" in top_all
+    assert "mes_actual_en_curso" in top_all
+    assert top_all["top_por_unidades"][0]["cod_producto"] == "SKU-GRAM"
+    assert top_all["top_por_unidades"][0]["cantidad"] == 600.0
+    assert top_all["top_por_unidades"][0]["num_facturas"] == 2
+    assert top_all["top_por_valor"][0]["cod_producto"] == "SKU-VAL"
+    assert top_all["top_por_valor"][0]["valor"] == 115600.0
+    assert top_all["top_por_transacciones"][0]["num_facturas"] == 2
+    connection.close()
+
