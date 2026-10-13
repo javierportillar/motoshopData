@@ -584,7 +584,7 @@ def test_supplier_names_are_canonical_and_shared_names_are_not_linkable(
     assert by_nit["900111111-1"].label_is_unique is False
     assert not supplier_ref_mentioned("Shared Supplier", by_nit["900111111-1"])
     assert supplier_ref_mentioned("NIT 900111111-1", by_nit["900111111-1"])
-    assert by_nit["900111111-1"].href == "/dashboards/compras/proveedores/900111111-1"
+    assert by_nit["900111111-1"].href == "/dashboards/proveedores/900111111-1"
 
     candidates = _tool_entity_candidates(
         "get_ultima_compra",
@@ -1282,7 +1282,7 @@ def test_history_backfills_explicit_purchase_and_supplier_mentions_read_only(
         "/dashboards/compras/dia/2026-01-02/documento/55?cod_clase=FC"
     )
     supplier_ref = next(ref for ref in refs if ref["entity_type"] == "supplier")
-    assert supplier_ref["href"] == "/dashboards/compras/proveedores/900111111-1"
+    assert supplier_ref["href"] == "/dashboards/proveedores/900111111-1"
     assert supplier_ref["label_is_unique"] is False
     stored_message = repository.list_messages("motoshop", "managed", conversation["id"])[1]
     assert stored_message["content"] == answer
@@ -1430,7 +1430,7 @@ def test_analysis_module_supplier_sales_generates_clickable_supplier_links(
     supplier_ref = reply["entity_refs"][0]
     assert supplier_ref["entity_type"] == "supplier"
     assert supplier_ref["entity_id"] == "900111111-1"
-    assert supplier_ref["href"] == "/dashboards/compras/proveedores/900111111-1"
+    assert supplier_ref["href"] == "/dashboards/proveedores/900111111-1"
 
 
 def test_replenishment_extracts_suppliers_and_products_with_parenthesized_nit(
@@ -1516,9 +1516,123 @@ def test_replenishment_extracts_suppliers_and_products_with_parenthesized_nit(
     assert "product" in entity_types
     supplier_ref = next(ref for ref in reply["entity_refs"] if ref["entity_type"] == "supplier")
     assert supplier_ref["entity_id"] == "900111111-1"
-    assert supplier_ref["href"] == "/dashboards/compras/proveedores/900111111-1"
+    assert supplier_ref["href"] == "/dashboards/proveedores/900111111-1"
     product_ref = next(ref for ref in reply["entity_refs"] if ref["entity_type"] == "product")
     assert product_ref["entity_id"] == "SKU-1"
     assert product_ref["href"] == "/dashboards/productos/SKU-1"
+
+
+def test_inventario_overview_extracts_supplier_and_numeric_sku_and_persists_on_reload(
+    tenant_databases: TenantDatabases,
+) -> None:
+    import duckdb
+    from motoshop_api.llm.qa_chat import (
+        _entity_candidates_mentioned_in_text,
+        _persisted_entity_candidates,
+        _tool_entity_candidates,
+    )
+
+    tenant_databases.close()
+    with duckdb.connect(str(tenant_databases.paths["motoshop"])) as con:
+        con.execute(
+            "INSERT INTO silver_dim_producto VALUES ('51138', 'ACEITE MOTOR SINTETICO 10W40')"
+        )
+        con.execute(
+            "INSERT INTO silver_fact_compras VALUES "
+            "('2026-02-01', '99', 'FC', '900333333-3', 'Unique Supplier', 500.0, 'B')"
+        )
+
+    tool_output = {
+        "productos_para_comprar": [{
+            "sku": "51138",
+            "nombre": "ACEITE MOTOR SINTETICO 10W40",
+            "stock": 0.0,
+            "accion": "comprar_ya",
+            "sugerido_comprar": 12.0,
+            "rotacion_diaria": 0.5,
+            "ingreso_perdido_estimado_mes": 250000.0,
+            "precio_venta": 45000.0,
+            "proveedor": "Unique Supplier",
+            "nit_proveedor": "900333333-3",
+        }],
+        "productos_para_vender_rapido": [],
+    }
+    candidates = _tool_entity_candidates("get_inventario_overview", tool_output)
+    assert ("product", "51138") in {(c["entity_type"], c["entity_id"]) for c in candidates}
+    assert ("supplier", "900333333-3") in {(c["entity_type"], c["entity_id"]) for c in candidates}
+
+    # Numeric SKU in Markdown table row where "SKU" is only in header and product name is abbreviated
+    markdown_table = (
+        "| # | SKU | Producto | Proveedor |\n"
+        "| --- | --- | --- | --- |\n"
+        "| 1 | 51138 | Aceite 10W40 | Unique Supplier |\n"
+    )
+    mentioned = _entity_candidates_mentioned_in_text(
+        markdown_table,
+        candidates,
+        _context("motoshop", "purchases", "inventory"),
+    )
+    assert ("product", "51138") in {(c["entity_type"], c["entity_id"]) for c in mentioned}
+    assert ("supplier", "900333333-3") in {(c["entity_type"], c["entity_id"]) for c in mentioned}
+
+    # Persisted reload retains supplier ref when tool is in _PRODUCT_REFERENCE_TOOLS
+    persisted = _persisted_entity_candidates({
+        "tools_used": ["get_inventario_overview"],
+        "entity_refs": [
+            {
+                "entity_type": "supplier",
+                "entity_id": "900333333-3",
+                "label": "Unique Supplier",
+                "domain": "purchases",
+                "href": "/dashboards/proveedores/900333333-3",
+            },
+            {
+                "entity_type": "product",
+                "entity_id": "51138",
+                "label": "ACEITE MOTOR SINTETICO 10W40",
+                "domain": "inventory",
+                "href": "/dashboards/productos/51138",
+            },
+        ],
+    })
+    assert len(persisted) == 2
+
+
+def test_supplier_and_product_refs_scale_past_50_without_truncation(
+    tenant_databases: TenantDatabases,
+) -> None:
+    import duckdb
+    from motoshop_api.llm.qa_chat import _product_records
+    from motoshop_api.llm.registry import resolve_purchase_document_refs, resolve_supplier_refs
+
+    tenant_databases.close()
+    with duckdb.connect(str(tenant_databases.paths["motoshop"])) as con:
+        for idx in range(65):
+            nit = f"900555{idx:03d}-1"
+            doc = f"DOC-{idx:03d}"
+            con.execute(
+                "INSERT INTO silver_fact_compras VALUES ('2026-02-10', ?, 'FC', ?, ?, 100.0, 'B')",
+                [doc, nit, f"Proveedor {idx:03d}"],
+            )
+
+    context = _context("motoshop", "purchases", "inventory")
+    nits = [f"900555{idx:03d}-1" for idx in range(65)]
+    supplier_refs = resolve_supplier_refs(context, nits)
+    assert len(supplier_refs) == 65
+
+    doc_ids = [f"2026-02-10|FC|DOC-{idx:03d}" for idx in range(65)]
+    doc_refs = resolve_purchase_document_refs(context, doc_ids)
+    assert len(doc_refs) == 65
+
+    large_payload = {
+        "productos": [
+            {"sku": f"SKU-SCALE-{idx:03d}", "nombre": f"Product Scale {idx:03d}"}
+            for idx in range(250)
+        ]
+    }
+    extracted_products = _product_records(large_payload)
+    assert len(extracted_products) == 250
+
+
 
 

@@ -10,9 +10,10 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
-ANALYZER_REVISION = "purchase-invoice-v4-unclassified-lines"
+ANALYZER_REVISION = "purchase-invoice-v5-economist-merchandising"
 DEFAULT_TARGET_COVER_DAYS = 45
 MAX_STORED_PRODUCT_RESULTS = 500
+MAX_SUPPLIER_OPPORTUNITIES = 15
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,11 @@ def _purchase_verdict(
     suggested_quantity: float | None,
     target_cover_days: int,
     stock_reconstructed_negative: bool,
+    demand_classification: str | None = None,
+    days_since_last_sale_before: int | None = None,
+    last_sale_before: str | None = None,
+    excess_units: float | None = None,
+    excess_capital_cop: float | None = None,
 ) -> tuple[str, str, str]:
     """Turn stock and sales signals into an explainable, non-profitability verdict."""
     if signal == "insufficient_evidence":
@@ -93,6 +99,37 @@ def _purchase_verdict(
         )
 
     if prior_units <= 0:
+        if demand_classification == "zombie_historico":
+            stock_note = (
+                f" y ya tenía {stock_before:g} {unit} en inventario previo"
+                if stock_before and stock_before > 0
+                else ""
+            )
+            return (
+                "review_no_prior_sales",
+                "Revisar: sin ventas previas (zombie histórico)",
+                f"No hay unidades vendidas registradas en los 180 días previos ni historial de "
+                f"rotación previo{stock_note}; no se debió recomprar sin pedido firme.",
+            )
+        if demand_classification == "dormido_mas_180d":
+            dormant_detail = (
+                f" (última venta el {last_sale_before}, hace {days_since_last_sale_before} días)"
+                if last_sale_before and days_since_last_sale_before is not None
+                else ""
+            )
+            return (
+                "review_no_prior_sales",
+                "Revisar: sin ventas previas (producto dormido)",
+                "No hay unidades vendidas registradas en los 180 días previos"
+                f"{dormant_detail}; la demanda se detuvo y reponer inmoviliza caja.",
+            )
+        if demand_classification == "sku_nuevo_primera_compra":
+            return (
+                "review_no_prior_sales",
+                "Revisar: sin ventas previas (SKU nuevo)",
+                "No hay unidades vendidas registradas en los 180 días previos (primera compra del "
+                "SKU); validar exhibición, precio de lanzamiento y rotación inicial.",
+            )
         return (
             "review_no_prior_sales",
             "Revisar: sin ventas previas",
@@ -106,20 +143,31 @@ def _purchase_verdict(
             if prior_cover_days is not None
             else ""
         )
+        capital_note = (
+            f" Inmoviliza ${excess_capital_cop:,.0f} COP adicionales innecesarios."
+            if excess_capital_cop and excess_capital_cop > 0
+            else ""
+        )
         return (
             "review_excess_stock",
             "Revisar: stock previo alto",
             f"Antes de esta compra había {stock_before:g} {unit}{cover}; supera el objetivo de "
-            f"{target_cover_days} días por más del margen de tolerancia del análisis.",
+            f"{target_cover_days} días por más del margen de tolerancia del análisis.{capital_note}",
         )
 
     if signal == "cantidad_superior_a_referencia":
         reference = suggested_quantity if suggested_quantity is not None else 0.0
+        excess_note = (
+            f" Exceso de {excess_units:g} {unit}"
+            + (f" (${excess_capital_cop:,.0f} COP)." if excess_capital_cop else ".")
+            if excess_units and excess_units > 0
+            else ""
+        )
         return (
             "review_above_reference",
             "Revisar: compra sobre referencia",
             f"Se compraron {quantity:g} {unit} frente a una referencia de reposición de "
-            f"{reference:g} {unit}, calculada con ventas previas y stock estimado.",
+            f"{reference:g} {unit}, calculada con ventas previas y stock estimado.{excess_note}",
         )
 
     reference = suggested_quantity if suggested_quantity is not None else 0.0
@@ -166,6 +214,47 @@ def normalize_purchase_assessment_metrics(metrics: dict[str, Any]) -> dict[str, 
         else:
             signal = "cantidad_en_rango_de_referencia"
 
+        demand_classification = product.get("clasificacion_demanda_previa")
+        if not demand_classification:
+            if prior_sales > 0:
+                demand_classification = "demanda_activa_180d"
+            elif product.get("ultima_venta_previa"):
+                demand_classification = "dormido_mas_180d"
+            elif product.get("tuvo_compras_previas") or (stock_before is not None and stock_before > 0):
+                demand_classification = "zombie_historico"
+            else:
+                demand_classification = "sin_ventas_180d"
+            product["clasificacion_demanda_previa"] = demand_classification
+
+        unit_price = (
+            _number(product.get("precio_unitario_compra_promedio_cop"))
+            or _number(product.get("costo_producto_unitario_promedio_cop"))
+        )
+        if unit_price is None and quantity > 0:
+            unit_price = (_number(product.get("valor_lineas_compra_cop")) or 0.0) / quantity
+
+        excess_units = _number(product.get("unidades_exceso"))
+        if excess_units is None:
+            if quantity <= 0 or stock_before is None:
+                excess_units = 0.0
+            elif prior_sales <= 0:
+                excess_units = quantity
+            elif suggested_quantity is not None and quantity > suggested_quantity:
+                excess_units = max(0.0, quantity - suggested_quantity)
+            else:
+                excess_units = 0.0
+            product["unidades_exceso"] = _round(excess_units)
+
+        excess_capital = _number(product.get("capital_exceso_inmovilizado_cop"))
+        if excess_capital is None:
+            if prior_sales <= 0 and quantity > 0 and stock_before is not None:
+                excess_capital = max(0.0, float(product.get("valor_lineas_compra_cop") or 0.0))
+            elif excess_units and excess_units > 0 and unit_price is not None:
+                excess_capital = max(0.0, excess_units * unit_price)
+            else:
+                excess_capital = 0.0
+            product["capital_exceso_inmovilizado_cop"] = _round(excess_capital)
+
         verdict, label, reason = _purchase_verdict(
             signal=signal,
             quantity=quantity,
@@ -176,6 +265,15 @@ def normalize_purchase_assessment_metrics(metrics: dict[str, Any]) -> dict[str, 
             suggested_quantity=suggested_quantity,
             target_cover_days=target_days,
             stock_reconstructed_negative=bool(product.get("stock_reconstruido_negativo")),
+            demand_classification=demand_classification,
+            days_since_last_sale_before=(
+                int(product["dias_sin_venta_antes_de_compra"])
+                if product.get("dias_sin_venta_antes_de_compra") is not None
+                else None
+            ),
+            last_sale_before=product.get("ultima_venta_previa"),
+            excess_units=excess_units,
+            excess_capital_cop=excess_capital,
         )
         product.update({
             "senal_deterministica": signal,
@@ -276,6 +374,10 @@ def normalize_purchase_assessment_metrics(metrics: dict[str, Any]) -> dict[str, 
             "cantidad_superior_a_referencia",
         }
     )
+    excess_capital_total = sum(
+        float(product.get("capital_exceso_inmovilizado_cop") or 0)
+        for product in products
+    )
     aligned_count = sum(
         product["veredicto_compra"] == "aligned_with_reference" for product in products
     )
@@ -316,6 +418,18 @@ def normalize_purchase_assessment_metrics(metrics: dict[str, Any]) -> dict[str, 
             product["senal_deterministica"] == "sin_ventas_previas_en_180d"
             for product in products
         ),
+        "skus_zombie_historico_comprados": sum(
+            product.get("clasificacion_demanda_previa") == "zombie_historico"
+            for product in products
+        ),
+        "skus_dormidos_mas_180d_comprados": sum(
+            product.get("clasificacion_demanda_previa") == "dormido_mas_180d"
+            for product in products
+        ),
+        "skus_nuevos_primera_compra": sum(
+            product.get("clasificacion_demanda_previa") == "sku_nuevo_primera_compra"
+            for product in products
+        ),
         "skus_stock_previo_sobre_objetivo": sum(
             product["senal_deterministica"] == "stock_previo_estimado_superaba_objetivo"
             for product in products
@@ -347,6 +461,7 @@ def normalize_purchase_assessment_metrics(metrics: dict[str, Any]) -> dict[str, 
             1,
         ),
         "valor_en_senales_cuantitativas_de_exceso_cop": _round(risk_value),
+        "capital_exceso_inmovilizado_cop": _round(excess_capital_total),
         "valor_sin_evidencia_suficiente_cop": _round(unassessed_value),
         "porcentaje_valor_sin_evidencia_suficiente": _round(
             unassessed_value / total_exposure * 100
@@ -594,24 +709,43 @@ def _product_catalog(
     if not product_codes:
         return {}, {}
     placeholders = ",".join("?" for _ in product_codes)
-    rows = connection.execute(
-        f"""
-        SELECT CAST(cod_producto AS VARCHAR),
-               MAX(NULLIF(nombre_producto, '')),
-               MAX(NULLIF(presentacion, '')),
-               MAX(NULLIF(cod_medida, ''))
-        FROM silver_dim_producto
-        WHERE CAST(cod_producto AS VARCHAR) IN ({placeholders})
-        GROUP BY CAST(cod_producto AS VARCHAR)
-        """,
-        product_codes,
-    ).fetchall()
+    try:
+        rows = connection.execute(
+            f"""
+            SELECT CAST(cod_producto AS VARCHAR),
+                   MAX(NULLIF(nombre_producto, '')),
+                   MAX(NULLIF(presentacion, '')),
+                   MAX(NULLIF(cod_medida, '')),
+                   MAX(precio_venta1)
+            FROM silver_dim_producto
+            WHERE CAST(cod_producto AS VARCHAR) IN ({placeholders})
+            GROUP BY CAST(cod_producto AS VARCHAR)
+            """,
+            product_codes,
+        ).fetchall()
+    except Exception:
+        rows = [
+            (*row, None)
+            for row in connection.execute(
+                f"""
+                SELECT CAST(cod_producto AS VARCHAR),
+                       MAX(NULLIF(nombre_producto, '')),
+                       MAX(NULLIF(presentacion, '')),
+                       MAX(NULLIF(cod_medida, ''))
+                FROM silver_dim_producto
+                WHERE CAST(cod_producto AS VARCHAR) IN ({placeholders})
+                GROUP BY CAST(cod_producto AS VARCHAR)
+                """,
+                product_codes,
+            ).fetchall()
+        ]
     catalog = {
         code: {
             "name": name,
             "unit": presentation or measure or "SIN_DATO",
+            "sale_price": _number(sale_price),
         }
-        for code, name, presentation, measure in rows
+        for code, name, presentation, measure, sale_price in rows
     }
 
     stock: dict[str, float] = {}
@@ -694,6 +828,316 @@ def _later_purchase_movements(
     return {code: float(quantity or 0) for code, quantity in rows}
 
 
+def _prior_purchase_history(
+    connection: Any,
+    product_codes: list[str],
+    purchase_date: date,
+) -> dict[str, tuple[date, float]]:
+    """Return (first_purchase_date, total_prior_units_purchased) strictly before purchase_date."""
+    if not product_codes:
+        return {}
+    placeholders = ",".join("?" for _ in product_codes)
+    rows = connection.execute(
+        f"""
+        WITH ranked_headers AS (
+          SELECT CAST(num_documento AS VARCHAR) AS num_documento,
+                 CAST(cod_clase AS VARCHAR) AS cod_clase,
+                 CAST(business_date AS DATE) AS business_date,
+                 COUNT(*) OVER (
+                   PARTITION BY num_documento, cod_clase, business_date
+                 ) AS identity_count
+          FROM silver_fact_compras
+          WHERE CAST(business_date AS DATE) < ?
+            AND COALESCE(estado_documento, '') != 'A'
+        ), valid_headers AS (
+          SELECT * FROM ranked_headers WHERE identity_count = 1
+        )
+        SELECT CAST(d.cod_producto AS VARCHAR),
+               MIN(h.business_date),
+               SUM(COALESCE(d.cantidad, 0))
+        FROM silver_fact_compras_detalle d
+        JOIN valid_headers h
+          ON CAST(d.num_documento AS VARCHAR) = h.num_documento
+         AND CAST(d.cod_clase AS VARCHAR) = h.cod_clase
+         AND CAST(d.business_date AS DATE) = h.business_date
+        WHERE CAST(d.cod_producto AS VARCHAR) IN ({placeholders})
+        GROUP BY CAST(d.cod_producto AS VARCHAR)
+        """,
+        [purchase_date, *product_codes],
+    ).fetchall()
+    return {
+        code: (first_date, float(total_qty or 0))
+        for code, first_date, total_qty in rows
+        if first_date is not None
+    }
+
+
+def _supplier_missed_opportunities(
+    connection: Any,
+    *,
+    nit_proveedor: str | None,
+    purchase_date: date,
+    purchased_codes: list[str],
+    inventory_source: str,
+    inventory_cutoff: date | None,
+    target_cover_days: int,
+) -> dict[str, Any]:
+    """Identify high-rotation SKUs historically supplied by this vendor that were omitted."""
+    empty_result: dict[str, Any] = {
+        "nit_proveedor": str(nit_proveedor).strip() if nit_proveedor else None,
+        "skus_catalogo_historico_proveedor": 0,
+        "skus_con_rotacion_omitidos": 0,
+        "total_oportunidades_omitidas": 0,
+        "costo_estimado_oportunidades_omitidas_cop": 0.0,
+        "ingresos_180d_oportunidades_omitidas_cop": 0.0,
+        "top_productos_omitidos": [],
+    }
+    if not nit_proveedor or not str(nit_proveedor).strip():
+        return empty_result
+    supplier_nit = str(nit_proveedor).strip()
+    try:
+        supplier_rows = connection.execute(
+            """
+            WITH ranked_headers AS (
+              SELECT CAST(num_documento AS VARCHAR) AS num_documento,
+                     CAST(cod_clase AS VARCHAR) AS cod_clase,
+                     CAST(business_date AS DATE) AS business_date,
+                     CAST(nit_proveedor AS VARCHAR) AS nit_proveedor,
+                     COUNT(*) OVER (
+                       PARTITION BY num_documento, cod_clase, business_date
+                     ) AS identity_count
+              FROM silver_fact_compras
+              WHERE CAST(business_date AS DATE) <= ?
+                AND COALESCE(estado_documento, '') != 'A'
+            ), valid_headers AS (
+              SELECT * FROM ranked_headers
+              WHERE identity_count = 1
+                AND TRIM(COALESCE(nit_proveedor, '')) = ?
+            )
+            SELECT CAST(d.cod_producto AS VARCHAR) AS cod_producto,
+                   MAX(NULLIF(d.nombre_detalle, '')) AS nombre_detalle,
+                   MAX(h.business_date) AS ultima_compra,
+                   SUM(COALESCE(d.cantidad, 0)) AS unidades_compradas_hist,
+                   AVG(COALESCE(NULLIF(d.costo_producto, 0), NULLIF(d.valor_unitario, 0))) AS costo_ref,
+                   COUNT(DISTINCT h.num_documento || '-' || h.cod_clase) AS facturas_proveedor
+            FROM silver_fact_compras_detalle d
+            JOIN valid_headers h
+              ON CAST(d.num_documento AS VARCHAR) = h.num_documento
+             AND CAST(d.cod_clase AS VARCHAR) = h.cod_clase
+             AND CAST(d.business_date AS DATE) = h.business_date
+            WHERE d.cod_producto IS NOT NULL
+              AND TRIM(CAST(d.cod_producto AS VARCHAR)) != ''
+            GROUP BY CAST(d.cod_producto AS VARCHAR)
+            """,
+            [purchase_date, supplier_nit],
+        ).fetchall()
+    except Exception:
+        return empty_result
+
+    if not supplier_rows:
+        return empty_result
+
+    purchased_set = set(purchased_codes)
+    candidate_map: dict[str, dict[str, Any]] = {}
+    for code, name, last_buy, total_bought, ref_cost, inv_count in supplier_rows:
+        clean_code = str(code or "").strip()
+        if not clean_code or clean_code in purchased_set:
+            continue
+        candidate_map[clean_code] = {
+            "nombre_detalle": name,
+            "ultima_compra": last_buy,
+            "unidades_compradas_hist": float(total_bought or 0),
+            "costo_ref": _number(ref_cost),
+            "facturas_proveedor": int(inv_count or 0),
+        }
+
+    total_supplier_catalog = len(supplier_rows)
+    if not candidate_map:
+        return {
+            **empty_result,
+            "skus_catalogo_historico_proveedor": total_supplier_catalog,
+        }
+
+    candidate_codes = sorted(candidate_map.keys())
+    catalog_map, stock_map = _product_catalog(connection, candidate_codes, inventory_source)
+    abc_map = _abc_classification(
+        connection, candidate_codes, purchase_date.strftime("%Y-%m")
+    )
+    later_purchases_map = _later_purchase_movements(
+        connection, candidate_codes, purchase_date, inventory_cutoff
+    )
+
+    placeholders = ",".join("?" for _ in candidate_codes)
+    window_start = purchase_date - timedelta(days=180)
+    sales_180_rows = connection.execute(
+        f"""
+        WITH ranked_headers AS (
+          SELECT CAST(num_documento AS VARCHAR) AS num_documento,
+                 CAST(cod_clase AS VARCHAR) AS cod_clase,
+                 CAST(business_date AS DATE) AS business_date,
+                 COUNT(*) OVER (
+                   PARTITION BY num_documento, cod_clase, business_date
+                 ) AS identity_count
+          FROM silver_fact_ventas
+          WHERE CAST(business_date AS DATE) >= ?
+            AND CAST(business_date AS DATE) < ?
+            AND COALESCE(estado_documento, '') != 'A'
+        ), valid_headers AS (
+          SELECT * FROM ranked_headers WHERE identity_count = 1
+        )
+        SELECT CAST(d.cod_producto AS VARCHAR),
+               SUM(COALESCE(d.cantidad, 0)),
+               SUM(COALESCE(d.total_detalle, 0)),
+               MAX(h.business_date)
+        FROM silver_fact_ventas_detalle d
+        JOIN valid_headers h
+          ON CAST(d.num_documento AS VARCHAR) = h.num_documento
+         AND CAST(d.cod_clase AS VARCHAR) = h.cod_clase
+         AND CAST(d.business_date AS DATE) = h.business_date
+        WHERE CAST(d.cod_producto AS VARCHAR) IN ({placeholders})
+        GROUP BY CAST(d.cod_producto AS VARCHAR)
+        """,
+        [window_start, purchase_date, *candidate_codes],
+    ).fetchall()
+    sales_180_map = {
+        str(code).strip(): (float(units or 0), float(rev or 0), last_sale)
+        for code, units, rev, last_sale in sales_180_rows
+    }
+
+    sales_after_map: dict[str, float] = {}
+    if inventory_cutoff is not None and purchase_date <= inventory_cutoff:
+        sales_after_rows = connection.execute(
+            f"""
+            WITH ranked_headers AS (
+              SELECT CAST(num_documento AS VARCHAR) AS num_documento,
+                     CAST(cod_clase AS VARCHAR) AS cod_clase,
+                     CAST(business_date AS DATE) AS business_date,
+                     COUNT(*) OVER (
+                       PARTITION BY num_documento, cod_clase, business_date
+                     ) AS identity_count
+              FROM silver_fact_ventas
+              WHERE CAST(business_date AS DATE) >= ?
+                AND CAST(business_date AS DATE) <= ?
+                AND COALESCE(estado_documento, '') != 'A'
+            ), valid_headers AS (
+              SELECT * FROM ranked_headers WHERE identity_count = 1
+            )
+            SELECT CAST(d.cod_producto AS VARCHAR),
+                   SUM(COALESCE(d.cantidad, 0))
+            FROM silver_fact_ventas_detalle d
+            JOIN valid_headers h
+              ON CAST(d.num_documento AS VARCHAR) = h.num_documento
+             AND CAST(d.cod_clase AS VARCHAR) = h.cod_clase
+             AND CAST(d.business_date AS DATE) = h.business_date
+            WHERE CAST(d.cod_producto AS VARCHAR) IN ({placeholders})
+            GROUP BY CAST(d.cod_producto AS VARCHAR)
+            """,
+            [purchase_date, inventory_cutoff, *candidate_codes],
+        ).fetchall()
+        sales_after_map = {
+            str(code).strip(): float(units or 0)
+            for code, units in sales_after_rows
+        }
+
+    opportunities: list[dict[str, Any]] = []
+    for code in candidate_codes:
+        sales_180_units, sales_180_revenue, last_sale_date = sales_180_map.get(
+            code, (0.0, 0.0, None)
+        )
+        if sales_180_units <= 0:
+            continue
+        daily_velocity = sales_180_units / 180.0
+        target_units = daily_velocity * target_cover_days
+        stock_now = stock_map.get(code)
+        later_bought = later_purchases_map.get(code, 0.0)
+        later_sold = sales_after_map.get(code, 0.0)
+        reconstructed_stock = (
+            stock_now - later_bought + later_sold
+            if stock_now is not None
+            and inventory_cutoff is not None
+            and purchase_date <= inventory_cutoff
+            else None
+        )
+        effective_stock = (
+            reconstructed_stock
+            if reconstructed_stock is not None and reconstructed_stock >= 0
+            else (stock_now if stock_now is not None and stock_now >= 0 else 0.0)
+        )
+        cover_days = effective_stock / daily_velocity if daily_velocity > 0 else None
+        suggested_order_units = max(0.0, target_units - effective_stock)
+        if suggested_order_units < 0.5:
+            continue
+
+        cand_info = candidate_map[code]
+        cat_info = catalog_map.get(code, {})
+        unit_cost = cand_info.get("costo_ref")
+        sale_price = cat_info.get("sale_price")
+        avg_realized_price = (
+            sales_180_revenue / sales_180_units if sales_180_units > 0 else sale_price
+        )
+        effective_price = avg_realized_price or sale_price
+        gross_margin_pct = None
+        if effective_price and effective_price > 0 and unit_cost is not None:
+            gross_margin_pct = (effective_price - unit_cost) / effective_price * 100.0
+        estimated_order_cost = (
+            suggested_order_units * unit_cost if unit_cost is not None else None
+        )
+        abc = abc_map.get(code)
+        urgency = (
+            "quiebre_inminente"
+            if effective_stock <= 0 or (cover_days is not None and cover_days <= 7)
+            else "deficit_cobertura"
+            if cover_days is not None and cover_days < 25
+            else "reposicion_recomendada"
+        )
+        opportunities.append({
+            "cod_producto": code[:100],
+            "nombre": str(
+                cat_info.get("name") or cand_info.get("nombre_detalle") or code
+            )[:180],
+            "unidad": str(cat_info.get("unit") or "UND")[:80],
+            "abc_categoria": abc[0] if abc else None,
+            "abc_etiqueta": abc[0] if abc else "sin clasificación",
+            "ventas_180d_previas_unidades": _round(sales_180_units),
+            "ingresos_180d_previos_cop": _round(sales_180_revenue),
+            "velocidad_diaria_unidades": _round(daily_velocity, 4),
+            "stock_estimado_en_fecha_compra": _round(effective_stock),
+            "stock_actual": _round(stock_now),
+            "cobertura_estimada_dias": _round(cover_days, 1),
+            "unidades_sugeridas_pedido": _round(suggested_order_units),
+            "ultimo_costo_unitario_cop": _round(unit_cost, 2),
+            "costo_estimado_pedido_cop": _round(estimated_order_cost),
+            "precio_venta_referencia_cop": _round(effective_price),
+            "margen_bruto_180d_pct": _round(gross_margin_pct, 1),
+            "ultima_compra_proveedor": _as_iso(cand_info.get("ultima_compra")),
+            "ultima_venta_previa": _as_iso(last_sale_date),
+            "urgencia_reposicion": urgency,
+        })
+
+    opportunities.sort(
+        key=lambda item: (
+            0 if item["urgencia_reposicion"] == "quiebre_inminente" else 1,
+            -(item.get("ingresos_180d_previos_cop") or 0.0),
+            -(item.get("ventas_180d_previas_unidades") or 0.0),
+        )
+    )
+    total_est_cost = sum(
+        float(item.get("costo_estimado_pedido_cop") or 0.0) for item in opportunities
+    )
+    total_opp_rev = sum(
+        float(item.get("ingresos_180d_previos_cop") or 0.0) for item in opportunities
+    )
+    return {
+        "nit_proveedor": supplier_nit,
+        "skus_catalogo_historico_proveedor": total_supplier_catalog,
+        "skus_con_rotacion_omitidos": len(opportunities),
+        "total_oportunidades_omitidas": len(opportunities),
+        "costo_estimado_oportunidades_omitidas_cop": _round(total_est_cost),
+        "ingresos_180d_oportunidades_omitidas_cop": _round(total_opp_rev),
+        "top_productos_omitidos": opportunities[:MAX_SUPPLIER_OPPORTUNITIES],
+    }
+
+
 def _abc_classification(
     connection: Any, product_codes: list[str], purchase_month: str
 ) -> dict[str, tuple[str, str] | None]:
@@ -754,8 +1198,20 @@ def analyze_purchase_invoice(
     purchase_movements = _later_purchase_movements(
         connection, product_codes, invoice.business_date, inventory_cutoff
     )
+    prior_purchases = _prior_purchase_history(
+        connection, product_codes, invoice.business_date
+    )
     classifications = _abc_classification(
         connection, product_codes, invoice.business_date.strftime("%Y-%m")
+    )
+    supplier_opportunities = _supplier_missed_opportunities(
+        connection,
+        nit_proveedor=invoice.header.get("nit_proveedor"),
+        purchase_date=invoice.business_date,
+        purchased_codes=product_codes,
+        inventory_source=inventory_source,
+        inventory_cutoff=inventory_cutoff,
+        target_cover_days=target_cover_days,
     )
 
     groups: dict[str, dict[str, Any]] = {}
@@ -812,6 +1268,21 @@ def analyze_purchase_invoice(
         details = catalog.get(code, {})
         unit = str(details.get("unit") or "SIN_DATO")[:80]
         quantity = grouped["quantity"]
+        all_sales_before = [
+            (movement_date, units, value)
+            for movement_date, units, value in sales_movements.get(code, [])
+            if movement_date < invoice.business_date and units > 0
+        ]
+        last_sale_before_date = max((d for d, _, _ in all_sales_before), default=None)
+        days_since_last_sale_before = (
+            (invoice.business_date - last_sale_before_date).days
+            if last_sale_before_date is not None
+            else None
+        )
+        prior_purchase_info = prior_purchases.get(code)
+        had_prior_purchases = prior_purchase_info is not None and prior_purchase_info[1] > 0
+        first_purchase_date = prior_purchase_info[0] if prior_purchase_info is not None else None
+
         daily_sales_before = [
             (movement_date, units, value)
             for movement_date, units, value in sales_movements.get(code, [])
@@ -897,6 +1368,51 @@ def analyze_purchase_invoice(
                 / later_sales_revenue
                 * 100
             )
+        catalog_sale_price = _number(details.get("sale_price"))
+        expected_gross_margin_pct = None
+        if catalog_sale_price is not None and catalog_sale_price > 0 and margin_cost is not None:
+            expected_gross_margin_pct = (
+                (catalog_sale_price - margin_cost) / catalog_sale_price * 100
+            )
+        elif margin_proxy is not None:
+            expected_gross_margin_pct = margin_proxy
+
+        if prior_units > 0:
+            demand_classification = "demanda_activa_180d"
+        elif last_sale_before_date is not None:
+            demand_classification = "dormido_mas_180d"
+        elif had_prior_purchases or (stock_before_estimate is not None and stock_before_estimate > 0):
+            demand_classification = "zombie_historico"
+        else:
+            demand_classification = "sku_nuevo_primera_compra"
+
+        effective_unit_cost = (
+            unit_price
+            if unit_price is not None
+            else (
+                unit_cost
+                if unit_cost is not None
+                else (grouped["purchase_amount"] / quantity if quantity > 0 else 0.0)
+            )
+        )
+        if quantity <= 0 or stock_before_estimate is None:
+            excess_units = 0.0
+            excess_capital_cop = 0.0
+        elif prior_units <= 0:
+            excess_units = quantity
+            excess_capital_cop = max(0.0, grouped["purchase_amount"])
+        elif suggested_quantity is not None and quantity > suggested_quantity:
+            excess_units = max(0.0, quantity - suggested_quantity)
+            excess_capital_cop = max(0.0, excess_units * effective_unit_cost)
+        else:
+            excess_units = 0.0
+            excess_capital_cop = 0.0
+
+        post_purchase_cover_days = (
+            (stock_before_estimate + quantity) / daily_velocity
+            if stock_before_estimate is not None and daily_velocity > 0 and quantity > 0
+            else None
+        )
         if stock_before_estimate is None:
             purchase_signal = "insufficient_evidence"
         elif quantity <= 0:
@@ -922,6 +1438,11 @@ def analyze_purchase_invoice(
                 reconstructed_stock_before_day is not None
                 and reconstructed_stock_before_day < 0
             ),
+            demand_classification=demand_classification,
+            days_since_last_sale_before=days_since_last_sale_before,
+            last_sale_before=_as_iso(last_sale_before_date),
+            excess_units=excess_units,
+            excess_capital_cop=excess_capital_cop,
         )
         products.append({
             "cod_producto": code[:100],
@@ -946,12 +1467,20 @@ def analyze_purchase_invoice(
             "costo_producto_unitario_promedio_cop": _round(unit_cost, 4),
             "costo_unitario_referencia_margen_cop": _round(margin_cost, 4),
             "fuente_costo_margen": margin_cost_source,
+            "precio_venta_catalogo_cop": _round(catalog_sale_price),
+            "margen_bruto_esperado_pct": _round(expected_gross_margin_pct, 1),
             "abc_categoria": abc[0] if abc else None,
             "abc_mes_clasificacion": abc[1] if abc else None,
             "abc_etiqueta": abc[0] if abc else "sin clasificación",
             "ventas_previas_180d_unidades": _round(prior_units),
             "velocidad_previa_diaria_unidades": _round(daily_velocity, 4),
+            "ultima_venta_previa": _as_iso(last_sale_before_date),
+            "dias_sin_venta_antes_de_compra": days_since_last_sale_before,
+            "tuvo_compras_previas": had_prior_purchases,
+            "primera_compra_registrada": _as_iso(first_purchase_date),
+            "clasificacion_demanda_previa": demand_classification,
             "cobertura_cantidad_comprada_dias": _round(buy_cover_days, 1),
+            "cobertura_post_compra_dias": _round(post_purchase_cover_days, 1),
             "stock_actual": _round(stock_now),
             "inventory_controlled": stock_now is not None,
             "control_evidence": (
@@ -968,6 +1497,8 @@ def analyze_purchase_invoice(
             ),
             "cobertura_stock_previo_estimada_dias": _round(pre_purchase_cover_days, 1),
             "cantidad_referencia_objetivo": _round(suggested_quantity),
+            "unidades_exceso": _round(excess_units),
+            "capital_exceso_inmovilizado_cop": _round(excess_capital_cop),
             "cobertura_stock_actual_dias": _round(current_cover, 1),
             "ventas_posteriores_hasta_corte_unidades": _round(later_sales_units),
             "ingresos_posteriores_hasta_corte_cop": _round(later_sales_revenue),
@@ -1005,6 +1536,10 @@ def analyze_purchase_invoice(
         float(product["valor_exposicion_lineas_compra_cop"] or 0)
         for product in products
         if product["senal_deterministica"] in risk_signals
+    )
+    excess_capital_total = sum(
+        float(product.get("capital_exceso_inmovilizado_cop") or 0)
+        for product in products
     )
     uncertain_value = sum(
         float(product["valor_exposicion_lineas_compra_cop"] or 0)
@@ -1054,6 +1589,18 @@ def analyze_purchase_invoice(
             product["senal_deterministica"] == "sin_ventas_previas_en_180d"
             for product in products
         ),
+        "skus_zombie_historico_comprados": sum(
+            product.get("clasificacion_demanda_previa") == "zombie_historico"
+            for product in products
+        ),
+        "skus_dormidos_mas_180d_comprados": sum(
+            product.get("clasificacion_demanda_previa") == "dormido_mas_180d"
+            for product in products
+        ),
+        "skus_nuevos_primera_compra": sum(
+            product.get("clasificacion_demanda_previa") == "sku_nuevo_primera_compra"
+            for product in products
+        ),
         "skus_stock_previo_sobre_objetivo": sum(
             product["senal_deterministica"] == "stock_previo_estimado_superaba_objetivo"
             for product in products
@@ -1083,6 +1630,7 @@ def analyze_purchase_invoice(
             review_value / line_exposure_value * 100 if line_exposure_value else None, 1
         ),
         "valor_en_senales_cuantitativas_de_exceso_cop": _round(risk_value),
+        "capital_exceso_inmovilizado_cop": _round(excess_capital_total),
         "valor_sin_evidencia_suficiente_cop": _round(unassessed_value),
         "porcentaje_valor_sin_evidencia_suficiente": _round(
             unassessed_value / line_exposure_value * 100 if line_exposure_value else None, 1
@@ -1137,6 +1685,7 @@ def analyze_purchase_invoice(
             key: _as_iso(value) for key, value in cutoffs.items()
         },
         "products": visible_products,
+        "supplier_opportunities": supplier_opportunities,
         "evidence_notes": [
             (
                 "Las ventas posteriores describen movimientos del SKU tras la fecha de compra; "

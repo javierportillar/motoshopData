@@ -33,7 +33,7 @@ _ROUTES = {
         "/dashboards/compras/dia/{business_date}/documento/{num_documento}"
         "?cod_clase={cod_clase}",
     ),
-    "supplier": ("purchases", "/dashboards/compras/proveedores/{entity_id}"),
+    "supplier": ("purchases", "/dashboards/proveedores/{entity_id}"),
 }
 _ENTITY_SOURCES = {
     "alert": ("gold_alertas_quiebre", "sku"),
@@ -58,6 +58,10 @@ PURCHASE_REFERENCE_TOOLS = frozenset({
     "get_detalle_compra",
     "get_analisis_modulo",
     "get_productos_para_reponer",
+    "get_inventario_overview",
+    "get_dormidos",
+    "analizar_compras_periodo",
+    "evaluar_compra_planeada",
 })
 _SPANISH_MONTHS = {
     "enero": 1,
@@ -345,7 +349,7 @@ def resolve_purchase_document_ref(context: TenantContext, entity_id: str) -> Ent
 def resolve_purchase_document_refs(
     context: TenantContext, entity_ids: list[str]
 ) -> list[EntityRef]:
-    """Resolve up to 50 exact purchase identities in one tenant-scoped query."""
+    """Resolve exact purchase identities in tenant-scoped queries without artificial caps."""
     if not context.allows("purchases") or not entity_ids:
         return []
     identities: list[tuple[str, str, str]] = []
@@ -356,45 +360,46 @@ def resolve_purchase_document_refs(
             continue
         if identity not in identities:
             identities.append(identity)
-        if len(identities) >= 50:
-            break
     if not identities:
         return []
-    clauses = [
-        "(CAST(business_date AS VARCHAR) = ? AND cod_clase = ? AND num_documento = ?)"
-        for _ in identities
-    ]
-    parameters = [value for identity in identities for value in identity]
-    try:
-        rows = _purchase_cursor_rows(
-            context,
-            f"""
-            SELECT CAST(business_date AS VARCHAR), cod_clase, num_documento, COUNT(*) AS exact_rows
-            FROM silver_fact_compras
-            WHERE ({" OR ".join(clauses)})
-              AND UPPER(TRIM(COALESCE(estado_documento, ''))) != 'A'
-            GROUP BY 1, 2, 3
-            """,
-            parameters,
-        )
-    except LookupError:
-        return []
-    refs = []
-    for raw_date, raw_class, raw_number, exact_rows in rows:
-        if int(exact_rows) != 1:
+    refs: list[EntityRef] = []
+    batch_size = 100
+    for offset in range(0, len(identities), batch_size):
+        batch = identities[offset:offset + batch_size]
+        clauses = [
+            "(CAST(business_date AS VARCHAR) = ? AND cod_clase = ? AND num_documento = ?)"
+            for _ in batch
+        ]
+        parameters = [value for identity in batch for value in identity]
+        try:
+            rows = _purchase_cursor_rows(
+                context,
+                f"""
+                SELECT CAST(business_date AS VARCHAR), cod_clase, num_documento, COUNT(*) AS exact_rows
+                FROM silver_fact_compras
+                WHERE ({" OR ".join(clauses)})
+                  AND UPPER(TRIM(COALESCE(estado_documento, ''))) != 'A'
+                GROUP BY 1, 2, 3
+                """,
+                parameters,
+            )
+        except LookupError:
             continue
-        refs.append(_purchase_ref_from_identity(str(raw_date), str(raw_class), str(raw_number)))
+        for raw_date, raw_class, raw_number, exact_rows in rows:
+            if int(exact_rows) != 1:
+                continue
+            refs.append(_purchase_ref_from_identity(str(raw_date), str(raw_class), str(raw_number)))
     return refs
 
 
 def resolve_supplier_refs(context: TenantContext, nits: list[str]) -> list[EntityRef]:
-    """Resolve canonical tenant supplier names and name uniqueness in one bounded query."""
+    """Resolve canonical tenant supplier names and name uniqueness without artificial caps."""
     if not context.allows("purchases") or not nits:
         return []
     normalized_nits = list(dict.fromkeys(
         nit.strip() for nit in nits
         if isinstance(nit, str) and is_valid_supplier_nit(nit.strip())
-    ))[:50]
+    ))
     if not normalized_nits:
         return []
     placeholders = ",".join("?" for _ in normalized_nits)
@@ -450,7 +455,7 @@ def resolve_supplier_refs(context: TenantContext, nits: list[str]) -> list[Entit
             label=str(row[1]),
             label_is_unique=name_counts.get(str(row[1]).strip().casefold(), 0) == 1,
             domain="purchases",
-            href=f"/dashboards/compras/proveedores/{quote(str(row[0]), safe='')}",
+            href=f"/dashboards/proveedores/{quote(str(row[0]), safe='')}",
         )
         for row in rows
     ]
@@ -754,12 +759,14 @@ def resolve_entity_ref(
 
 
 def resolve_product_refs_in_text(
-    context: TenantContext, text: str, *, limit: int = 100
+    context: TenantContext, text: str, *, limit: int | None = None
 ) -> list[EntityRef]:
-    """Resolve a bounded number of exact SKU tokens in old assistant text."""
-    if not context.allows("inventory") or not text or int(limit) <= 0:
+    """Resolve exact SKU tokens in assistant text without artificial caps unless limit is set."""
+    if not context.allows("inventory") or not text:
         return []
-    candidate_limit = max(1, min(int(limit), 200))
+    if limit is not None and int(limit) <= 0:
+        return []
+    candidate_limit = int(limit) if limit is not None else None
     text = visible_markdown_text(text)
 
     codes: list[str] = []
@@ -771,7 +778,7 @@ def resolve_product_refs_in_text(
             continue
         seen.add(key)
         codes.append(code)
-        if len(codes) >= candidate_limit:
+        if candidate_limit is not None and len(codes) >= candidate_limit:
             break
     if not codes:
         return []
@@ -857,7 +864,7 @@ def product_ref_mentioned(text: str, ref: EntityRef) -> bool:
         if not ref.entity_id.isdigit():
             return True
         # A numeric SKU can also be an amount or invoice number in prose.
-        # Check if it has SKU label or product name in the line/table.
+        # Check if it has SKU label, product name, or occupies a non-currency Markdown table cell.
         line_start = text.rfind("\n", 0, match.start()) + 1
         line_end = text.find("\n", match.end())
         line = text[line_start:] if line_end < 0 else text[line_start:line_end]
@@ -865,6 +872,17 @@ def product_ref_mentioned(text: str, ref: EntityRef) -> bool:
             return True
         if product_label_mentioned_in_text(line, ref.label, allow_token_overlap=True):
             return True
+        if line.lstrip().startswith("|"):
+            cells = [c.strip().strip("`*_") for c in line.strip().strip("|").split("|")]
+            if any(
+                not cell.startswith("$")
+                and (
+                    cell.casefold() == ref.entity_id.casefold()
+                    or cell.casefold().startswith(f"{ref.entity_id.casefold()} ")
+                )
+                for cell in cells
+            ):
+                return True
     return bool(
         ref.label_is_unique
         and product_label_mentioned_in_text(text, ref.label, allow_token_overlap=False)

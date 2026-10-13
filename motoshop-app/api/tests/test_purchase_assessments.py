@@ -1658,3 +1658,99 @@ def test_successful_data_refresh_schedules_background_processing(monkeypatch, tm
         assert scheduled == [("motoshop", str(snapshot))]
     finally:
         _users_cache.clear()
+
+
+def test_analyzer_classifies_zombie_dormant_and_first_time_skus_and_discovers_omitted_supplier_opportunities(
+    purchase_assessment_db,
+):
+    connection = duckdb.connect(str(purchase_assessment_db))
+    connection.execute("ALTER TABLE silver_dim_producto ADD COLUMN precio_venta1 DOUBLE")
+    # Insert supplier catalog history and products for supplier 900123456
+    connection.execute(
+        "INSERT INTO silver_dim_producto VALUES "
+        "('SKU-ZOMBIE', 'Casco Zombie', 5, '2026-09-16', 'UND', 'UND', 100), "
+        "('SKU-DORMANT', 'Guante Dormido', 4, '2026-09-16', 'UND', 'UND', 80), "
+        "('SKU-FIRST', 'Impermeable Nuevo', 3, '2026-09-16', 'UND', 'UND', 60), "
+        "('SKU-STAR', 'Aceite Estrella 10W40', 1, '2026-09-16', 'UND', 'UND', 50)"
+    )
+    connection.execute(
+        "INSERT INTO gold_mart_inventario_actual VALUES "
+        "('SKU-ZOMBIE', 5, '2026-09-16'), "
+        "('SKU-DORMANT', 4, '2026-09-16'), "
+        "('SKU-FIRST', 3, '2026-09-16'), "
+        "('SKU-STAR', 1, '2026-09-16')"
+    )
+    # Historical purchase 200 days before 2026-09-15 (around 2026-02-20) from supplier 900123456
+    connection.execute(
+        "INSERT INTO silver_fact_compras VALUES "
+        "('HIST-1', 'FC', '2026-02-20', '900123456', 'Proveedor Estrategico', 500, 'B'), "
+        "('EVAL-1', 'FC', '2026-09-15', '900123456', 'Proveedor Estrategico', 490, 'B')"
+    )
+    connection.execute(
+        "INSERT INTO silver_fact_compras_detalle VALUES "
+        "('HIST-1', 'FC', '2026-02-20', 'SKU-ZOMBIE', 'Casco Zombie', 2, 50, 100, 50), "
+        "('HIST-1', 'FC', '2026-02-20', 'SKU-DORMANT', 'Guante Dormido', 2, 40, 80, 40), "
+        "('HIST-1', 'FC', '2026-02-20', 'SKU-STAR', 'Aceite Estrella 10W40', 20, 25, 500, 25), "
+        "('EVAL-1', 'FC', '2026-09-15', 'SKU-ZOMBIE', 'Casco Zombie', 5, 50, 250, 50), "
+        "('EVAL-1', 'FC', '2026-09-15', 'SKU-DORMANT', 'Guante Dormido', 4, 40, 160, 40), "
+        "('EVAL-1', 'FC', '2026-09-15', 'SKU-FIRST', 'Impermeable Nuevo', 3, 26.67, 80, 26.67)"
+    )
+    # Sales:
+    # - SKU-DORMANT sold once on 2026-01-10 (>180d before 2026-09-15)
+    # - SKU-STAR sold 36 units in the 180d window before 2026-09-15 (0.2/day -> 45d target = 9 units; stock_now=1 -> needs ~8 units)
+    connection.execute(
+        "INSERT INTO silver_fact_ventas VALUES "
+        "('V-OLD', 'FV', '2026-01-10', 'B'), "
+        "('V-STAR', 'FV', '2026-08-15', 'B')"
+    )
+    connection.execute(
+        "INSERT INTO silver_fact_ventas_detalle VALUES "
+        "('V-OLD', 'FV', '2026-01-10', 'SKU-DORMANT', 2, 160), "
+        "('V-STAR', 'FV', '2026-08-15', 'SKU-STAR', 36, 1800)"
+    )
+
+    invoice = next(
+        row for row in discover_purchase_invoices(connection) if row.num_documento == "EVAL-1"
+    )
+    metrics = analyze_purchase_invoice(connection, invoice)
+    connection.close()
+
+    by_sku = {p["cod_producto"]: p for p in metrics["products"]}
+    assert by_sku["SKU-ZOMBIE"]["clasificacion_demanda_previa"] == "zombie_historico"
+    assert by_sku["SKU-ZOMBIE"]["unidades_exceso"] == 5
+    assert by_sku["SKU-ZOMBIE"]["capital_exceso_inmovilizado_cop"] == 250
+    assert by_sku["SKU-ZOMBIE"]["precio_venta_catalogo_cop"] == 100
+    assert by_sku["SKU-ZOMBIE"]["margen_bruto_esperado_pct"] == 50.0
+
+    assert by_sku["SKU-DORMANT"]["clasificacion_demanda_previa"] == "dormido_mas_180d"
+    assert by_sku["SKU-DORMANT"]["dias_sin_venta_antes_de_compra"] > 180
+    assert by_sku["SKU-DORMANT"]["capital_exceso_inmovilizado_cop"] == 160
+
+    assert by_sku["SKU-FIRST"]["clasificacion_demanda_previa"] == "sku_nuevo_primera_compra"
+
+    summary = metrics["assessment_summary"]
+    assert summary["skus_zombie_historico_comprados"] == 1
+    assert summary["skus_dormidos_mas_180d_comprados"] == 1
+    assert summary["skus_nuevos_primera_compra"] == 1
+    assert summary["capital_exceso_inmovilizado_cop"] == 490
+
+    opportunities = metrics["supplier_opportunities"]
+    assert opportunities["total_oportunidades_omitidas"] >= 1
+    star = next(
+        item for item in opportunities["top_productos_omitidos"]
+        if item["cod_producto"] == "SKU-STAR"
+    )
+    assert star["ventas_180d_previas_unidades"] == 36
+    assert star["unidades_sugeridas_pedido"] == 8
+    assert star["costo_estimado_pedido_cop"] == 200
+    assert star["ingresos_180d_previos_cop"] == 1800
+    assert star["margen_bruto_180d_pct"] == 50.0
+
+    report = deterministic_fallback(metrics)
+    assert "[Proveedor Estrategico](/dashboards/proveedores/900123456)" in report
+    assert "[SKU-ZOMBIE — Casco Zombie](/dashboards/productos/SKU-ZOMBIE)" in report
+    assert "[SKU-STAR — Aceite Estrella 10W40](/dashboards/productos/SKU-STAR)" in report
+    assert "## 1. Qué NO se debió comprar (o se compró en exceso) y por qué" in report
+    assert "## 2. Qué SÍ se debió pedir a este proveedor y no se tuvo en cuenta" in report
+    assert "## 3. Estrategia comercial, mercadeo y reasignación de caja" in report
+

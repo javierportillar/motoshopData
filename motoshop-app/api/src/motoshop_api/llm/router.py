@@ -475,7 +475,7 @@ async def list_chat_messages(
             resolve_product_refs_in_text,
             tenant_context,
             combined_text,
-            limit=50,
+            limit=None,
         )
     purchase_history_rows = [
         row if (

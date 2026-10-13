@@ -207,7 +207,7 @@ def test_historical_product_link_resolution_degrades_if_duckdb_is_unavailable(mo
     assert resolve_product_refs_in_text(context, "BONNAT001 SALSAS MRS TASTE") == []
 
 
-@pytest.mark.parametrize(("limit", "expected_count"), [(3, 3), (30, 30), (500, 50), (0, 0)])
+@pytest.mark.parametrize(("limit", "expected_count"), [(3, 3), (30, 30), (500, 80), (0, 0)])
 def test_historical_product_link_resolution_caps_total_candidate_queries(
     monkeypatch, limit: int, expected_count: int
 ) -> None:
@@ -227,7 +227,27 @@ def test_historical_product_link_resolution_caps_total_candidate_queries(
     assert len(calls) == (1 if expected_count else 0)
     if expected_count:
         assert len(calls[0][0]) == expected_count
-        assert calls[0][1] == 50
+        assert calls[0][1] == 100
+
+
+def test_product_ref_mentioned_matches_numeric_sku_in_markdown_table_cell() -> None:
+    from motoshop_api.llm.contracts import EntityRef
+    from motoshop_api.llm.registry import product_ref_mentioned
+
+    ref = EntityRef(
+        entity_type="product",
+        entity_id="51138",
+        label="ACEITE MOTOR SINTETICO 10W40",
+        domain="inventory",
+        href="/dashboards/productos/51138",
+    )
+    table_md = (
+        "| # | SKU | Producto | Stock |\n"
+        "| --- | --- | --- | --- |\n"
+        "| 1 | 51138 | Aceite 10W40 | 0 |\n"
+    )
+    assert product_ref_mentioned(table_md, ref)
+
 
 
 def test_sources_reject_failures_and_untrusted_supabase_filters() -> None:

@@ -1353,7 +1353,8 @@ class ToolExecutor:
                      AND h.business_date = d.business_date
                     GROUP BY d.cod_producto
                 )
-                SELECT p.cod_producto, p.nom_producto, p.stock_actual, p.dias_sin_venta, s.nombre_proveedor
+                SELECT p.cod_producto, p.nom_producto, p.stock_actual, p.dias_sin_venta,
+                       s.nombre_proveedor, s.nit_proveedor
                 FROM gold_mart_productos_dormidos p
                 JOIN latest_supplier s ON s.cod_producto = p.cod_producto
                 WHERE p.dias_sin_venta >= ? AND p.dias_sin_venta < 5000
@@ -1370,33 +1371,72 @@ class ToolExecutor:
                         "stock": float(r[2]),
                         "dias_sin_venta": int(r[3] if r[3] else 99999),
                         "proveedor": r[4],
+                        "nit_proveedor": r[5],
                     }
                     for r in rows
                 ],
                 "total": len(rows),
                 "proveedor_filtrado": supplier_query.strip(),
             }
-        rows = self._con.execute(
-            """
-            SELECT cod_producto, nom_producto, stock_actual, dias_sin_venta
-            FROM gold_mart_productos_dormidos
-            WHERE dias_sin_venta >= ? AND dias_sin_venta < 5000
-            ORDER BY dias_sin_venta DESC LIMIT ?
-        """,
-            [days_min, limit],
-        ).fetchall()
-        return {
-            "dormidos": [
-                {
-                    "sku": r[0],
-                    "nombre": r[1],
-                    "stock": float(r[2]),
-                    "dias_sin_venta": int(r[3] if r[3] else 99999),
-                }
-                for r in rows
-            ],
-            "total": len(rows),
-        }
+        try:
+            rows = self._con.execute(
+                """
+                WITH latest_supplier AS (
+                    SELECT d.cod_producto,
+                           ARG_MAX(h.nombre_proveedor, d.business_date) AS nombre_proveedor,
+                           ARG_MAX(h.nit_proveedor, d.business_date) AS nit_proveedor
+                    FROM silver_fact_compras_detalle d
+                    INNER JOIN silver_fact_compras h
+                      ON h.num_documento = d.num_documento
+                     AND h.cod_clase = d.cod_clase
+                     AND h.business_date = d.business_date
+                    GROUP BY d.cod_producto
+                )
+                SELECT p.cod_producto, p.nom_producto, p.stock_actual, p.dias_sin_venta,
+                       s.nombre_proveedor, s.nit_proveedor
+                FROM gold_mart_productos_dormidos p
+                LEFT JOIN latest_supplier s ON s.cod_producto = p.cod_producto
+                WHERE p.dias_sin_venta >= ? AND p.dias_sin_venta < 5000
+                ORDER BY p.dias_sin_venta DESC LIMIT ?
+            """,
+                [days_min, limit],
+            ).fetchall()
+            return {
+                "dormidos": [
+                    {
+                        "sku": r[0],
+                        "nombre": r[1],
+                        "stock": float(r[2]),
+                        "dias_sin_venta": int(r[3] if r[3] else 99999),
+                        "proveedor": r[4],
+                        "nit_proveedor": r[5],
+                    }
+                    for r in rows
+                ],
+                "total": len(rows),
+            }
+        except Exception:
+            rows = self._con.execute(
+                """
+                SELECT cod_producto, nom_producto, stock_actual, dias_sin_venta
+                FROM gold_mart_productos_dormidos
+                WHERE dias_sin_venta >= ? AND dias_sin_venta < 5000
+                ORDER BY dias_sin_venta DESC LIMIT ?
+            """,
+                [days_min, limit],
+            ).fetchall()
+            return {
+                "dormidos": [
+                    {
+                        "sku": r[0],
+                        "nombre": r[1],
+                        "stock": float(r[2]),
+                        "dias_sin_venta": int(r[3] if r[3] else 99999),
+                    }
+                    for r in rows
+                ],
+                "total": len(rows),
+            }
 
     def get_alerts_by_urgency(self, urgency: str | None = None) -> dict:
         """Alertas de quiebre de stock, filtrables por urgencia."""
@@ -2963,6 +3003,7 @@ class ToolExecutor:
                 "ingreso_perdido_estimado_mes": it["ingreso_perdido_estimado"],
                 "precio_venta": it["precio_venta"],
                 "proveedor": it.get("nombre_proveedor"),
+                "nit_proveedor": it.get("nit_proveedor"),
             }
             for it in sorted(
                 [x for x in items if x.get("accion") in ("comprar_ya", "comprar_pronto")],
@@ -2982,6 +3023,7 @@ class ToolExecutor:
                 "dias_sin_venta": it.get("dias_desde_venta"),
                 "costo_unit": it["costo_unit"],
                 "proveedor": it.get("nombre_proveedor"),
+                "nit_proveedor": it.get("nit_proveedor"),
             }
             for it in sorted(
                 [x for x in items if x.get("accion") in ("liquidar", "sobrestock", "zombie_con_stock")],

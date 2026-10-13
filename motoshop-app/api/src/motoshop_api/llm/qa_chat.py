@@ -638,7 +638,7 @@ def _product_records(value: Any) -> list[tuple[str, str]]:
     """Extract only structured code/name pairs from a tool result."""
     records: list[tuple[str, str]] = []
     pending = [value]
-    while pending and len(records) < 200:
+    while pending:
         current = pending.pop()
         if isinstance(current, list):
             pending.extend(reversed(current))
@@ -657,6 +657,33 @@ def _product_records(value: Any) -> list[tuple[str, str]]:
         )
         if entity_id and label:
             records.append((entity_id, label))
+        pending.extend(child for child in current.values() if isinstance(child, (dict, list)))
+    return records
+
+
+def _supplier_records(value: Any) -> list[tuple[str, str]]:
+    """Extract structured (nit_proveedor, supplier_name) pairs from tool results."""
+    records: list[tuple[str, str]] = []
+    pending = [value]
+    ignored_labels = {"proveedor por verificar", "sin proveedor registrado", "sin dato"}
+    while pending:
+        current = pending.pop()
+        if isinstance(current, list):
+            pending.extend(reversed(current))
+            continue
+        if not isinstance(current, dict):
+            continue
+        if str(current.get("estado_documento", "")).strip().upper() != "A":
+            raw_nit = current.get("nit_proveedor")
+            raw_name = (
+                current.get("proveedor")
+                or current.get("nombre_proveedor")
+                or (current.get("nombre") if "nit_proveedor" in current and "sku" not in current and "cod_producto" not in current else None)
+            )
+            nit = str(raw_nit or "").strip()
+            name = re.sub(r"\s+", " ", str(raw_name or "").strip())
+            if nit and name and name.casefold() not in ignored_labels:
+                records.append((nit, name))
         pending.extend(child for child in current.values() if isinstance(child, (dict, list)))
     return records
 
@@ -706,6 +733,15 @@ def _tool_entity_candidates(tool_name: str, value: Any) -> list[dict[str, Any]]:
                     "domain": "purchases",
                     "route_key": "supplier",
                 })
+    if tool_name in (PURCHASE_REFERENCE_TOOLS | _PRODUCT_REFERENCE_TOOLS):
+        for nit, supplier_name in _supplier_records(value):
+            candidates.append({
+                "entity_type": "supplier",
+                "entity_id": nit,
+                "label": supplier_name,
+                "domain": "purchases",
+                "route_key": "supplier",
+            })
     if tool_name == "get_analisis_modulo":
         sections = value.get("sections") if isinstance(value.get("sections"), dict) else {}
         prov_sec = sections.get("proveedores") if isinstance(sections.get("proveedores"), dict) else value.get("proveedores")
@@ -724,21 +760,6 @@ def _tool_entity_candidates(tool_name: str, value: Any) -> list[dict[str, Any]]:
                                 "domain": "purchases",
                                 "route_key": "supplier",
                             })
-    if tool_name == "get_productos_para_reponer":
-        products = value.get("productos")
-        if isinstance(products, list):
-            for p in products:
-                if isinstance(p, dict):
-                    nit = str(p.get("nit_proveedor") or "").strip()
-                    supplier_name = str(p.get("proveedor") or "").strip()
-                    if nit and supplier_name and supplier_name.casefold() != "proveedor por verificar":
-                        candidates.append({
-                            "entity_type": "supplier",
-                            "entity_id": nit,
-                            "label": supplier_name,
-                            "domain": "purchases",
-                            "route_key": "supplier",
-                        })
     unique: dict[tuple[str, str], dict[str, Any]] = {}
     for item in candidates:
         entity_type = str(item.get("entity_type", ""))
@@ -767,19 +788,21 @@ def _purchase_records(tool_name: str, value: dict[str, Any]) -> list[dict[str, A
 
 
 def _persisted_entity_candidates(row: dict[str, Any]) -> list[dict[str, Any]]:
-    """Retain purchase refs only when the turn records an allowlisted source tool."""
+    """Retain purchase and supplier refs only when the turn records an allowlisted source tool."""
     references = row.get("entity_refs", [])
     if not isinstance(references, list):
         return []
     tools_used = row.get("tools_used", [])
     source_tools = set(tools_used) if isinstance(tools_used, list) else set()
     has_purchase_source = bool(source_tools & PURCHASE_REFERENCE_TOOLS)
+    has_supplier_source = bool(source_tools & (PURCHASE_REFERENCE_TOOLS | _PRODUCT_REFERENCE_TOOLS))
     return [
         item for item in references
         if isinstance(item, dict)
         and (
-            item.get("entity_type") not in {"purchase_document", "supplier"}
-            or has_purchase_source
+            (item.get("entity_type") == "purchase_document" and has_purchase_source)
+            or (item.get("entity_type") == "supplier" and has_supplier_source)
+            or item.get("entity_type") not in {"purchase_document", "supplier"}
         )
     ]
 
@@ -836,6 +859,17 @@ def _entity_candidates_mentioned_in_text(
                     return True
                 if product_label_mentioned_in_text(line, label, allow_token_overlap=True):
                     return True
+                if line.lstrip().startswith("|"):
+                    cells = [c.strip().strip("`*_") for c in line.strip().strip("|").split("|")]
+                    if any(
+                        not cell.startswith("$")
+                        and (
+                            cell.casefold() == entity_id.casefold()
+                            or cell.casefold().startswith(f"{entity_id.casefold()} ")
+                        )
+                        for cell in cells
+                    ):
+                        return True
                 return False
 
             has_id_token = bool(
