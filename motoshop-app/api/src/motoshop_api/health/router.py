@@ -110,7 +110,7 @@ def readiness(tenant: str = "motoshop") -> dict:
     from motoshop_api.metrics.repo_duckdb import _bootstrap_duckdb_from_r2, _make_db_path
 
     safe_tenant = tenant if tenant in {"motoshop", "masvital"} else "motoshop"
-    db_path = settings.duckdb_path and Path(settings.duckdb_path) or _make_db_path(safe_tenant)
+    db_path = _make_db_path(safe_tenant)
     try:
         _bootstrap_duckdb_from_r2(db_path, safe_tenant)
     except Exception:

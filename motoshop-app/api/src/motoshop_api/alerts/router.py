@@ -69,7 +69,7 @@ def _clear_alerts_cache():
 def get_repo(tenant: str = Depends(get_tenant)) -> AlertsRepoProtocol:
     """Inyección de dependencias: DuckDB si DATA_BACKEND=duckdb, Databricks si no."""
     if settings.data_backend == "duckdb":
-        db_path = settings.duckdb_path or str(_make_db_path(tenant))
+        db_path = str(_make_db_path(tenant))
         # Trigger the R2 bootstrap here too so alerts also kick off the download
         # after a restart (metrics already do). If the file isn't ready,
         # DuckDBAlertsRepo → get_shared_connection raises DuckDBNotReadyError → 503.

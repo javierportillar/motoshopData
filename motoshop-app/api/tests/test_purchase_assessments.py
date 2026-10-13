@@ -1361,7 +1361,7 @@ def test_tenant_snapshot_path_bootstraps_r2_outside_tests(
     db_path = tmp_path / "motoshop_gold.duckdb"
     bootstrap_calls = []
     monkeypatch.setattr(settings, "env", environment)
-    monkeypatch.setattr(settings, "duckdb_path", "")
+    monkeypatch.setattr(settings, "duckdb_path", str(tmp_path / "global_override.duckdb"))
     monkeypatch.setattr(metrics_module, "_make_db_path", lambda _tenant: db_path)
     monkeypatch.setattr(
         metrics_module,
@@ -1373,6 +1373,40 @@ def test_tenant_snapshot_path_bootstraps_r2_outside_tests(
     assert len(bootstrap_calls) == expected_bootstraps
     if expected_bootstraps:
         assert bootstrap_calls == [(db_path, "motoshop")]
+
+
+def test_tenant_snapshot_path_and_admin_refresh_ignore_global_duckdb_path_override(
+    tmp_path,
+    monkeypatch,
+):
+    import motoshop_api.metrics.repo_duckdb as metrics_module
+    import motoshop_api.purchase_assessments.worker as worker_module
+    from motoshop_api.admin import router as admin_module
+    from motoshop_api.config import settings
+
+    paths = {
+        "motoshop": tmp_path / "motoshop_gold.duckdb",
+        "masvital": tmp_path / "masvital_gold.duckdb",
+    }
+    bootstrap_calls: list[tuple[Path, str]] = []
+    monkeypatch.setattr(settings, "env", "prod")
+    monkeypatch.setattr(settings, "duckdb_path", str(paths["motoshop"]))
+    monkeypatch.setattr(metrics_module, "_make_db_path", lambda tenant: paths[tenant])
+    monkeypatch.setattr(
+        metrics_module,
+        "_bootstrap_duckdb_from_r2",
+        lambda path, tenant: bootstrap_calls.append((path, tenant)),
+    )
+
+    assert worker_module._tenant_snapshot_path("masvital") == paths["masvital"]
+    assert worker_module._tenant_snapshot_path("motoshop") == paths["motoshop"]
+    assert bootstrap_calls == [
+        (paths["masvital"], "masvital"),
+        (paths["motoshop"], "motoshop"),
+    ]
+    assert admin_module._get_duckdb_path("masvital") == paths["masvital"]
+    assert admin_module._get_duckdb_path("motoshop") == paths["motoshop"]
+
 
 
 @pytest.mark.parametrize("initial_status", ["pending", "processing"])

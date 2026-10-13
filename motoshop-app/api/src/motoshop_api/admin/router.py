@@ -43,8 +43,9 @@ class RefreshResponse(BaseModel):
 def _get_duckdb_path(tenant: str = "motoshop") -> Path:
     from motoshop_api.metrics.repo_duckdb import _make_db_path
 
-    db_path = settings.duckdb_path or str(_make_db_path(tenant))
-    return Path(db_path)
+    # Ignore global settings.duckdb_path so tenant-scoped refreshes and status
+    # checks never overwrite or read another tenant's DuckDB file.
+    return _make_db_path(tenant)
 
 
 def _get_pipeline_runs_db_path(tenant: str = "motoshop") -> Path:

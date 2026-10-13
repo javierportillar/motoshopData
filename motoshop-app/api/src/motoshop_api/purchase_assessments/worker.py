@@ -25,7 +25,11 @@ def _tenant_snapshot_path(tenant_id: str) -> Path:
         _make_db_path,
     )
 
-    db_path = Path(settings.duckdb_path or _make_db_path(tenant_id))
+    # Never use a global settings.duckdb_path override here: the worker sweeps
+    # all configured tenants, and sharing a single path causes R2 bootstrap to
+    # overwrite one tenant's DuckDB with another's and persist cross-tenant
+    # purchase assessments.
+    db_path = _make_db_path(tenant_id)
     if settings.env.casefold() != "test":
         _bootstrap_duckdb_from_r2(db_path, tenant_id)
     return db_path
