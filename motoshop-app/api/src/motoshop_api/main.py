@@ -12,6 +12,7 @@ import structlog
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -37,6 +38,7 @@ from motoshop_api.llm.router import router as llm_router
 from motoshop_api.logging import RequestIDMiddleware, setup_logging
 from motoshop_api.metrics.repo_duckdb import DuckDBNotReadyError
 from motoshop_api.metrics.router import router as metrics_router
+from motoshop_api.middleware.etag import ETagMiddleware
 from motoshop_api.pipeline_runs.router import router as pipeline_runs_router
 from motoshop_api.products.router import router as products_router
 from motoshop_api.purchase_assessments.router import router as purchase_assessments_router
@@ -214,6 +216,12 @@ async def mysql_offline_handler(request: Request, _exc: sqlalchemy.exc.Operation
             "available_endpoints": ["/health", "/api/auth/*", "/api/alerts/*", "/api/forecast/*", "/api/metrics/*", "/api/products/*", "/api/purchase-plans/*"],
         },
     )
+
+# ETag / Conditional Requests (304 Not Modified)
+app.add_middleware(ETagMiddleware)
+
+# GZip Compression (ancho de banda outbound, mínimo 1000 bytes)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # CORS
 app.add_middleware(
