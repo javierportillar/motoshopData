@@ -12,12 +12,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Configuración tipada de la API. Lee `.env` del root del repo."""
 
-    # Busca .env en el root del repo (../../.. desde este archivo)
+    # Busca .env en el root del repo y en la carpeta de la API
     _root = Path(__file__).resolve().parent.parent.parent.parent.parent  # repos/RepoName
-    _env_path = _root / ".env"
+    _env_root = _root / ".env"
+    _env_api = Path(__file__).resolve().parent.parent.parent / ".env"
+
+    _env_files = tuple(str(p) for p in (_env_root, _env_api, Path(".env")) if p.exists())
 
     model_config = SettingsConfigDict(
-        env_file=_env_path if os.path.exists(_env_path) else ".env",
+        env_file=_env_files if _env_files else ".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

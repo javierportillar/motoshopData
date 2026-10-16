@@ -59,37 +59,38 @@ Write-Log ".env: OK"
 
 # 4. Arrancar uvicorn
 Write-Log "Arrancando uvicorn en puerto $Port..."
-# Leer secretos desde .env (¡NUNCA hardcodear!)
-$env:JWT_SECRET = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^JWT_SECRET=(.+)$'} | ForEach-Object {$matches[1]})
-if (-not $env:JWT_SECRET) { Write-Log "ERROR: JWT_SECRET no encontrada en $ApiDir\.env"; exit 1 }
 
-$env:ENV = "dev"
-$env:MYSQL_HOST = "localhost"
-$env:MYSQL_PORT = "3306"
-$env:MYSQL_DATABASE = "motoshop2024"
-$env:MYSQL_USER = "api_read"
+# Cargar todas las variables desde .env (ProjectRoot y ApiDir)
+$envFiles = @("$ProjectRoot\.env", "$ApiDir\.env")
+foreach ($ef in $envFiles) {
+    if (Test-Path $ef) {
+        Get-Content $ef | ForEach-Object {
+            if ($_ -match "^\s*([^#=]+)=(.*)$") {
+                $k = $matches[1].Trim()
+                $v = $matches[2].Trim('"', "'")
+                Set-Item -Path "env:$k" -Value $v -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
 
-$env:MYSQL_PASSWORD = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^MYSQL_PASSWORD=(.+)$'} | ForEach-Object {$matches[1]})
-if (-not $env:MYSQL_PASSWORD) { Write-Log "ERROR: MYSQL_PASSWORD no encontrada en $ApiDir\.env"; exit 1 }
+if (-not $env:JWT_SECRET) {
+    Write-Log "ERROR: JWT_SECRET no encontrada en archivos .env"
+    exit 1
+}
 
-$env:MYSQL_APP_WRITER_USER = "app_writer"
-
-$env:MYSQL_APP_WRITER_PASSWORD = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^MYSQL_APP_WRITER_PASSWORD=(.+)$'} | ForEach-Object {$matches[1]})
-if (-not $env:MYSQL_APP_WRITER_PASSWORD) { Write-Log "ERROR: MYSQL_APP_WRITER_PASSWORD no encontrada en $ApiDir\.env"; exit 1 }
-$env:CORS_ORIGINS = "http://localhost:3000,https://api.fragloesja.uk,https://motoshop-web-tau.vercel.app,https://app.fragloesja.uk,http://localhost:8000"
-
-# Databricks (Track A) — leer del .env de la API
-$env:DATABRICKS_HOST = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^DATABRICKS_HOST=(.+)$'} | ForEach-Object {$matches[1]})
-$env:DATABRICKS_TOKEN = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^DATABRICKS_TOKEN=(.+)$'} | ForEach-Object {$matches[1]})
-$env:DATABRICKS_HTTP_PATH = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^DATABRICKS_HTTP_PATH=(.+)$'} | ForEach-Object {$matches[1]})
-
-# R2 + DUCKDB_PATH (V1.5+ DuckDB backend)
-$env:R2_ENDPOINT = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^R2_ENDPOINT=(.+)$'} | ForEach-Object {$matches[1]})
-$env:R2_ACCESS_KEY_ID = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^R2_ACCESS_KEY_ID=(.+)$'} | ForEach-Object {$matches[1]})
-$env:R2_SECRET_ACCESS_KEY = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^R2_SECRET_ACCESS_KEY=(.+)$'} | ForEach-Object {$matches[1]})
-$env:R2_BUCKET = (Get-Content "$ApiDir\.env" | Where-Object {$_ -match '^R2_BUCKET=(.+)$'} | ForEach-Object {$matches[1]})
-$env:DUCKDB_PATH = "$ProjectRoot\out\motoshop_gold.duckdb"
-# PIPELINE_RUNS_DB_PATH no se setea — el commit 3fc7b7b usa ruta tenant-aware por defecto
+# Defaults operativos si no vienen en .env
+if (-not $env:ENV) { $env:ENV = "dev" }
+if (-not $env:MYSQL_HOST) { $env:MYSQL_HOST = "localhost" }
+if (-not $env:MYSQL_PORT) { $env:MYSQL_PORT = "3306" }
+if (-not $env:MYSQL_DATABASE) { $env:MYSQL_DATABASE = "motoshop2024" }
+if (-not $env:MYSQL_USER) { $env:MYSQL_USER = "api_read" }
+if (-not $env:CORS_ORIGINS) {
+    $env:CORS_ORIGINS = "http://localhost:3000,https://api.fragloesja.uk,https://motoshop-web-tau.vercel.app,https://app.fragloesja.uk,http://localhost:8000"
+}
+if (-not $env:DUCKDB_PATH) {
+    $env:DUCKDB_PATH = "$ProjectRoot\out\motoshop_gold.duckdb"
+}
 
 $proc = Start-Process -FilePath "$ApiDir\.venv\Scripts\python.exe" `
     -ArgumentList "-m","uvicorn","motoshop_api.main:app","--port","$Port" `
