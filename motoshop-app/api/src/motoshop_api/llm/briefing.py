@@ -165,7 +165,7 @@ class BriefingGenerator:
             LIMIT 3
         """, [ayer.isoformat()]).fetchall()
         ctx["dormidos_recuperados"] = [
-            {"sku": r[0], "nombre": r[1], "dias_dormido": int(r[2]), "ventas_hoy": float(r[3])}
+            {"sku": r[0], "nombre": r[1], "dias_dormido": int(r[2]) if r[2] is not None else 0, "ventas_hoy": float(r[3])}
             for r in dormidos if r[3]
         ]
 

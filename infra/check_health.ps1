@@ -1,6 +1,21 @@
 # check_health.ps1 — Health check periódico con auto-reinicio
 $ErrorActionPreference = "Continue"
-$ProjectRoot = "C:\Users\MotoShop\Documents\javidevmoto\motoshopData"
+# Detección dinámica y robusta de la raíz del proyecto
+$candidateRoots = @(
+    (Resolve-Path "$PSScriptRoot\..").Path,
+    "C:\Users\MotoShop\Documents\javidevmoto",
+    "C:\Users\MotoShop\Documents\javidevmoto\motoshopData"
+)
+$ProjectRoot = $null
+foreach ($cand in $candidateRoots) {
+    if (Test-Path "$cand\motoshop-app\api") {
+        $ProjectRoot = $cand
+        break
+    }
+}
+if (-not $ProjectRoot) {
+    $ProjectRoot = (Resolve-Path "$PSScriptRoot\..").Path
+}
 $LogDir = "$ProjectRoot\logs"
 
 if (!(Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }

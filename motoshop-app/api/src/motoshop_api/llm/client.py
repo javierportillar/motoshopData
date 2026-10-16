@@ -51,7 +51,7 @@ class PermanentLLMError(LLMDependencyError):
 
 def get_llm_client() -> LLMClient:
     global _client_singleton
-    if _client_singleton is None:
+    if _client_singleton is None or not _client_singleton._backends:
         _client_singleton = LLMClient()
     return _client_singleton
 
@@ -60,29 +60,71 @@ class LLMClient:
     """Cliente HTTP dual-API: GO primario, Zen fallback."""
 
     def __init__(self):
+        self._http = httpx.Client(timeout=httpx.Timeout(TIMEOUT))
+        self._init_backends()
+
+    def _init_backends(self):
         self._backends = []
-        if GO_API_KEY:
+        import os
+        from motoshop_api.config import _sync_env_to_os_environ
+
+        go_key = (
+            os.environ.get("OPENCODE_API_KEY")
+            or settings.opencode_api_key
+            or GO_API_KEY
+        )
+        zen_key = (
+            os.environ.get("OPENCODE_API_KEY_FALLBACK")
+            or os.environ.get("HF_API_TOKEN")
+            or settings.opencode_api_key_fallback
+            or ZEN_API_KEY
+        )
+
+        if not go_key or not zen_key:
+            _sync_env_to_os_environ()
+            go_key = (
+                go_key
+                or os.environ.get("OPENCODE_API_KEY")
+                or settings.opencode_api_key
+                or GO_API_KEY
+            )
+            zen_key = (
+                zen_key
+                or os.environ.get("OPENCODE_API_KEY_FALLBACK")
+                or os.environ.get("HF_API_TOKEN")
+                or settings.opencode_api_key_fallback
+                or ZEN_API_KEY
+            )
+
+        go_base = (
+            os.environ.get("OPENCODE_BASE_URL")
+            or settings.go_api_base
+            or GO_API_BASE
+        )
+        if "opencode.ai/zen/go" not in go_base and "opencode.ai" in go_base:
+            go_base = settings.go_api_base
+
+        if go_key:
             self._backends.append(
                 {
                     "name": "go",
-                    "base": GO_API_BASE.rstrip("/"),
-                    "key": GO_API_KEY,
-                    "model": GO_MODEL,
-                    "max_tokens": GO_MAX_TOKENS,
+                    "base": go_base.rstrip("/"),
+                    "key": go_key,
+                    "model": settings.go_model or GO_MODEL,
+                    "max_tokens": settings.go_max_tokens or GO_MAX_TOKENS,
                 }
             )
-        if ZEN_API_KEY:
+        if zen_key:
             self._backends.append(
                 {
                     "name": "zen",
-                    "base": ZEN_API_BASE.rstrip("/"),
-                    "key": ZEN_API_KEY,
-                    "model": ZEN_MODEL,
-                    "max_tokens": ZEN_MAX_TOKENS,
+                    "base": (settings.zen_api_base or ZEN_API_BASE).rstrip("/"),
+                    "key": zen_key,
+                    "model": settings.zen_model or ZEN_MODEL,
+                    "max_tokens": settings.zen_max_tokens or ZEN_MAX_TOKENS,
                 }
             )
 
-        self._http = httpx.Client(timeout=httpx.Timeout(TIMEOUT))
         if not self._backends:
             logger.warning("No API keys configured — LLM calls will fail")
 
@@ -133,7 +175,9 @@ class LLMClient:
         deadline: float | None = None,
     ) -> dict:
         if not self._backends:
-            raise PermanentLLMError("No LLM providers are configured")
+            self._init_backends()
+            if not self._backends:
+                raise PermanentLLMError("No LLM providers are configured")
 
         failures: list[str] = []
         last_cause: Exception | None = None

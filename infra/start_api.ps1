@@ -1,6 +1,22 @@
 # start_api.ps1 — Arranca uvicorn con verificación de errores
 $ErrorActionPreference = "Continue"
-$ProjectRoot = "C:\Users\MotoShop\Documents\javidevmoto\motoshopData"
+
+# Detección dinámica y robusta de la raíz del proyecto
+$candidateRoots = @(
+    (Resolve-Path "$PSScriptRoot\..").Path,
+    "C:\Users\MotoShop\Documents\javidevmoto",
+    "C:\Users\MotoShop\Documents\javidevmoto\motoshopData"
+)
+$ProjectRoot = $null
+foreach ($cand in $candidateRoots) {
+    if (Test-Path "$cand\motoshop-app\api") {
+        $ProjectRoot = $cand
+        break
+    }
+}
+if (-not $ProjectRoot) {
+    $ProjectRoot = (Resolve-Path "$PSScriptRoot\..").Path
+}
 $ApiDir = "$ProjectRoot\motoshop-app\api"
 $LogDir = "$ProjectRoot\logs"
 $Port = 8000
@@ -15,8 +31,29 @@ function Write-Log($msg) {
 }
 
 Write-Log "=== INICIO VERIFICACION API ==="
+Write-Log "ProjectRoot: $ProjectRoot"
+Write-Log "ApiDir: $ApiDir"
 
-# 1. Matar instancia previa si está corriendo (permite deploy sin restart manual)
+# 1. Matar instancia previa si está corriendo (por puerto y por proceso)
+try {
+    $portPids = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique
+    if ($portPids) {
+        foreach ($p in $portPids) {
+            Write-Log "Deteniendo proceso en puerto $Port (PID $p)"
+            Stop-Process -Id $p -Force -ErrorAction SilentlyContinue
+        }
+    }
+} catch {}
+try {
+    netstat -ano | Select-String ":$Port\s+.*LISTENING" | ForEach-Object {
+        if ($_ -match "(\d+)$") {
+            $nsPid = $matches[1]
+            Write-Log "Deteniendo netstat PID $nsPid"
+            Stop-Process -Id $nsPid -Force -ErrorAction SilentlyContinue
+        }
+    }
+} catch {}
+
 $apiProcs = Get-Process python -ErrorAction SilentlyContinue | Where-Object {
     try {
         $cmdLine = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)").CommandLine
@@ -50,29 +87,37 @@ try {
 
 # 3. Verificar .env
 Write-Log "Verificando .env..."
-if (!(Test-Path "$ApiDir\.env")) {
-    Write-Log "ERROR: .env no encontrado en $ApiDir\.env"
-    Write-Log "Solución: Crear archivo .env con las variables de entorno"
+$envFiles = @(
+    "$ApiDir\.env",
+    "$ProjectRoot\.env",
+    "$ProjectRoot\..\.env"
+)
+$envFound = $false
+foreach ($ef in $envFiles) {
+    if (Test-Path $ef) {
+        $envFound = $true
+        Write-Log "Cargando $ef..."
+        Get-Content $ef | ForEach-Object {
+            if ($_ -match "^\s*([^#=]+)=(.*)$") {
+                $k = $matches[1].Trim()
+                $v = $matches[2].Trim('"', "'")
+                # Solo setear si el valor no es vacío o si no existe en el environment
+                if ($v -ne "" -or -not (Test-Path "env:$k")) {
+                    Set-Item -Path "env:$k" -Value $v -ErrorAction SilentlyContinue
+                }
+            }
+        }
+    }
+}
+
+if (-not $envFound) {
+    Write-Log "ERROR: .env no encontrado en ninguna ruta candidata"
     exit 1
 }
 Write-Log ".env: OK"
 
 # 4. Arrancar uvicorn
 Write-Log "Arrancando uvicorn en puerto $Port..."
-
-# Cargar todas las variables desde .env (ProjectRoot y ApiDir)
-$envFiles = @("$ProjectRoot\.env", "$ApiDir\.env")
-foreach ($ef in $envFiles) {
-    if (Test-Path $ef) {
-        Get-Content $ef | ForEach-Object {
-            if ($_ -match "^\s*([^#=]+)=(.*)$") {
-                $k = $matches[1].Trim()
-                $v = $matches[2].Trim('"', "'")
-                Set-Item -Path "env:$k" -Value $v -ErrorAction SilentlyContinue
-            }
-        }
-    }
-}
 
 if (-not $env:JWT_SECRET) {
     Write-Log "ERROR: JWT_SECRET no encontrada en archivos .env"
@@ -92,7 +137,12 @@ if (-not $env:DUCKDB_PATH) {
     $env:DUCKDB_PATH = "$ProjectRoot\out\motoshop_gold.duckdb"
 }
 
-$proc = Start-Process -FilePath "$ApiDir\.venv\Scripts\python.exe" `
+$pythonExe = "$ApiDir\.venv\Scripts\python.exe"
+if (-not (Test-Path $pythonExe)) {
+    $pythonExe = "python.exe"
+}
+
+$proc = Start-Process -FilePath $pythonExe `
     -ArgumentList "-m","uvicorn","motoshop_api.main:app","--port","$Port" `
     -WindowStyle Hidden -PassThru -WorkingDirectory $ApiDir
 

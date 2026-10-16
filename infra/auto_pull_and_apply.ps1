@@ -136,7 +136,27 @@ try {
     if ($apiChanged.Count -gt 0 -or $scriptsChanged -contains "infra/start_api.ps1") {
         Log "INFO" "API changes detected ($($apiChanged.Count) files). Restarting..."
 
-        # Stop API actual (best-effort)
+        # Stop API actual: buscar proceso escuchando en puerto 8000
+        try {
+            $portPids = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique
+            if ($portPids) {
+                foreach ($p in $portPids) {
+                    Log "INFO" "Stopping process on port 8000 PID $p"
+                    Stop-Process -Id $p -Force -ErrorAction SilentlyContinue
+                }
+            }
+        } catch {}
+        try {
+            netstat -ano | Select-String ":8000\s+.*LISTENING" | ForEach-Object {
+                if ($_ -match "(\d+)$") {
+                    $nsPid = $matches[1]
+                    Log "INFO" "Stopping netstat PID $nsPid"
+                    Stop-Process -Id $nsPid -Force -ErrorAction SilentlyContinue
+                }
+            }
+        } catch {}
+
+        # Stop API actual (best-effort por nombre de proceso)
         $apiProcs = Get-Process python -ErrorAction SilentlyContinue | Where-Object {
             try {
                 $cmdLine = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)").CommandLine

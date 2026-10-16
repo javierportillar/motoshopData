@@ -9,15 +9,63 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _candidate_env_paths() -> list[Path]:
+    root = Path(__file__).resolve().parent.parent.parent.parent.parent
+    api_dir = Path(__file__).resolve().parent.parent.parent
+    candidates = [
+        api_dir / ".env",
+        root / ".env",
+        Path("C:/Users/MotoShop/Documents/javidevmoto/motoshop-app/api/.env"),
+        Path("C:/Users/MotoShop/Documents/javidevmoto/.env"),
+        Path("C:/Users/MotoShop/Documents/javidevmoto/motoshopData/motoshop-app/api/.env"),
+        Path("C:/Users/MotoShop/Documents/javidevmoto/motoshopData/.env"),
+        Path(".env"),
+    ]
+    seen = set()
+    res = []
+    for c in candidates:
+        try:
+            resolved = c.resolve()
+            if resolved not in seen and resolved.is_file():
+                seen.add(resolved)
+                res.append(resolved)
+        except Exception:
+            pass
+    return res
+
+
+SYNC_KEYS = {
+    "OPENCODE_API_KEY",
+    "OPENCODE_API_KEY_FALLBACK",
+    "HF_API_TOKEN",
+    "OPENCODE_BASE_URL",
+    "JWT_SECRET",
+}
+
+
+def _sync_env_to_os_environ() -> None:
+    for path in _candidate_env_paths():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        k = k.strip().upper()
+                        v = v.strip().strip("\"'")
+                        if k in SYNC_KEYS and v and not os.environ.get(k):
+                            os.environ[k] = v
+        except Exception:
+            pass
+
+
+_sync_env_to_os_environ()
+
+
 class Settings(BaseSettings):
     """Configuración tipada de la API. Lee `.env` del root del repo."""
 
-    # Busca .env en el root del repo y en la carpeta de la API
-    _root = Path(__file__).resolve().parent.parent.parent.parent.parent  # repos/RepoName
-    _env_root = _root / ".env"
-    _env_api = Path(__file__).resolve().parent.parent.parent / ".env"
-
-    _env_files = tuple(str(p) for p in (_env_root, _env_api, Path(".env")) if p.exists())
+    _env_files = tuple(str(p) for p in _candidate_env_paths())
 
     model_config = SettingsConfigDict(
         env_file=_env_files if _env_files else ".env",

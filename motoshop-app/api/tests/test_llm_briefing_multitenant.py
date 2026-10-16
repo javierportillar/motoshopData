@@ -152,7 +152,6 @@ def test_briefing_uses_isolated_db_and_explicit_destination_per_tenant(
         briefing_client.post("/api/llm/briefing/send", headers={"X-Tenant": tenant})
         for tenant in ("motoshop", "masvital")
     ]
-
     assert [response.status_code for response in responses] == [200, 200]
     assert [response.json()["briefing_text"] for response in responses] == [
         "[MotoShop]\nMotoShop:101.0", "[MasVital]\nMasVital:202.0",
