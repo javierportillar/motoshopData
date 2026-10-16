@@ -17,17 +17,18 @@ from motoshop_api.config import settings
 router = APIRouter(tags=["meta"])
 
 
-def _get_db_path() -> Path:
-    """Devuelve la ruta real del archivo DuckDB según config."""
+def _get_db_path(tenant: str = "motoshop") -> Path:
+    """Devuelve la ruta real del archivo DuckDB según config y tenant."""
     from motoshop_api.metrics.repo_duckdb import _make_db_path
 
-    db_path = settings.duckdb_path or str(_make_db_path("motoshop"))
+    safe_tenant = tenant if tenant in {"motoshop", "masvital"} else "motoshop"
+    db_path = settings.duckdb_path or str(_make_db_path(safe_tenant))
     return Path(db_path)
 
 
-def _duckdb_freshness() -> dict:
+def _duckdb_freshness(tenant: str = "motoshop") -> dict:
     """Lag del archivo DuckDB local (R2 download freshness)."""
-    db_path = _get_db_path()
+    db_path = _get_db_path(tenant)
 
     if not db_path.exists():
         return {"status": "CRITICAL", "error": f"DuckDB file not found at {db_path}"}
@@ -124,12 +125,12 @@ def readiness(tenant: str = "motoshop") -> dict:
 
 
 @router.get("/health/data-freshness")
-def data_freshness() -> dict:
+def data_freshness(tenant: str = "motoshop") -> dict:
     """Devuelve frescura de datos según el backend activo.
 
     - duckdb: lag desde la última descarga de R2 (mtime del archivo)
     - databricks: lag desde el último manifest en UC Volume
     """
     if settings.data_backend == "duckdb":
-        return _duckdb_freshness()
+        return _duckdb_freshness(tenant)
     return _databricks_freshness()
