@@ -206,6 +206,26 @@ try {
         }
     }
 
+    # ─── Verificar Túnel Cloudflare (motoshop-local) ──────────
+    try {
+        $tunnelCheckUrl = if ($env:TUNNEL_URL) { $env:TUNNEL_URL } else { "https://motoshop-local.fragloesja.uk/health" }
+        $cfResp = Invoke-WebRequest -Uri $tunnelCheckUrl -TimeoutSec 6 -UseBasicParsing -ErrorAction Stop
+        if ($cfResp.StatusCode -eq 200) {
+            Log "INFO" "Túnel Cloudflare OK ($tunnelCheckUrl)"
+        } else {
+            throw "Status code $($cfResp.StatusCode)"
+        }
+    } catch {
+        Log "WARN" "Túnel Cloudflare no responde ($($_)). Intentando recuperar servicio..."
+        $cfService = Get-Service -Name "cloudflared" -ErrorAction SilentlyContinue
+        if ($cfService) {
+            Restart-Service cloudflared -Force -ErrorAction SilentlyContinue
+            Log "INFO" "Servicio cloudflared reiniciado."
+        } else {
+            & "$RepoRoot\infra\start_tunnel.ps1"
+        }
+    }
+
     # ─── Sync notebooks si cambió gold/ ─────────────────────
 
     if ($notebooksChanged.Count -gt 0) {

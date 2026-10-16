@@ -78,28 +78,40 @@ try {
 
 # 3. Verificar Túnel
 Write-Log "Túnel..."
+$tunnelUrl = if ($env:TUNNEL_URL) { $env:TUNNEL_URL } else { "https://motoshop-local.fragloesja.uk/health" }
 try {
-    $resp = Invoke-WebRequest -Uri "https://api.fragloesja.uk/health" -TimeoutSec 10 -UseBasicParsing
+    $resp = Invoke-WebRequest -Uri $tunnelUrl -TimeoutSec 10 -UseBasicParsing
     if ($resp.StatusCode -eq 200) {
-        Write-Log "  Túnel: OK"
+        Write-Log "  Túnel: OK ($tunnelUrl)"
     } else {
         Write-Log "  Túnel: ERROR - Status $($resp.StatusCode)"
         $issues += "Túnel respondió con status $($resp.StatusCode)"
     }
 } catch {
-    Write-Log "  Túnel: CAIDO - Intentando reiniciar..."
-    & "$ProjectRoot\infra\start_tunnel.ps1"
+    Write-Log "  Túnel: CAIDO ($tunnelUrl) - Intentando recuperar servicio..."
+    $cfService = Get-Service -Name "cloudflared" -ErrorAction SilentlyContinue
+    if ($cfService) {
+        try {
+            Restart-Service cloudflared -Force -ErrorAction Stop
+            Write-Log "  Servicio cloudflared reiniciado vía Restart-Service."
+        } catch {
+            Write-Log "  Restart-Service cloudflared falló: $($_.Exception.Message)"
+            & "$ProjectRoot\infra\start_tunnel.ps1"
+        }
+    } else {
+        & "$ProjectRoot\infra\start_tunnel.ps1"
+    }
     Start-Sleep -Seconds 10
     try {
-        $resp2 = Invoke-WebRequest -Uri "https://api.fragloesja.uk/health" -TimeoutSec 10 -UseBasicParsing
+        $resp2 = Invoke-WebRequest -Uri $tunnelUrl -TimeoutSec 10 -UseBasicParsing
         if ($resp2.StatusCode -eq 200) {
             Write-Log "  Túnel: REINICIADO OK"
         } else {
-            Write-Log "  Túnel: ERROR después de reinicio"
+            Write-Log "  Túnel: ERROR después de reinicio (Status $($resp2.StatusCode))"
             $issues += "Túnel no se pudo reiniciar"
         }
     } catch {
-        Write-Log "  Túnel: ERROR - No se pudo reiniciar"
+        Write-Log "  Túnel: ERROR - No se pudo reiniciar ($($_.Exception.Message))"
         $issues += "Túnel no se pudo reiniciar"
     }
 }
