@@ -44,7 +44,7 @@ def _fetchall_dict(cur, sql, params=None):
 def _get_max_silver_ts(con: duckdb.DuckDBPyConnection):
     """Devuelve el fecha_documento_ts más alto en silver."""
     row = con.execute(
-        "SELECT MAX(fecha_documento_ts) FROM motoshop_silver_fact_ventas"
+        "SELECT MAX(fecha_documento_ts) FROM silver_fact_ventas"
     ).fetchone()
     return row[0] if row and row[0] else "2020-01-01 00:00:00"
 
@@ -141,7 +141,7 @@ def _insert_headers(con: duckdb.DuckDBPyConnection, rows: list[dict]) -> int:
                 continue
         if batch:
             con.executemany("""
-                INSERT INTO motoshop_silver_fact_ventas
+                INSERT INTO silver_fact_ventas
                     (num_documento, cod_clase, prefijo,
                      fecha_documento_ts, business_date,
                      nit_cliente, nombre_cliente,
@@ -196,7 +196,7 @@ def _insert_details(con: duckdb.DuckDBPyConnection, rows: list[dict], headers_da
                 continue
         if batch:
             con.executemany("""
-                INSERT INTO motoshop_silver_fact_ventas_detalle
+                INSERT INTO silver_fact_ventas_detalle
                     (num_documento, cod_clase, cod_producto,
                      nombre_detalle, cantidad, valor_unitario,
                      descuento_porcentaje, descuento_valor,
