@@ -26,8 +26,21 @@ param(
     [switch]$DryRun = $false
 )
 
-$ErrorActionPreference = "Continue"
-$RepoRoot = "C:\Users\MotoShop\Documents\javidevmoto"
+$candidateRoots = @(
+    (Resolve-Path "$PSScriptRoot\..").Path,
+    "C:\Users\MotoShop\Documents\javidevmoto\motoshopData",
+    "C:\Users\MotoShop\Documents\javidevmoto"
+)
+$RepoRoot = $null
+foreach ($cand in $candidateRoots) {
+    if (Test-Path "$cand\.git") {
+        $RepoRoot = $cand
+        break
+    }
+}
+if (-not $RepoRoot) {
+    $RepoRoot = (Resolve-Path "$PSScriptRoot\..").Path
+}
 $LogFile = "$RepoRoot\infra\logs\auto_pull.log"
 $DisableFlag = "$RepoRoot\infra\AUTO_PULL_DISABLED"
 $LockFile = "$RepoRoot\infra\auto_pull.lock"
