@@ -184,6 +184,24 @@ try {
             }
         }
 
+        # Sincronizar DuckDB fresco a api/out
+        $rootDuck = "$RepoRoot\out\motoshop_gold.duckdb"
+        $apiDuck = "$RepoRoot\motoshop-app\api\out\motoshop_gold.duckdb"
+        if (Test-Path $rootDuck) {
+            if (-not (Test-Path $apiDuck) -or ((Get-Item $rootDuck).LastWriteTimeUtc -gt (Get-Item $apiDuck).LastWriteTimeUtc)) {
+                Copy-Item -Path $rootDuck -Destination $apiDuck -Force -ErrorAction SilentlyContinue
+                Log "INFO" "Sincronizado $rootDuck -> $apiDuck"
+            }
+        }
+        $rootMasvital = "$RepoRoot\out\masvital_gold.duckdb"
+        $apiMasvital = "$RepoRoot\motoshop-app\api\out\masvital_gold.duckdb"
+        if (Test-Path $rootMasvital) {
+            if (-not (Test-Path $apiMasvital) -or ((Get-Item $rootMasvital).LastWriteTimeUtc -gt (Get-Item $apiMasvital).LastWriteTimeUtc)) {
+                Copy-Item -Path $rootMasvital -Destination $apiMasvital -Force -ErrorAction SilentlyContinue
+                Log "INFO" "Sincronizado $rootMasvital -> $apiMasvital"
+            }
+        }
+
         # Start API
         Log "INFO" "Starting API via start_api.ps1..."
         Start-Process powershell -ArgumentList "-ExecutionPolicy", "Bypass", "-File", "$RepoRoot\infra\start_api.ps1" -WindowStyle Hidden

@@ -562,6 +562,7 @@ class _ConnectionSlot:
     active_readers: int = 0
     retired: bool = False
     closed: bool = False
+    mtime: float = 0.0
 
 
 # Current slot per logical database path. A stable proxy is returned to callers,
@@ -594,12 +595,29 @@ def _open_connection(physical_path: Path, logical_key: str) -> duckdb.DuckDBPyCo
 
 def _ensure_current_slot_locked(key: str) -> _ConnectionSlot:
     slot = _shared_connections.get(key)
+    physical_path = Path(key)
+    current_mtime = physical_path.stat().st_mtime if physical_path.exists() else 0.0
+
+    if slot is not None and getattr(slot, "mtime", 0.0) < current_mtime:
+        _retire_slot_locked(slot)
+        slot = None
+        try:
+            from motoshop_api.metrics.router import _metrics_cache
+            _metrics_cache.clear()
+        except Exception:
+            pass
+        logger.info(
+            "DuckDB file updated on disk for %s (mtime=%.0f) — refreshed connection and cleared metrics cache",
+            key,
+            current_mtime,
+        )
+
     if slot is None:
-        physical_path = Path(key)
         slot = _ConnectionSlot(
             logical_key=key,
             physical_path=physical_path,
             connection=_open_connection(physical_path, key),
+            mtime=current_mtime,
         )
         _shared_connections[key] = slot
     return slot
@@ -774,6 +792,7 @@ def publish_duckdb_snapshot(tmp_path: Path, db_path: Path) -> None:
             physical_path=version_path,
             connection=new_connection,
             delete_on_close=True,
+            mtime=db_path.stat().st_mtime if db_path.exists() else 0.0,
         )
         if old_slot is not None:
             _retire_slot_locked(old_slot)

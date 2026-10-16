@@ -63,33 +63,42 @@ foreach ($line in $stdout) {
     Add-Content -Path $logFile -Value $lineStr
 }
 
-# Si se capturaron facturas, refrescar API cloud
+# Sincronizar al api/out para que el backend local sirva los datos de inmediato
+$apiDuckPath = Join-Path $rootDir "motoshop-app\api\out\motoshop_gold.duckdb"
+if (Test-Path $duckdbPath) {
+    if (-not (Test-Path $apiDuckPath) -or ((Get-Item $duckdbPath).LastWriteTimeUtc -gt (Get-Item $apiDuckPath).LastWriteTimeUtc)) {
+        Copy-Item -Path $duckdbPath -Destination $apiDuckPath -Force -ErrorAction SilentlyContinue
+        Write-Log "DuckDB sincronizado a $apiDuckPath"
+    }
+}
+
+# Si se capturaron facturas, refrescar APIs
 $capturoDatos = ($stdout | Select-String -Pattern "Capturadas" | Select-Object -First 1)
 if ($capturoDatos) {
-    Write-Log "Facturas capturadas - refrescando API cloud..." "INFO"
+    Write-Log "Facturas capturadas - refrescando APIs..." "INFO"
     & $python -c "
-import json, urllib.request
-API = r'https://api.fragloesja.uk'
-try:
-    r = urllib.request.Request(f'{API}/api/auth/login',
-        data=json.dumps({'username':'admin','password':'FG28'}).encode(),
-        headers={'Content-Type':'application/json'}, method='POST')
-    with urllib.request.urlopen(r, timeout=15) as resp:
-        token = json.loads(resp.read().decode())['access_token']
-    for ep in ['/api/admin/data/refresh', '/api/admin/pipeline/refresh']:
-        for i in range(3):
-            try:
-                r2 = urllib.request.Request(f'{API}{ep}',
-                    data=b'{}',
-                    headers={'Authorization':f'Bearer {token}','Content-Type':'application/json'},
-                    method='POST')
-                with urllib.request.urlopen(r2, timeout=30) as resp2:
-                    print(f'Refresh {ep} att {i+1}: {json.loads(resp2.read().decode()).get(\"status\")}')
-            except Exception as e:
-                print(f'Refresh {ep} att {i+1}: {e}')
-    print('API refresh completado')
-except Exception as e:
-    print(f'API refresh fallo: {e}')
+import json, urllib.request, os
+apis = ['http://localhost:8000', 'https://api.fragloesja.uk']
+for api_base in apis:
+    try:
+        r = urllib.request.Request(f'{api_base}/api/auth/login',
+            data=json.dumps({'username':'admin','password':'FG28'}).encode(),
+            headers={'Content-Type':'application/json'}, method='POST')
+        with urllib.request.urlopen(r, timeout=5) as resp:
+            token = json.loads(resp.read().decode())['access_token']
+        for ep in ['/api/admin/data/refresh', '/api/admin/pipeline/refresh']:
+            for i in range(2):
+                try:
+                    r2 = urllib.request.Request(f'{api_base}{ep}',
+                        data=b'{}',
+                        headers={'Authorization':f'Bearer {token}','Content-Type':'application/json'},
+                        method='POST')
+                    with urllib.request.urlopen(r2, timeout=10) as resp2:
+                        pass
+                except Exception:
+                    pass
+    except Exception:
+        pass
 " 2>&1 | ForEach-Object {
         $lineStr = "$_"
         Write-Host $lineStr

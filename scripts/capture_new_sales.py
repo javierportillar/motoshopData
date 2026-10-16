@@ -386,6 +386,16 @@ def main() -> int:
 
         # ── 8. Upload gold + Refresh (solo si hay datos nuevos) ────────────
         if count > 0:
+            import shutil
+            for cand_dir in [Path("motoshop-app/api/out"), Path("../motoshop-app/api/out")]:
+                if cand_dir.exists():
+                    target_file = cand_dir / DB_PATH.name
+                    try:
+                        shutil.copy2(DB_PATH, target_file)
+                        logger.info("DuckDB copiado a %s", target_file)
+                    except Exception as e:
+                        logger.warning("No se pudo copiar a %s: %s", target_file, e)
+
             _upload_to_r2()    # sube gold + pipeline_runs (el último está ok)
             _refresh_api()
 

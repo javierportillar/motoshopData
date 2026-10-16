@@ -22,8 +22,7 @@ def _get_db_path(tenant: str = "motoshop") -> Path:
     from motoshop_api.metrics.repo_duckdb import _make_db_path
 
     safe_tenant = tenant if tenant in {"motoshop", "masvital"} else "motoshop"
-    db_path = settings.duckdb_path or str(_make_db_path(safe_tenant))
-    return Path(db_path)
+    return _make_db_path(safe_tenant)
 
 
 def _duckdb_freshness(tenant: str = "motoshop") -> dict:
