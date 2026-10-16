@@ -811,15 +811,39 @@ def _make_db_path(tenant: str) -> Path:
     """Construye la ruta al archivo DuckDB según tenant y entorno.
 
     En prod usa /tmp/{tenant}_gold.duckdb.
-    En dev (local) usa out/{tenant}_gold.duckdb.
-
-    NOTA (2026-06-15): se removio la lectura de DUCKDB_PATH env var. Estaba
-    causando que el override fijo a motoshop_gold.duckdb se aplicara a TODOS
-    los tenants, asi masvital leia el DuckDB equivocado. Si necesitas override
-    explicito por dev local, pasa db_path al constructor de DuckDBMetricsRepo.
+    En dev (local) busca en las ubicaciones candidatas (repo root out, api out, local windows)
+    y selecciona el archivo existente con el mtime más reciente.
     """
     if os.environ.get("ENV") == "prod":
         return Path(f"/tmp/{tenant}_gold.duckdb")
+
+    api_dir = Path(__file__).resolve().parent.parent.parent
+    repo_root = api_dir.parent.parent
+    parent_root = repo_root.parent
+
+    candidates = [
+        parent_root / "out" / f"{tenant}_gold.duckdb",
+        repo_root / "out" / f"{tenant}_gold.duckdb",
+        api_dir / "out" / f"{tenant}_gold.duckdb",
+        Path(f"C:/Users/MotoShop/Documents/javidevmoto/out/{tenant}_gold.duckdb"),
+        Path(f"C:/Users/MotoShop/Documents/javidevmoto/motoshopData/out/{tenant}_gold.duckdb"),
+        Path(f"C:/Users/MotoShop/Documents/javidevmoto/motoshop-app/api/out/{tenant}_gold.duckdb"),
+        Path(f"out/{tenant}_gold.duckdb"),
+    ]
+    seen = set()
+    existing: list[Path] = []
+    for c in candidates:
+        try:
+            resolved = c.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                if resolved.exists() and resolved.is_file() and resolved.stat().st_size > 0:
+                    existing.append(resolved)
+        except Exception:
+            pass
+
+    if existing:
+        return max(existing, key=lambda p: p.stat().st_mtime)
     return Path(f"out/{tenant}_gold.duckdb")
 
 

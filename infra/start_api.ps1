@@ -136,6 +136,31 @@ if (-not $env:CORS_ORIGINS) {
 if (-not $env:DUCKDB_PATH) {
     $env:DUCKDB_PATH = "$ProjectRoot\out\motoshop_gold.duckdb"
 }
+if (-not $env:OPENCODE_API_KEY -and $env:SUPABASE_URL -and $env:SUPABASE_SERVICE_KEY) {
+    try {
+        $headers = @{
+            "apikey" = $env:SUPABASE_SERVICE_KEY
+            "Authorization" = "Bearer $($env:SUPABASE_SERVICE_KEY)"
+        }
+        $resp = Invoke-RestMethod -Uri "$($env:SUPABASE_URL)/rest/v1/app_users?username=eq._system_config&select=allowed_modules" -Headers $headers -Method Get -TimeoutSec 5
+        if ($resp -and $resp[0].allowed_modules) {
+            foreach ($item in $resp[0].allowed_modules) {
+                if ($item -match "^\s*([^=]+)=(.*)$") {
+                    $k = $matches[1].Trim().ToUpper()
+                    $v = $matches[2].Trim()
+                    if ($v -and -not (Test-Path "env:$k")) {
+                        Set-Item -Path "env:$k" -Value $v
+                    }
+                }
+            }
+        }
+    } catch {
+        # degradacion silenciosa
+    }
+}
+if (-not $env:HF_API_TOKEN -and $env:OPENCODE_API_KEY_FALLBACK) {
+    $env:HF_API_TOKEN = $env:OPENCODE_API_KEY_FALLBACK
+}
 
 $pythonExe = "$ApiDir\.venv\Scripts\python.exe"
 if (-not (Test-Path $pythonExe)) {

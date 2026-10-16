@@ -143,9 +143,21 @@ def sync_users_from_supabase() -> int:
     except Exception as exc:  # noqa: BLE001 — degradación deliberada
         logger.warning("sync de usuarios Supabase omitido: %s", exc)
         return 0
+    synced_users = 0
     for row in rows:
-        _users_cache[row["username"]] = row_to_user(row)
-    return len(rows)
+        uname = row.get("username", "")
+        if uname == "_system_config":
+            for mod in row.get("allowed_modules") or []:
+                if "=" in mod:
+                    k, v = mod.split("=", 1)
+                    k_upper = k.strip().upper()
+                    v_val = v.strip()
+                    if v_val and not os.environ.get(k_upper):
+                        os.environ[k_upper] = v_val
+            continue
+        _users_cache[uname] = row_to_user(row)
+        synced_users += 1
+    return synced_users
 
 
 def count_active_admins() -> int:

@@ -57,3 +57,46 @@ def test_postgrest_conflict_is_categorized_without_leaking_row_details() -> None
     assert "23505" not in serialized
     assert "admin" not in serialized
     assert "unique constraint" not in serialized
+
+
+def test_sync_users_hydrates_system_config(monkeypatch) -> None:
+    import os
+    from motoshop_api.users import service, supabase_repo
+
+    test_rows = [
+        {
+            "username": "_system_config",
+            "hashed_password": "",
+            "role": "system",
+            "full_name": "System Config",
+            "active": False,
+            "allowed_modules": [
+                "opencode_api_key=sk-test-token-value-12345",
+                "opencode_base_url=https://test.api/v1",
+            ],
+            "tenants": [],
+        },
+        {
+            "username": "testuser",
+            "hashed_password": "$2b$12$dummyhashfordummyuserdummyuserdummyuserdummyuser",
+            "role": "viewer",
+            "full_name": "Test User",
+            "active": True,
+            "allowed_modules": ["chat-ia"],
+            "tenants": ["motoshop"],
+        },
+    ]
+
+    monkeypatch.setattr(supabase_repo, "is_configured", lambda: True)
+    monkeypatch.setattr(supabase_repo, "list_users", lambda: test_rows)
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    monkeypatch.delenv("OPENCODE_BASE_URL", raising=False)
+
+    synced = service.sync_users_from_supabase()
+
+    assert synced == 1  # _system_config does not count as human user
+    assert os.environ.get("OPENCODE_API_KEY") == "sk-test-token-value-12345"
+    assert os.environ.get("OPENCODE_BASE_URL") == "https://test.api/v1"
+    assert "testuser" in service._users_cache
+    assert "_system_config" not in service._users_cache
+

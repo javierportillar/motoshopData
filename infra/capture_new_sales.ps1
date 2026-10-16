@@ -81,8 +81,9 @@ import json, urllib.request, os
 apis = ['http://localhost:8000', 'https://api.fragloesja.uk']
 for api_base in apis:
     try:
+        admin_pass = os.environ.get('ADMIN_PASSWORD', 'MotoShop2026!')
         r = urllib.request.Request(f'{api_base}/api/auth/login',
-            data=json.dumps({'username':'admin','password':'FG28'}).encode(),
+            data=json.dumps({'username':'admin','password':admin_pass}).encode(),
             headers={'Content-Type':'application/json'}, method='POST')
         with urllib.request.urlopen(r, timeout=5) as resp:
             token = json.loads(resp.read().decode())['access_token']

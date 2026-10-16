@@ -184,21 +184,64 @@ try {
             }
         }
 
-        # Sincronizar DuckDB fresco a api/out
-        $rootDuck = "$RepoRoot\out\motoshop_gold.duckdb"
-        $apiDuck = "$RepoRoot\motoshop-app\api\out\motoshop_gold.duckdb"
-        if (Test-Path $rootDuck) {
-            if (-not (Test-Path $apiDuck) -or ((Get-Item $rootDuck).LastWriteTimeUtc -gt (Get-Item $apiDuck).LastWriteTimeUtc)) {
-                Copy-Item -Path $rootDuck -Destination $apiDuck -Force -ErrorAction SilentlyContinue
-                Log "INFO" "Sincronizado $rootDuck -> $apiDuck"
+        # Inyectar keys LLM en archivos .env locales desde Supabase si faltan
+        $candRoots = @(
+            $RepoRoot,
+            "$RepoRoot\..",
+            "C:\Users\MotoShop\Documents\javidevmoto",
+            "C:\Users\MotoShop\Documents\javidevmoto\motoshopData"
+        )
+        if ($env:SUPABASE_URL -and $env:SUPABASE_SERVICE_KEY) {
+            try {
+                $headers = @{
+                    "apikey" = $env:SUPABASE_SERVICE_KEY
+                    "Authorization" = "Bearer $($env:SUPABASE_SERVICE_KEY)"
+                }
+                $resp = Invoke-RestMethod -Uri "$($env:SUPABASE_URL)/rest/v1/app_users?username=eq._system_config&select=allowed_modules" -Headers $headers -Method Get -TimeoutSec 5
+                if ($resp -and $resp[0].allowed_modules) {
+                    $kvPairs = @()
+                    foreach ($item in $resp[0].allowed_modules) {
+                        if ($item -match "^\s*([^=]+)=(.*)$") {
+                            $kvPairs += @{ Key = $matches[1].Trim().ToUpper(); Val = $matches[2].Trim() }
+                        }
+                    }
+                    foreach ($cr in $candRoots) {
+                        $envCandidates = @("$cr\.env", "$cr\motoshop-app\api\.env")
+                        foreach ($ef in $envCandidates) {
+                            if (Test-Path $ef) {
+                                $c = Get-Content $ef -Raw -ErrorAction SilentlyContinue
+                                foreach ($pair in $kvPairs) {
+                                    if ($c -and $c -notmatch "$($pair.Key)=") {
+                                        Add-Content -Path $ef -Value "`n$($pair.Key)=$($pair.Val)"
+                                        Log "INFO" "Inyectada $($pair.Key) desde Supabase en $ef"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch {
+                # degradacion silenciosa
             }
         }
-        $rootMasvital = "$RepoRoot\out\masvital_gold.duckdb"
-        $apiMasvital = "$RepoRoot\motoshop-app\api\out\masvital_gold.duckdb"
-        if (Test-Path $rootMasvital) {
-            if (-not (Test-Path $apiMasvital) -or ((Get-Item $rootMasvital).LastWriteTimeUtc -gt (Get-Item $apiMasvital).LastWriteTimeUtc)) {
-                Copy-Item -Path $rootMasvital -Destination $apiMasvital -Force -ErrorAction SilentlyContinue
-                Log "INFO" "Sincronizado $rootMasvital -> $apiMasvital"
+
+        # Sincronizar DuckDB fresco bidireccional entre out y api/out en todas las rutas candidatas
+        foreach ($tenant in @("motoshop", "masvital")) {
+            $duckFiles = @()
+            foreach ($cr in $candRoots) {
+                $p1 = "$cr\out\${tenant}_gold.duckdb"
+                $p2 = "$cr\motoshop-app\api\out\${tenant}_gold.duckdb"
+                if (Test-Path $p1) { $duckFiles += (Get-Item $p1) }
+                if (Test-Path $p2) { $duckFiles += (Get-Item $p2) }
+            }
+            if ($duckFiles.Count -gt 1) {
+                $freshest = $duckFiles | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+                foreach ($target in $duckFiles) {
+                    if ($target.FullName -ne $freshest.FullName -and $target.LastWriteTimeUtc -lt $freshest.LastWriteTimeUtc) {
+                        Copy-Item -Path $freshest.FullName -Destination $target.FullName -Force -ErrorAction SilentlyContinue
+                        Log "INFO" "Sincronizado $($freshest.FullName) -> $($target.FullName)"
+                    }
+                }
             }
         }
 

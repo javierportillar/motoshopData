@@ -82,6 +82,21 @@ class LLMClient:
 
         if not go_key or not zen_key:
             _sync_env_to_os_environ()
+            try:
+                from motoshop_api.users import supabase_repo
+                if supabase_repo.is_configured():
+                    cfg = supabase_repo.get_user("_system_config")
+                    if cfg and cfg.get("allowed_modules"):
+                        for item in cfg.get("allowed_modules", []):
+                            if "=" in item:
+                                k, v = item.split("=", 1)
+                                k_clean = k.strip().upper()
+                                v_clean = v.strip()
+                                if v_clean and not os.environ.get(k_clean):
+                                    os.environ[k_clean] = v_clean
+            except Exception as exc:
+                logger.debug("llm_supabase_hydration_skipped: %s", exc)
+
             go_key = (
                 go_key
                 or os.environ.get("OPENCODE_API_KEY")
