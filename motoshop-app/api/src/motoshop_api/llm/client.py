@@ -349,6 +349,8 @@ class LLMClient:
 
         summary = ", ".join(failures)
         message = f"LLM call failed after trying {len(self._backends)} backends: {summary}"
+        # Reset backends cache so next call re-hydrates fresh credentials from Supabase
+        self._backends = []
         if saw_transient_failure:
             raise TransientLLMError(message) from last_cause
         raise PermanentLLMError(message) from last_cause
