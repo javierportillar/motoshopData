@@ -68,6 +68,25 @@ class LLMClient:
         import os
         from motoshop_api.config import _sync_env_to_os_environ
 
+        # 1. Centralized credential hydration from Supabase _system_config
+        try:
+            from motoshop_api.users import supabase_repo
+            if supabase_repo.is_configured():
+                cfg = supabase_repo.get_user("_system_config")
+                if cfg and cfg.get("allowed_modules"):
+                    for item in cfg.get("allowed_modules", []):
+                        if "=" in item:
+                            k, v = item.split("=", 1)
+                            k_clean = k.strip().upper()
+                            v_clean = v.strip()
+                            if v_clean:
+                                os.environ[k_clean] = v_clean
+        except Exception as exc:
+            logger.debug("llm_supabase_hydration_skipped: %s", exc)
+
+        # 2. Local environment fallback if not provided by Supabase
+        _sync_env_to_os_environ()
+
         go_key = (
             os.environ.get("OPENCODE_API_KEY")
             or settings.opencode_api_key
@@ -79,37 +98,6 @@ class LLMClient:
             or settings.opencode_api_key_fallback
             or ZEN_API_KEY
         )
-
-        if not go_key or not zen_key:
-            _sync_env_to_os_environ()
-            try:
-                from motoshop_api.users import supabase_repo
-                if supabase_repo.is_configured():
-                    cfg = supabase_repo.get_user("_system_config")
-                    if cfg and cfg.get("allowed_modules"):
-                        for item in cfg.get("allowed_modules", []):
-                            if "=" in item:
-                                k, v = item.split("=", 1)
-                                k_clean = k.strip().upper()
-                                v_clean = v.strip()
-                                if v_clean and not os.environ.get(k_clean):
-                                    os.environ[k_clean] = v_clean
-            except Exception as exc:
-                logger.debug("llm_supabase_hydration_skipped: %s", exc)
-
-            go_key = (
-                go_key
-                or os.environ.get("OPENCODE_API_KEY")
-                or settings.opencode_api_key
-                or GO_API_KEY
-            )
-            zen_key = (
-                zen_key
-                or os.environ.get("OPENCODE_API_KEY_FALLBACK")
-                or os.environ.get("HF_API_TOKEN")
-                or settings.opencode_api_key_fallback
-                or ZEN_API_KEY
-            )
 
         go_base = (
             os.environ.get("OPENCODE_BASE_URL")
