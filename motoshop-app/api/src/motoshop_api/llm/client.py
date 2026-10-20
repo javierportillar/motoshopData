@@ -297,10 +297,15 @@ class LLMClient:
                     continue
 
                 if not text and not tool_calls:
+                    finish_reason = choice.get("finish_reason")
+                    token_details = usage.get("completion_tokens_details") or {}
                     logger.warning(
-                        "LLM empty completion from %s/%s",
+                        "LLM empty completion from %s/%s finish_reason=%s tokens_out=%d reasoning_tokens=%s",
                         backend["name"],
                         backend["model"],
+                        finish_reason,
+                        usage.get("completion_tokens", 0),
+                        token_details.get("reasoning_tokens"),
                     )
                     failures.append(f"{backend['name']}:empty_completion")
                     continue

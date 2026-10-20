@@ -12,6 +12,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from motoshop_api.auth.tenant_dep import TenantContext
+from motoshop_api.config import settings
 from motoshop_api.llm.catalog_queries import parse_catalog_list_request
 from motoshop_api.llm.client import (
     LLM_REQUEST_DEADLINE_SECONDS,
@@ -427,6 +428,83 @@ Reglas:
 - Agrupación por proveedor: Si el usuario pide agrupar o segmentar productos sin stock o de reposición por cada proveedor ("de todos mis proveedores", "por cada proveedor", "los 5 más urgentes"), organizalos por proveedor en una tabla Markdown concisa o secciones claras (hasta 5 productos por proveedor) para mantener la respuesta completa, legible y sin cortes.
 - Los valores monetarios se expresan en {agent.currency}.
 """
+
+
+def compact_assistant_history_content(content: str, is_latest: bool = True) -> str:
+    """Compact very large assistant history messages to prevent context saturation.
+
+    Preserves all semantic entities (SKUs, product names, suppliers, NITs, summaries)
+    while removing repetitive metric boilerplate from large dumps.
+    """
+    if not content or len(content) <= 1500:
+        return content
+
+    lines = content.splitlines()
+    header_lines: list[str] = []
+    item_lines: list[str] = []
+    footer_lines: list[str] = []
+    in_items = False
+
+    for line in lines:
+        stripped = line.strip()
+        if re.search(r"\bSKU\b", stripped, re.IGNORECASE):
+            m_sku = re.match(
+                r"^[-*•\d.]*\s*SKU\s+([A-Za-z0-9_-]+)\s*[·\-:]\s*([^:;]+)",
+                stripped,
+                re.IGNORECASE,
+            )
+            if m_sku:
+                in_items = True
+                sku = m_sku.group(1).strip()
+                name = m_sku.group(2).strip()
+                name = re.sub(r"\s*\(?\bproveedor.*$", "", name, flags=re.IGNORECASE).strip()
+                compact_line = f"- SKU {sku} · {name}"
+
+                m_prov = re.search(r"\bproveedor:\s*([^;\n]+)", stripped, re.IGNORECASE)
+                if m_prov:
+                    prov_raw = m_prov.group(1).strip().rstrip(".\n ")
+                    if prov_raw.endswith(")") and prov_raw.count(")") > prov_raw.count("("):
+                        prov_raw = prov_raw[:-1].strip()
+                    compact_line += f" (proveedor: {prov_raw})"
+                item_lines.append(compact_line)
+            else:
+                if in_items:
+                    item_lines.append(stripped[:120])
+                else:
+                    header_lines.append(line)
+        elif in_items and (
+            not stripped
+            or stripped.startswith("La cantidad")
+            or stripped.startswith("Nota")
+            or stripped.startswith("*")
+        ):
+            footer_lines.append(line)
+        elif not in_items:
+            header_lines.append(line)
+        else:
+            footer_lines.append(line)
+
+    if not item_lines:
+        if is_latest:
+            if len(content) > 3300:
+                return content[:2500] + "\n\n... [contenido intermedio compactado] ...\n\n" + content[-800:]
+            return content
+        if len(content) > 1200:
+            return content[:800] + "\n\n... [detalle histórico compactado] ...\n\n" + content[-400:]
+        return content
+
+    if not is_latest and len(item_lines) > 10:
+        item_lines = item_lines[:10] + [f"... y {len(item_lines) - 10} productos más listados en este turno ..."]
+
+    parts = []
+    if header_lines:
+        parts.append("\n".join(header_lines).strip())
+    if item_lines:
+        parts.append("\n".join(item_lines).strip())
+    if footer_lines:
+        parts.append("\n".join(footer_lines).strip())
+
+    return "\n\n".join(p for p in parts if p)
 
 
 class ConversationManager:
@@ -1311,13 +1389,23 @@ class QAChat:
                 sales_cutoff=sales_cutoff,
             ),
         }]
-        messages.extend(
-            {"role": row["role"], "content": row["content"]}
-            for row in history[-30:]
-            if row.get("role") in ("user", "assistant")
-        )
-        if not history and session["messages"]:
-            messages.extend(session["messages"][-30:])
+        history_source = history[-30:] if history else (session.get("messages", [])[-30:])
+        assistant_indices = [
+            i for i, row in enumerate(history_source) if row.get("role") == "assistant"
+        ]
+        latest_assistant_idx = assistant_indices[-1] if assistant_indices else -1
+
+        for idx, row in enumerate(history_source):
+            role = row.get("role")
+            if role == "user":
+                messages.append({"role": "user", "content": row["content"]})
+            elif role == "assistant":
+                content = str(row.get("content") or "")
+                is_latest = (idx == latest_assistant_idx)
+                messages.append({
+                    "role": "assistant",
+                    "content": compact_assistant_history_content(content, is_latest=is_latest),
+                })
         messages.append({"role": "user", "content": message})
 
         tool_calls_used: list[str] = []
@@ -1333,7 +1421,7 @@ class QAChat:
         deterministic_fallback_text = ""
         result: dict = {}
         provider_failure: LLMDependencyError | None = None
-        llm_kwargs: dict = {"max_tokens": 3000}
+        llm_kwargs: dict = {"max_tokens": settings.go_max_tokens or 8000}
         with suppress(Exception):
             import inspect
             sig = inspect.signature(self.llm.complete_with_tools)
