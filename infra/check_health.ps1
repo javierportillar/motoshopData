@@ -88,14 +88,16 @@ try {
         $issues += "Túnel respondió con status $($resp.StatusCode)"
     }
 } catch {
-    Write-Log "  Túnel: CAIDO ($tunnelUrl) - Intentando recuperar servicio..."
-    $cfService = Get-Service -Name "cloudflared" -ErrorAction SilentlyContinue
-    if ($cfService) {
+    Write-Log "  Túnel: CAIDO ($tunnelUrl) - Recuperando via task MotoShopTunnelSvc..."
+    $cfTask = Get-ScheduledTask -TaskName "MotoShopTunnelSvc" -ErrorAction SilentlyContinue
+    if ($cfTask) {
         try {
-            Restart-Service cloudflared -Force -ErrorAction Stop
-            Write-Log "  Servicio cloudflared reiniciado vía Restart-Service."
+            Stop-ScheduledTask -TaskName "MotoShopTunnelSvc" -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+            Start-ScheduledTask -TaskName "MotoShopTunnelSvc" -ErrorAction Stop
+            Write-Log "  Task MotoShopTunnelSvc reiniciada."
         } catch {
-            Write-Log "  Restart-Service cloudflared falló: $($_.Exception.Message)"
+            Write-Log "  Reinicio de task fallo: $($_.Exception.Message)"
             & "$ProjectRoot\infra\start_tunnel.ps1"
         }
     } else {

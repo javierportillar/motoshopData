@@ -290,11 +290,18 @@ try {
             throw "Status code $($cfResp.StatusCode)"
         }
     } catch {
-        Log "WARN" "Túnel Cloudflare no responde ($($_)). Intentando recuperar servicio..."
-        $cfService = Get-Service -Name "cloudflared" -ErrorAction SilentlyContinue
-        if ($cfService) {
-            Restart-Service cloudflared -Force -ErrorAction SilentlyContinue
-            Log "INFO" "Servicio cloudflared reiniciado."
+        Log "WARN" "Túnel Cloudflare no responde ($($_)). Recuperando via task MotoShopTunnelSvc..."
+        $cfTask = Get-ScheduledTask -TaskName "MotoShopTunnelSvc" -ErrorAction SilentlyContinue
+        if ($cfTask) {
+            try {
+                Stop-ScheduledTask -TaskName "MotoShopTunnelSvc" -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 2
+                Start-ScheduledTask -TaskName "MotoShopTunnelSvc" -ErrorAction Stop
+                Log "INFO" "Task MotoShopTunnelSvc reiniciada."
+            } catch {
+                Log "WARN" "Reinicio de task fallo: $($_.Exception.Message)"
+                & "$RepoRoot\infra\start_tunnel.ps1"
+            }
         } else {
             & "$RepoRoot\infra\start_tunnel.ps1"
         }

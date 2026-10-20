@@ -1,107 +1,77 @@
-# start_tunnel.ps1 — Arranca cloudflared con verificación de errores
+# start_tunnel.ps1 — Asegura el túnel Cloudflare (motoshop-local)
+# El túnel corre como scheduled task SYSTEM "MotoShopTunnelSvc"; este script
+# verifica salud y, si hace falta, reinicia la task (preferido) o arranca
+# cloudflared directo con config.yml (fallback).
 $ErrorActionPreference = "Continue"
-$ProjectRoot = "C:\Users\MotoShop\Documents\javidevmoto"
+
+# Raíz del proyecto (detección dinámica y robusta)
+$candidateRoots = @(
+    (Resolve-Path "$PSScriptRoot\..").Path,
+    "C:\Users\MotoShop\Documents\javidevmoto\motoshopData",
+    "C:\Users\MotoShop\Documents\javidevmoto"
+)
+$ProjectRoot = $null
+foreach ($cand in $candidateRoots) {
+    if (Test-Path "$cand\motoshop-app\api") { $ProjectRoot = $cand; break }
+}
+if (-not $ProjectRoot) { $ProjectRoot = (Resolve-Path "$PSScriptRoot\..").Path }
 $LogDir = "$ProjectRoot\logs"
+
 $Cloudflared = "C:\Users\MotoShop\AppData\Local\Microsoft\WinGet\Links\cloudflared.exe"
-$TunnelId = "38e6118f-4d8e-43cb-8990-fa7e71039c12"
-$TunnelUrl = if ($env:TUNNEL_URL) { $env:TUNNEL_URL } else { "https://motoshop-local.fragloesja.uk" }
+$TunnelId    = "91f4b0e5-0a78-4789-9185-2f4d2a7c1098"
+$ConfigFile  = "C:\Users\MotoShop\.cloudflared\config.yml"
+$TaskName    = "MotoShopTunnelSvc"
+$TunnelUrl   = if ($env:TUNNEL_URL) { $env:TUNNEL_URL } else { "https://motoshop-local.fragloesja.uk" }
 
 if (!(Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
 $LogFile = "$LogDir\tunnel_start_$(Get-Date -Format 'yyyy-MM-dd_HHmm').log"
 
 function Write-Log($msg) {
     $entry = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $msg"
-    Write-Host $entry
     Add-Content -Path $LogFile -Value $entry -Encoding utf8
+}
+
+function Test-Tunnel {
+    try {
+        $resp = Invoke-WebRequest -Uri "$TunnelUrl/health" -TimeoutSec 10 -UseBasicParsing
+        return ($resp.StatusCode -eq 200)
+    } catch { return $false }
 }
 
 Write-Log "=== INICIO VERIFICACION TUNNEL ==="
 Write-Log "TunnelUrl: $TunnelUrl"
 
-# 0. Si el túnel está configurado como servicio de Windows, preferir gestión del servicio
-$cfService = Get-Service -Name "cloudflared" -ErrorAction SilentlyContinue
-if ($cfService) {
-    Write-Log "Servicio Windows cloudflared detectado (Estado: $($cfService.Status))"
-    if ($cfService.Status -ne "Running") {
-        Write-Log "Iniciando servicio Windows cloudflared..."
-        Start-Service cloudflared -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 5
+# 0. Si ya responde, no tocar nada
+if (Test-Tunnel) {
+    Write-Log "Túnel: OK ($TunnelUrl/health)"
+    Write-Log "=== FIN ==="
+    exit 0
+}
+
+# 1. Preferido: reiniciar la scheduled task SYSTEM que realmente corre el túnel
+$task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+if ($task) {
+    Write-Log "Task '$TaskName' detectada (Estado: $($task.State)). Reiniciando..."
+    try { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue } catch {}
+    Start-Sleep -Seconds 2
+    try { Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop } catch { Write-Log "WARN: Start-ScheduledTask fallo: $($_.Exception.Message)" }
+    for ($i = 1; $i -le 12; $i++) {
+        Start-Sleep -Seconds 3
+        if (Test-Tunnel) { Write-Log "Túnel: OK via task (intento $i)"; Write-Log "=== FIN ==="; exit 0 }
     }
-    try {
-        $resp = Invoke-WebRequest -Uri "$TunnelUrl/health" -TimeoutSec 10 -UseBasicParsing
-        if ($resp.StatusCode -eq 200) {
-            Write-Log "Túnel vía servicio: OK ($TunnelUrl/health → $($resp.StatusCode))"
-            Write-Log "=== FIN ==="
-            exit 0
-        }
-    } catch {
-        Write-Log "WARN: Servicio cloudflared corriendo pero túnel no responde. Reiniciando servicio..."
-        Restart-Service cloudflared -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 5
-        try {
-            $resp2 = Invoke-WebRequest -Uri "$TunnelUrl/health" -TimeoutSec 10 -UseBasicParsing
-            if ($resp2.StatusCode -eq 200) {
-                Write-Log "Túnel vía servicio: REINICIADO OK ($TunnelUrl/health → $($resp2.StatusCode))"
-                Write-Log "=== FIN ==="
-                exit 0
-            }
-        } catch {}
-    }
+    Write-Log "WARN: task reiniciada pero el túnel no responde; probando fallback"
 }
 
-# 1. Verificar si ya está corriendo (proceso independiente)
-$running = Get-Process cloudflared -ErrorAction SilentlyContinue
-if ($running) {
-    Write-Log "Túnel ya está corriendo (PID: $($running.Id))"
-    # Verificar que conecta
-    try {
-        $resp = Invoke-WebRequest -Uri "$TunnelUrl/health" -TimeoutSec 10 -UseBasicParsing
-        if ($resp.StatusCode -eq 200) {
-            Write-Log "Túnel: OK ($TunnelUrl/health → $($resp.StatusCode))"
-            Write-Log "=== FIN ==="
-            exit 0
-        }
-    } catch {
-        Write-Log "WARN: Túnel proceso activo pero no conecta - reiniciando..."
-        Stop-Process -Name cloudflared -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 2
-    }
+# 2. Fallback: arrancar cloudflared directo con config.yml
+if (!(Test-Path $Cloudflared)) { Write-Log "ERROR: cloudflared.exe no encontrado en $Cloudflared"; exit 1 }
+if (!(Test-Path $ConfigFile))  { Write-Log "ERROR: config.yml no encontrado en $ConfigFile"; exit 1 }
+Write-Log "Arrancando cloudflared (config: $ConfigFile, tunnel: $TunnelId)..."
+Start-Process -FilePath $Cloudflared `
+    -ArgumentList "tunnel","--config","$ConfigFile","run","$TunnelId" `
+    -WindowStyle Hidden
+for ($i = 1; $i -le 12; $i++) {
+    Start-Sleep -Seconds 3
+    if (Test-Tunnel) { Write-Log "Túnel: OK (intento $i)"; Write-Log "=== FIN ==="; exit 0 }
 }
-
-# 2. Verificar que el ejecutable existe
-if (!(Test-Path $Cloudflared)) {
-    Write-Log "ERROR: cloudflared.exe no encontrado en $Cloudflared"
-    Write-Log "Solución: Instalar cloudflared con: winget install cloudflare.cloudflared"
-    exit 1
-}
-
-# 3. Verificar archivo de credenciales
-$credFile = "C:\Users\MotoShop\.cloudflared\$TunnelId.json"
-if (!(Test-Path $credFile)) {
-    Write-Log "ERROR: Archivo de credenciales no encontrado en $credFile"
-    Write-Log "Solución: Ejecutar: cloudflared tunnel login"
-    exit 1
-}
-
-# 4. Arrancar cloudflared
-Write-Log "Arrancando túnel $TunnelId..."
-$proc = Start-Process -FilePath $Cloudflared `
-    -ArgumentList "tunnel","run","$TunnelId" `
-    -WindowStyle Hidden -PassThru
-
-Start-Sleep -Seconds 10
-
-# 5. Verificar que conecta
-try {
-    $resp = Invoke-WebRequest -Uri "$TunnelUrl/health" -TimeoutSec 10 -UseBasicParsing
-    if ($resp.StatusCode -eq 200) {
-        Write-Log "Túnel: OK ($TunnelUrl/health → $($resp.StatusCode))"
-        Write-Log "=== FIN ==="
-        exit 0
-    }
-} catch {
-    Write-Log "ERROR: Túnel no conecta después de 10s"
-    Write-Log "Causa: cloudflared puede haber fallado al conectar"
-    Write-Log "Solución: Verificar que el túnel está configurado con: cloudflared tunnel list"
-    exit 1
-}
+Write-Log "ERROR: Túnel no conecta"
+exit 1
