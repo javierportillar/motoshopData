@@ -559,6 +559,12 @@ def test_product_catalog_search(client: TestClient):
     assert res_all.status_code == 200
     assert len(res_all.json()) >= 10
 
+    # Also test /api/pos/products endpoint used by the POS workstation UI
+    res_pos = client.get("/api/pos/products?q=Castrol")
+    assert res_pos.status_code == 200
+    assert any(p["sku"] == "CAS-ACT-20W50" for p in res_pos.json())
+
+
 
 # ─── 7. Sales Query and Detail Endpoints ─────────────
 

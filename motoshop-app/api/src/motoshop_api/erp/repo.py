@@ -561,20 +561,125 @@ class ERPRepository:
         limit: int = 50,
     ) -> list[ProductSearchResult]:
         """Searches products by barcode, SKU, name, or category within tenant."""
-        clean_q = q.strip().lower()
+        from motoshop_api.config import settings
+
+        clean_q = q.strip()
+
+        # 1. Hermetic test environment: use in-memory twin
+        if getattr(settings, "env", "") == "test":
+            clean_lower = clean_q.lower()
+            with self._lock:
+                items = list(self._ensure_tenant_products(tenant_id).values())
+
+            if not clean_lower:
+                return items[:limit]
+
+            matched: list[ProductSearchResult] = []
+            for p in items:
+                if (
+                    clean_lower in p.name.lower()
+                    or clean_lower in p.sku.lower()
+                    or (p.barcode and clean_lower in p.barcode.lower())
+                    or (p.category and clean_lower in p.category.lower())
+                ):
+                    matched.append(p)
+                    if len(matched) >= limit:
+                        break
+
+            return matched
+
+        # 2. Production / Dev live database query (MySQL first if connected)
+        try:
+            from sqlalchemy import text
+            from motoshop_api.db.engine import get_engine
+
+            with get_engine().connect() as conn:
+                like_param = f"%{clean_q}%"
+                rows = conn.execute(
+                    text(
+                        "SELECT codprod, nomprod, codbar, codmed, codlin1, "
+                        "COALESCE(pvsini, pvconi, 0) as price, "
+                        "COALESCE(exiprod, 0) as stock, "
+                        "COALESCE(impinvi, 19.0) as tax_rate "
+                        "FROM productos "
+                        "WHERE (:q = '' OR nomprod LIKE :like_q OR codprod LIKE :like_q OR codbar LIKE :like_q) "
+                        "ORDER BY nomprod LIMIT :limit"
+                    ),
+                    {"q": clean_q, "like_q": like_param, "limit": limit},
+                ).fetchall()
+                if rows:
+                    return [
+                        ProductSearchResult(
+                            sku=str(r._mapping["codprod"] or "").strip(),
+                            name=str(r._mapping["nomprod"] or "").strip(),
+                            price=Decimal(str(r._mapping["price"] or 0)),
+                            stock=Decimal(str(r._mapping["stock"] or 0)),
+                            tax_rate=Decimal(str(r._mapping["tax_rate"] or 19)),
+                            category=str(r._mapping["codlin1"] or "GENERAL").strip(),
+                            barcode=str(r._mapping["codbar"] or r._mapping["codprod"] or "").strip(),
+                        )
+                        for r in rows
+                    ]
+        except Exception:
+            pass
+
+        # 3. DuckDB query (fast analytical snapshot for Cloud/Render and offline servers)
+        try:
+            import duckdb
+            from motoshop_api.metrics.repo_duckdb import _make_db_path
+
+            db_path = _make_db_path(tenant_id)
+            if db_path.exists():
+                con = duckdb.connect(str(db_path), read_only=True)
+                like_param = f"%{clean_q}%"
+                rows = con.execute(
+                    """
+                    SELECT 
+                        cod_producto as sku, 
+                        nombre_producto as name, 
+                        codigo_barras as barcode, 
+                        ROUND(COALESCE(precio_venta_con_iva, precio_venta_sin_iva, 0), 2) as price, 
+                        ROUND(COALESCE(existencia, 0), 2) as stock, 
+                        COALESCE(cod_linea1, 'GENERAL') as category
+                    FROM silver_dim_producto 
+                    WHERE (? = '' OR nombre_producto ILIKE ? OR cod_producto ILIKE ? OR codigo_barras ILIKE ?)
+                    ORDER BY existencia DESC, nombre_producto ASC
+                    LIMIT ?
+                    """,
+                    [clean_q, like_param, like_param, like_param, limit],
+                ).fetchall()
+                con.close()
+                if rows:
+                    return [
+                        ProductSearchResult(
+                            sku=str(r[0] or "").strip(),
+                            name=str(r[1] or "").strip(),
+                            barcode=str(r[2] or r[0] or "").strip(),
+                            price=Decimal(str(r[3] or 0)),
+                            stock=Decimal(str(r[4] or 0)),
+                            tax_rate=Decimal("19.00") if tenant_id == "motoshop" else Decimal("0.00"),
+                            category=str(r[5] or "GENERAL").strip(),
+                        )
+                        for r in rows
+                    ]
+        except Exception as e:
+            logger.warning(f"DuckDB product search fallback failed for {tenant_id}: {e}")
+
+        # 4. Fallback in-memory catalog
+        clean_lower = clean_q.lower()
         with self._lock:
             items = list(self._ensure_tenant_products(tenant_id).values())
 
-        if not clean_q:
+        if not clean_lower:
             return items[:limit]
 
-        matched: list[ProductSearchResult] = []
+        matched = []
         for p in items:
             if (
-                clean_q in p.name.lower()
-                or clean_q in p.sku.lower()
-                or (p.barcode and clean_q in p.barcode.lower())
-                or (p.category and clean_q in p.category.lower())
+                clean_lower in p.name.lower()
+                or clean_lower in p.sku.lower()
+                or (p.barcode and clean_lower in p.barcode.lower())
+                or (p.category and clean_lower in p.category.lower())
             ):
                 matched.append(p)
                 if len(matched) >= limit:

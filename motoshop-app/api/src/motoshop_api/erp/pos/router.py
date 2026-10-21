@@ -31,13 +31,15 @@ import re
 from decimal import Decimal
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from motoshop_api.auth.deps import get_current_user
 from motoshop_api.auth.users import User
 from motoshop_api.erp.engine import ErpSaveFailed
 from motoshop_api.erp.guards import PeriodLockedError, require_erp_tenant
+from motoshop_api.erp.models import ProductSearchResult
+from motoshop_api.erp.repo import ERPRepository, get_erp_repo
 from motoshop_api.erp.invoicing.repo import (
     FakeInvoicesRepo,
     RealInvoicesRepo,
@@ -281,3 +283,16 @@ def create_pos_sale(
         "totals": response["totals"],
         "documentNumber": f"{response['prefven']}{response['numfven']}",
     }
+
+
+@router.get("/products", response_model=list[ProductSearchResult])
+async def list_pos_products(
+    q: Annotated[str, Query()] = "",
+    limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+    tenant: Tenant = Depends(require_erp_tenant),
+    user: User = Depends(get_current_user),
+    repo: ERPRepository = Depends(get_erp_repo),
+) -> list[ProductSearchResult]:
+    """Search products for the Web POS counter in active tenant."""
+    return repo.search_products(tenant_id=tenant.id, q=q, limit=limit)
+

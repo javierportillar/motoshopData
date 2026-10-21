@@ -260,6 +260,7 @@ ROUTE_MODULE_EXCEPTIONS: Mapping[RouteKey, str] = {
     ("POST", "/api/erp/pos/sessions/{id}/movements"): "pos cashier session cash movement",
     ("GET", "/api/erp/catalog/products/search"): "pos product catalog search",
     ("GET", "/api/erp/pos/products"): "pos product catalog search alias",
+    ("GET", "/api/pos/products"): "pos product catalog search alias",
     # DIAN electronic invoicing core (handles user authentication & tenant isolation internally)
     ("GET", "/api/erp/dian/status"): "dian electronic invoicing status list",
     ("GET", "/api/erp/dian/document/{sale_id}"): "dian electronic document query",
