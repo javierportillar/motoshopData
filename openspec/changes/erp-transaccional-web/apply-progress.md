@@ -269,3 +269,44 @@ Windows. The checksum now normalizes CRLF → LF before hashing.
   stub adapter (the legacy behaviour). See docs/hermes/ONBOARDING_DIAN.md.
 - The legacy `provetecno` / `formapago.codfele` / `contadores.envfele`
   configuration must be completed in `sgHermes` once the account is live.
+
+## Integración POS → motor transaccional (cierre de la suite web)
+
+| Item | Status | Commit(s) | Evidence |
+|---|---|---|---|
+| `POST /api/pos/sales` (la ruta que YA usaba la pantalla POS) | done | `6128f8c` | test_erp_pos_adapter.py (6) |
+| Mapeo del payload POS → contrato de factura | done | `6128f8c` | `candet`/`valuni`/`dctpes`/`ivapes`/`ipopes` (los nombres legacy ya los usa el carrito) |
+| Formas de pago legacy | done | `6128f8c` | EFECTIVO→F01, DATAFONO→F03, TRANSFERENCIA→F07, CREDITO→F10 |
+| Vendedor = la empresa (`terceros.emppro='SI'`) | done | `6128f8c` | antes se consultaba `venfven`, tabla que NO existe en el legacy |
+| Nombre del cliente en la cabecera (`clifven`) | done | `6128f8c` | paridad legacy de la factura |
+| Matriz de módulos: `("POST", "/api/pos/sales")` | done | `6128f8c` | sin la entrada el guard devolvía 500 |
+| Idempotency-Key en ambos headers (`Idempotency-Key` y `X-Idempotency-Key`) | done | `6128f8c` | el POS usa el segundo |
+
+### El hueco que esto cerró
+
+La pantalla POS hacía `POST /api/pos/sales` y **esa ruta no existía** en el
+backend: cada venta caía en la cola "offline" sin avisar y **nunca llegaba
+al ledger legacy**. Además el endpoint legacy `/api/erp/pos/sales` (el que
+sí existía) escribía en DuckDB analítico, no en `facventas`/`contadores`.
+Ahora la venta del POS:
+
+    → POST /api/pos/sales → motor transaccional → facventas + detfventas
+      + detapago + contadores (LOCK TABLES) + app_doc_journal + stock
+
+y el dashboard lo sigue viendo sin cambios, porque el ETL lee las tablas
+legacy (una sola contabilidad, dos readerships).
+
+### Verificación
+
+- ERP suite: **248 passed** (incluye la suite de concurrencia contra el
+  MySQL 5.0.45 real).
+- Suite completa del backend: **916 passed**, 13 fallos + 11 errores
+  preexistentes (duckdb / pipeline / snapshot), ninguno en ERP.
+- La ruta vive en la app: `POST /api/pos/sales` montado y en la matriz.
+
+### Requisito de despliegue (no es código)
+
+La escritura transaccional necesita la API **on-prem** (la que sí alcanza
+el MySQL del PC): `NEXT_PUBLIC_API_URL=http://localhost:8000` en el
+frontend (`.env.local`) o el túnel. Render (`api.fragloesja.uk`) sirve
+la analítica, pero NO puede escribir: MySQL vive en el PC.
