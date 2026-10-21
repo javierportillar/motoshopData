@@ -30,6 +30,7 @@ from typing import Any, Protocol
 from motoshop_api.erp.cash.schemas import (
     ArqueoCreate,
     CashMovementCreate,
+    ConsignmentCreate,
     EgressCreate,
     ReceiptCreate,
 )
@@ -199,6 +200,9 @@ class _CashDocumentRepo:
         actor: str,
         request_id: str,
         idempotency_key: str | None,
+        pref: str | None = None,
+        reserve=None,
+        release=None,
     ) -> dict:
         if idempotency_key:
             stored = self.idempotency.get(idempotency_key)
@@ -207,7 +211,8 @@ class _CashDocumentRepo:
 
         computed = validate()
 
-        pref = self.numbering.resolve_prefix(codcon)
+        if pref is None:
+            pref = self.numbering.resolve_prefix(codcon)
         entry = self.journal.open_pending(
             codclas=codcon,
             pref=pref,
@@ -221,13 +226,16 @@ class _CashDocumentRepo:
         entry_id = entry.id or 0
 
         try:
-            number = self.numbering.reserve(
-                codcon=codcon,
-                pref=pref,
-                doc_table=doc_table,
-                num_field=num_field,
-                prefix_column=prefix_column,
-            )
+            if reserve is None:
+                number = self.numbering.reserve(
+                    codcon=codcon,
+                    pref=pref,
+                    doc_table=doc_table,
+                    num_field=num_field,
+                    prefix_column=prefix_column,
+                )
+            else:
+                number = reserve()
         except Exception as exc:
             self.journal.mark_failed(entry_id, str(exc))
             raise
@@ -240,6 +248,8 @@ class _CashDocumentRepo:
         except Exception as exc:
             for table, row in reversed(written):
                 self.store.discard(table, row)
+            if release is not None:
+                release(number)
             self.journal.mark_failed(entry_id, str(exc))
             raise ErpSaveFailed(
                 f"El documento no pudo guardarse: {exc}",
@@ -888,6 +898,10 @@ ARQUEO_CODCON = "S38"
 ARQUEO_DOC_TYPE = "arqueo_caja"
 #: `detcajarq.tiparq` classes (1=billetes, 2=monedas, 3=otros).
 ARQUEO_CLASSES = (1, 2, 3)
+#: Legacy table holding the bank consignment.
+CONSBANCAB_TABLE = "consbancab"
+#: Journal/audit document type of the bank consignment.
+CONSIGNMENT_DOC_TYPE = "consignacion_bancaria"
 
 
 class ArqueoRepo(Protocol):
@@ -1084,6 +1098,196 @@ def get_arqueo_repo() -> ArqueoRepo:
     )
 
 
+# ═══════════════════════ Consignaciones (task 4.5) ═══════════════════════
+
+#: `consbancab.precon` — the legacy prefix of a bank consignment.
+CONSIGNMENT_PREFIX = "RC"
+#: Journal/audit document type of the bank consignment.
+CONSIGNMENT_DOC_TYPE = "consignacion_bancaria"
+#: `consbancab.codclas` is EMPTY in the legacy rows: the consignment has no
+#: `contadores` entry (it owns its counter in `formapago.numcon`).
+CONSIGNMENT_CODCLAS = ""
+#: `formapago.tippag` / `afepag` of a bank-consignment payment form.
+CONSIGNMENT_TIPPAG = 2
+CONSIGNMENT_AFEPAG = 22
+
+
+class ConsignmentRepo(Protocol):
+    """Contract shared by the fake twin and the real MySQL repo."""
+
+    def create(
+        self,
+        body: ConsignmentCreate,
+        *,
+        tenant: str,
+        empresa: str,
+        actor: str,
+        request_id: str,
+        idempotency_key: str | None,
+    ) -> dict: ...
+
+
+class _BaseConsignmentRepo(_CashDocumentRepo):
+    """Bank consignment (``consbancab``) with its OWN counter (CC-5).
+
+    The consignment does NOT go through ``contadores``: the number comes from
+    the payment form's own counter (``formapago.numcon``) and advances
+    EXACTLY ONCE per posting. The idempotency replay (φ0) short-circuits
+    before the counter is touched, so a retry never advances it twice.
+    """
+
+    def create(
+        self,
+        body: ConsignmentCreate,
+        *,
+        tenant: str,
+        empresa: str,
+        actor: str,
+        request_id: str,
+        idempotency_key: str | None,
+    ) -> dict:
+        def _validate() -> dict:
+            fields: dict[str, str] = {}
+            if body.valor <= ZERO:
+                fields["valor"] = "El valor de la consignación debe ser mayor que cero"
+            formapago = self.store.find_formapago(body.codpag)
+            if formapago is None:
+                fields["codpag"] = f"La forma de pago '{body.codpag}' no existe"
+            else:
+                tippag = int(formapago.get("tippag") or 0)
+                afepag = int(formapago.get("afepag") or 0)
+                if tippag != CONSIGNMENT_TIPPAG or afepag != CONSIGNMENT_AFEPAG:
+                    fields["codpag"] = (
+                        "La forma de pago debe ser de consignación bancaria "
+                        f"(tippag={CONSIGNMENT_TIPPAG}, afepag={CONSIGNMENT_AFEPAG})"
+                    )
+            if fields:
+                raise LegacyValidationError(fields)
+            assert_period_open(
+                self.store.locked_periods(),
+                fecha=body.fecha,
+                codclas=CONSIGNMENT_CODCLAS,
+                what="la consignación",
+            )
+            return {"formapago": formapago}
+
+        def _reserve() -> int:
+            """Take the consignment number from ``formapago.numcon`` (once)."""
+            current = self.store.payment_form_counter(body.codpag)
+            self.store.advance_payment_form_counter(body.codpag, current + 1)
+            return current
+
+        def _release(number: int) -> None:
+            """φ3 failure: walk the bank counter back to the free number."""
+            self.store.advance_payment_form_counter(body.codpag, number)
+
+        def _persist(computed: dict, number: int, pref: str, written: list) -> None:
+            formapago = computed["formapago"]
+            row = {
+                "numcon": str(number),
+                "nomdoc": "RECIBO DE CAJA MENOR",
+                "precon": pref,
+                "feccon": body.fecha,
+                "codcue": str(formapago.get("codcue") or CASH_CUENTA),
+                "codpag": body.codpag,
+                "detcon": body.detalle or "",
+                "totcon": body.valor,
+                "estcon": "B",
+                "codemp": empresa,
+                "horcaj": 1,
+                "codres": "",
+                "tipret": body.tipret,
+                "codcos": "",
+                "codclas": CONSIGNMENT_CODCLAS,
+                "empcod": "",
+                "cod2cos": "",
+                "actor": actor,
+            }
+            self.store.stage_insert(CONSBANCAB_TABLE, row)
+            written.append((CONSBANCAB_TABLE, row))
+
+        def _response(computed: dict, number: int, pref: str) -> dict:
+            return {
+                "numero": number,
+                "pref": pref,
+                "codpag": body.codpag,
+                "totcon": str(body.valor),
+                "codcue": str(computed["formapago"].get("codcue") or CASH_CUENTA),
+            }
+
+        return self._save(
+            codcon=CONSIGNMENT_CODCLAS,
+            doc_type=CONSIGNMENT_DOC_TYPE,
+            doc_table=CONSBANCAB_TABLE,
+            num_field="numcon",
+            prefix_column="precon",
+            validate=_validate,
+            persist=_persist,
+            response=_response,
+            tenant=tenant,
+            empresa=empresa,
+            actor=actor,
+            request_id=request_id,
+            idempotency_key=idempotency_key,
+            pref=CONSIGNMENT_PREFIX,
+            reserve=_reserve,
+            release=_release,
+        )
+
+
+class FakeConsignmentRepo(_BaseConsignmentRepo):
+    """In-memory twin used by the hermetic test suite."""
+
+    def __init__(
+        self,
+        *,
+        store: Any,
+        journal: JournalRepo,
+        idempotency: IdempotencyRepo,
+        numbering: ContadoresRepo | None = None,
+    ) -> None:
+        super().__init__(
+            store=store,
+            journal=journal,
+            idempotency=idempotency,
+            numbering=numbering or store.numbering,
+        )
+
+
+class RealConsignmentRepo(_BaseConsignmentRepo):
+    """Real MySQL writer (same sequence, InnoDB journal + MyISAM rows)."""
+
+    def __init__(
+        self,
+        *,
+        store: Any,
+        journal: JournalRepo,
+        idempotency: IdempotencyRepo,
+        numbering: ContadoresRepo,
+    ) -> None:
+        super().__init__(
+            store=store,
+            journal=journal,
+            idempotency=idempotency,
+            numbering=numbering,
+        )
+
+
+def get_consignment_repo() -> ConsignmentRepo:
+    """FastAPI dependency: the real MySQL-backed repo."""
+    from motoshop_api.erp.cash.store import get_cash_store
+    from motoshop_api.erp.idempotency import get_idempotency_repo
+    from motoshop_api.erp.journal import get_journal_repo
+    from motoshop_api.erp.numbering import get_contadores_repo
+
+    return RealConsignmentRepo(
+        store=get_cash_store(),
+        journal=get_journal_repo(),
+        idempotency=get_idempotency_repo(),
+        numbering=get_contadores_repo(),
+    )
+
+
 __all__ = [
     "AnnulledDocumentError",
     "ARQUEO_CLASSES",
@@ -1092,11 +1296,18 @@ __all__ = [
     "ArqueoRepo",
     "CARTERA_CUENTA",
     "CASH_CUENTA",
+    "CONSIGNMENT_AFEPAG",
+    "CONSIGNMENT_CODCLAS",
+    "CONSIGNMENT_DOC_TYPE",
+    "CONSIGNMENT_PREFIX",
+    "CONSIGNMENT_TIPPAG",
     "CashMovementsRepo",
+    "ConsignmentRepo",
     "EGRESS_CODCON",
     "EGRESS_DOC_TYPE",
     "FakeArqueoRepo",
     "FakeCashMovementsRepo",
+    "FakeConsignmentRepo",
     "FakeReceiptsRepo",
     "INGRESS_CODCON",
     "INGRESS_DOC_TYPE",
@@ -1107,12 +1318,14 @@ __all__ = [
     "RECEIPT_DOC_TYPE",
     "RealArqueoRepo",
     "RealCashMovementsRepo",
+    "RealConsignmentRepo",
     "RealReceiptsRepo",
     "ReceiptOverpaymentError",
     "ReceiptsRepo",
     "SOLCRE_TIPCLAS",
     "get_arqueo_repo",
     "get_cash_movements_repo",
+    "get_consignment_repo",
     "get_receipts_repo",
     "open_balance",
     "payment_duality",

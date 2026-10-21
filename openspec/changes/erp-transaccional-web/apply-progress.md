@@ -203,3 +203,32 @@ the formula itself was NOT changed.
 
 ### Next
 - Slice 4 (collections/cash) → Slice 5 (annulment) → frontend PR-5/7.
+
+## Slice 4 — erp-collections-cash (backend, PR-6) — completion record
+
+The apply agent was cut twice by infrastructure timeouts; the orchestrator
+closed the remaining pieces (consignment repo constants/import, its test
+file and its HTTP route).
+
+| Task | Status | Commit(s) | Evidence |
+|---|---|---|---|
+| 4.1 receipts against open CxC + Graba_Fpago duality | done | `433532c` | test_erp_cash_receipts.py |
+| 4.2 cash router + period lock (Hay_Cie_Eli, 409) | done | `abc076f` | test_erp_cash_router.py / test_erp_cash_period.py |
+| 4.3 egresos (comprobantes) + causación | done | `1a512d3` | test_erp_cash_router.py |
+| 4.4 arqueo (cajaarqueo + detcajarq) | done | `254fca7` | test_erp_cash_arqueo.py |
+| 4.5 bank consignations (consbancab) | done | this batch | test_erp_cash_consignments.py (7) + POST /api/erp/bank/consignments |
+| 4.6 cash UI (../frontfambus, PR-7) | pending | — | frontend slice, separate repo |
+
+ERP suite: **214 passed** (baseline 166 → +48). ruff clean on the touched
+packages. Two latent defects fixed from the interrupted run: the missing
+`CONSBANCAB_TABLE` constant and the missing `ConsignmentCreate` import.
+
+### Consignment number parity (CC-5)
+The bank consignment does NOT use `contadores`: its number comes from the
+payment form's own counter (`formapago.numcon`) and advances EXACTLY ONCE
+per posting. The idempotent replay short-circuits BEFORE the counter is
+touched, so a retry never advances it twice (covered by test).
+
+### Next
+- Slice 5 (annulment: guard chain, full flag reversal, kardex stock
+  recompute, motanudoc audit) → frontend PR-5 (POS invoice screen) + PR-7.
