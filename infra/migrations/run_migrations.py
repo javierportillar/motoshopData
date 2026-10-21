@@ -115,7 +115,17 @@ def split_statements(sql_text: str) -> list[str]:
 
 
 def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """Checksum of a migration file, normalized for line endings.
+
+    The checksum MUST be stable across platforms: git's ``autocrlf`` turns
+    the LF files of the repository into CRLF in a Windows working tree, so
+    hashing the raw bytes reports a false "checksum drift" for every
+    migration that was applied from an LF checkout. The line endings are
+    normalized to LF before hashing, which is also what the ledger rows
+    recorded on the first run.
+    """
+    raw = path.read_bytes().replace(b"\r\n", b"\n")
+    return hashlib.sha256(raw).hexdigest()
 
 
 # ─── Discovery / ordering (pure, hermetically testable) ────────

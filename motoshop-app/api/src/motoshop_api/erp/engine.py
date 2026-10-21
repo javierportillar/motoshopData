@@ -20,9 +20,10 @@ inserts, cleanup) are injected as callables per slice.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from motoshop_api.erp.uow import erp_write_uow
 
@@ -51,7 +52,7 @@ class ErpSaveRequest:
     request_id: str
     idempotency_key: str
     save_fn: Callable[[object, int], Any]           # (conn, reserved number) → response
-    numbering_fn: Callable[["ErpSaveRequest"], int] | None  # φ2 hook (None: masters)
+    numbering_fn: Callable[[ErpSaveRequest], int] | None  # φ2 hook (None: masters)
     cleanup_fn: Callable[[int], None] | None = None  # φ3 failure compensation
     engine: object | None = None                     # UoW engine override (tests)
 
@@ -133,7 +134,7 @@ def heal_stale_pending(
     listed by the caller.
     """
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
     healed: list[str] = []
     for entry in journal.list_stale_pending(stale_after=stale_after, now=now):
         if entry.docnum is not None and has_legacy_rows(entry.docnum):

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 from sqlalchemy import insert, update
 
 from motoshop_api.erp.models import app_doc_journal
-
 
 JOURNAL_STATUSES = ("PENDING", "COMMITTED", "FAILED", "ANNULLED")
 
@@ -40,6 +39,7 @@ class JournalEntry:
     idempotency_key: str | None
     error_msg: str | None
     created_at: datetime | None
+    doc_type: str = ""
 
 
 class JournalRepo(Protocol):
@@ -62,6 +62,10 @@ class JournalRepo(Protocol):
     def mark_committed(self, entry_id: int, docnum: int) -> None: ...
 
     def mark_failed(self, entry_id: int, error_msg: str) -> None: ...
+
+    def mark_annulled(self, entry_id: int, docnum: int) -> None: ...
+
+    def list_document_entries(self, codclas: str, docnum: int) -> list[JournalEntry]: ...
 
     def list_stale_pending(
         self, stale_after: timedelta, now: datetime
@@ -102,7 +106,7 @@ class FakeJournalRepo:
             "request_id": request_id,
             "idempotency_key": idempotency_key,
             "error_msg": None,
-            "created_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
         }
         self._next_id += 1
         self.entries.append(record)
@@ -120,6 +124,18 @@ class FakeJournalRepo:
         record = self.entries[entry_id - 1]
         record["status"] = "FAILED"
         record["error_msg"] = error_msg[:500]
+
+    def mark_annulled(self, entry_id: int, docnum: int) -> None:
+        record = self.entries[entry_id - 1]
+        record["status"] = "ANNULLED"
+        record["docnum"] = docnum
+
+    def list_document_entries(self, codclas: str, docnum: int) -> list[JournalEntry]:
+        return [
+            _row_to_entry(record)
+            for record in self.entries
+            if record["codclas"] == codclas and record["docnum"] == docnum
+        ]
 
     def list_stale_pending(
         self, stale_after: timedelta, now: datetime
@@ -149,6 +165,7 @@ def _row_to_entry(record: dict) -> JournalEntry:
         idempotency_key=record.get("idempotency_key"),
         error_msg=record.get("error_msg"),
         created_at=record.get("created_at"),
+        doc_type=record.get("doc_type", ""),
     )
 
 
@@ -194,6 +211,7 @@ class RealJournalRepo:
             id=new_id, codclas=codclas, pref=pref, docnum=None, status="PENDING",
             tenant=tenant, empresa=empresa, actor=actor, request_id=request_id,
             idempotency_key=idempotency_key, error_msg=None, created_at=None,
+            doc_type=doc_type,
         )
 
     def record_number(self, entry_id: int, docnum: int) -> None:
@@ -204,6 +222,32 @@ class RealJournalRepo:
 
     def mark_failed(self, entry_id: int, error_msg: str) -> None:
         self._update(entry_id, status="FAILED", error_msg=error_msg[:500], docnum=None)
+
+    def mark_annulled(self, entry_id: int, docnum: int) -> None:
+        self._update(entry_id, status="ANNULLED", docnum=docnum)
+
+    def list_document_entries(self, codclas: str, docnum: int) -> list[JournalEntry]:
+        from sqlalchemy import text
+
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT id, codclas, pref, docnum, status, tenant, empresa, actor, "
+                    "request_id, idempotency_key, error_msg, created_at, doc_type "
+                    "FROM app_doc_journal WHERE codclas = :c AND docnum = :n "
+                    "ORDER BY id"
+                ),
+                {"c": str(codclas), "n": docnum},
+            ).fetchall()
+        return [
+            JournalEntry(
+                id=r[0], codclas=r[1], pref=r[2] or "", docnum=r[3], status=r[4],
+                tenant=r[5], empresa=r[6] or "", actor=r[7], request_id=r[8] or "",
+                idempotency_key=r[9], error_msg=r[10], created_at=r[11],
+                doc_type=r[12] or "",
+            )
+            for r in rows
+        ]
 
     def list_stale_pending(
         self, stale_after: timedelta, now: datetime
@@ -250,10 +294,10 @@ class RealJournalRepo:
                 conn.execute(
                     update(app_doc_journal)
                     .where(app_doc_journal.c.id == entry_id)
-                    .values(updated_at=datetime.now(timezone.utc).replace(tzinfo=None))
+                    .values(updated_at=datetime.now(UTC).replace(tzinfo=None))
                 )
             else:
-                values["updated_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
+                values["updated_at"] = datetime.now(UTC).replace(tzinfo=None)
                 conn.execute(
                     update(app_doc_journal)
                     .where(app_doc_journal.c.id == entry_id)

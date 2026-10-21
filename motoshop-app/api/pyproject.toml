@@ -48,6 +48,9 @@ ignore = ["B008"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+  "integration: requires the local MySQL 5.0.45 instance (ERP concurrency suite)",
+]
 
 [build-system]
 requires = ["setuptools>=68"]

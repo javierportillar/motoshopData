@@ -244,11 +244,14 @@ class RealContadoresRepo:
         self._lock_wait_seconds = lock_wait_seconds
 
     def _connect(self):
+        # The reservation speaks the raw DBAPI (cursor/execute/commit), so the
+        # connection must be the DRIVER connection: a SQLAlchemy 2.x
+        # ``Connection`` has no ``cursor()`` and cannot run ``LOCK TABLES``.
         if self._engine_factory is not None:
-            return self._engine_factory().connect()
+            return self._engine_factory().raw_connection()
         from motoshop_api.db.engine import get_erp_engine
 
-        return get_erp_engine().connect()
+        return get_erp_engine().raw_connection()
 
     def _read_row(self, cur, codcon: str, pref: str) -> ContadorRow:
         cur.execute(
@@ -314,9 +317,12 @@ class RealContadoresRepo:
 
         worker = threading.Thread(target=_latch, daemon=True)
         worker.start()
-        if not worker.join(timeout=wait) or (
-            not granted.wait(timeout=0) and worker.is_alive()
-        ):
+        # NOTE: ``Thread.join()`` returns None (falsy) in BOTH cases, so the
+        # timeout must be detected with ``is_alive()`` after the join - using
+        # ``not worker.join(...)`` made the watchdog fire on EVERY successful
+        # reservation and the real MySQL path could never number a document.
+        worker.join(timeout=wait)
+        if worker.is_alive() or not granted.is_set():
             # Watchdog: close the connection so the blocked LOCK TABLES
             # aborts server-side and the session releases any partial latch.
             with contextlib.suppress(Exception):
