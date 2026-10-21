@@ -30,14 +30,22 @@ from motoshop_api.app_writes.repo import AuditRepo, FakeAuditRepo, get_audit_rep
 from motoshop_api.auth.users import User
 from motoshop_api.erp.cash.repo import (
     AnnulledDocumentError,
+    FakeArqueoRepo,
     FakeCashMovementsRepo,
     FakeReceiptsRepo,
+    RealArqueoRepo,
     RealCashMovementsRepo,
     RealReceiptsRepo,
+    get_arqueo_repo,
     get_cash_movements_repo,
     get_receipts_repo,
 )
-from motoshop_api.erp.cash.schemas import CashMovementCreate, EgressCreate, ReceiptCreate
+from motoshop_api.erp.cash.schemas import (
+    ArqueoCreate,
+    CashMovementCreate,
+    EgressCreate,
+    ReceiptCreate,
+)
 from motoshop_api.erp.engine import ErpSaveFailed
 from motoshop_api.erp.guards import (
     PeriodLockedError,
@@ -234,6 +242,41 @@ def create_egress(
         user,
         "create",
         "comprobante_egreso",
+        str(response["numero"]),
+        request_id,
+        payload={"before": None, "after": response},
+    )
+    return response
+
+
+@router.post("/cash/arqueo", status_code=201)
+def create_arqueo(
+    body: ArqueoCreate,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    x_request_id: Annotated[str | None, Header(alias="X-Request-Id")] = None,
+    tenant: Tenant = Depends(require_erp_tenant),
+    user: User = Depends(require_erp_collections_write),
+    repo: FakeArqueoRepo | RealArqueoRepo = Depends(get_arqueo_repo),
+    audit: AuditRepo | FakeAuditRepo = Depends(get_audit_repo),
+) -> dict:
+    """Post a cash count (S38): header + denomination rows (CC-4)."""
+    _validate_idempotency_key(idempotency_key)
+    request_id = x_request_id or str(uuid.uuid4())
+    response = _save_or_http_error(
+        lambda: repo.create(
+            body,
+            tenant=tenant.id,
+            empresa=tenant.erp.empresa,
+            actor=user.username,
+            request_id=request_id,
+            idempotency_key=idempotency_key,
+        )
+    )
+    _log_audit(
+        audit,
+        user,
+        "create",
+        "arqueo_caja",
         str(response["numero"]),
         request_id,
         payload={"before": None, "after": response},

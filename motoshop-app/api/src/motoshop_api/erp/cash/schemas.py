@@ -95,7 +95,9 @@ class ArqueoDenominationIn(BaseModel):
 
     denarq: ErpMoney = Field(default=Decimal("0"))
     cantden: int = Field(default=1, ge=1)
-    tiparq: int = Field(ge=1, le=3)  # 1=billetes 2=monedas 3=otros
+    # The class rule (1=billetes, 2=monedas, 3=otros) is a BUSINESS invariant
+    # (CC-4): the repo owns it so the failure is the aggregate 422 shape.
+    tiparq: int = Field(ge=0)
     tipdet: LegacyText | None = Field(default=None, max_length=30)
     bandes: LegacyText | None = Field(default=None, max_length=150)
     numche: LegacyText | None = Field(default=None, max_length=30)

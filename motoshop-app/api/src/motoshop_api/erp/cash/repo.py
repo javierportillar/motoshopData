@@ -28,13 +28,16 @@ from decimal import Decimal
 from typing import Any, Protocol
 
 from motoshop_api.erp.cash.schemas import (
+    ArqueoCreate,
     CashMovementCreate,
     EgressCreate,
     ReceiptCreate,
 )
 from motoshop_api.erp.cash.store import (
+    CAJAARQUEO_TABLE,
     COMPROBANTES_TABLE,
     DETAPAGO_TABLE,
+    DETCAJARQ_TABLE,
     DETCUENTAS_TABLE,
     CashStore,
 )
@@ -877,13 +880,222 @@ def get_cash_movements_repo() -> CashMovementsRepo:
     )
 
 
+# ═══════════════════════ Arqueo de caja (task 4.4) ════════════════════════
+
+#: `contadores.codcon` of the cash count (S38 ARQUEO DE CAJA).
+ARQUEO_CODCON = "S38"
+#: Journal/audit document type of the cash count.
+ARQUEO_DOC_TYPE = "arqueo_caja"
+#: `detcajarq.tiparq` classes (1=billetes, 2=monedas, 3=otros).
+ARQUEO_CLASSES = (1, 2, 3)
+
+
+class ArqueoRepo(Protocol):
+    """Contract shared by the fake twin and the real MySQL repo."""
+
+    def create(
+        self,
+        body: ArqueoCreate,
+        *,
+        tenant: str,
+        empresa: str,
+        actor: str,
+        request_id: str,
+        idempotency_key: str | None,
+    ) -> dict: ...
+
+
+class _BaseArqueoRepo(_CashDocumentRepo):
+    """Cash count (S38): ``cajaarqueo`` header + ``detcajarq`` rows.
+
+    Invariants enforced server-side (CC-4):
+    - the header total equals ``Σ(cantden × denarq)`` of its rows;
+    - every row belongs to exactly ONE ``tiparq`` class (1/2/3).
+
+    A declared total that disagrees with the denomination sum is a 422 that
+    names the difference — nothing persists.
+    """
+
+    def __init__(
+        self,
+        *,
+        store: Any,
+        journal: JournalRepo,
+        idempotency: IdempotencyRepo,
+        numbering: ContadoresRepo,
+    ) -> None:
+        super().__init__(
+            store=store,
+            journal=journal,
+            idempotency=idempotency,
+            numbering=numbering,
+        )
+
+    def create(
+        self,
+        body: ArqueoCreate,
+        *,
+        tenant: str,
+        empresa: str,
+        actor: str,
+        request_id: str,
+        idempotency_key: str | None,
+    ) -> dict:
+        def _validate() -> dict:
+            fields: dict[str, str] = {}
+            total = ZERO
+            for index, row in enumerate(body.rows):
+                if row.tiparq not in ARQUEO_CLASSES:
+                    fields[f"rows[{index}].tiparq"] = (
+                        "Cada denominación debe pertenecer a una sola clase "
+                        "(1 billetes, 2 monedas, 3 otros)"
+                    )
+                if row.cantden < 1:
+                    fields[f"rows[{index}].cantden"] = (
+                        "La cantidad contada debe ser mayor que cero"
+                    )
+                total += row.denarq * row.cantden
+            if body.salcaj is not None and body.salcaj != total:
+                difference = body.salcaj - total
+                fields["salcaj"] = (
+                    f"El total declarado ({body.salcaj}) no coincide con la suma "
+                    f"de las denominaciones ({total}); diferencia: {difference}"
+                )
+            if fields:
+                raise LegacyValidationError(fields)
+            assert_period_open(
+                self.store.locked_periods(),
+                fecha=body.fecha,
+                codclas=ARQUEO_CODCON,
+                what="el arqueo",
+            )
+            return {"total": total}
+
+        def _persist(computed: dict, number: int, pref: str, written: list) -> None:
+            header = {
+                "numarq": str(number),
+                "codclas": ARQUEO_CODCON,
+                "nomdoc": "ARQUEO DE CAJA",
+                "prearq": pref,
+                "fecarq": body.fecha,
+                "nitter": body.nitter or "",
+                "codcue": body.codcue,
+                "salcaj": computed["total"],
+                "obsarq": body.obsarq or "",
+                "estarq": "B",
+                "codemp": empresa,
+                "empcod": "",
+                "tiparq": "C",  # legacy solver tag (rows carry the real class)
+                "actor": actor,
+            }
+            self.store.stage_insert(CAJAARQUEO_TABLE, header)
+            written.append((CAJAARQUEO_TABLE, header))
+
+            for row in body.rows:
+                detail = {
+                    "numarq": str(number),
+                    "codclas": ARQUEO_CODCON,
+                    "denarq": row.denarq,
+                    "cantden": row.cantden,
+                    "tipdet": row.tipdet or "",
+                    "bandes": row.bandes or "",
+                    "numche": row.numche or "",
+                    "tiparq": str(row.tiparq),
+                }
+                self.store.stage_insert(DETCAJARQ_TABLE, detail)
+                written.append((DETCAJARQ_TABLE, detail))
+
+        def _response(computed: dict, number: int, pref: str) -> dict:
+            return {
+                "numero": number,
+                "pref": pref,
+                "codclas": ARQUEO_CODCON,
+                "salcaj": str(computed["total"]),
+                "filas": len(body.rows),
+            }
+
+        return self._save(
+            codcon=ARQUEO_CODCON,
+            doc_type=ARQUEO_DOC_TYPE,
+            doc_table=CAJAARQUEO_TABLE,
+            num_field="numarq",
+            prefix_column="prearq",
+            validate=_validate,
+            persist=_persist,
+            response=_response,
+            tenant=tenant,
+            empresa=empresa,
+            actor=actor,
+            request_id=request_id,
+            idempotency_key=idempotency_key,
+        )
+
+
+class FakeArqueoRepo(_BaseArqueoRepo):
+    """In-memory twin used by the hermetic test suite."""
+
+    def __init__(
+        self,
+        *,
+        store: Any,
+        journal: JournalRepo,
+        idempotency: IdempotencyRepo,
+        numbering: ContadoresRepo | None = None,
+    ) -> None:
+        super().__init__(
+            store=store,
+            journal=journal,
+            idempotency=idempotency,
+            numbering=numbering or store.numbering,
+        )
+
+
+class RealArqueoRepo(_BaseArqueoRepo):
+    """Real MySQL writer (same sequence, InnoDB journal + MyISAM rows)."""
+
+    def __init__(
+        self,
+        *,
+        store: Any,
+        journal: JournalRepo,
+        idempotency: IdempotencyRepo,
+        numbering: ContadoresRepo,
+    ) -> None:
+        super().__init__(
+            store=store,
+            journal=journal,
+            idempotency=idempotency,
+            numbering=numbering,
+        )
+
+
+def get_arqueo_repo() -> ArqueoRepo:
+    """FastAPI dependency: the real MySQL-backed repo."""
+    from motoshop_api.erp.cash.store import get_cash_store
+    from motoshop_api.erp.idempotency import get_idempotency_repo
+    from motoshop_api.erp.journal import get_journal_repo
+    from motoshop_api.erp.numbering import get_contadores_repo
+
+    return RealArqueoRepo(
+        store=get_cash_store(),
+        journal=get_journal_repo(),
+        idempotency=get_idempotency_repo(),
+        numbering=get_contadores_repo(),
+    )
+
+
 __all__ = [
     "AnnulledDocumentError",
+    "ARQUEO_CLASSES",
+    "ARQUEO_CODCON",
+    "ARQUEO_DOC_TYPE",
+    "ArqueoRepo",
     "CARTERA_CUENTA",
     "CASH_CUENTA",
     "CashMovementsRepo",
     "EGRESS_CODCON",
     "EGRESS_DOC_TYPE",
+    "FakeArqueoRepo",
     "FakeCashMovementsRepo",
     "FakeReceiptsRepo",
     "INGRESS_CODCON",
@@ -893,11 +1105,13 @@ __all__ = [
     "PAYMENT_TIPCLAS",
     "RECEIPT_CODCON",
     "RECEIPT_DOC_TYPE",
+    "RealArqueoRepo",
     "RealCashMovementsRepo",
     "RealReceiptsRepo",
     "ReceiptOverpaymentError",
     "ReceiptsRepo",
     "SOLCRE_TIPCLAS",
+    "get_arqueo_repo",
     "get_cash_movements_repo",
     "get_receipts_repo",
     "open_balance",
