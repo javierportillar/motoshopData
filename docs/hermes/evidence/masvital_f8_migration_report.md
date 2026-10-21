@@ -25,7 +25,7 @@
 | 10 | Suite ERP (concurrencia + POS + guards) | ✅ **32/32** |
 | 11 | Suite completa como control de regresión | ✅ **sin regresiones** (22F/11E idénticos antes y después) |
 | 12 | Convivencia con el POS legacy | ✅ factura 3552 creada **después** del `ALTER` |
-| 13 | Write path del POS Web contra el esquema real | ❌ **BLOQUEANTE — ver §9** |
+| 13 | Write path del POS Web contra el esquema real | ✅ **resuelto y verificado end-to-end — ver §9** |
 
 **Resultado:** la infraestructura está lista — base migrada, usuario de escritura con grants,
 tenant habilitado, backend reiniciado y el POS legacy convive con el índice único. **Pero el POS
@@ -266,11 +266,12 @@ activo**, sin colisiones y sin errores.
 
 ---
 
-## 9. BLOQUEANTE: el write path real no coincide con el esquema legacy
+## 9. Write path real: bloqueante detectado y resuelto
 
 El objetivo era "dejar la base operativa para recibir ventas del POS Web". La infraestructura sí
-quedó operativa; la **persistencia de la venta no**. El camino real usa nombres de columna que no
-existen en el esquema heredado.
+quedó operativa; la **persistencia de la venta no**. El camino real usaba nombres de columna que no
+existen en el esquema heredado. **Estado: resuelto y verificado end-to-end** (commit `ab02482`,
+§9.3); este apartado conserva el diagnóstico porque explica por qué la suite no lo detectó.
 
 ### Evidencia
 
@@ -306,30 +307,69 @@ detcuentas -> ERROR 1054 (42S22): Unknown column 'numfven' in 'field list'
   esas columnas: el defecto no es específico de MasVital; el writer real nunca corrió contra un
   esquema legacy.
 
-### Impacto operativo
+### Impacto operativo (mientras estuvo abierto)
 
-Con `erp.enabled: true` (estado actual), una venta desde el POS Web devuelve **500
-`Unknown column`** en lugar del 403 limpio anterior. **No hay riesgo de corrupción**: el INSERT
-aborta antes de escribir. El POS legacy no se ve afectado.
+Con `erp.enabled: true`, una venta desde el POS Web devolvía **500** en lugar del 403 limpio
+anterior. **No hubo riesgo de corrupción**: el INSERT abortaba antes de escribir. El POS legacy
+nunca se vio afectado.
 
-### Opciones
+### Resolución
 
-1. **Implementar el mapper legacy** (en `_persist` o en un override de `RealInvoicesRepo`):
-   `numlin`→`numite`, `numfven`→`numnum` en `detapago`/`detcuentas`, `valcre`→`valhab`,
-   `nitope`→`nitter`, `prefven`→`predoc` en `detapago`. Quedan **dos decisiones de negocio**:
-   `actor` (candidatos `nomuso`/`codcaj`) y `empresa`→`empcod` vs `codemp`.
-   Requiere además `codclas='S15'` en `detfventas`/`detapago`/`detcuentas` (el legacy no lo deriva).
-2. **Revertir `erp.enabled` a `false`** hasta que el mapper exista, para devolver 403 en vez de 500.
+Se implementó la opción 1 y, al ejecutarla contra MySQL real, aparecieron **dos defectos más** que
+la suite hermética también ocultaba. Los tres se corrigieron en `ab02482`:
 
-Recomendación: **opción 1** con una prueba de integración contra un **clon del esquema real**, no
-contra el schema sintético.
+| # | Defecto | Síntoma real | Corrección |
+|---|---|---|---|
+| 1 | `RealInvoiceStore` no exponía `terceros`/`sellers`/`productos` | `AttributeError` **antes** del primer INSERT | `_LazyMasterMap` (una consulta por clave, memoizada por request) |
+| 2 | `erp/models.py` no declaraba `app_doc_journal.updated_at` | `CompileError: Unconsumed column names: updated_at` en `record_number` | columna agregada al `Table` |
+| 3 | `commit()` usaba `exec_driver_sql` con placeholders nombrados | `:numfven` llegaba literal a pymysql → **ERROR 1064** | `text()` + `conn.execute(..., row)` |
+| 4 | nombres de columna del payload POS | **ERROR 1054** en las 4 tablas | mapper explícito en `_persist` |
+
+Mapeo aplicado (valores tomados del esquema y de los datos legacy, no supuestos):
+`numlin`→`numite`, `numfven`→`numnum` en `detapago`/`detcuentas`, `valcre`→`valhab`,
+`nitope`→`nitter`, `prefven`→`predoc`/`prenum`, `referencia`→`numpag`; `codclas='S15'` explícito;
+`codmed` resuelto desde `productos.codmed` (`'001'` en 6.450 de 7.840 líneas legacy, no `'UND'`);
+`despag` vacío (2.820 de 2.821 filas legacy); `codpag` del primer pago (`facventas.codpag` es
+`NOT NULL` sin default).
+
+### Verificación end-to-end (clon `masvital_clone`)
+
+Tres facturas guardadas con `app_writer` por el camino real (`RealInvoicesRepo.create`), no por SQL
+manual: `3558`, `3559`, `3560`.
+
+```
+facventas   1 fila   codclas=S15 prefven=FVP nomuso=ja codemp=E01 empcod=E01 codpag=F04 estfven=B
+detfventas  1 fila   codmed=001 codbod=01 numite=1 totdet=11900
+detapago    1 fila   codpag=F04 despag= (vacío) numpag=REF-PROBE-001 valpag=11900
+detcuentas  2 filas  CLIENTES 11900/0  +  VENTAS COMERCIO 0/11900  (partida doble)
+app_doc_journal   status=COMMITTED
+app_idempotency   respuesta almacenada
+contadores        conres 3554 -> 3561
+```
+
+Cero `ERROR 1054`/`1064`. Regresión: 4 tests nuevos en `tests/test_erp_legacy_write_path.py`;
+suite completa **22F / 913P / 8S / 11E**, idéntica a la línea base (22F / 909P / 8S / 11E: los 4
+passes extra son los tests nuevos).
+
+### Deuda pendiente (no bloquea la venta)
+
+| Tema | Legacy real | Lo que escribe el POS Web | Efecto |
+|---|---|---|---|
+| `facventas.codemp` | NIT del operador (`59312669` constante en 3.554 filas), `empcod` vacío | `E01`/`E01` | reportes que agrupan por `codemp` separan las ventas web |
+| `facventas.nomuso`/`codcaj` | `''` y `C1` | `actor[:2]` y `01` | idem, trazabilidad web distinguible |
+| `detcuentas` causación | PUC por línea (`11050501`, `41359501`, `24080102` IVA) | par grueso `1305`/`4135` | el IVA no se separa en el auxiliar |
+| stock | `productos.exiprod` decrementado | solo se valida; **no se persiste** | el POS Web no descuenta existencias |
+
+`codemp`/`nomuso`/`codcaj` siguen la decisión del operador (empresa `E01`); si los reportes legacy
+deben cuadrar, hay que revisarlos antes de habilitar ventas web masivas.
 
 ## 10. Riesgos y deuda técnica
 
 | Severidad | Riesgo | Recomendación |
 |---|---|---|
-| **Crítica** | **El write path real no coincide con el esquema legacy (§9): toda venta del POS Web devuelve 500 `Unknown column`** | implementar el mapper (`numite`, `numnum`, `valhab`, `nitter`, `predoc`, `codclas='S15'`) y probarlo contra un clon del esquema real |
-| Alta | `F8-004` hardcodeado a `motoshop2024`: el runner desde la raíz del repo falla | parametrizar o excluir del descubrimiento |
+| **Resuelta** | El write path real no coincidía con el esquema legacy (§9): toda venta devolvía 500 `Unknown column` | mapper implementado y probado end-to-end contra un clon; ver §9 |
+| **Alta** | `codemp`/`nomuso`/`codcaj` web no coinciden con el legacy, y la causación no separa IVA (§9, deuda pendiente) | decidir con el negocio antes de habilitar ventas web masivas |
+| **Alta** | El POS Web no descuenta `productos.exiprod`: solo valida | persistir el stock o documentar la venta sin descuento |
 | Alta | `root` **sin password** y el servidor escuchando en `0.0.0.0:3306` | fijar password de `root` y bindear a `127.0.0.1` o firewallear |
 | Media | El path de lectura usa `root` porque el password de `api_read` es desconocido | rotar `api_read` y usar ese usuario en `MYSQL_USER` |
 | Media | MySQL 5.0.45 (EOL desde 2012), sin FKs, `latin1` | plan de migración a 5.7/8.0 |
