@@ -353,6 +353,23 @@ class ERPRepository:
                     detail="Sale is already voided",
                 )
 
+            # DIAN electronic invoice annulment guard (spec erp-dian-einvoicing / Valid_EdiDocele):
+            # estfele = 1 / ACCEPTED documents cannot be voided directly; requires DIAN Credit Note handling.
+            from motoshop_api.erp.dian import DianStatusEnum, get_dian_queue
+
+            dian_queue = get_dian_queue()
+            dian_doc = dian_queue.get_dian_status_for_sale(sale_id, tenant_id)
+            if dian_doc and dian_doc.status == DianStatusEnum.ACCEPTED:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Documento electrónico aceptado por la DIAN (estfele=1). "
+                        "No se puede anular directamente, requiere Nota Crédito (DIAN Credit Note handling)."
+                    ),
+                )
+            if dian_doc and dian_doc.status != DianStatusEnum.ACCEPTED:
+                dian_queue.cancel_sale(sale_id, tenant_id)
+
             now = datetime.now(timezone.utc)
             sale.status = "voided"
             sale.void_reason = reason
@@ -586,4 +603,7 @@ def reset_erp_repo() -> ERPRepository:
     global _erp_repo
     with _repo_lock:
         _erp_repo = ERPRepository()
+    from motoshop_api.erp.dian import reset_dian_queue
+
+    reset_dian_queue()
     return _erp_repo
