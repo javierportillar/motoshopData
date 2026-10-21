@@ -1,4 +1,4 @@
-﻿"""Punto de entrada de la API FastAPI de MotoShop."""
+"""Punto de entrada de la API FastAPI de MotoShop."""
 
 from __future__ import annotations
 
@@ -177,7 +177,7 @@ async def duckdb_not_ready_handler(request: Request, _exc: DuckDBNotReadyError) 
         response = problem_response(
             503,
             "https://api.motoshop/errors/dependency-unavailable",
-            "Los datos del tenant todavÃ­a se estÃ¡n cargando. ReintentÃ¡ en unos segundos.",
+            "Los datos del tenant todavía se están cargando. Reintentá en unos segundos.",
             _assistant_request_id(request),
         )
         response.headers["Retry-After"] = "5"
@@ -186,7 +186,7 @@ async def duckdb_not_ready_handler(request: Request, _exc: DuckDBNotReadyError) 
         status_code=503,
         headers={"Retry-After": "5"},
         content={
-            "detail": "El servidor estÃ¡ terminando de cargar los datos. ReintentÃ¡ en unos segundos.",
+            "detail": "El servidor está terminando de cargar los datos. Reintentá en unos segundos.",
             "status": "loading",
             "retry_after_seconds": 5,
         },

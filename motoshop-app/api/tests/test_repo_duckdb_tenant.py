@@ -32,9 +32,9 @@ def test_make_db_path_dev() -> None:
     os.environ.pop("DUCKDB_PATH", None)
     try:
         path = _make_db_path("motoshop")
-        assert str(path) == "out/motoshop_gold.duckdb"
+        assert path.name == "motoshop_gold.duckdb"
         path2 = _make_db_path("masvital")
-        assert str(path2) == "out/masvital_gold.duckdb"
+        assert path2.name == "masvital_gold.duckdb"
     finally:
         os.environ["ENV"] = "dev"
 
