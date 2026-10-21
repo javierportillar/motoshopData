@@ -264,8 +264,21 @@ ROUTE_MODULE_EXCEPTIONS: Mapping[RouteKey, str] = {
 
 
 def route_modules(method: str, route_template: str) -> tuple[str, ...] | None:
-    """Return the required modules for an HTTP route template."""
-    return ROUTE_MODULES.get((method.upper(), route_template))
+    """Return the required modules for an HTTP route template.
+
+    ERP delta-spec routes (slices 2+ of the transactional write change) are
+    policy-declared in ``erp.guards.ERP_ROUTE_MODULES`` and merged here, so a
+    router mounted later inherits its matrix entry automatically. They live
+    outside :data:`ROUTE_MODULES` because that dict is audited 1:1 against
+    routes mounted in the production app (tests/test_auth_modules.py).
+    """
+    key = (method.upper(), route_template)
+    modules = ROUTE_MODULES.get(key)
+    if modules is not None:
+        return modules
+    from motoshop_api.erp.guards import ERP_ROUTE_MODULES
+
+    return ERP_ROUTE_MODULES.get(key)
 
 
 def _route_path(route: object) -> str | None:

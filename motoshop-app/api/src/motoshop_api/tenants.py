@@ -24,6 +24,20 @@ class TenantAgent(BaseModel):
     knowledge_namespace: str = ""
 
 
+class TenantErpConfig(BaseModel):
+    """Per-tenant ERP write configuration (tenants.yaml ``erp`` block).
+
+    Slice-1 contract (spec erp-write-foundation, ADR-0008-06): only tenants
+    with ``enabled=true`` reach the transactional write engine; the legacy
+    ``empresas.empcod`` is resolved server-side (never client-supplied).
+    """
+
+    enabled: bool = False
+    empresa: str = ""          # e.g. "E01" → facventas.codemp
+    stock_negative_policy: str = "warn"  # warn | reject
+    dian_provider: str = "stub"          # stub | facture
+
+
 class Tenant(BaseModel):
     id: str
     nombre: str
@@ -37,6 +51,7 @@ class Tenant(BaseModel):
     enabled_features: list[str] = Field(default_factory=list)
     briefing: TenantBriefing = TenantBriefing(activo=False)
     agent: TenantAgent = Field(default_factory=TenantAgent)
+    erp: TenantErpConfig = Field(default_factory=TenantErpConfig)
 
 
 _tenants_cache: dict[str, Tenant] = {}
