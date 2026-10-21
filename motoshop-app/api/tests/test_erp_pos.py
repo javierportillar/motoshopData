@@ -591,3 +591,39 @@ def test_list_and_get_sale(client: TestClient):
     assert res_list.status_code == 200
     items = res_list.json()
     assert any(s["id"] == sale_id for s in items)
+
+
+def test_masvital_bulk_fractional_sale_with_decimal_quantity(client: TestClient):
+    """Verifies that fractional quantities (e.g. 21.428 grams of almonds at $70 COP)
+    are supported with exact Decimal precision and without integer truncation.
+    """
+    key = str(uuid.uuid4())
+    payload = {
+        "branch_id": "B01",
+        "doc_type": "POS",
+        "client_name": "CLIENTE MASVITAL",
+        "items": [
+            {
+                "product_id": "OLAM001",
+                "name": "Almendra Americana",
+                "unit_measure": "GR",
+                "quantity": "21.428",
+                "unit_price": "70.00",
+                "discount_pct": "0.0",
+                "vat_pct": "0.0",
+            }
+        ],
+        "payments": [
+            {
+                "method": "CASH",
+                "amount": "1499.96",
+            }
+        ],
+    }
+    res = client.post("/api/erp/pos/sales", json=payload, headers={"Idempotency-Key": key})
+    assert res.status_code == 201
+    sale = res.json()
+    assert Decimal(str(sale["items"][0]["quantity"])) == Decimal("21.428")
+    assert Decimal(str(sale["items"][0]["valuni"])) == Decimal("70.00")
+    assert Decimal(str(sale["items"][0]["totdet"])) == Decimal("1499.96")
+    assert Decimal(str(sale["grand_total"])) == Decimal("1499.96")
