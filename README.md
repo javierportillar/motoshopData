@@ -62,7 +62,10 @@ sgHermes (Windows, MySQL 5.0)  ─────►  Pipeline ETL (DuckDB)  ──
 | Buscar un repuesto exigía saber el nombre exacto del proveedor. | Búsqueda híbrida: sinónimos + embeddings + keyword. "amortiguador trasero" encuentra el SKU aunque esté como "AMORTIG TRAS". |
 | Pedir reposición se decidía por intuición. | Plan de compras automático con forecast por categoría y alertas de drift de demanda. |
 
-**Lo que MotoShop NO hace.** `sgHermes` sigue siendo la fuente de verdad transaccional. El sistema NO modifica esquemas, datos ni permisos del MySQL productivo — solo lee. Toda escritura nuestra va a tablas `app_*` separadas. El negocio sigue facturando con sgHermes como siempre.
+**Evolución a ERP Transaccional Web (Híbrido)**:
+A partir de la migración `erp-transaccional-web`, el Web POS y `sgHermes` comparten la misma base de datos MySQL 5.0 física en tiempo real:
+- **Venta simultánea**: Toda venta realizada desde la aplicación web impacta de inmediato en MySQL (`facventas`, `detfventas`, `detapago`, `detcuentas`, `contadores`) y descuenta el stock (`productos.exiprod`). Si alguien abre `sgHermes` en el PC del local dos segundos después, la venta ya existe y el stock ya está rebajado.
+- **Topología dual**: La analítica global y proyecciones siguen servidas por Render + Cloudflare R2 (DuckDB), mientras que las transacciones del mostrador viajan directo al motor MySQL local mediante la red interna o túneles Cloudflare seguros (`motoshop-local.fragloesja.uk` y `masvital-local.fragloesja.uk`).
 
 ### Roles operativos
 
@@ -80,74 +83,81 @@ Reglas formales por rol viven en `INICIAR_AGENTE.md` e `INICIAR_REVIEWER.md` cua
 
 ---
 
-## 3 · Arquitectura — vista completa
+## 3 · Arquitectura — vista completa (Híbrida: Analítica + Transaccional)
 
 ```mermaid
 flowchart TB
-    subgraph WIN["PC Windows (en el negocio)"]
-        SG[sgHermes<br/>MySQL 5.0 MyISAM<br/>~179 tablas]
+    subgraph WIN["PC Windows (en cada local: MotoShop / MasVital)"]
+        SG[sgHermes<br/>Escritorio Windows]
+        MYSQL[(MySQL 5.0 Legacy<br/>facventas, detfventas, detapago,<br/>detcuentas, productos.exiprod)]
+        API_LOCAL[FastAPI On-Prem<br/>Puerto 8000 / UoW Transaccional]
         TASK[Task Scheduler<br/>cron cada 30 min]
         PIPE[Pipeline Python<br/>pipeline/run_all.py]
-        DB_LOCAL[(motoshop_gold.duckdb<br/>~50 MB)]
-        AUTO[auto_pull_and_apply.ps1<br/>cron 5 min]
+        DB_LOCAL[(motoshop_gold.duckdb<br/>~50 MB analítico)]
+    end
+
+    subgraph TUNNEL["Cloudflare Tunnels (Cero Apertura de Puertos)"]
+        CF_TUNNEL[Túneles Seguros HTTPS<br/>motoshop-local.fragloesja.uk<br/>masvital-local.fragloesja.uk]
     end
 
     subgraph CF["Cloudflare R2 (free tier)"]
         R2[(Bucket motoshop-gold<br/>motoshop_gold.duckdb)]
     end
 
-    subgraph RENDER["Render (free tier)"]
-        API[FastAPI<br/>api.fragloesja.uk]
-        DB_CACHE[(/tmp/motoshop_gold.duckdb<br/>bootstrap desde R2 al start)]
-        SQLITE[(SQLite local<br/>app_writes,<br/>refresh_tokens,<br/>push_subscriptions)]
+    subgraph RENDER["Render (free tier - Solo Analítica / IA)"]
+        API_CLOUD[FastAPI Cloud<br/>api.fragloesja.uk]
+        DB_CACHE[(/tmp/gold.duckdb<br/>bootstrap desde R2)]
     end
 
     subgraph VERCEL["Vercel (free tier)"]
         WEB[Next.js 14 PWA<br/>app.fragloesja.uk]
     end
 
-    subgraph GH["GitHub Actions (free)"]
-        CI_BRIEF[briefing-daily.yml<br/>cron 11:00 UTC<br/>= 06:00 COL]
-        CI_DEPLOY[vercel-deploy.yml<br/>on push main]
+    subgraph EXT["Servicios externos"]
+        TG[Telegram Bot API<br/>Briefing 06:00]
+        DIAN[DIAN Facturación Electrónica<br/>Resolución & CUFE/QR]
     end
 
-    subgraph EXT["Servicios externos (free / pay-per-use)"]
-        TG[Telegram Bot API]
-        HF[HuggingFace<br/>Inference API<br/>embeddings 384d]
-        OCZ[OpenCode Zen<br/>LLM gateway]
-    end
+    %% RUTA TRANSACCIONAL EN TIEMPO REAL (POS / ERP)
+    WEB -->|1. Venta POS / Cobro / Arqueo<br/>HTTPS failover router| CF_TUNNEL
+    CF_TUNNEL -->|2. Proxy seguro a PC local| API_LOCAL
+    API_LOCAL -->|3. UoW Atómico: INSERT facventas<br/>UPDATE productos.exiprod| MYSQL
+    SG <-->|Acceso simultáneo al mismo motor| MYSQL
+    API_LOCAL -->|Cola asíncrona UBL 2.1| DIAN
 
-    SG -->|Task Scheduler<br/>SELECT-only| TASK
+    %% RUTA ANALÍTICA ASÍNCRONA (BI / FORECAST / TELEGRAM)
+    MYSQL -->|Task Scheduler SELECT-only| TASK
     TASK --> PIPE
-    PIPE -->|construye<br/>bronze→silver→gold| DB_LOCAL
-    DB_LOCAL -->|scripts/upload_duckdb_to_r2.py<br/>S3 PutObject| R2
-    AUTO -->|git pull main<br/>auto-restart API| WIN
-
-    R2 -->|boto3 download_file<br/>en startup| DB_CACHE
-    API <--> DB_CACHE
-    API <--> SQLITE
-
-    WEB <-->|HTTPS<br/>JWT cookie httponly| API
-    CI_BRIEF -->|HTTP POST<br/>/briefing/send| API
-    API -->|HTTPS POST| TG
-    TG -->|Telegram| GERENTE[Gerente]
-
-    API -->|httpx| HF
-    API -->|httpx| OCZ
-
-    CI_DEPLOY -->|vercel CLI| WEB
+    PIPE -->|construye bronze→silver→gold| DB_LOCAL
+    DB_LOCAL -->|Sync programado| R2
+    R2 -->|Descarga periódica| DB_CACHE
+    API_CLOUD <--> DB_CACHE
+    WEB -->|Consultas de métricas y dashboards| API_CLOUD
+    API_CLOUD -->|Briefing diario| TG
 
     classDef windows fill:#0078D4,color:#fff
     classDef cloud fill:#F38020,color:#fff
     classDef vercel fill:#000,color:#fff
     classDef render fill:#46E3B7,color:#000
+    classDef tunnel fill:#8A2BE2,color:#fff
     classDef ext fill:#7B1818,color:#fff
     class WIN windows
     class CF cloud
     class VERCEL vercel
     class RENDER render
+    class TUNNEL tunnel
     class EXT ext
 ```
+
+### ¿Cómo funciona la conexión transaccional vs analítica?
+
+| Operación | Destino | Transporte | Latencia / Reflejo |
+|---|---|---|---|
+| **Venta en Mostrador (Web POS)** | PC Local (MySQL) | Red Wi-Fi local o Túnel Cloudflare (`*-local.fragloesja.uk`) | **Tiempo real (< 100ms)**: el `INSERT` y el descuento de `exiprod` ocurren en el acto en el PC del local. `sgHermes` ve la venta inmediatamente. |
+| **Apertura / Cierre de Caja** | PC Local (MySQL) | Red Wi-Fi local o Túnel Cloudflare | **Tiempo real**: registra arqueo y movimientos de caja en el motor local. |
+| **Facturación Electrónica DIAN** | Cola DIAN / API local | Adaptador UBL / CUFE con reintentos backoff | **Segundos**: genera CUFE, QR y transmite a la DIAN. |
+| **Dashboards y Métricas** | Render (Nube) | `api.fragloesja.uk` (DuckDB columnar) | **Periódico**: Lee el snapshot analítico sincronizado vía R2 sin sobrecargar el MySQL del local. |
+| **IA y Forecast** | Render (Nube) | `api.fragloesja.uk` (DeepSeek + DuckDB) | **Bajo demanda**: Cálculos pesados ejecutados en la nube con 0 consumo de CPU en el local. |
 
 ---
 
