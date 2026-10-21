@@ -334,42 +334,50 @@ Mapeo aplicado (valores tomados del esquema y de los datos legacy, no supuestos)
 
 ### Verificación end-to-end (clon `masvital_clone`)
 
-Tres facturas guardadas con `app_writer` por el camino real (`RealInvoicesRepo.create`), no por SQL
-manual: `3558`, `3559`, `3560`.
+Facturas guardadas con `app_writer` por el camino real (`RealInvoicesRepo.create`), no por SQL
+manual. Primera tanda (`ab02482`): `3558`, `3559`, `3560`. Segunda tanda (`4e67589`), con una línea
+a granel: **3555**.
 
 ```
-facventas   1 fila   codclas=S15 prefven=FVP nomuso=ja codemp=E01 empcod=E01 codpag=F04 estfven=B
-detfventas  1 fila   codmed=001 codbod=01 numite=1 totdet=11900
-detapago    1 fila   codpag=F04 despag= (vacío) numpag=REF-PROBE-001 valpag=11900
-detcuentas  2 filas  CLIENTES 11900/0  +  VENTAS COMERCIO 0/11900  (partida doble)
+facventas   1 fila   codclas=S15 prefven=FVP nomuso= codcaj=C1 codemp=59312669 empcod= codpag=F01
+detfventas  2 filas  numite=1 codmed=001 candet=1      totdet=11900
+                     numite=2 codmed=003 candet=0.250  totdet=2095
+detapago    1 fila   codpag=F01 despag= (vacío) numpag=REF-PROBE-GRANEL valpag=13995
+detcuentas  3 filas  11050501 Factura de Venta     13995/0
+                     41359501 Ventas Comercio       0/12000
+                     24080102 IVA generado excluido 0/1995     (balance 13995 = 13995)
+stock       7503008669000  21      -> 20
+            OLAM001       1268.002 -> 1267.752   (0.250 a granel, sin ruido binario)
 app_doc_journal   status=COMMITTED
 app_idempotency   respuesta almacenada
-contadores        conres 3554 -> 3561
+contadores        conres 3554 -> 3556
 ```
 
-Cero `ERROR 1054`/`1064`. Regresión: 4 tests nuevos en `tests/test_erp_legacy_write_path.py`;
-suite completa **22F / 913P / 8S / 11E**, idéntica a la línea base (22F / 909P / 8S / 11E: los 4
+Cero `ERROR 1054`/`1064`. Regresión: 8 tests nuevos en `tests/test_erp_legacy_write_path.py`;
+suite completa **22F / 917P / 8S / 11E**, idéntica a la línea base (22F / 909P / 8S / 11E: los 8
 passes extra son los tests nuevos).
 
 ### Deuda pendiente (no bloquea la venta)
 
 | Tema | Legacy real | Lo que escribe el POS Web | Efecto |
 |---|---|---|---|
-| `facventas.codemp` | NIT del operador (`59312669` constante en 3.554 filas), `empcod` vacío | `E01`/`E01` | reportes que agrupan por `codemp` separan las ventas web |
-| `facventas.nomuso`/`codcaj` | `''` y `C1` | `actor[:2]` y `01` | idem, trazabilidad web distinguible |
-| `detcuentas` causación | PUC por línea (`11050501`, `41359501`, `24080102` IVA) | par grueso `1305`/`4135` | el IVA no se separa en el auxiliar |
-| stock | `productos.exiprod` decrementado | solo se valida; **no se persiste** | el POS Web no descuenta existencias |
+| Débito de la causación | `11050501` para efectivo, `11100501` bancos, `1305` cartera | **siempre** `11050501` | una venta a crédito (`F10`) debita caja en vez de cartera |
+| Costo/inventario | `61359501` y `14350101` por línea | no se registran | el costo de venta no se mueve en el auxiliar |
+| `detcuentas.detcue` del ingreso | nombre del producto | `Ventas Comercio` | el auxiliar agrupa por cuenta, no por ítem |
 
-`codemp`/`nomuso`/`codcaj` siguen la decisión del operador (empresa `E01`); si los reportes legacy
-deben cuadrar, hay que revisarlos antes de habilitar ventas web masivas.
+Resuelto en `4e67589`: descuento de stock, `codemp`/`empcod`/`nomuso`/`codcaj` y las cuentas PUC.
+
+La cabecera ya usa las convenciones legacy (NIT del operador, `C1`, `nomuso` vacío) y el auxiliar
+libra caja contra ingreso e IVA. Lo que falta es el débito por forma de pago (crédito vs efectivo) y
+el costo de venta.
 
 ## 10. Riesgos y deuda técnica
 
 | Severidad | Riesgo | Recomendación |
 |---|---|---|
 | **Resuelta** | El write path real no coincidía con el esquema legacy (§9): toda venta devolvía 500 `Unknown column` | mapper implementado y probado end-to-end contra un clon; ver §9 |
-| **Alta** | `codemp`/`nomuso`/`codcaj` web no coinciden con el legacy, y la causación no separa IVA (§9, deuda pendiente) | decidir con el negocio antes de habilitar ventas web masivas |
-| **Alta** | El POS Web no descuenta `productos.exiprod`: solo valida | persistir el stock o documentar la venta sin descuento |
+| **Resuelta** | El POS Web ya descuenta `productos.exiprod` como delta en la misma UoW (§9) | pendiente: probar concurrencia con `SgHermes` en producción |
+| **Media** | Venta a crédito (`F10`) debita caja (`11050501`) en vez de cartera (§9, deuda) | discriminar por `codpag` antes de vender a crédito desde la web |
 | Alta | `root` **sin password** y el servidor escuchando en `0.0.0.0:3306` | fijar password de `root` y bindear a `127.0.0.1` o firewallear |
 | Media | El path de lectura usa `root` porque el password de `api_read` es desconocido | rotar `api_read` y usar ese usuario en `MYSQL_USER` |
 | Media | MySQL 5.0.45 (EOL desde 2012), sin FKs, `latin1` | plan de migración a 5.7/8.0 |
