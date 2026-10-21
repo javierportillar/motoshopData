@@ -249,6 +249,17 @@ ROUTE_MODULE_EXCEPTIONS: Mapping[RouteKey, str] = {
     ("POST", "/api/admin/users"): "admin-only RBAC administration",
     ("PATCH", "/api/admin/users/{username}"): "admin-only RBAC administration",
     ("DELETE", "/api/admin/users/{username}"): "admin-only RBAC administration",
+    # POS & ERP transactional core (handles cashier authentication & idempotency internally)
+    ("POST", "/api/erp/pos/sales"): "pos sales transactional core with idempotency key",
+    ("GET", "/api/erp/pos/sales/{id}"): "pos sales query",
+    ("GET", "/api/erp/pos/sales"): "pos sales list",
+    ("POST", "/api/erp/pos/sales/{id}/void"): "pos sales voiding with audit reason",
+    ("GET", "/api/erp/pos/sessions/current"): "pos cashier active session lookup",
+    ("POST", "/api/erp/pos/sessions/open"): "pos cashier session open",
+    ("POST", "/api/erp/pos/sessions/{id}/close"): "pos cashier session close",
+    ("POST", "/api/erp/pos/sessions/{id}/movements"): "pos cashier session cash movement",
+    ("GET", "/api/erp/catalog/products/search"): "pos product catalog search",
+    ("GET", "/api/erp/pos/products"): "pos product catalog search alias",
 }
 
 

@@ -28,6 +28,7 @@ from motoshop_api.auth.router import router as auth_router
 from motoshop_api.auth.users import load_users
 from motoshop_api.config import settings
 from motoshop_api.data_catalog.router import catalog_router
+from motoshop_api.erp.router import router as erp_router
 from motoshop_api.expiry.router import router as expiry_router
 from motoshop_api.forecast.router import router as forecast_router
 from motoshop_api.gastos.router import router as gastos_router
@@ -258,6 +259,7 @@ app.include_router(gastos_router, dependencies=module_access)  # ya tiene prefix
 app.include_router(expiry_router, prefix="/api", dependencies=module_access)
 app.include_router(users_router)  # ya tiene prefix=/api/admin/users
 app.include_router(reports_router, prefix="/api")
+app.include_router(erp_router, prefix="/api/erp")
 
 
 class HealthResponse(BaseModel):
