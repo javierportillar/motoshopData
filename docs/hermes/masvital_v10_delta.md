@@ -110,13 +110,14 @@ Verificado leyendo el código decompilado de **este** binario:
 2. **Facturación electrónica presente pero apagada.** Los 57 contadores tienen `esfelec='N'` y `resdian='NO'`; las 3.547 facturas emitidas tienen `estfele='N'`. La capacidad está comprada, la configuración no.
 3. **Operación a granel real.** 17 de 7.818 líneas de venta tienen cantidad fraccionaria (3 decimales), con precio por gramo. `productos.exiprod` mezcla gramos y unidades según `codmed`. Esto no aparece cuantificado en el corpus de 9.1.0.
 4. **Un solo contador activo:** `S15 FACTURA DE VENTA POS`, prefijo `FVP`, consecutivo **3.548**.
-5. **Discrepancia de configuración:** `servidor.txt` (2024-07-31) apunta a `bdempresa`, base que **no existe** en el servidor; la data vive en `masvital`. La app corre igual. Requiere confirmación del operador.
+5. **La configuración efectiva vive en VirtualStore (UAC), no en Program Files.** El `servidor.txt` de `C:\Program Files (x86)\Julio Chaves\SgHermes\` (65 bytes, 2024-07-31) apunta a `bdempresa`, base que **no existe**. La app corre sin elevación, así que Windows redirige sus lecturas y escrituras a `%LOCALAPPDATA%\VirtualStore\Program Files (x86)\Julio Chaves\SgHermes\servidor.txt` (64 bytes, 2026-10-21 09:49), que sí dice **`masvital`**. Verificado contra la conexión viva: PID 2792 → `SHOW FULL PROCESSLIST` → `db = masvital`.
 
 ## 8. Impacto en el plan de migración
 
 - El **modelo de datos y las reglas** del blueprint siguen siendo válidos como marco, pero los números concretos (tablas, contadores, volúmenes) deben tomarse de este delta para MasVital.
 - El **mapeo de unidades** (gramo vs unidad) es un requisito nuevo y bloqueante para el ETL de inventario.
 - La **FE DIAN** no es desarrollo nuevo: es activación + resolución + credenciales.
+- **Cuidado al tocar la configuración:** editar `servidor.txt` en Program Files **no tiene efecto**. El archivo que manda es el de VirtualStore; hay que editar ese o relanzar la app elevada.
 - El **delta de código 9.1.0 → 10.0.0.3** (804 vs 797 archivos) queda sin diff semántico: requeriría decompilar también el 9.1.0 en una máquina que lo tenga.
 
 ## 9. Evidencia asociada

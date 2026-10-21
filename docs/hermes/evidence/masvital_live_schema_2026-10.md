@@ -17,6 +17,7 @@
 | Motor de tablas | **MyISAM — 179/179** |
 | Charset | `latin1` / `latin1_swedish_ci` |
 | Auth | `root` **sin password** |
+| Config efectiva | `servidor.txt` en **VirtualStore** (UAC), no en Program Files — ver `masvital_v10_delta.md` §7.5 |
 
 ## 2. Volumetría
 
