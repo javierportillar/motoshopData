@@ -33,7 +33,7 @@ No trates una **[I]** como contrato: son hipótesis de trabajo.
 ## Hallazgos que condicionan el rediseño
 
 1. `totdet = (valuni − dctpes + ivapes + ipopes) × candet` — fórmula extraída del binario, los impuestos son **por unidad**.
-2. Los consecutivos viven en `contadores` (`numcon` = próximo), sin bloqueo ni índice único.
+2. Los consecutivos viven en `contadores` (`conres` = próximo número; `numcon` es solo el código numérico del tipo de doc), con bloqueo por `LOCK TABLES` en el código pero sin índice único en la tabla.
 3. El stock es un contador único (`productos.exiprod`): **no hay kardex**, y se permite vender en negativo.
 4. Los documentos (`facventas`, `detfventas`, `detapago`, `compras`, `detcompras`) **no tienen PK** y el motor es MyISAM.
 5. Las contraseñas son **reversibles** y el acceso a datos es SQL concatenado sin parámetros.

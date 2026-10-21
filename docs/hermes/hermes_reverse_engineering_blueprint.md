@@ -314,36 +314,39 @@ El binario es un **ERP generalista multiindustria**, no un POS de repuestos. Mó
 
 Los consecutivos **sí viven en la base**, en `contadores` (57 filas):
 
-| Campo | Significado |
+| Campo | Significado **[V] verificado en código** |
 |---|---|
 | `codcon` | Tipo de documento (`S15` = FACTURA DE VENTA POS) |
 | `descon` | Descripción ("FACTURA DE VENTA POS") |
-| `numcon` | **Próximo número a usar** |
-| `numini` / `numfin` | Rango autorizado |
-| `numauto` | ¿Continúa automáticamente al agotar el rango? |
+| `numcon` | Código numérico del tipo de documento (S15 → 15). **NO es el contador.** |
+| `numini` / `numfin` | Rango autorizado (DIAN) |
+| `numauto` | `SI`: autoincrementa; `NO`: el usuario digita el número manualmente |
 | `preres` | Prefijo (`FVP`) |
-| `conres` | Resolución asociada |
+| `conres` | **Contador vivo: próximo número a usar** (S15 → 7323) |
 | `actcon` | Activo |
 | `tipclas` | Clase de documento |
 
-Contadores relevantes hoy **[V]**:
+Contadores relevantes hoy **[V]** (`conres` = próximo número):
 
-| `codcon` | Documento | Prefijo | `numcon` (siguiente) | `numauto` |
+| `codcon` | Documento | Prefijo | `conres` (siguiente) | `numauto` |
 |---|---|---|---|---|
 | S15 | FACTURA DE VENTA POS | FVP | **7323** | SI |
-| S08 | FACTURA DE VENTA | FV | 1 | SI |
-| S16 | DEVOLUCIÓN POS | DP | 262 | SI |
-| S18 | COMPRA | COM | 2363 | **NO** |
-| S01 | RECIBO DE CAJA | RC | 23 | SI |
-| S02 | COMPROBANTE DE EGRESO | CE | 517 | SI |
-| S09 | COTIZACIÓN | COT | 387 | SI |
+| S08 | FACTURA DE VENTA | FV | [I] re-verificar | SI |
+| S16 | DEVOLUCIÓN POS | DP | [I] re-verificar | SI |
+| S18 | COMPRA | COM | [I] re-verificar | **NO** |
+| S01 | RECIBO DE CAJA | RC | [I] re-verificar | SI |
+| S02 | COMPROBANTE DE EGRESO | CE | [I] re-verificar | SI |
+| S09 | COTIZACIÓN | COT | [I] re-verificar | SI |
 
-**Flujo verificado:** `SELECT … FROM contadores WHERE codcon='S15'` → se usa `numcon` como número del documento → `UPDATE contadores SET numcon = numcon + 1`. El literal `Consecutivo actual ya existe debe ser un n…` confirma una validación de duplicado **en aplicación**.
+**Flujo verificado en código descompilado** (`Botones.cs`):
+- `Conta_ResFV` (L35): `LOCK TABLES contadores WRITE` → lee `conres` como número del documento → `UPDATE conres = conres + 1 WHERE conres <= valor_anterior`. Existe bloqueo de tabla MyISAM, no read-modify-write libre.
+- `Bus_Con_Act` (L453): autocorrección con `MAX(<tabla_documento>)+1` si el contador quedó rezagado.
+- `Valid_NumFin` (`MovOtros.cs` L1397): valida rango `numini`/`numfin`; si el número supera `numfin`, bloquea con "El nuevo número de documento es mayor que la numeración final, debe ampliar la numeración final". Con `numauto='NO'` (ej. compras S18) el usuario digita el número y hay validación de duplicado en aplicación ("Consecutivo actual ya existe…").
 
 **Defectos del mecanismo:**
-1. **Read-modify-write sin bloqueo** sobre MyISAM → dos cajas simultáneas pueden tomar el mismo número.
-2. **Sin `UNIQUE(prefijo, número)`**: hoy no hay duplicados (7.307/7.307), pero nada lo garantiza.
-3. El contador puede desincronizarse si la transacción falla después de insertar la factura.
+1. `Bus_Con_Act` usa `SELECT MAX(numdoc)` sin `UNIQUE(prefijo, número)` en la tabla de documentos: la red de seguridad depende de lectura correcta bajo carga.
+2. El bloqueo `LOCK TABLES` es exclusión mutua global de MyISAM: serializa TODO documento de todas las cajas durante el latch.
+3. El contador puede desincronizarse si el proceso muere después de incrementar `conres` pero antes de insertar el documento (MyISAM sin transacciones); se recupera solo vía `Bus_Con_Act`.
 
 **Diseño nuevo:** tabla `document_sequences` con `UPDATE … RETURNING` (PostgreSQL) o `SELECT … FOR UPDATE`, más `UNIQUE(prefix, number)` como red de seguridad; el número se reserva dentro de la misma transacción que emite el documento.
 
@@ -423,12 +426,22 @@ Campos de cabecera: `retfte` (retefuente), `retiva` (reteIVA), `retica` (reteICA
 - Fuente única: `productos.exiprod` (contador).
 - Sin bloqueo: MyISAM no permite `SELECT … FOR UPDATE`; el control es de aplicación y de un solo usuario.
 - **Se permite vender en cero/negativo** (2.421 en cero, 5 negativos) **[V]**.
-- Descuento de stock al facturar: **[I]** se decrementa `exiprod` en la misma operación (no hay kardex que lo pruebe). Requiere prueba controlada para confirmar el momento exacto (al guardar vs al imprimir).
+- Descuento de stock al facturar: **[V] verificado** — `Edi_CueInvProd` (`Vardos.cs` L423) ejecuta `exiprod = exiprod + cantidad` al guardar el documento (venta → cantidad negativa), más costos (`cosulc` si compra, `coskar` leído de `detcuentas` en `Busca_post`, o recálculo con `Recal_Cat`). **No valida negativos**: por eso existen productos con stock negativo. Kardex reporte = `SUM(detcuentas.candet)` sobre la cuenta de inventario del producto (`SCos_Can_Cue`, `MovOtros.cs` L913). Además `UPDATE productos SET exiprod` directo existe en re-herrajes de stock (`Actualsaldo.cs` L1001, `Productos.cs` L10918, `CierreAnu2.cs` L3909).
 
-### 3.8 Anulaciones y devoluciones
+### 3.8 Anulaciones y devoluciones **[V] verificado en código** (`Boteliminar.cs`)
 
-- Anulación: `estfven = 'A'` (16 casos). **No hay movimiento de reversa en kardex** (la tabla está vacía) ni contrapartida en `detapago` **[V]** → el stock y la caja se corrigen a mano. Es una **brecha funcional** a resolver en el sistema nuevo.
-- Devoluciones/cambios: `detfventas.devcam` y `iterel` (línea relacionada) sugieren el mecanismo, más `subinventa`; sin flujo verificable **[X]**.
+La anulación **sí tiene reversa completa** (flujo `Ll_FACVENP`, L624 en adelante):
+
+1. `Veri_Anul` (L402): rechaza si el documento ya está anulado.
+2. `Hay_Cie_Eli`: rechaza si la fecha del documento cae dentro de un cierre contable cerrado.
+3. `Valid_EdiDocele` (L425): rechaza modificar documentos electrónicos ya aceptados (estado DIAN 1/2).
+4. Diálogo `FrModAnuDoc`: exige permiso (`TxtCodPerm='N049'`) y **motivo**.
+5. `Inserta_Anu` (L385): `INSERT INTO motanudoc (numnum, fecanu, motanu, codemp, horanu, codclas, fecdoc, tipo)` — auditoría de anuladas (tipo `A`) y modificaciones (tipo `M`).
+6. Reversa de asientos y pagos: `UPDATE detcuentas SET estcue='A'`, `UPDATE detapago SET estado='A'`, `UPDATE financiacion SET estfin='A'`.
+7. Reversa de stock: `AcInv_Eli_Anul` (`Vardos.cs` L865) borra el asiento del documento y para cada producto `tipclas` ∈ {S18, S44, S23, S34} llama `Edi_CueInvProd(..., Recal_Cat=true)` → **recálculo completo de `exiprod` desde `detcuentas` restantes**.
+8. `UPDATE facventas SET estfven='A'` (L680/770/1071) y reset del documento de domicilio asociado.
+
+Devoluciones/cambios: documento clase S16 (DEVOLUCIÓN POS, prefijo DP) con contador propio; `detfventas.devcam` e `iterel` (línea original relacionada) **[V]** como esquema, flujo UI completo en `NotcreCLI/NotcrePRO` **[I]** (no leído línea a línea).
 
 ### 3.9 Transacciones y concurrencia
 
@@ -666,7 +679,7 @@ El legacy es local (todo en la misma máquina), así que la operación no depend
 | 4 | Recalcular totales y comparar contra cabecera; registrar discrepancias |
 | 5 | Sembrar `product_stock` desde `productos.exiprod` (sin kardex histórico → marcar "saldo inicial" en `stock_movements`) |
 | 6 | Remapear `formapago` → `payment_methods` conservando el código (F01, F05…) |
-| 7 | Sembrar `document_sequences` desde `contadores` (`numcon` = **próximo**, no el último usado) y desde `contadores.preres` |
+| 7 | Sembrar `document_sequences` desde `contadores` (**`conres`** = próximo, no el último usado; `numcon` es solo el código numérico del tipo de doc) y desde `contadores.preres` |
 | 8 | Importar anuladas con `status='voided'` y su `void_reason` desconocido |
 | 9 | Validar contra muestras: factura 7322 (100.000, 1 línea, sin IVA) debe cuadrar al centavo |
 | 10 | Cargar `listapre` + `preciosxpro` (2 listas, 123 precios) y asignar `customers.price_list_id` |
