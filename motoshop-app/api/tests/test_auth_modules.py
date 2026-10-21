@@ -15,8 +15,8 @@ from motoshop_api.auth.module_access import (
     ROUTE_MODULES,
     require_route_module,
 )
-from motoshop_api.erp.guards import ERP_ROUTE_MODULES
 from motoshop_api.auth.users import User
+from motoshop_api.erp.guards import ERP_ROUTE_MODULES
 from motoshop_api.main import app as production_app
 
 
