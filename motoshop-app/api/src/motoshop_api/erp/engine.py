@@ -125,7 +125,8 @@ def heal_stale_pending(
 
     Returns the healed document keys ("codclas/pref/docnum REASON"). Rows that
     DO have legacy rows are NOT auto-failed here: they need the nightly
-    consistency check (doc totals vs detcuentas, exiprod audit) and are only
+    consistency check (doc totals vs detcuentas, products.existencia audit) and
+    are only
     listed by the caller.
     """
     if now is None:
