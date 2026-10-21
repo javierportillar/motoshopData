@@ -1,9 +1,14 @@
-"""Pydantic models for POS, Cash Sessions & ERP transactions.
+"""ERP data contracts — union of two lineages on the same module:
 
-Implements data contracts for Web POS and sgHermes reverse-engineering specs.
+- Pydantic models for POS, Cash Sessions & ERP transactions
+  (Web POS and sgHermes reverse-engineering specs, origin/main POS core).
+- SQLAlchemy Core table definitions for the ERP ``app_*`` companions
+  (erp-transaccional-web slice 1; F8-001/F8-002 own the physical DDL).
 """
 
 from __future__ import annotations
+
+# ═══ POS / cash / session contracts (origin/main POS core) ════════════════
 
 from datetime import datetime
 from decimal import Decimal
@@ -250,3 +255,61 @@ class ProductSearchResult(BaseModel):
     tax_rate: Decimal
     category: str | None = None
     barcode: str | None = None
+
+
+# ═══ app_* companion tables (erp-transaccional-web slice 1) ═══════════════
+
+from sqlalchemy import (  # noqa: E402
+    Column,
+    Enum,
+    Index,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    TIMESTAMP,
+    UniqueConstraint,
+)
+
+
+metadata_erp = MetaData(schema=None)  # default schema (motoshop2024)
+
+app_doc_journal = Table(
+    "app_doc_journal",
+    metadata_erp,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("codclas", String(4), nullable=False),
+    Column("pref", String(8), default=""),
+    Column("docnum", Integer, nullable=True),
+    Column("status", Enum("PENDING", "COMMITTED", "FAILED", "ANNULLED"), nullable=False),
+    Column("doc_type", String(32), default=""),
+    Column("tenant", String(32), nullable=False),
+    Column("empresa", String(15), default=""),
+    Column("actor", String(64), nullable=False),
+    Column("request_id", String(64), default=""),
+    Column("idempotency_key", String(64), nullable=True),
+    Column("error_msg", String(500), nullable=True),
+    Column("created_at", TIMESTAMP, nullable=False),
+    Index("idx_status_created", "status", "created_at"),
+    Index("idx_tenant_status", "tenant", "status"),
+    Index("idx_codclas_docnum", "codclas", "pref", "docnum"),
+    Index("idx_idempotency", "idempotency_key"),
+    extend_existing=True,
+)
+
+app_idempotency = Table(
+    "app_idempotency",
+    metadata_erp,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("idempotency_key", String(64), nullable=False),
+    Column("doc_type", String(32), default=""),
+    Column("tenant", String(32), nullable=False),
+    Column("actor", String(64), default=""),
+    Column("request_id", String(64), default=""),
+    Column("response_json", Text, nullable=True),
+    Column("created_at", TIMESTAMP, nullable=False),
+    UniqueConstraint("idempotency_key", name="uq_idempotency_key"),
+    Index("idx_tenant_created", "tenant", "created_at"),
+    extend_existing=True,
+)
