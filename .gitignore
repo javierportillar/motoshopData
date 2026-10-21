@@ -98,3 +98,6 @@ logs/
 infra/supabase/.temp/
 
 reponova-out
+
+# Esquema de referencia del legacy sgHermes (solo DDL, sin datos) - si se versiona
+!docs/hermes/evidence/schema_2024.sql

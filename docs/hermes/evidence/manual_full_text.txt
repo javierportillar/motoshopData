@@ -1,0 +1,1255 @@
+
+===== PAGINA 1 =====
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+  
+===== PAGINA 2 =====
+ 
+ 
+Contenido 
+ 
+Copias de Seguridad ............................................................................................................... 3 
+Ingreso al Software .................................................................................................................. 3 
+Barra de Botones ..................................................................................................................... 4 
+Parametrización General de la Empresa ............................................................................ 5 
+Parametrizar información de la Empresa ...................................................................... 5 
+Crear Terceros (Clientes, proveedores y empleados) ................................................ 6 
+Crear Catálogo de Productos ............................................................................................ 7 
+Crear Usuarios del Sistema ............................................................................................. 10 
+Procesos ................................................................................................................................... 11 
+Saldos Iniciales ................................................................................................................... 11 
+R
+ecibos de Caja (Comprobante de Ingreso) ............................................................... 12 
+Recibos de Caja (Comprobante de Egreso) ................................................................ 13 
+Facturación .......................................................................................................................... 14 
+Facturación POS ................................................................................................................. 15 
+Compras ............................................................................................................................... 17 
+Informes .................................................................................................................................... 18 
+Informe de Comprobantes ............................................................................................... 18 
+Informe de Caja ................................................................................................................... 19 
+Informe de Ventas .............................................................................................................. 20 
+Informe de Cuentas por Cobrar ...................................................................................... 21 
+Informe de Cuentas por Pagar ........................................................................................ 22 
+Informe de Contabilidad ................................................................................................... 23 
+Informe de Inventario ........................................................................................................ 24 
+Kardex ................................................................................................................................... 25 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+===== PAGINA 3 =====
+ 
+ 
+Copias de Seguridad 
+ 
+Son archivos que se crean como respaldo de la 
+ información existente en el 
+software de manera que sea posible recuperarse si acontece un siniestro que 
+comprometa los datos actuales. 
+Para realizar su copia de seguridad, simplemente copiando la carpeta de base 
+de datos ubicada en:  
+C:\Archivos de programa(x86)\MySQL\MySQL Server 5.0\data 
+ 
+Para restaurarla, puede borrar la carpeta anterior, y reemplazarla por la copia. 
+ 
+Ingreso al Software 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Al momento de ejecuta r el 
+programa Hermes Gestión 
+Comercial aparecerá una ventana 
+en la cual es necesario ingresar la 
+Base de datos a la que desea 
+acceder. 
+ 
+A continuación, aparecerá 
+esta pantalla de Inicio de 
+sesión, en la cual se debe 
+ingresar correctamente el 
+usuario con s u respectiva 
+contraseña. 
+ 
+
+===== PAGINA 4 =====
+ 
+ 
+Barra de Botones 
+ 
+Es la fila de botones que se encuentra en la 
+ parte superior de la pantalla, 
+proporciona una serie de funciones y comandos, facilitando acc esar, modificar, 
+buscar, anular y eliminar la información. 
+ 
+ 
+ 
+Nuevo: Iniciar un nuevo documento o nuevo registro, ésta acción se 
+puede ejecutar con las teclas Ctrl+N. 
+Guardar: Graba los datos del documento o registro ésta acción se puede 
+ejecutar con las teclas Ctrl+G. 
+Modificar: Activa los campos para modificar registro activo, ésta acción 
+se puede ejecutar con las teclas Ctrl+F2. 
+Eliminar: Elimina registro activo o Anula el documento activo, ésta acción 
+se puede ejecutar con las teclas Ctrl+E. 
+Buscar: Buscar registros o documentos, ésta acción se puede ejecutar 
+con las teclas Ctrl+f3. 
+Primero: Permite desplazarse hasta el primer registro o documento, ésta 
+acción se puede ejecutar con las teclas Ctrl+F5. 
+Anterior: Permite desplazarse al anterior re gistro o documento, ésta 
+acción se puede ejecutar con las teclas Ctrl+F6. 
+Siguiente: Permite desplazarse al siguiente registro o documento, ésta 
+acción se puede ejecutar con las teclas Ctrl+F7. 
+Ultimo: Permite desplazarse hasta el último registro o docum ento, ésta 
+acción se puede ejecutar con las teclas Ctrl+F8. 
+Imprimir: Imprime documento activo, ésta acción se puede ejecutar con 
+las teclas Ctrl+I. 
+Deshacer: Deshacer cuando se ha presionado el botón nuevo, o 
+modificar. 
+Cerrar: Permite cerrar el documento. 
+Actualizar: Actualizar formulario activo esto por si hay cambios en otro 
+formulario que afecte a este. 
+ 
+
+===== PAGINA 5 =====
+ 
+ 
+Traer desde Excel: Permite 
+importar registros a partir de un 
+documento creado en Excel. 
+ 
+Contabilidad: Permite ver la contabilidad del documento activo, 
+ésta acción se puede ejecutar con las teclas Ctrl+U. 
+ 
+Adicionar Tercero:  Permite crear nuevos terceros  (Clientes, 
+Proveedores y empleados). 
+Copiar o traer  desde: Para copiar documentos, o transferir ítems de 
+documentos pendientes, ésta acción se puede ejecutar con las teclas 
+Ctrl+T. 
+Parametrización General de la Empresa 
+ 
+Para ingresar al sistema los datos básicos de su empresa tales como razón 
+social, nombre comercial, teléfonos, dirección, correo electrónico, página web, 
+representante legal y contador público. 
+ 
+Parametrizar información de la Empresa 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Ingresamos a la siguiente ruta: 
+Parámetros/Empresa 
+Lo seleccionamos y nos aparecerá la 
+siguiente ventana: 
+Digite la información de su empresa en 
+los campos correspondientes. En la 
+pestaña Clasificación seleccione las 
+opciones correspondientes al tipo de 
+empresa que posee. 
+Recuerde que los 
+ Bancos
+ asignados 
+en empresa, serán utilizados  en 
+catálogos de forma de pago cuando 
+afecte a Bancos. 
+Una vez parametrizados presione el 
+botón 
+ Guardar
+ ubicado en la parte 
+superior. 
+ 
+ 
+ 
+===== PAGINA 6 =====
+ 
+ 
+Crear Terceros (Clientes, proveedores y empleados)  
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Para crear los terceros que 
+aparecerán relacionados en 
+comprobantes tales como facturas 
+de venta, comprobantes de egres o, 
+recibos de caja, entre otros, 
+ingresamos a la siguiente ruta: 
+Parámetros/Catálogos/Terceros 
+Lo seleccionamos y nos aparecerá 
+la siguiente ventana: 
+ 
+ 
+ 
+Para adicionar un nuevo 
+tercero presione el botón 
+Nuevo y proceda a llenar los 
+campos correspondientes, 
+una vez llenos los datos 
+básicos del tercero, 
+seleccione la Clasificación 
+que le corresponda.  
+ 
+ 
+En la pestaña Comerciales 
+puede manejar el cupo en 
+cartera de cada cliente, 
+además de agregar la 
+información bancaria, 
+asignar una lista de precio 
+especial y detallar la 
+actividad económica. 
+ 
+ 
+===== PAGINA 7 =====
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Imagen: Seleccionar una imagen perteneciente al tercero, Hermes guarda la 
+ruta de donde proviene la imagen, si la imagen ya no existe, no se mostrará, si 
+pertenece a una red de computadores, debe especificar la ruta de red de donde 
+proviene la imagen, o que cada equipo de trabajo contenga la imagen en esta 
+ruta, si desea que no tenga imagen debe activar la casilla de Sin imagen. 
+ 
+ 
+ 
+ 
+ 
+ 
+Completados los campos requeridos seleccione el botón Guardar. 
+ 
+Crear Catálogo de Productos 
+ 
+Para crear el catálogo de productos, debe ingresar a la siguiente ruta: 
+Parámetros/Catálogos/Productos 
+ 
+ 
+ 
+ 
+ 
+ 
+En la pestaña 
+Varios  
+podemos ingresar datos 
+relevantes de cada uno de 
+los terceros, fecha de 
+nacimiento, obse rvaciones 
+fotografía y logo en el caso 
+de los proveedores. 
+ 
+ 
+En la pestaña Empleados 
+podemos ingresar datos 
+importantes para el manejo 
+de nómina. 
+     Presionar este botón 
+para ingresar, modificar o 
+eliminar los contratos del 
+empleado, además también 
+para establecer los 
+conceptos de Nómina. 
+ 
+ 
+===== PAGINA 8 =====
+ 
+ 
+Para crear un nuevo producto seleccionar el botón 
+Nuevo
+, proceda a diligenciar 
+los campos correspondientes.
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Detalle: Nombre que tendrá el artículo. 
+SubInventario / Maneja seriales, Lotes o vencimiento: Activar esta casilla, si 
+desea que el sistema también lleve un subinventario para seriales, lotes o fechas 
+de vencimientos. 
+Nivel general:  seleccionar el nivel general al cual pertenece el producto, 
+previamente creado en Parámetros/Clasificación de inventario/Nivel general. 
+Grupos: Designe un tipo, una marca o grupo para el producto con el fin de dar 
+un orden al inventario. Si en algún momento desea generar un informe sobre los 
+artículos de un tipo, marca o grupo determinad o, será necesario llenar estos 
+campos. Para crear los grupos seleccionar   
+ 
+Tarifa IVA:  Seleccionar la tarifa de IVA previamente creado en 
+Parámetros/Catálogos/Impuestos. 
+Stock Mínimo: digitar el stock mínimo del producto. 
+Stock Máximo: digitar el stock máximo del producto. 
+ 
+ 
+ 
+Código:
+ Código que 
+identificará el artículo 
+dentro del programa. 
+Cod. Barras:  Permite 
+adicionar un código de 
+barras relacionado con el 
+producto, el cual se puede 
+utilizar para agregar 
+referencias al momento de 
+elaborar una factura o 
+cuando se necesite buscar 
+un producto en particular. 
+Para adicionar un código de 
+barras coloque el puntero 
+del mouse sobre el campo 
+Cód. Barras y apunte la 
+pistola lectora al código del 
+artículo que desee ingresar. 
+ 
+ 
+
+===== PAGINA 9 =====
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Nota: Si desea eliminar o modificar un Precio de venta, debe seleccionar de la 
+lista el precio de venta según lista de precio, para eliminar presione la tecla Supr, 
+y para modificar seleccione una lista de precio en la casilla Lista de Precio que 
+se encuentre en la list a como si fuera a adicionar uno nuevo, luego presione el 
+botón aceptar, si la Lista de Precio se encuentra en la lista este le informará que 
+La lista de precio ya se encuentra en la lista y si desea modificarla. 
+ 
+ 
+ 
+ 
+En la pestaña Presentación 
+puede parametrizar el 
+modelo o presentación del 
+producto, el valor de medida, 
+unidad múltiplo en compras, 
+registro Invima si lo requiere, 
+puede seleccionar una 
+imagen para identificar el 
+producto con mayor facilidad 
+y hacer unas observaciones. 
+ 
+En l a pestaña Precio de 
+Venta ingresamos el precio  
+al público, puede determinar 
+si este precio se toma antes o 
+después del impuesto. 
+Puede crear listas de precios 
+previamente creadas en 
+Parámetros/Precios-Listas 
+de Precio/Catálogo de 
+Listas. 
+ 
+
+===== PAGINA 10 =====
+ 
+ 
+Crear Usuarios del Sistema 
+ 
+Con el fi n de tener un acceso controlado al sistema, 
+ Hermes permite crear 
+usuarios con diferentes niveles de acceso y permisos. 
+Para esto ingresamos a la ruta: Sesión/Usuarios 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+El usuario debe ser 
+creado previamente 
+como empleado en el 
+catálogo de terceros: 
+Parámetros/Catálogos
+/Terceros (Ver pág. 6). 
+Para crear un nuevo 
+usuario presione el 
+botón Nuevo y 
+diligencie los espacios 
+correspondientes. 
+ 
+Si el usuario tiene permisos 
+para el uso completo  del 
+sistema, seleccionamos el 
+nivel de Administrador. 
+De lo contrario para asignar 
+permisos específicos, 
+seleccionamos el nivel 
+Personalizado y damos 
+clic en          
+Seleccionamos las casillas 
+de los permisos que 
+necesitamos para este 
+usuario, aceptamos y 
+guardamos. 
+===== PAGINA 11 =====
+ 
+ 
+Procesos 
+Saldos Iniciales 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Se elige el botón Nuevo para crear un nuevo saldo inicial . Por el contrario, si 
+necesita hacer cambios en un saldo existente debe presionar el botón Buscar, 
+selecciona el saldo  y elige la opción Modificar para registrar  los cambios 
+necesarios. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Si desea eliminar o modificar un saldo, debe seleccionarlo de la lista y lo elimina 
+presionando la tecla Supr. 
+En el caso de Inventarios, Cuentas por Cobrar y Cuentas por Pagar pue de 
+seleccionar directamente los botones respectivos. AL finalizar presione el botón 
+Guardar. 
+ 
+Permite ingresar todos los saldos 
+iniciales existentes de la empresa para 
+empezar los movimientos contables.  
+Para crear saldos iniciales , debe 
+ingresar a la siguiente ruta: 
+Parámetros/Saldos Iniciales 
+ 
+Edite fecha, numero de 
+documento exter no, 
+detalle, seleccionamos al 
+tercero y buscamos la 
+cuenta de acuerdo al 
+catálogo de cuentas 
+contables, presione la 
+tecla enter, según la 
+cuenta se abrirá otra 
+ventana para agregar 
+más datos o 
+directamente se dirige a 
+la casilla del Valor, 
+nuevamente presi one 
+enter hasta que el saldo 
+se agregue a la lista.  
+===== PAGINA 12 =====
+ 
+ 
+R
+ecibos de Caja (Comprobante de Ingreso) 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+nuevamente presione enter hasta que el registro se agregue a la lista.  
+Si desea eliminar o modificar un registro, debe seleccionar lo de la lista y lo 
+elimina presionando la tecla Supr. 
+En el caso de un abono de un cliente podemos ir directamente a Ver saldos. 
+Directamente podemos crear anticipos , conceptos y descuentos  por medio de 
+sus respectivos botones, adicionamos la Forma de pago y guardamos. 
+ 
+ 
+ 
+ 
+Para crear Comprobante de Ingreso, debe ingresar a la siguiente ruta: 
+Movimientos/Caja y Bancos/Recibos de Caja (Comp. De Ingreso) 
+ 
+Es un documento de 
+contabilidad, que debemos 
+diligenciar cuando hay u n 
+ingreso en efectivo o en 
+cheque a nuestra empresa 
+correspondiente a un pago o 
+abono por algún concepto. 
+Seleccionamos Nuevo y 
+procedemos a llenar los 
+campos de fecha, hora, 
+tercero, por concepto de y 
+buscamos la cuenta 
+correspondiente al catálogo 
+de cuen tas contables, 
+presione la tecla enter, 
+según la cuenta se abrirá 
+otra ventana para agregar 
+más datos o directamente se 
+dirige a la casilla del valor,  
+===== PAGINA 13 =====
+ 
+ 
+Recibos de Caja (Comprobante de Egreso) 
+ 
+ 
+ 
+ 
+ 
+El comprobante de egreso es un documento cont able que permite registrar el 
+pago de las diferentes obligaciones que adquiere el ente económico como: 
+cuentas por pagar a proveedores, obligaciones laborales, cancelación de los 
+diferentes gastos operacionales (servicios, papelería, etc.), transacciones 
+comerciales, causar anticipos, etc. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Si desea eliminar o modificar un registro, debe seleccionarlo de la lista y lo 
+elimina presionando la tecla Supr. 
+En el caso de un abono de un cliente podemos ir directamente a Ver saldos. 
+Directamente podemos crear anticipos, conceptos y descuentos por medio de 
+sus respectivos botones, adicionamos la 
+Forma de pago
+ y guardamos. 
+ 
+Para crear Comprobante de Egreso, debe ingresar a la siguiente ruta: 
+Movimientos/Caja y Bancos/Recibos de Caja (Comp. De Egreso) 
+ 
+Seleccionamos Nuevo y 
+procedemos a llenar los 
+campos de fecha, hora, 
+tercero, por concepto de y 
+buscamos la cuenta 
+correspondiente al catálogo 
+de cuentas contables, 
+presione la tecla enter, 
+según la cuenta se abrirá 
+otra ventana para agregar 
+más datos o directamente se 
+dirige a la casilla del valor, 
+nuevamente presione enter 
+hasta que el registro se 
+agregue a la lista. 
+===== PAGINA 14 =====
+ 
+ 
+Facturación 
+ 
+Para crear una Factura de venta, debe ingresar a la siguiente ruta: 
+Movimientos/Ventas/Factura de Venta 
+O con la combinación de teclas Ctrl+F 
+ 
+ 
+ 
+ 
+ 
+Para diligenciar la factura de venta prim ero seleccione 
+Nuevo
+ y digite los datos 
+básicos del documento en las casillas: Fecha - Cliente - Vendedor. 
+Posteriormente adicione el 
+Producto
+ a facturar escribiendo el nombre o código 
+del mismo o a través del botón Buscar o con la tecla F3, una vez seleccionado  
+presione la tecla enter para  especificar las cantidades a v ender y presione la 
+tecla enter nuevamente hasta que el producto se agregue a la lista. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+===== PAGINA 15 =====
+ 
+ 
+Si desea eliminar o modificar un producto, debe seleccionarlo de l a lista y lo 
+elimina presionando la tecla Supr. 
+Seleccione la Forma de Pago en la cual el cliente cancelará. 
+ 
+ 
+ 
+ 
+Si escoge la forma de pago CUENTAS X COBRAR puede especificar el plazo, 
+el interés por mora y el descuento. 
+ 
+ 
+ 
+Por último, presione el botón 
+Guardar
+ para finalizar e imprimir la factura. 
+ 
+Facturación POS 
+ 
+POS hace referencia al tipo de facturación de empresas comerciales que tengan 
+implementados puntos de venta, que utilizan impresoras tipo tiquete (POS) y una 
+resolución especial de la DIAN.  
+Para acceder a la Facturación POS ingrese a la siguiente ruta: 
+Movimientos/Facturación POS/Factura de Venta POS 
+O con la combinación de teclas Ctrl+P 
+ 
+ 
+ 
+ 
+ 
+Para diligenciar la factura de venta POS primero seleccione 
+Nuevo
+ y digite los 
+datos básicos del documento en las casillas: Fecha - Cliente. 
+Posteriormente adicione el 
+Producto
+ a facturar escribiendo el nombre o código 
+del mismo o a través del botón Buscar o con la tecla F3, una vez seleccionado  
+===== PAGINA 16 =====
+ 
+ 
+presione la tecla enter para  especificar las cantidades a v ender y presione la 
+tecla enter nuevamente hasta que el producto se agregue a la lista. 
+Si desea eliminar o modificar un producto, debe seleccionarlo de l a lista y lo 
+elimina presionando la tecla Supr. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Seleccione la Forma de Pago en la cual el cliente cancelará. 
+ 
+ 
+ 
+ 
+De ésta manera se realizará la operación matemática entre el valor total y el valor 
+recibido dando a conocer el resultado en la casilla cambio. 
+ 
+ 
+ 
+Si escoge la forma de pago CUENTAS X COBRAR puede especificar el plazo, 
+el interés por mora y el descuento. 
+ 
+ 
+ 
+Por último, presione el botón 
+Guardar
+ para finalizar e imprimir la factura. 
+ 
+Si selecciona efectivo, p ara 
+conocer el valor del cambio 
+presione la tecla F6 y digite 
+la cantidad que ha recibido 
+por parte del cliente. 
+===== PAGINA 17 =====
+ 
+ 
+Compras 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Una vez seleccionado presione la tecla enter para especificar el precio unitario y 
+las cantidades adquiridas de cada producto, presione la tecla enter nuevamente 
+hasta que el producto se agregue a la lista. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Para crear una compra, debe ingresar a la siguiente ruta: 
+Movimientos/Compras/Compra 
+ Para diligenciar el  documento de 
+compras primero digite los  datos 
+generales, fecha, según Factura 
+del proveedor y los datos del 
+proveedor, posteriormente 
+adicione el Producto a facturar 
+escribiendo el nombre o código 
+del mismo o a través del  botón 
+Buscar o con la tecla F3.  
+ 
+Si desea eliminar o 
+modificar un producto, 
+debe seleccionarlo de la 
+lista y lo elimina 
+presionando la tecla Supr. 
+Una vez dili genciados los 
+productos que aparecen 
+en la factura del 
+proveedor, proceda a 
+escoger la Forma de 
+Pago y por último  damos 
+clic en el botón Guardar. 
+ 
+===== PAGINA 18 =====
+ 
+ 
+Informes 
+ 
+Hermes le proporciona diferentes informes de acuerdo a sus necesidades, 
+hace que la revisión contable sea sobre bases reales, en una forma muy sencilla 
+y práctica para la toma de decisiones, y así conocer el comportamiento para 
+proyectarse a futuro y adelantarse a los acontecimientos.  Todos los informes 
+pueden exportarse a diferentes formatos, PDF, Excel, Word, etc. 
+ 
+Informe de Comprobantes 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Presenta un informe detallado de cada uno 
+de los documentos existentes. 
+Para observar este informe , debe ingresar 
+a la siguiente ruta: 
+Informes/Informe de Comprobantes 
+ 
+Seleccione el tipo de documento que necesita 
+observar, de esta forma se abre una nueva 
+ventana en la cual puede fi ltrar la información 
+por fecha, por consecutivos, por terceros, por 
+usuarios, etc. Al finalizar damos clic en el botón 
+de la impresora para ver y analizar el informe 
+correspondiente. 
+ 
+===== PAGINA 19 =====
+ 
+ 
+Informe de Caja 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Puede filtrar la información por fecha, por arqueo de caja, por usuarios, por 
+facturas de venta, devoluciones, recibos de caja, comprobantes de eg reso, por 
+caja, además cuenta con unas opciones adicionales como mirar el informe 
+detallado por facturas, agrupado por ítems, etc. Al finalizar damos clic en el botón 
+de la impresora para ver y analizar el informe correspondiente o exportarlo 
+directamente a un documento de Excel con su respectivo botón. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Permite generar un informe del movimiento 
+detallado, acumulado por cuen tas o resumido 
+de las cuentas de caja y bancos. 
+Para observar este informe, debe ingresar a la 
+siguiente ruta: 
+Informes/Informe de Caja 
+ 
+Al ingresar aparece esta venta 
+donde puede seleccionar el tipo 
+de informe que desea observar. 
+ 
+===== PAGINA 20 =====
+ 
+ 
+Informe de Ventas 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Puede filtrar la información por fecha, por consecutivos, por tipo de factura, por 
+usuarios, por vendedor, por forma de pago, por producto etc. Al finalizar damos 
+clic en el botón de la impresora para ver y analizar el informe correspondiente. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Permite visualizar todos los movimientos 
+en ventas, ventas diarias, resumen de 
+ventas, comparativos, utilidad, etc. 
+Para observar este informe , debe 
+ingresar a la siguiente ruta: 
+Informes/Informe de Caja 
+ 
+Se despliega esta ventana en 
+donde puede seleccionar una 
+variedad de inf ormes de 
+acuerdo a sus requerimientos. 
+ 
+===== PAGINA 21 =====
+ 
+ 
+Informe de Cuentas por Cobrar 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Puede filtrar la información por cuentas, por fechas, por vendedor, por terceros 
+(Clientes), por vencimien tos, etc. Al finalizar damos clic en el botón de la 
+impresora para ver y analizar el informe correspondiente o exportarlo 
+directamente a un documento de Excel con su respectivo botón. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Permite visualizar el informe de Cartera, 
+para ello debe ingresar a la siguiente ruta: 
+Informes/Informe de Cuentas por 
+Cobrar 
+ 
+En este informe podemos mirar a 
+detalle toda la cartera de los clientes, 
+ya sea por gru pos, movimientos por 
+clientes, historiales, vencimientos, etc. 
+ 
+===== PAGINA 22 =====
+ 
+ 
+Informe de Cuentas por Pagar 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Puede fi ltrar la información por cuentas, por fechas, por número de factura 
+interna o externa, por terceros (Proveedores), por vencimientos, etc. Al finalizar 
+damos clic en el botón de la impresora para ver y analizar el informe 
+correspondiente o exportarlo direct amente a un documento de Excel con su 
+respectivo botón. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Permite visualizar el informe de Cuentas 
+por Pagar, para ello debe ingresar a la 
+siguiente ruta: 
+Informes/Informe de Cuentas por 
+Pagar 
+ 
+En este informe pod emos mirar a 
+detalle todas las cuentas por pagar a 
+proveedores, puede ver un informe 
+general de todas las cuentas o 
+únicamente los movimientos por cada 
+uno de los proveedores. 
+ 
+===== PAGINA 23 =====
+ 
+ 
+Informe de Contabilidad 
+ 
+ 
+ 
+ 
+ 
+ 
+Dentro de los informes de Contabilidad encontramos los Informes Generales 
+(Comprobante diario, Movimiento de cuentas, Graficar cuentas, Listado de 
+cuentas), Informes Financieros (Balance de prueba, Balance general, Estado 
+de resultados, Estado de cambios en el patrimonio), Libros Contables (Libro de 
+inventarios y balances, Libro diario, Libro mayor y de balances, Libro auxiliar), 
+Informes Financieros NIIF (Estado de situación financiera, Estado de resultado 
+integral, Estado de cambios en el patrimonio, Estado de flujo de efectivo) y por 
+ultimo los Informes de Auditoria (Errores de documentos, Contabilidad 
+modificada, Errores de costo en ventas). 
+Puede filtr ar cada uno de ellos por fechas, por cuentas, por terceros, etc. Al 
+finalizar damos clic en el botón de la impresora para ver y analizar el informe 
+correspondiente. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Para observar los informes contables 
+debe ingresar a la siguiente ruta: 
+Informes/Contabilidad 
+ 
+===== PAGINA 24 =====
+ 
+ 
+Informe de Inventario 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Para observar el informe de Inventario 
+debe ingresar a la siguiente ruta: 
+Informes/Inventario 
+ 
+En esta ventana puede seleccionar 
+el tipo de informe que desea 
+observar, e scoja a través de los 
+filtros la información que va a 
+revisar en el informe (Fecha, 
+proveedor, producto, líneas de 
+inventario, etc.), posteriormente 
+seleccione los parámetros que 
+condicionarán la información 
+generada en el informe. Por último, 
+presione el botón imprimir. 
+ 
+===== PAGINA 25 =====
+ 
+ 
+Kardex 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Primero busque el producto, seleccione desde y hasta que fecha necesita mirar 
+los movimientos realizados para el producto en cuestión, por ultimo da clic en el 
+botón consultar, en la lista aparecerá de forma detallada cada uno de los 
+movimientos que se han realizado en el rango de fechas seleccionadas. 
+Al finalizar damos clic en el botón de la impresora para ver y analizar el informe 
+correspondiente. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+En la misma ruta de informes de 
+inventario: 
+Informes/Inventario 
+Seleccione el botón Kardex 
+ 
+===== PAGINA 26 =====
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Contáctenos: 
+ 
+Sitio Web: https://hermespyme.wixsite.com/hermes 
+ 
+Correo Electrónico: gestionhermes@hotmail.com 
+ 
+Celular - WhatsApp: 3186735802 
+ 
+ 
+ 
+ 
+ 
+Hermes - Todos los derechos reservados. 
+2020 
+ 
+ 
