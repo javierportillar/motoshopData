@@ -357,19 +357,59 @@ Cero `ERROR 1054`/`1064`. Regresión: 8 tests nuevos en `tests/test_erp_legacy_w
 suite completa **22F / 917P / 8S / 11E**, idéntica a la línea base (22F / 909P / 8S / 11E: los 8
 passes extra son los tests nuevos).
 
+Tercera tanda (`c37339f`): débito por forma de pago y costo de venta. Tres ventas reales sobre el
+clon, mismo producto (`7503008669000`, costo de maestro `9058`), total `11900` cada una:
+
+```
+A) efectivo F01          -> 3557   11050501 11900/0
+                                   41359501     0/10000   24080102     0/1900
+                                   61359501  9058/0       14350101  0/9058
+B) crédito  F10          -> 3558   13050501 11900/0 (nitter=12963457)
+                                   41359501     0/10000   24080102     0/1900
+                                   61359501  9058/0       14350101  0/9058
+C) mixta    F01 + F07    -> 3559   11050501  5950/0      11100501  5950/0
+                                   41359501     0/10000   24080102     0/1900
+                                   61359501  9058/0       14350101  0/9058
+
+detapago    3557 F01 11900 | 3558 F10 11900 | 3559 F01 5950 + F07 5950
+detfventas  cosprod = 9058 en las tres (snapshot del costo al momento de la venta)
+balances    20958 = 20958 en las tres (totfven + costo)
+stock       7503008669000  21 -> 18
+```
+
+**Base del costo.** El historial asienta `candet * detfventas.cosprod`, no `productos.cosulc`: en la
+factura 3554 dos de cuatro líneas no cierran con el maestro (`10588.96` vs `10550`; `35508.57` vs
+`35664`) porque `cosprod` congela el costo de la venta. Por eso el POS Web ahora escribe `cosulc` en
+`cosprod` y asienta el costo desde ahí.
+
+Regresión final: 14 tests nuevos en `tests/test_erp_legacy_write_path.py`; suite completa
+**22F / 923P / 8S / 11E**, misma línea base de 22 fallos, todos ambientales.
+
+### Decisiones y hallazgos
+
+- **Débito por forma de pago**: `F01`/`F08` (efectivo, caja menor) → `11050501`; `F10` (crédito) →
+  `13050501`; `F03`, `F04`, `F07` y cualquier otra forma (cheque, consignación, tarjeta,
+  transferencia) → `11100501`. Una línea de débito por cada pago, por su `valpag`. Si la venta no
+  trae pagos, cae a caja por `totfven` para no romper el balance.
+- **Costo de venta**: par `61359501`/`14350101` por línea con el nombre del producto en `detcue`
+  (como el legacy). Los productos con costo `0` no generan filas `0/0`.
+- **Hallazgo — el plazo de crédito no es representable**: `facventas` **no tiene** `diascot`,
+  `fecven` ni `valcar` (esas columnas existen en `auxdoc`, `compras`, `auxrepcart` y `auxrepdim`;
+  `detapago.fecven` sí existe pero es la fecha de vencimiento del pago). No se inventaron columnas:
+  una venta a crédito queda sin vencimiento en la cabecera. Requiere decisión de negocio.
+- **Hallazgo — `codclas` del historial**: las facturas de venta usan `S15`, no `S01`; los productos
+  son excluidos de IVA, por eso el legacy asienta `24080102` por línea con `0/0`.
+
 ### Deuda pendiente (no bloquea la venta)
 
 | Tema | Legacy real | Lo que escribe el POS Web | Efecto |
 |---|---|---|---|
-| Débito de la causación | `11050501` para efectivo, `11100501` bancos, `1305` cartera | **siempre** `11050501` | una venta a crédito (`F10`) debita caja en vez de cartera |
-| Costo/inventario | `61359501` y `14350101` por línea | no se registran | el costo de venta no se mueve en el auxiliar |
 | `detcuentas.detcue` del ingreso | nombre del producto | `Ventas Comercio` | el auxiliar agrupa por cuenta, no por ítem |
+| Desglose de IVA | `24080102` por línea (`0/0` en excluidos) | una línea con el IVA real | el total coincide; el desglose por ítem no |
+| Vencimiento de cartera | `facventas` no tiene columnas de plazo | no se escribe | la venta a crédito no lleva fecha de vencimiento |
 
 Resuelto en `4e67589`: descuento de stock, `codemp`/`empcod`/`nomuso`/`codcaj` y las cuentas PUC.
-
-La cabecera ya usa las convenciones legacy (NIT del operador, `C1`, `nomuso` vacío) y el auxiliar
-libra caja contra ingreso e IVA. Lo que falta es el débito por forma de pago (crédito vs efectivo) y
-el costo de venta.
+Resuelto en `c37339f`: débito por forma de pago y costo de venta.
 
 ## 10. Riesgos y deuda técnica
 
@@ -377,7 +417,8 @@ el costo de venta.
 |---|---|---|
 | **Resuelta** | El write path real no coincidía con el esquema legacy (§9): toda venta devolvía 500 `Unknown column` | mapper implementado y probado end-to-end contra un clon; ver §9 |
 | **Resuelta** | El POS Web ya descuenta `productos.exiprod` como delta en la misma UoW (§9) | pendiente: probar concurrencia con `SgHermes` en producción |
-| **Media** | Venta a crédito (`F10`) debita caja (`11050501`) en vez de cartera (§9, deuda) | discriminar por `codpag` antes de vender a crédito desde la web |
+| **Resuelta** | Venta a crédito (`F10`) debitaba caja (`11050501`) en vez de cartera | discriminación por `codpag` implementada y verificada (`c37339f`, §9) |
+| Media | `facventas` no tiene columnas de plazo (`diascot`/`fecven`/`valcar`): la venta a crédito no lleva vencimiento (§9) | definir si el plazo se modela en otra tabla o se agrega al esquema legacy |
 | Alta | `root` **sin password** y el servidor escuchando en `0.0.0.0:3306` | fijar password de `root` y bindear a `127.0.0.1` o firewallear |
 | Media | El path de lectura usa `root` porque el password de `api_read` es desconocido | rotar `api_read` y usar ese usuario en `MYSQL_USER` |
 | Media | MySQL 5.0.45 (EOL desde 2012), sin FKs, `latin1` | plan de migración a 5.7/8.0 |
