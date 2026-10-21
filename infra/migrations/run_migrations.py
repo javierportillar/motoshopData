@@ -104,7 +104,9 @@ def split_statements(sql_text: str) -> list[str]:
         # F-series file convention: comments only appear between statements or
         # glued to a terminator; they are never part of an executable statement.
         chunk = "\n".join(
-            l for l in chunk.splitlines() if not l.strip().startswith("--")
+            line
+            for line in chunk.splitlines()
+            if not line.strip().startswith("--")
         )
         text = chunk.strip()
         if text:
@@ -221,6 +223,33 @@ def precheck_no_duplicates(conn: object, table: str, key_columns: tuple[str, ...
         )
 
 
+_PRECHECK_RE = re.compile(
+    r"^--\s*precheck:\s*(?P<table>[\w$]+)\((?P<cols>[^)]+)\)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _extract_prechecks(sql_text: str) -> list[tuple[str, tuple[str, ...]]]:
+    """Parse ``-- precheck: table(col, …)`` directives from a SQL file.
+
+    Unique-index migrations (F8-003+) declare the dup pre-check inline so
+    the runner runs it BEFORE that file's DDL (WF-6s2: duplicates abort the
+    migration, the index is never created on dirty data).
+    """
+    found: list[tuple[str, tuple[str, ...]]] = []
+    for raw_line in sql_text.splitlines():
+        match = _PRECHECK_RE.match(raw_line.strip())
+        if not match:
+            continue
+        cols = tuple(
+            col.strip().strip("`")
+            for col in match.group("cols").split(",")
+            if col.strip()
+        )
+        found.append((match.group("table").strip("`"), cols))
+    return found
+
+
 # ─── Apply ─────────────────────────────────────────────────────
 
 
@@ -272,6 +301,10 @@ def apply_migrations(conn, migrations: list[MigrationFile]) -> list[str]:  # typ
     """
     applied_now: list[str] = []
     for migration in migrations:
+        sql_text = migration.path.read_text(encoding="utf-8")
+        # WF-6s2: declared dup pre-checks run BEFORE any DDL of the file
+        for table, key_columns in _extract_prechecks(sql_text):
+            precheck_no_duplicates(conn, table, key_columns)
         _apply_one(conn, migration)
         cursor = conn.cursor()
         try:
@@ -318,7 +351,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", default=None)
     parser.add_argument("--database", default=None)
     parser.add_argument("--user", default=None)
-    parser.add_argument("--password", default=None, help="MySQL password (local runs; prefer --password-file)")
+    parser.add_argument(
+        "--password", default=None,
+        help="MySQL password (local runs; prefer --password-file)",
+    )
     parser.add_argument("--password-file", default=None, help="Read the MySQL password from a file")
     args = parser.parse_args(argv)
 
@@ -328,7 +364,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     conn = _build_conn_from_env(args)
-    print(f"Series {args.prefix}: {len(files)} file(s); host={conn.host} db={conn.db} user={conn.user}")
+    print(
+        f"Series {args.prefix}: {len(files)} file(s); "
+        f"host={conn.host} db={conn.db} user={conn.user}"
+    )
     try:
         try:
             applied = run_against_conn(conn, files)

@@ -19,13 +19,12 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from infra.migrations import run_migrations as runner  # noqa: E402
-from infra.migrations.run_migrations import (  # noqa: E402
+from infra.migrations.run_migrations import (  # noqa: E402, F401
     DuplicateMigrationNumberError,
-    MissingSqlFileError,
     MigrationOutOfOrderError,
+    MissingSqlFileError,
     PrecheckFailedError,
 )
-
 
 # ─── statement splitting ───────────────────────────────────────
 
@@ -235,3 +234,115 @@ def test_f8_files_present_and_parseable():
     for _n, text in texts:
         stmts = runner.split_statements(text)
         assert stmts and all(s.strip() for s in stmts)
+
+
+# ─── 3.2: F8-003 unique doc index + pre-check directives (WF-6s2) ──
+
+
+def test_extract_prechecks_parses_directives():
+    sql = (
+        "-- precheck: facventas(codclas, prefven, numfven)\n"
+        "-- precheck: detfventas(codclas, numfven)\n"
+        "ALTER TABLE facventas ADD UNIQUE KEY uq_doc (codclas, prefven, numfven);\n"
+    )
+    assert runner._extract_prechecks(sql) == [
+        ("facventas", ("codclas", "prefven", "numfven")),
+        ("detfventas", ("codclas", "numfven")),
+    ]
+
+
+def test_extract_prechecks_ignores_files_without_directives():
+    assert runner._extract_prechecks("CREATE TABLE a (x INT);\n") == []
+
+
+def test_f8_003_file_exists_with_unique_index_and_precheck():
+    p = _REAL_MIGRATIONS_DIR / "F8-003-unique_doc_indexes.sql"
+    assert p.is_file(), "F8-003-unique_doc_indexes.sql missing (task 3.2)"
+    text = p.read_text(encoding="utf-8")
+    assert "ALTER TABLE facventas" in text
+    assert "UNIQUE" in text.upper()
+    assert "prefven" in text and "numfven" in text
+    # the dup pre-check MUST be declared for the indexed doc table (WF-6s2)
+    assert ("facventas", ("codclas", "prefven", "numfven")) in \
+        runner._extract_prechecks(text)
+
+
+class _DispatchCursor:
+    """Fake cursor: GROUP BY probes return scripted rows, DDL is recorded."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=None):
+        sql = sql.strip()
+        if "GROUP BY" in sql and "HAVING" in sql:
+            self._conn.rows = self._conn.dup_rows
+        else:
+            self._conn.executed.append(sql)
+            self._conn.rows = []
+
+    def fetchall(self):
+        return list(self._conn.rows)
+
+    def close(self):
+        pass
+
+
+class _PrecheckConn:
+    def __init__(self, dup_rows):
+        self.dup_rows = dup_rows
+        self.executed: list[str] = []
+        self.rows: list = []
+        self.commit_calls = 0
+
+    def cursor(self):
+        return _DispatchCursor(self)
+
+    def commit(self):
+        self.commit_calls += 1
+
+
+def test_migration_with_duplicates_aborts_before_ddl(tmp_path):
+    d = tmp_path / "migrations"
+    d.mkdir()
+    (d / "F8-003-unique_doc_indexes.sql").write_text(
+        "-- precheck: facventas(codclas, prefven, numfven)\n"
+        "ALTER TABLE facventas ADD UNIQUE KEY uq_doc (codclas, prefven, numfven);\n",
+        encoding="utf-8",
+    )
+    conn = _PrecheckConn(dup_rows=[("S15", "FVP", 7322, 2)])
+    with pytest.raises(PrecheckFailedError) as exc:
+        runner.apply_migrations(
+            conn, runner.discover_f8_files(d, prefix="F8")
+        )
+    assert "facventas" in str(exc.value)
+    # no DDL ran: only the pre-check probe (the GROUP BY) was executed
+    assert all("GROUP BY" in s or "HAVING" in s for s in conn.executed)
+    assert not any("ALTER TABLE" in s for s in conn.executed)
+
+
+def test_clean_migration_runs_ddl_after_precheck(tmp_path):
+    d = tmp_path / "migrations"
+    d.mkdir()
+    (d / "F8-003-unique_doc_indexes.sql").write_text(
+        "-- precheck: facventas(codclas, prefven, numfven)\n"
+        "ALTER TABLE facventas ADD UNIQUE KEY uq_doc (codclas, prefven, numfven);\n",
+        encoding="utf-8",
+    )
+    conn = _PrecheckConn(dup_rows=[])
+    applied = runner.apply_migrations(
+        conn, runner.discover_f8_files(d, prefix="F8")
+    )
+    assert applied == ["F8-003-unique_doc_indexes.sql"]
+    assert any("ALTER TABLE" in s for s in conn.executed)
+
+
+def test_f8_003_real_file_dry_precheck_against_fake_clean_conn():
+    """The real F8-003 file parses and its precheck directives resolve."""
+    path = _REAL_MIGRATIONS_DIR / "F8-003-unique_doc_indexes.sql"
+    text = path.read_text(encoding="utf-8")
+    stmts = runner.split_statements(text)
+    assert stmts, "F8-003 has no executable statements"
+    conn = _PrecheckConn(dup_rows=[])
+    for table, key_columns in runner._extract_prechecks(text):
+        runner.precheck_no_duplicates(conn, table, key_columns)  # no raise

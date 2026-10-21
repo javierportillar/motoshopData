@@ -1,0 +1,23 @@
+-- F8-003 unique_doc_indexes.sql (task 3.2, slice 3 — erp-transaccional-web)
+--
+-- Storage-level backstop against double-booked document numbers (spec
+-- erp-sales-invoicing: "A unique index MUST back the legacy doc table so
+-- double-booking is impossible at storage level"). The legacy facventas
+-- table has numfven as a NON-unique KEY (blueprint §2.2 [V]), so the
+-- Bus_Con_Act heal has no storage safety net.
+--
+-- The dup pre-check is declared inline (`-- precheck:` directive): the
+-- migration runner scans the table for duplicate (codclas, prefven,
+-- numfven) groups and ABORTS BEFORE DDL when any exist (WF-6s2) — the
+-- operator must resolve the duplicate groups by hand before re-running.
+--
+-- Detail and payment tables are intentionally NOT touched: detfventas /
+-- detapago / detcuentas are 1:N children keyed by (codclas, numfven) with
+-- their own numite line numbers — several rows per document is correct.
+--
+-- MySQL 5.0.45 / MyISAM compatible (ADD UNIQUE KEY, no IF NOT EXISTS —
+-- MySQL 5.0 has no IF NOT EXISTS for keys; the app_migration_state ledger
+-- makes the runner re-run a no-op instead).
+
+-- precheck: facventas(codclas, prefven, numfven)
+ALTER TABLE facventas ADD UNIQUE KEY uq_facventas_doc (codclas, prefven, numfven);
