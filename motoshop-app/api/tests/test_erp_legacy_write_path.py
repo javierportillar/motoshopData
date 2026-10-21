@@ -119,7 +119,7 @@ def test_commit_applies_the_stock_delta_with_the_invoice_rows():
 # ─── Legacy header/causación conventions (fake twin) ─────────────────────
 
 
-def _fake_repo(candet: Decimal = Decimal("3")):
+def _fake_repo(candet: Decimal = Decimal("3"), payments=None):
     from motoshop_api.erp.idempotency import FakeIdempotencyRepo
     from motoshop_api.erp.invoicing.repo import FakeInvoiceStore, FakeInvoicesRepo
     from motoshop_api.erp.invoicing.schemas import (
@@ -137,6 +137,8 @@ def _fake_repo(candet: Decimal = Decimal("3")):
     discount = Decimal("500.25")
     vat = Decimal("950.05")
     total = (unit_price - discount + vat) * candet
+    if payments is None:
+        payments = [{"codpag": "F01", "amount": total}]
     body = InvoiceCreate(
         nitter="222222222222",
         nitvend="VEN01",
@@ -150,7 +152,7 @@ def _fake_repo(candet: Decimal = Decimal("3")):
                 ivapes=vat,
             )
         ],
-        payments=[InvoicePaymentIn(codpag="F01", amount=total)],
+        payments=[InvoicePaymentIn(**payment) for payment in payments],
     )
     return repo, store, body
 
@@ -202,6 +204,89 @@ def test_fractional_stock_is_decremented_without_losing_precision():
 
     after = Decimal(str(store.productos["PROD1"]["exiprod"]))
     assert after == before - Decimal("0.250")
+
+
+# ─── Debit account per payment form ──────────────────────────────────────
+
+
+def test_cash_payment_debits_caja():
+    repo, store, body = _fake_repo()
+
+    _save(repo, body)
+
+    debits = [r["codcue"] for r in store.detcuentas if r["valdeb"] > 0]
+    assert debits == ["11050501"]
+
+
+def test_credit_payment_debits_the_receivable_and_names_the_client():
+    repo, store, body = _fake_repo(
+        payments=[{"codpag": "F10", "amount": Decimal("31350.90")}]
+    )
+
+    _save(repo, body)
+
+    row = next(r for r in store.detcuentas if r["codcue"] == "13050501")
+    assert row["valdeb"] == Decimal("31350.90")
+    assert row["valhab"] == Decimal("0")
+    assert row["nitter"] == "222222222222"
+    assert store.facventas[0]["codpag"] == "F10"
+
+
+def test_card_and_transfer_forms_debit_bancos():
+    for form in ("F03", "F04", "F07", "TARJETA", "TRANSFER"):
+        repo, store, body = _fake_repo(
+            payments=[{"codpag": form, "amount": Decimal("31350.90")}]
+        )
+
+        _save(repo, body)
+
+        debits = [r["codcue"] for r in store.detcuentas if r["valdeb"] > 0]
+        assert debits == ["11100501"], form
+
+
+def test_mixed_payments_split_the_debit_and_keep_the_entry_balanced():
+    repo, store, body = _fake_repo(
+        payments=[
+            {"codpag": "F01", "amount": Decimal("15675.45")},
+            {"codpag": "F07", "amount": Decimal("15675.45")},
+        ]
+    )
+
+    result = _save(repo, body)
+
+    debits = [r["codcue"] for r in store.detcuentas if r["valdeb"] > 0]
+    assert debits == ["11050501", "11100501"]
+    total_debits = sum(r["valdeb"] for r in store.detcuentas)
+    total_credits = sum(r["valhab"] for r in store.detcuentas)
+    assert total_debits == result["totals"]["totfven"]
+    assert total_debits == total_credits
+
+
+def test_cost_is_booked_from_the_sale_time_snapshot():
+    repo, store, body = _fake_repo(candet=Decimal("2"))
+    store.productos["PROD1"]["cosulc"] = Decimal("4000")
+
+    _save(repo, body)
+
+    line = store.detfventas[0]
+    assert line["cosprod"] == Decimal("4000"), "detfventas snapshots the unit cost"
+    cost = next(r for r in store.detcuentas if r["codcue"] == "61359501")
+    inventory = next(r for r in store.detcuentas if r["codcue"] == "14350101")
+    assert cost["valdeb"] == Decimal("8000.00")
+    assert cost["valhab"] == Decimal("0")
+    assert inventory["valdeb"] == Decimal("0")
+    assert inventory["valhab"] == Decimal("8000.00")
+    assert sum(r["valdeb"] for r in store.detcuentas) == sum(
+        r["valhab"] for r in store.detcuentas
+    )
+
+
+def test_zero_cost_products_add_no_noise_to_the_ledger():
+    repo, store, body = _fake_repo()
+
+    _save(repo, body)
+
+    assert not [r for r in store.detcuentas if r["codcue"] in ("61359501", "14350101")]
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -75,8 +75,31 @@ LEGACY_OPERATOR_NIT = "59312669"
 LEGACY_CASH_REGISTER = "C1"
 #: PUC accounts observed in the legacy `detcuentas` causación.
 LEGACY_ACCOUNT_CASH = "11050501"     # Caja general / efectivo
+LEGACY_ACCOUNT_BANK = "11100501"     # Bancos
+LEGACY_ACCOUNT_RECEIVABLE = "13050501"  # Clientes nacionales / cartera
 LEGACY_ACCOUNT_INCOME = "41359501"   # Ingreso comercio
 LEGACY_ACCOUNT_IVA = "24080102"      # IVA generado
+LEGACY_ACCOUNT_COST = "61359501"     # Costo de ventas
+LEGACY_ACCOUNT_INVENTORY = "14350101"  # Inventario
+
+#: Payment forms that settle into cash / the register.
+LEGACY_CASH_FORMS = frozenset({"F01", "F08", "CASH", "EFECTIVO"})
+#: Payment forms that leave a receivable instead of money.
+LEGACY_CREDIT_FORMS = frozenset({"F10", "CREDIT", "CREDITO", "CRÉDITO"})
+
+
+def legacy_debit_account(codpag: str | None) -> str:
+    """PUC account that receives the debit for a payment form.
+
+    Cash and register forms hit caja; credit forms leave a receivable; every
+    other form (card, transfer, cheque, bank consignment) goes through bancos.
+    """
+    code = str(codpag or "").strip().upper()
+    if code in LEGACY_CASH_FORMS:
+        return LEGACY_ACCOUNT_CASH
+    if code in LEGACY_CREDIT_FORMS:
+        return LEGACY_ACCOUNT_RECEIVABLE
+    return LEGACY_ACCOUNT_BANK
 
 ZERO = Decimal("0")
 
@@ -458,8 +481,9 @@ class _BaseInvoicesRepo:
           ``numite``.
         - ``detapago`` numbers with ``numnum``/``predoc`` and keeps the
           reference in ``numpag``.
-        - ``detcuentas`` books the legacy PUC chart (11050501 / 41359501 /
-          24080102) numbered by ``numnum``/``prenum``.
+        - ``detcuentas`` books the legacy PUC chart, numbered by
+          ``numnum``/``prenum``: the debit follows the payment form
+          (caja / bancos / cartera), then income, IVA and the cost pair.
         - ``productos.exiprod`` is decremented by ``candet`` in the same
           unit of work, as a delta.
 
@@ -504,6 +528,7 @@ class _BaseInvoicesRepo:
         self.store.stage_insert(INVOICE_HEADER_TABLE, header)
         written.append((INVOICE_HEADER_TABLE, header))
 
+        line_costs: list[tuple[Decimal, str]] = []
         for index, line in enumerate(body.lines):
             # detfventas.codmed is a real unit code from the legacy master
             # ('001' in 6,450 of 7,840 lines); the POS payload defaults to the
@@ -514,6 +539,13 @@ class _BaseInvoicesRepo:
                 unit = str(line.codmed or "").strip()
             if not unit or unit.upper() == "UND":
                 unit = "001"
+            # detfventas.cosprod snapshots the unit cost at sale time; the
+            # legacy causación books cost from this column, not from the
+            # product master (cosulc drifts: 10588.96 vs 10550.00 on 3554).
+            unit_cost = Decimal(str(product.get("cosulc") or ZERO))
+            line_costs.append(
+                ((line.candet * unit_cost).quantize(Decimal("0.01")), (line.nomdet or "")[:150])
+            )
             line_row = {
                 "numfven": number,
                 "codclas": doc_class,
@@ -531,6 +563,7 @@ class _BaseInvoicesRepo:
                 "codbod": (line.codbod or "01")[:4],
                 "codmed": unit[:3],
                 "facumed": line.facumed or Decimal("1"),
+                "cosprod": unit_cost,
                 "totdet": computed["lines"][index]["totdet"],
             }
             self.store.stage_insert(INVOICE_LINES_TABLE, line_row)
@@ -561,17 +594,40 @@ class _BaseInvoicesRepo:
             written.append((INVOICE_PAYMENTS_TABLE, payment_row))
 
         # Accounting causación (detcuentas) with the legacy PUC chart:
-        #   11050501 Caja general      DEBIT  total cobrado
+        #   one DEBIT per payment, on the account its form settles into
+        #     (caja 11050501 / bancos 11100501 / cartera 13050501);
         #   41359501 Ingreso comercio  CREDIT base (total - IVA)
         #   24080102 IVA generado      CREDIT IVA desglosado
+        #   61359501 Costo de ventas   DEBIT  candet * cosprod, per line
+        #   14350101 Inventario        CREDIT the same amount
         # The income credit absorbs any impoconsumo (totipo) so the entry always
         # balances; the observed legacy chart has no separate IPO account.
+        entries: list[tuple[str, str, Decimal, Decimal]] = []
+        if body.payments:
+            for payment in body.payments:
+                entries.append(
+                    (
+                        legacy_debit_account(payment.codpag),
+                        "Factura de Venta",
+                        payment.amount,
+                        ZERO,
+                    )
+                )
+        else:
+            entries.append(
+                (LEGACY_ACCOUNT_CASH, "Factura de Venta", totals["totfven"], ZERO)
+            )
         base = totals["totfven"] - totals["totiva"]
-        entries = (
-            (LEGACY_ACCOUNT_CASH, "Factura de Venta", totals["totfven"], ZERO),
-            (LEGACY_ACCOUNT_INCOME, "Ventas Comercio", ZERO, base),
-            (LEGACY_ACCOUNT_IVA, "IVA generado excluido", ZERO, totals["totiva"]),
+        entries.append((LEGACY_ACCOUNT_INCOME, "Ventas Comercio", ZERO, base))
+        entries.append(
+            (LEGACY_ACCOUNT_IVA, "IVA generado excluido", ZERO, totals["totiva"])
         )
+        for line_cost, label in line_costs:
+            if line_cost <= ZERO:
+                continue
+            entries.append((LEGACY_ACCOUNT_COST, label, line_cost, ZERO))
+            entries.append((LEGACY_ACCOUNT_INVENTORY, label, ZERO, line_cost))
+
         for item_index, (account, label, debit_value, credit_value) in enumerate(
             entries, start=1
         ):
