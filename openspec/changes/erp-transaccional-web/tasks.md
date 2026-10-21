@@ -45,46 +45,46 @@ Requirement ID map: `WF`=erp-write-foundation, `MW`=erp-masters-write, `SI`=erp-
 
 > Slice-0 note honored: F8 migrations run via `infra/migrations/run_migrations.py` on the local MySQL — task 1.1 executes the first local run with the dup pre-check behavior verified.
 
-- [ ] 1.1 `[AUTO→CHECKPOINT]` **Migration runner + F8-001/002 + first local run** `[WF-6s1, WF-5]`
+- [x] 1.1 `[AUTO→CHECKPOINT]` **Migration runner + F8-001/002 + first local run** `[WF-6s1, WF-5]`
   - RED: `motoshop-app/api/tests/test_erp_migrations.py` — runner applies each SQL file exactly once; second run is a no-op with recorded state in `app_migration_state`; out-of-order/missing file errors.
   - GREEN: `infra/migrations/run_migrations.py` (stdlib+pymysql), `infra/migrations/F8-001-app_doc_journal.sql`, `infra/migrations/F8-002-app_idempotency.sql` (InnoDB, utf8, TIMESTAMP defaults, F5 style).
   - CHECKPOINT: run against local MySQL — `motoshop-app\api\.venv\Scripts\python.exe -m infra.migrations.run_migrations` twice from repo root; assert second run no-op. Dup pre-check helper (scan target table for duplicates before any DDL) ships here and is exercised in 3.2.
   - Depends: none.
 
-- [ ] 1.2 `[AUTO]` **Transactional ERP engine + UoW** `[WF-4, WF-7]`
+- [x] 1.2 `[AUTO]` **Transactional ERP engine + UoW** `[WF-4, WF-7]`
   - RED: `motoshop-app/api/tests/test_erp_uow.py` — Fake twin commits on success, rolls back on exception; engine kwargs assert `autocommit=False`, latin1 charset, pool 2+4, app_writer user.
   - GREEN: `motoshop-app/api/src/motoshop_api/db/engine.py` (+`get_erp_engine()`, `reset_erp_engine()`), `src/motoshop_api/erp/uow.py` (`erp_write_uow` context manager), `src/motoshop_api/erp/__init__.py`.
   - Verify: `motoshop-app\api\.venv\Scripts\python.exe -m pytest tests/test_erp_uow.py -m "not integration"` (cwd `motoshop-app/api`).
   - Depends: 1.1.
 
-- [ ] 1.3 `[AUTO]` **Journal repo + φ-sequence skeleton** `[WF-5s1, WF-4s1]`
+- [x] 1.3 `[AUTO]` **Journal repo + φ-sequence skeleton** `[WF-5s1, WF-4s1]`
   - RED: `motoshop-app/api/tests/test_erp_journal.py` (InnoDB contract fixtures) — PENDING row exists before any legacy insert; flips COMMITTED with final number; failure path → FAILED(error).
   - GREEN: `src/motoshop_api/erp/journal.py`, `src/motoshop_api/erp/engine.py` (φ0 precheck → φ1 journal → φ2 numbering hook → φ3 unit → φ4 commit skeleton).
   - Verify: pytest `tests/test_erp_journal.py -m "not integration"`.
   - Depends: 1.2.
 
-- [ ] 1.4 `[AUTO]` **Idempotency convention** `[WF-8s1, WF-8s2]`
+- [x] 1.4 `[AUTO]` **Idempotency convention** `[WF-8s1, WF-8s2]`
   - RED: `motoshop-app/api/tests/test_erp_idempotency.py` — replay under same UUIDv4 key returns stored response, no counter advance, exactly one doc; new key → new document.
   - GREEN: `src/motoshop_api/erp/idempotency.py` (F5-001 pattern over `app_idempotency`), wire φ0 in `erp/engine.py`.
   - Verify: pytest `tests/test_erp_idempotency.py tests/test_erp_journal.py`.
   - Depends: 1.3.
 
-- [ ] 1.5 `[AUTO]` **Decimal + latin1 conversion palette** `[WF-7s1, WF-7s2]` (parallel with 1.3–1.4)
+- [x] 1.5 `[AUTO]` **Decimal + latin1 conversion palette** `[WF-7s1, WF-7s2]` (parallel with 1.3–1.4)
   - RED: `motoshop-app/api/tests/test_erp_conversions.py` — `19990.625` exact round-trip, no float drift; `"Bujía NGK Ñ-P"` latin1 round-trip without mojibake; comma-decimal legacy rows (`PuntX_Coma`); astral-plane codepoint rejected at Pydantic boundary; ROUND_HALF_UP quantize only for derived normalized amounts.
   - GREEN: `src/motoshop_api/erp/common/conversions.py` (`to_legacy_num`/`from_legacy_num`, ConstrainedDecimal money/qty types).
   - Verify: pytest `tests/test_erp_conversions.py`.
   - Depends: 1.2.
 
-- [ ] 1.6 `[AUTO]` **Tenant ERP config + module matrix + grants** `[WF-1s1, WF-1s2, WF-2s1, WF-2s2, WF-3s1, WF-3s2]`
+- [x] 1.6 `[AUTO]` **Tenant ERP config + module matrix + grants** `[WF-1s1, WF-1s2, WF-2s1, WF-2s2, WF-3s1, WF-3s2]`
   - RED: `motoshop-app/api/tests/test_erp_guards.py` — no JWT → 401 and zero row changes; vendedor annulment → 403; masvital write → 403 "tenant not enabled"; module-disabled → 403 explicit reason; matrix denies POST → 403 before business validation; tenant isolation on writes.
   - GREEN: `tenants.yaml`+`tenants.py`+`config.py` (`erp: {enabled, empresa, stock_negative_policy, dian_provider}`; masvital `enabled=false`), `src/motoshop_api/auth/module_access.py` (erp module entries, default off), `infra/migrations/F8-004-grant_app_writer_erp.sql` (F5-003 per-table pattern).
   - Verify: pytest `tests/test_erp_guards.py`; CHECKPOINT: apply F8-004 locally.
   - Depends: 1.2.
 
-- [ ] 1.7 `[AUTO]` **ETL include/exclude policy** `[WF-9s3]` (parallel)
+- [x] 1.7 `[AUTO]` **ETL include/exclude policy** `[WF-9s3]` (parallel)
   - RED: `pipeline/tests/test_dump_include_exclude.py` — `app_*` excluded from gold aggregates; legacy doc tables (`facventas`, `detcuentas`, …) included.
   - GREEN: `infra/dump_to_cloud.py` explicit include/exclude lists.
-  - Verify: `python -m pytest pipeline/tests/test_dump_include_exclude.py` (repo root).
+  - Verify: `.venv-infra\Scripts\python.exe -m pytest pipeline/tests/test_dump_include_exclude.py` (repo root — the default interpreter lacks the pipeline venv's pyarrow).
   - Depends: none.
 
 **Slice 1 DoD**: journal-first φ-sequence saves against local MySQL; idempotent replay; masvital 403; F8-001/002/004 applied locally; ETL policy green; all new routers registered but matrix-gated OFF.
