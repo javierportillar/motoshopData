@@ -1,6 +1,8 @@
 # Ingeniería inversa de sgHermes
 
-Documentación del sistema legacy que hoy sostiene la operación (POS/ERP SgHermes 9.1.0 sobre MySQL) y plan de reconstrucción en Next.js + FastAPI.
+Documentación del sistema legacy que hoy sostiene la operación (POS/ERP SgHermes sobre MySQL) y plan de reconstrucción en Next.js + FastAPI.
+
+> **Versiones:** el corpus principal documenta **9.1.0** (MotoShop, 37.760.512 bytes). La instalación de **MasVital** corre **10.0.0.3** (39.016.448 bytes); su delta está en [`masvital_v10_delta.md`](masvital_v10_delta.md).
 
 ## Contenido
 
@@ -11,6 +13,9 @@ Documentación del sistema legacy que hoy sostiene la operación (POS/ERP SgHerm
 | [`modules.md`](modules.md) | **Análisis por módulo del 100% del binario** (721 clases): tesorería, notas, compras, kardex virtual, cierre contable, parámetros, nómina, DIAN, restaurante, reportes, migraciones. |
 | [`form_catalog.csv`](form_catalog.csv) | Catálogo estructurado de las 721 clases con lógica: líneas, métodos, bloques SQL y tablas tocadas por archivo, agrupadas por dominio. |
 | [`evidence/`](evidence/) | Evidencia cruda: diccionario de datos, dump del esquema, literales y SQL del binario, manual de usuario, comandos de REA y scripts reproducibles. |
+| [`masvital_v10_delta.md`](masvital_v10_delta.md) | **Delta del build 10.0.0.3** (MasVital): identidad, histórico de builds, límites de REA, receta de decompilación y diferencias contra 9.1.0. |
+| [`evidence/masvital_live_schema_2026-10.md`](evidence/masvital_live_schema_2026-10.md) | Introspección en vivo de la base `masvital` (179 tablas): volumetría, contadores, venta a granel y riesgos. |
+| [`evidence/binary_strings_digest_v10.md`](evidence/binary_strings_digest_v10.md) | Literales del binario 10.0.0.3 (conteos no comparables con el digest de 9.1.0). |
 
 ## Estado
 
