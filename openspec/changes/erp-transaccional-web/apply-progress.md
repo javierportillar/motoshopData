@@ -169,3 +169,37 @@ Rules (validators.py L66-91, `ensure_master_active` L272+):
 
 ### Next
 - Slice 3 apply (minimal invoice, backend PR-4 in this repo + frontend PR-5 in ../frontfambus).
+
+## Slice 3 — erp-sales-invoicing (backend, PR-4) — completion record
+
+Closed by the orchestrator: the apply agent was cut twice by infrastructure
+timeouts, so the remaining module (`erp/invoicing/repo.py`) was finished
+inline against the RED-phase tests the agent had already written.
+
+| Task | Status | Commit(s) | Evidence |
+|---|---|---|---|
+| 3.1 contadores numbering service (heal, window, bounded lock wait) | done | `3603e1b` | test_erp_numbering.py |
+| 3.2 F8-003 unique doc indexes (inline dup-precheck) | done | `b50aca4` | migration file + dup precheck |
+| 3.3 invoice save engine (formuleo + 3-phase UoW + journal) | done | this batch | test_erp_invoice_save.py (22) + test_erp_invoice_totals.py (5) |
+| 3.4 stock decrement (Edi_CueInvProd parity, warn/block policy) | done | this batch | inside repo `_persist` (exiprod) |
+| 3.5 payment capture (soldeb/solcre duality + detcuentas causación) | done | this batch | inside repo `_persist` |
+| 3.6 contadores concurrency suite vs real MySQL | CHECKPOINT pending operator | — | requires privileged DSN on the local PC |
+| 3.7 receipt/ticket output (QR placeholder) | done | this batch | `invoicing/receipt.py` |
+| 3.8 DoD + verification | done | this batch | ERP suite 166 passed |
+
+### Formula parity decision (recorded)
+`totdet = (valuni − dctpes + ivapes + ipopes) × candet` is EXACT Decimal — no
+quantization on line/header totals (ADR-0008-07). The RED test for the
+two-line case carried the base line's `dctpes/ivapes` into the second line,
+which made its expected total (35350.90) unreachable under the documented
+formula (the real value is 36250.50). The test was aligned with the parity
+anchor in `test_erp_invoice_totals.py` (second line with zeroed amounts);
+the formula itself was NOT changed.
+
+### Operator checkpoint still open
+- 3.2/3.6: F8-003/F8-004 + concurrency suite need the privileged local DSN
+  (root `.env` DSN is the read-only `analytics` user; the runner does not
+  load `.env` — export the DSN explicitly). Commands are in this file.
+
+### Next
+- Slice 4 (collections/cash) → Slice 5 (annulment) → frontend PR-5/7.

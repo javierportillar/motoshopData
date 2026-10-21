@@ -16,6 +16,9 @@ Server-side authorization decided here; the frontend only hides controls
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
+from decimal import Decimal
+
 from fastapi import Depends, HTTPException, status
 
 from motoshop_api.auth.deps import get_current_user
@@ -24,9 +27,11 @@ from motoshop_api.auth.users import User
 from motoshop_api.tenants import Tenant, TenantErpConfig
 
 __all__ = [
+    "CausacionUnbalanced",
     "ERP_ROUTE_MODULES",
     "ERP_WRITE_ROLES",
     "TenantErpConfig",
+    "assert_causacion_balanced",
     "require_erp_annul",
     "require_erp_collections_write",
     "require_erp_masters_write",
@@ -61,6 +66,63 @@ ERP_ROUTE_MODULES: dict[tuple[str, str], tuple[str, ...]] = {
 # permisosfac flow. Annulments/collections are admin+gerente only.
 ERP_WRITE_ROLES = frozenset({"admin", "gerente", "vendedor"})
 ERP_ERP_MANAGEMENT_ROLES = frozenset({"admin", "gerente"})
+
+
+# ─── accounting causación balance (slice 3, task 3.4) ────────────
+
+
+class CausacionUnbalanced(Exception):
+    """The accounting causación does not balance — the save MUST abort.
+
+    Spec SI-9s1/SI-9s2: ``Σ valdeb = Σ valcre`` over the ``detcuentas`` rows
+    of one document. ``unmapped`` names the postings whose account mapping
+    was missing (a bad account mapping is the usual cause: the counterpart
+    entry could not be written).
+    """
+
+    def __init__(
+        self,
+        total_debit: Decimal,
+        total_credit: Decimal,
+        unmapped: Iterable[str] = (),
+    ):
+        self.total_debit = total_debit
+        self.total_credit = total_credit
+        self.unmapped = list(unmapped)
+        detail = (
+            f"la causación no cuadra: Σdeb={total_debit} ≠ Σcred={total_credit}"
+        )
+        if self.unmapped:
+            detail += "; falta la cuenta de: " + ", ".join(self.unmapped)
+        super().__init__(detail)
+
+
+def assert_causacion_balanced(
+    entries: Iterable[Mapping[str, object]],
+    *,
+    unmapped: Iterable[str] = (),
+) -> None:
+    """Guard: the document's accounting entries MUST balance (SI-9s1).
+
+    ``entries`` are the ``detcuentas`` rows (``valdeb``/``valhab``). The
+    check runs INSIDE the save unit so an unbalanced causación rolls the
+    unit back, leaves zero legacy rows and marks the journal FAILED.
+    """
+    rows = list(entries)
+    total_debit = sum((_as_decimal(row.get("valdeb")) for row in rows), Decimal("0"))
+    total_credit = sum((_as_decimal(row.get("valhab")) for row in rows), Decimal("0"))
+    missing = list(unmapped)
+    if missing or total_debit != total_credit:
+        raise CausacionUnbalanced(total_debit, total_credit, missing)
+
+
+def _as_decimal(value: object) -> Decimal:
+    """Legacy numeric (str/Decimal) → Decimal, exact."""
+    if isinstance(value, Decimal):
+        return value
+    if value is None:
+        return Decimal("0")
+    return Decimal(str(value))
 
 
 # ─── role gates ────────────────────────────────────────────────

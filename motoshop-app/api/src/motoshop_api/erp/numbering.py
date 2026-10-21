@@ -70,6 +70,15 @@ class ContadoresRepo(Protocol):
 
     def release(self, *, codcon: str, pref: str, number: int) -> None: ...
 
+    def resolve_prefix(self, codcon: str) -> str:
+        """The `preres` prefix configured for a doc type (legacy parity).
+
+        The desktop reads the prefix FROM the counter row
+        (`Conta_ResFV`: `SELECT conres, preres … WHERE codcon = …`), so the
+        web writer never hard-codes it.
+        """
+        ...
+
 
 def _as_int(value: object) -> int:
     """Legacy varchar numerics → int (counters/numbers are whole values)."""
@@ -130,6 +139,13 @@ class FakeContadoresRepo:
         if key not in self.rows:
             raise LookupError(f"contadores row not seeded: {key}")
         return self.rows[key]
+
+    def resolve_prefix(self, codcon: str) -> str:
+        """The prefix configured for a doc type (the counter row owns it)."""
+        for (row_codcon, preres) in self.rows:
+            if row_codcon == codcon:
+                return preres
+        raise LookupError(f"contadores row not seeded: codcon={codcon}")
 
     def acquire_debug(self) -> None:
         """Hold the latch from a foreign thread (desktop lock simulation).
@@ -359,3 +375,20 @@ class RealContadoresRepo:
         finally:
             with contextlib.suppress(Exception):
                 conn.close()
+
+    def resolve_prefix(self, codcon: str) -> str:
+        """The prefix (`preres`) configured for a doc type (legacy parity)."""
+        conn = self._connect()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT preres FROM contadores WHERE codcon = %s LIMIT 1",
+                (codcon,),
+            )
+            raw = cur.fetchone()
+        finally:
+            with contextlib.suppress(Exception):
+                conn.close()
+        if raw is None or not str(raw[0] or "").strip():
+            raise LookupError(f"contadores row not found: codcon={codcon}")
+        return str(raw[0]).strip()
