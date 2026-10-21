@@ -30,11 +30,14 @@ from motoshop_api.app_writes.repo import AuditRepo, FakeAuditRepo, get_audit_rep
 from motoshop_api.auth.users import User
 from motoshop_api.erp.cash.repo import (
     AnnulledDocumentError,
+    FakeCashMovementsRepo,
     FakeReceiptsRepo,
+    RealCashMovementsRepo,
     RealReceiptsRepo,
+    get_cash_movements_repo,
     get_receipts_repo,
 )
-from motoshop_api.erp.cash.schemas import ReceiptCreate
+from motoshop_api.erp.cash.schemas import CashMovementCreate, EgressCreate, ReceiptCreate
 from motoshop_api.erp.engine import ErpSaveFailed
 from motoshop_api.erp.guards import (
     PeriodLockedError,
@@ -113,6 +116,22 @@ def _conflict(exc: Exception) -> HTTPException:
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_jsonify(detail))
 
 
+def _save_or_http_error(save):
+    """Map the repo error contract onto the HTTP contract."""
+    try:
+        return save()
+    except LegacyValidationError as exc:
+        raise HTTPException(status_code=HTTP_422, detail=exc.detail()) from exc
+    except InactiveMasterError as exc:
+        raise HTTPException(status_code=HTTP_422, detail=exc.detail()) from exc
+    except (AnnulledDocumentError, PeriodLockedError) as exc:
+        raise _conflict(exc) from exc
+    except ErpSaveFailed as exc:
+        raise HTTPException(
+            status_code=HTTP_503, detail=str(exc), headers={"Retry-After": "5"}
+        ) from exc
+
+
 @router.post("/receipts", status_code=201)
 def create_receipt(
     body: ReceiptCreate,
@@ -126,8 +145,8 @@ def create_receipt(
     """Post a cash receipt (S01) against an open CxC balance (CC-1/CC-2/CC-6)."""
     _validate_idempotency_key(idempotency_key)
     request_id = x_request_id or str(uuid.uuid4())
-    try:
-        response = repo.create(
+    response = _save_or_http_error(
+        lambda: repo.create(
             body,
             tenant=tenant.id,
             empresa=tenant.erp.empresa,
@@ -135,21 +154,86 @@ def create_receipt(
             request_id=request_id,
             idempotency_key=idempotency_key,
         )
-    except LegacyValidationError as exc:
-        raise HTTPException(status_code=HTTP_422, detail=exc.detail()) from exc
-    except InactiveMasterError as exc:
-        raise HTTPException(status_code=HTTP_422, detail=exc.detail()) from exc
-    except (AnnulledDocumentError, PeriodLockedError) as exc:
-        raise _conflict(exc) from exc
-    except ErpSaveFailed as exc:
-        raise HTTPException(
-            status_code=HTTP_503, detail=str(exc), headers={"Retry-After": "5"}
-        ) from exc
+    )
     _log_audit(
         audit,
         user,
         "create",
         "recibo_caja",
+        str(response["numero"]),
+        request_id,
+        payload={"before": None, "after": response},
+    )
+    return response
+
+
+@router.post("/cash/movements", status_code=201)
+def create_cash_movement(
+    body: CashMovementCreate,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    x_request_id: Annotated[str | None, Header(alias="X-Request-Id")] = None,
+    tenant: Tenant = Depends(require_erp_tenant),
+    user: User = Depends(require_erp_collections_write),
+    repo: FakeCashMovementsRepo | RealCashMovementsRepo = Depends(
+        get_cash_movements_repo
+    ),
+    audit: AuditRepo | FakeAuditRepo = Depends(get_audit_repo),
+) -> dict:
+    """Cash movement in/out through a ``concepingegr`` concept (CC-3/CC-6)."""
+    _validate_idempotency_key(idempotency_key)
+    request_id = x_request_id or str(uuid.uuid4())
+    response = _save_or_http_error(
+        lambda: repo.create_movement(
+            body,
+            tenant=tenant.id,
+            empresa=tenant.erp.empresa,
+            actor=user.username,
+            request_id=request_id,
+            idempotency_key=idempotency_key,
+        )
+    )
+    _log_audit(
+        audit,
+        user,
+        "create",
+        "comprobante_caja",
+        str(response["numero"]),
+        request_id,
+        payload={"before": None, "after": response},
+    )
+    return response
+
+
+@router.post("/cash/egresos", status_code=201)
+def create_egress(
+    body: EgressCreate,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+    x_request_id: Annotated[str | None, Header(alias="X-Request-Id")] = None,
+    tenant: Tenant = Depends(require_erp_tenant),
+    user: User = Depends(require_erp_collections_write),
+    repo: FakeCashMovementsRepo | RealCashMovementsRepo = Depends(
+        get_cash_movements_repo
+    ),
+    audit: AuditRepo | FakeAuditRepo = Depends(get_audit_repo),
+) -> dict:
+    """Post a comprobante de egreso (S02) with a server-side total (CC-3)."""
+    _validate_idempotency_key(idempotency_key)
+    request_id = x_request_id or str(uuid.uuid4())
+    response = _save_or_http_error(
+        lambda: repo.create_egress(
+            body,
+            tenant=tenant.id,
+            empresa=tenant.erp.empresa,
+            actor=user.username,
+            request_id=request_id,
+            idempotency_key=idempotency_key,
+        )
+    )
+    _log_audit(
+        audit,
+        user,
+        "create",
+        "comprobante_egreso",
         str(response["numero"]),
         request_id,
         payload={"before": None, "after": response},
