@@ -86,6 +86,8 @@ class InvoiceCreate(BaseModel):
 
     nitter: LegacyText = Field(min_length=1, max_length=15)
     nitvend: LegacyText = Field(min_length=1, max_length=13)  # seller (venfven)
+    #: The client's name (legacy ``facventas.clifven``) - optional.
+    nomclien: LegacyText | None = Field(default=None, max_length=120)
     codcaj: LegacyText = Field(default="01", min_length=1, max_length=3)
     obsfven: LegacyText | None = Field(default=None, max_length=120)
     lines: list[InvoiceLineIn] = Field(min_length=1)

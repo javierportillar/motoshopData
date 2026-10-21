@@ -87,17 +87,30 @@ class RealInvoiceStore:
         return dict(row._mapping) if row is not None else None
 
     def find_seller(self, nitvend: str) -> dict | None:
+        """The seller (the company) - legacy parity: the company is a third
+        party with ``emppro = 'SI'`` (the legacy SofP_CreaLatam1 read the
+        seller's NIT from there; there is no ``venfven`` table)."""
         from sqlalchemy import text
 
         with self._read_engine().connect() as conn:
             row = conn.execute(
                 text(
-                    "SELECT nitvend, nombre FROM venfven "
-                    "WHERE nitvend = :v LIMIT 1"
+                    "SELECT nitter, nomter FROM terceros "
+                    "WHERE nitter = :n AND emppro = 'SI' LIMIT 1"
                 ),
-                {"v": str(nitvend)},
+                {"n": str(nitvend)},
             ).fetchone()
         return dict(row._mapping) if row is not None else None
+
+    def company_nit(self) -> str:
+        """The company's own NIT (the seller of the POS sales)."""
+        from sqlalchemy import text
+
+        with self._read_engine().connect() as conn:
+            row = conn.execute(
+                text("SELECT nitter FROM terceros WHERE emppro = 'SI' LIMIT 1")
+            ).fetchone()
+        return str(row[0]) if row is not None else ""
 
     # ─── writes ──────────────────────────────────────────────────
 

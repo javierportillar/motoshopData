@@ -100,7 +100,14 @@ class FakeInvoiceStore:
                 "nomter": "CLIENTE DEMO",
                 "inater": "NO",
                 "cupblo": "R",
-            }
+            },
+            "900123456": {
+                "nitter": "900123456",
+                "nomter": "MOTOSHOP CALI",
+                "inater": "NO",
+                "cupblo": "R",
+                "emppro": "SI",
+            },
         }
         self.productos: dict[str, dict] = {
             "PROD1": {
@@ -117,14 +124,21 @@ class FakeInvoiceStore:
             },
         }
         self.sellers: dict[str, dict] = {
-            "VEN01": {"nitvend": "VEN01", "nombre": "MOTOSHOP CALI"}
+            "VEN01": {"nitvend": "VEN01", "nombre": "MOTOSHOP CALI"},
+            "900123456": {"nitvend": "900123456", "nombre": "MOTOSHOP CALI"},
         }
         self.numbering: FakeContadoresRepo = FakeContadoresRepo()
         self.numbering.seed(
             _contador_row(conres=501, numini=1, numfin=99999)
         )
-
     # ─── staged writes ────────────────────────────────────────────
+
+    def company_nit(self) -> str:
+        """The company's own NIT (the seller) - legacy ``emppro = 'SI'``."""
+        for nitter, row in self.terceros.items():
+            if row.get("emppro") == "SI":
+                return nitter
+        return ""
 
     def stage_insert(self, table: str, row: dict) -> None:
         if self.fail_table and self.fail_table == table:
@@ -416,6 +430,7 @@ class _BaseInvoicesRepo:
             "prefven": pref,
             "nitter": body.nitter,
             "nitvend": body.nitvend,
+            "clifven": body.nomclien or "",
             "codcaj": body.codcaj,
             "obsfven": body.obsfven,
             "subfven": totals["subfven"],

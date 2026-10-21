@@ -34,6 +34,7 @@ from motoshop_api.erp.dian.router import router as dian_router
 from motoshop_api.erp.engine import ErpSaveFailed
 from motoshop_api.erp.invoicing.router import router as erp_invoicing_router
 from motoshop_api.erp.masters.router import router as erp_masters_router
+from motoshop_api.erp.pos.router import router as erp_pos_router
 from motoshop_api.erp.router import router as erp_router
 from motoshop_api.expiry.router import router as expiry_router
 from motoshop_api.forecast.router import router as forecast_router
@@ -289,6 +290,7 @@ app.include_router(erp_masters_router, prefix="/api", dependencies=module_access
 app.include_router(erp_cash_router, prefix="/api", dependencies=module_access)
 app.include_router(erp_invoicing_router, prefix="/api", dependencies=module_access)
 app.include_router(erp_annulment_router, prefix="/api", dependencies=module_access)
+app.include_router(erp_pos_router, dependencies=module_access)
 app.include_router(dian_router, prefix="/api/erp/dian")
 
 
