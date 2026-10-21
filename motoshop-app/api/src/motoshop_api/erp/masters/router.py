@@ -320,3 +320,56 @@ def get_producto(
             detail=f"Producto '{id}' no encontrado",
         )
     return row
+
+
+# ─── Catálogos de lectura (marcas / bodegas) ─────────────────────
+
+
+@router.get("/marcas")
+def list_marcas(
+    search: str = "",
+    limit: int = 200,
+    offset: int = 0,
+    tenant: Tenant = Depends(require_erp_tenant),
+    user: User = Depends(get_current_user),
+) -> list[dict]:
+    """List product brands (``marcas``) — read only, open to every role."""
+    from sqlalchemy import text
+
+    from motoshop_api.db.engine import get_engine
+
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT codmar, nommar FROM marcas "
+                "WHERE (:s = '' OR CONCAT(codmar, ' ', nommar) "
+                "LIKE CONCAT('%', :s, '%')) ORDER BY codmar LIMIT :l OFFSET :o"
+            ),
+            {"s": search, "l": limit, "o": offset},
+        ).fetchall()
+    return [dict(row._mapping) for row in rows]
+
+
+@router.get("/bodegas")
+def list_bodegas(
+    search: str = "",
+    limit: int = 200,
+    offset: int = 0,
+    tenant: Tenant = Depends(require_erp_tenant),
+    user: User = Depends(get_current_user),
+) -> list[dict]:
+    """List warehouses (``bodegas``) — read only, open to every role."""
+    from sqlalchemy import text
+
+    from motoshop_api.db.engine import get_engine
+
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT codbod, nombod, codemp FROM bodegas "
+                "WHERE (:s = '' OR CONCAT(codbod, ' ', nombod) "
+                "LIKE CONCAT('%', :s, '%')) ORDER BY codbod LIMIT :l OFFSET :o"
+            ),
+            {"s": search, "l": limit, "o": offset},
+        ).fetchall()
+    return [dict(row._mapping) for row in rows]
