@@ -65,7 +65,7 @@ class ContadoresRepo(Protocol):
 
     def reserve(
         self, *, codcon: str, pref: str, doc_table: str, num_field: str,
-        lock_wait_seconds: float = 5.0,
+        lock_wait_seconds: float = 5.0, prefix_column: str = "prefven",
     ) -> int: ...
 
     def release(self, *, codcon: str, pref: str, number: int) -> None: ...
@@ -176,7 +176,7 @@ class FakeContadoresRepo:
 
     def reserve(
         self, *, codcon: str, pref: str, doc_table: str, num_field: str,
-        lock_wait_seconds: float = 5.0,
+        lock_wait_seconds: float = 5.0, prefix_column: str = "prefven",
     ) -> int:
         key = (codcon, pref)
         locked = False
@@ -271,16 +271,20 @@ class RealContadoresRepo:
         )
 
     def _max_used(
-        self, cur, doc_table: str, codcon: str, pref: str, num_field: str
+        self, cur, doc_table: str, codcon: str, pref: str, num_field: str,
+        prefix_column: str = "prefven",
     ) -> int:
         """Bus_Con_Act: MAX(doc number) for the (codclas, prefix) pair.
 
         Doc numbers are legacy varchar numerics: MAX(CAST(... AS SIGNED))
         keeps the ordering numeric (MySQL 5.0-compatible, no window fns).
+        ``prefix_column`` names the prefix column of the doc table (``prefven``
+        on sales docs, ``predoc`` on ``detapago``, ``preegr`` on
+        ``comprobantes``…).
         """
         cur.execute(
             f"SELECT MAX(CAST({num_field} AS SIGNED)) FROM {doc_table} "  # noqa: S608
-            "WHERE codclas = %s AND prefven = %s",
+            f"WHERE codclas = %s AND {prefix_column} = %s",
             (codcon, pref),
         )
         raw = cur.fetchone()
@@ -288,7 +292,7 @@ class RealContadoresRepo:
 
     def reserve(
         self, *, codcon: str, pref: str, doc_table: str, num_field: str,
-        lock_wait_seconds: float | None = None,
+        lock_wait_seconds: float | None = None, prefix_column: str = "prefven",
     ) -> int:
         wait = self._lock_wait_seconds if lock_wait_seconds is None \
             else lock_wait_seconds
@@ -337,7 +341,7 @@ class RealContadoresRepo:
                 )
             conres = _as_int(row.conres)
             max_used = self._max_used(
-                cur, doc_table, codcon, pref, num_field
+                cur, doc_table, codcon, pref, num_field, prefix_column
             )
             if conres <= max_used:
                 conres = max_used + 1
