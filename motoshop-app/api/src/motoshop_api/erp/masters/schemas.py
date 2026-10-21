@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from motoshop_api.erp.common.conversions import ErpMoney, ErpQty, LegacyText
 
+
 def _opt(max_len: int):  # optional string bound (legacy varchar length)
     return Field(default=None, max_length=max_len)
 

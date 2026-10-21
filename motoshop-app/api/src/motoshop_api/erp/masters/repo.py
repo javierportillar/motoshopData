@@ -21,18 +21,17 @@ exactly like a real MySQL 5.0.45 unit.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any, Callable
+from typing import Any
 
 from motoshop_api.erp.engine import ErpSaveRequest, save_document
 from motoshop_api.erp.masters.schemas import (
-    BarcodeEntry,
     ProductCreate,
     ProductPriceEntry,
     ProductUpdate,
     TerceroCreate,
     TerceroUpdate,
-    UnitEntry,
 )
 from motoshop_api.erp.masters.validators import (
     DuplicateMasterError,
@@ -56,7 +55,7 @@ class FakeMastersStore:
         self.terceros: dict[str, dict] = {}
         self.tercecorreo: list[dict] = []
         self.productos: dict[str, dict] = {}
-        self.produktdmeds: list[dict] = []  # productos slice renames to produndmeds (kept for compat)
+        self.produktdmeds: list[dict] = []  # slice 2: productos' produndmeds
         self.preciosxpro: list[dict] = []
         self.prodcodbars: list[dict] = []
         self.fail_table: str | None = None  # inject a simulated insert failure
@@ -374,7 +373,9 @@ class RealTercerosRepo:
                 text("SELECT nitter, corele FROM tercecorreo WHERE nitter = :n"),
                 {"n": nitter},
             ).fetchall()
-        return [dict(zip(("nitter", "corele"), r)) for r in rows]
+        return [
+            dict(zip(("nitter", "corele"), r, strict=False)) for r in rows
+        ]
 
     # ── write side ──
     def create(self, body: TerceroCreate, **context) -> dict:
@@ -820,7 +821,11 @@ class RealProductosRepo:
             return None
         view = dict(row._mapping)
         view["units"] = [
-            dict(zip(("codprod", "codmed", "divmul", "facumed", "pventa", "tipovc"), r))
+            dict(zip(
+                ("codprod", "codmed", "divmul", "facumed", "pventa", "tipovc"),
+                r,
+                strict=False,
+            ))
             for r in conn.execute(
                 text(
                     "SELECT codprod, codmed, divmul, facumed, pventa, tipovc "
@@ -830,7 +835,7 @@ class RealProductosRepo:
             ).fetchall()
         ]
         view["barcodes"] = [
-            dict(zip(("codprod", "codbar"), r))
+            dict(zip(("codprod", "codbar"), r, strict=False))
             for r in conn.execute(
                 text(
                     "SELECT codprod, codbar FROM prodcodbars WHERE codprod = :c"
@@ -840,8 +845,9 @@ class RealProductosRepo:
         ]
         view["prices"] = [
             dict(zip(
-                ("codprod", "codlis", "pvtipo", "venprod", "veniva", "porutil",
-                 "actupr"), r,
+                ("codprod", "codlis", "pvtipo", "venprod", "veniva", "porutil", "actupr"),
+                r,
+                strict=False,
             ))
             for r in conn.execute(
                 text(
@@ -1023,9 +1029,13 @@ class RealProductosRepo:
 
             if changes_flat:
                 sets = ", ".join(f"{col} = :{col}" for col in changes_flat)
+                params = {
+                    col: (str(val) if val is not None else "")
+                    for col, val in changes_flat.items()
+                }
                 conn.execute(
                     text(f"UPDATE productos SET {sets} WHERE codprod = :c"),
-                    {**{k: (str(v) if v is not None else "") for k, v in changes_flat.items()}, "c": codprod},
+                    {**params, "c": codprod},
                 )
             if body.units is not None:
                 conn.execute(

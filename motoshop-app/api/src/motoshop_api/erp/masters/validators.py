@@ -24,8 +24,9 @@ Error shape convention for 4xx bodies:
 
 from __future__ import annotations
 
-from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Mapping
+from collections.abc import Mapping
+from decimal import ROUND_HALF_UP, Decimal
+from typing import Any
 
 # ═══ Domain exceptions mapped by the routers ═════════════════════════════
 
@@ -69,7 +70,10 @@ class InactiveMasterError(Exception):
     ``HTTPException(422, detail=...)`` verbatim.
     """
 
-    def __init__(self, kind: str, key_field: str, key: str, act_field: str, act_value: str, message: str):
+    def __init__(
+        self, kind: str, key_field: str, key: str, act_field: str,
+        act_value: str, message: str,
+    ):
         super().__init__(message)
         self.kind = kind
         self.key_field = key_field
@@ -100,7 +104,7 @@ def nit_verification_digit(nitter: str) -> str:
     1 (rem 1), else 11 − rem. NIT 900123456 → DV 8.
     """
     digits = [int(ch) for ch in nitter if ch.isdigit()]
-    total = sum(d * w for d, w in zip(reversed(digits), _DV_WEIGHTS))
+    total = sum(d * w for d, w in zip(reversed(digits), _DV_WEIGHTS, strict=False))
     rem = total % 11
     if rem == 0:
         return "0"
@@ -116,7 +120,13 @@ def _compose_nomcom(body: Mapping[str, Any]) -> str:
     razsoc = (body.get("razsoc") or "").strip()
     if razsoc:
         return razsoc
-    parts = [p for p in (body.get("nomter"), body.get("nomter2"), body.get("apeter"), body.get("apeter2")) if p]
+    parts = [
+        p
+        for p in (
+            body.get("nomter"), body.get("nomter2"),
+            body.get("apeter"), body.get("apeter2"),
+        ) if p
+    ]
     return " ".join(str(p).strip() for p in parts)
 
 
