@@ -51,7 +51,7 @@ class ErpSaveRequest:
     request_id: str
     idempotency_key: str
     save_fn: Callable[[object, int], Any]           # (conn, reserved number) → response
-    numbering_fn: Callable[["ErpSaveRequest"], int]  # φ2 hook: reserve the number
+    numbering_fn: Callable[["ErpSaveRequest"], int] | None  # φ2 hook (None: masters)
     cleanup_fn: Callable[[int], None] | None = None  # φ3 failure compensation
     engine: object | None = None                     # UoW engine override (tests)
 
@@ -81,9 +81,12 @@ def save_document(request: ErpSaveRequest, journal: Any, idempotency: Any = None
         idempotency_key=request.idempotency_key,
     )
 
-    # φ2 numbering hook (slice 3 plugs the contadores LOCK TABLES engine in)
-    number = request.numbering_fn(request)
-    journal.record_number(entry.id, number)
+    # φ2 numbering hook (slice 3 plugs the contadores LOCK TABLES engine in);
+    # masters (slices 2) carry no document number — numbering_fn is None.
+    number: int | None = None
+    if request.numbering_fn is not None:
+        number = request.numbering_fn(request)
+        journal.record_number(entry.id, number)
 
     # φ3 unit: legacy writes inside one transaction
     try:
