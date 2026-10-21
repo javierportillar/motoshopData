@@ -177,5 +177,19 @@ class Settings(BaseSettings):
             f"?charset=utf8"
         )
 
+    @property
+    def erp_database_url(self) -> str:
+        """URL transaccional del ERP (mismo usuario app_writer, charset latin1).
+
+        ADR-0008-07: la BD legacy es latin1 (MySQL 5.0.45 no tiene utf8); el
+        engine transaccional fuerza latin1 para que el texto acentuado haga
+        round-trip sin mojibake y los numéricos pasen como Decimal.
+        """
+        return (
+            f"mysql+pymysql://{self.mysql_app_writer_user}:{self.mysql_app_writer_password}"
+            f"@{self.mysql_host}:{self.mysql_port}/{self.mysql_database}"
+            f"?charset=latin1"
+        )
+
 
 settings = Settings()
