@@ -232,3 +232,40 @@ touched, so a retry never advances it twice (covered by test).
 ### Next
 - Slice 5 (annulment: guard chain, full flag reversal, kardex stock
   recompute, motanudoc audit) → frontend PR-5 (POS invoice screen) + PR-7.
+
+## Slice 5 — erp-document-annulment + checkpoints A/B/C — completion record
+
+| Task | Status | Commit(s) | Evidence |
+|---|---|---|---|
+| 5.1 ordered guard chain (Veri_Anul → Hay_Cie_Eli → Valid_EdiDocele → role → reason) | done | `8d06130` | test_erp_annulment_guards.py (11) |
+| 5.2 full flag reversal in ONE unit of work | done | `8d06130` | same suite |
+| 5.3 stock recompute from the kardex truth | done | `8d06130` | same suite (AcInv_Eli_Anul parity) |
+| 5.4 motanudoc audit + journal mirror + idempotent replay | done | `8d06130` | same suite |
+| 5.5 HTTP route POST /api/erp/documents/{codclas}/{numfven}/annulment | done | `8d06130` | mounted in main.py |
+| A — F8-003/F8-004 against the REAL MySQL 5.0.45 | done | applied to the local DB | `uq_facventas_doc(codclas,prefven,numfven)` created; app_writer now has INSERT/UPDATE on facventas/detfventas/detapago/compras + app_doc_journal/app_idempotency/app_migration_state |
+| B — contadores concurrency suite against the REAL MySQL | done | `8d06130` | test_erp_integration_concurrency.py (3 passed) |
+| C — DIAN provider configuration + onboarding | done | this batch | dian/settings.py + dian/live_adapters.py (Dataico/SoftProp) + docs/hermes/ONBOARDING_DIAN.md |
+
+### Two production bugs found by the REAL-DB suite (fixed)
+
+1. **`Thread.join()` returns None**, so `not worker.join(timeout=wait)` was
+   ALWAYS true: the watchdog fired on every successful reservation and the
+   real MySQL numbering path could NEVER number a document. Detected only
+   because the concurrency suite runs against a real server (the hermetic
+   suite uses the fake repo and passed).
+2. **`_connect()` returned a SQLAlchemy 2.x `Connection`** (no `.cursor()`),
+   so the raw-DBAPI `LOCK TABLES` path raised `AttributeError`. Fixed to
+   use `raw_connection()`.
+
+### Runner fix (Windows line endings)
+
+`infra/migrations/run_migrations.py` hashed the RAW file bytes, so with
+git's `autocrlf` every migration reported a false "checksum drift" on
+Windows. The checksum now normalizes CRLF → LF before hashing.
+
+### Still operator-dependent (external, not code)
+
+- The DIAN **provider account** does not exist yet: the ERP ships with the
+  stub adapter (the legacy behaviour). See docs/hermes/ONBOARDING_DIAN.md.
+- The legacy `provetecno` / `formapago.codfele` / `contadores.envfele`
+  configuration must be completed in `sgHermes` once the account is live.

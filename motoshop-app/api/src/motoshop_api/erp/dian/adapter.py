@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
 
@@ -97,7 +97,7 @@ class DianStubAdapter:
         if isinstance(raw_date, datetime):
             date_str = raw_date.strftime("%Y-%m-%d")
         else:
-            date_str = str(raw_date or datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+            date_str = str(raw_date or datetime.now(UTC).strftime("%Y-%m-%d"))
 
         total = doc.get("grand_total") or doc.get("total") or Decimal("0.00")
         nit = str(doc.get("tenant_nit") or doc.get("nit") or "900123456")
@@ -143,7 +143,7 @@ class DianStubAdapter:
 
             cufe = payload.get("cufe") or compute_pseudo_cufe(
                 doc_number=payload.get("doc_number", "DOC-0001"),
-                date_str=payload.get("date", datetime.now(timezone.utc).strftime("%Y-%m-%d")),
+                date_str=payload.get("date", datetime.now(UTC).strftime("%Y-%m-%d")),
                 total=payload.get("grand_total", "0.00"),
                 nit=payload.get("tenant_nit", "900123456"),
             )
@@ -157,7 +157,7 @@ class DianStubAdapter:
                 f'  <Invoice>\n'
                 f'    <ID>{doc_number}</ID>\n'
                 f'    <UUID schemeName="CUFE-SHA384">{cufe}</UUID>\n'
-                f'    <IssueDate>{datetime.now(timezone.utc).strftime("%Y-%m-%d")}</IssueDate>\n'
+                f'    <IssueDate>{datetime.now(UTC).strftime("%Y-%m-%d")}</IssueDate>\n'
                 f'    <Status>ACCEPTED</Status>\n'
                 f'  </Invoice>\n'
                 f'</AttachedDocument>'

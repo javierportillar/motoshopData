@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -130,7 +130,7 @@ class DianQueue:
         If ignore_backoff is True, processes pending items immediately regardless of scheduled delay.
         """
         processed: list[DianDocOut] = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         with self._lock:
             tenants = [tenant_id] if tenant_id is not None else list(self._tenant_documents.keys())
@@ -171,7 +171,7 @@ class DianQueue:
 
                     if res_status == "ACCEPTED":
                         doc.status = DianStatusEnum.ACCEPTED
-                        doc.accepted_at = datetime.now(timezone.utc)
+                        doc.accepted_at = datetime.now(UTC)
                         doc.cufe = result.get("cufe") or doc.cufe
                         doc.qr_url = result.get("qr_url") or doc.qr_url
                         doc.track_id = result.get("track_id")
