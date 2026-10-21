@@ -52,10 +52,10 @@ tenants:
     logo: "/tenants/masvital/logo.png"
     r2_object_key: "masvital_gold.duckdb"
     local_db_path: "/tmp/masvital_gold.duckdb"
-    mysql_source: "masvital_pos"
+    mysql_source: "masvital"
     erp:
-      enabled: false   # transactional writes are MotoShop-only (WF-3s1)
-      empresa: ""
+      enabled: true
+      empresa: "E01"
     telegram_chat_id_gerente: null  # delivery uses TELEGRAM_CHAT_ID_MASVITAL
     enabled_features:
       - products

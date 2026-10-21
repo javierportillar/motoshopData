@@ -78,7 +78,8 @@ def _tenant(id: str, erp_enabled: bool, empresa: str) -> Tenant:
 def _erp_tenant_configs():
     _tenants_cache.clear()
     _tenants_cache["motoshop"] = _tenant("motoshop", True, "E01")
-    _tenants_cache["masvital"] = _tenant("masvital", False, "")
+    _tenants_cache["masvital"] = _tenant("masvital", True, "E01")
+    _tenants_cache["disabled_demo"] = _tenant("disabled_demo", False, "")
     yield
     _tenants_cache.clear()
     _users_cache.clear()
@@ -126,16 +127,17 @@ def test_erp_write_accepts_the_three_document_roles():
 
 def test_tenant_gate_rejects_disabled_erp_tenant():
     with pytest.raises(Exception) as exc:
-        asyncio.run(require_erp_tenant(tenant_id="masvital"))
+        asyncio.run(require_erp_tenant(tenant_id="disabled_demo"))
     assert exc.value.status_code == 403
     assert "no está habilitado" in exc.value.detail
 
 
 def test_tenant_gate_resolves_erp_config_server_side():
-    config = asyncio.run(require_erp_tenant(tenant_id="motoshop"))
-    assert config.erp.enabled is True
-    assert config.erp.empresa == "E01"  # server-side, never client-supplied
-    assert config.erp.stock_negative_policy == "warn"
+    for tid in ("motoshop", "masvital"):
+        config = asyncio.run(require_erp_tenant(tenant_id=tid))
+        assert config.erp.enabled is True
+        assert config.erp.empresa == "E01"  # server-side, never client-supplied
+        assert config.erp.stock_negative_policy == "warn"
 
 
 # ─── WF-2s1 / WF-2s2 matrix entries (data, merged lookup) ──────
@@ -277,7 +279,7 @@ def test_motoshop_write_runs_full_chain_with_server_side_empresa():
     assert entry["status"] == "COMMITTED"
 
 
-def test_masvital_write_403_tenant_not_enabled_and_no_rows():
+def test_masvital_write_succeeds_and_scoped_to_masvital_empresa():
     journal = FakeJournalRepo()
     app = _probe_app(journal)
     client = TestClient(app)
@@ -286,6 +288,23 @@ def test_masvital_write_403_tenant_not_enabled_and_no_rows():
         "/api/erp/journal/probe",
         json={"codclas": "FV", "idempotency_key": "8f0e1c2a-3b4d-4e5f-9a0b-c1d2e3f4a5b8"},
         headers={**headers, "X-Tenant": "masvital"},
+    )
+    assert resp.status_code == 200
+    assert len(journal.entries) == 1
+    assert journal.entries[0]["tenant"] == "masvital"
+    assert journal.entries[0]["empresa"] == "E01"
+    assert journal.entries[0]["status"] == "COMMITTED"
+
+
+def test_disabled_demo_write_403_tenant_not_enabled_and_no_rows():
+    journal = FakeJournalRepo()
+    app = _probe_app(journal)
+    client = TestClient(app)
+    headers = _login_and_seeds()("vg3", "gerente", ["motoshop", "masvital", "disabled_demo"])
+    resp = client.post(
+        "/api/erp/journal/probe",
+        json={"codclas": "FV", "idempotency_key": "8f0e1c2a-3b4d-4e5f-9a0b-c1d2e3f4a5b9"},
+        headers={**headers, "X-Tenant": "disabled_demo"},
     )
     assert resp.status_code == 403
     assert "no está habilitado" in resp.json()["detail"]
@@ -342,6 +361,7 @@ def test_tenants_yaml_erp_block_loads_into_model():
         masvital = tenants_module.get_tenant_config("masvital")
         assert motoshop.erp is not None and motoshop.erp.enabled is True
         assert motoshop.erp.empresa == "E01"
-        assert masvital.erp is not None and masvital.erp.enabled is False
+        assert masvital.erp is not None and masvital.erp.enabled is True
+        assert masvital.erp.empresa == "E01"
     finally:
         _tenants_cache.clear()  # restore pytest fixtures' clean state
