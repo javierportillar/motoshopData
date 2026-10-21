@@ -68,6 +68,45 @@ TABLES_CORE = [
 # Si la tabla no tiene esa columna, el filtro se omite automáticamente.
 ACTIVE_DOC_FILTER = "estdoc = 'A'"
 
+# Política include/exclude (spec erp-write-foundation «ETL stays clean»):
+# las tablas de escritura transaccional (`app_*`: journal, idempotencia,
+# ledger de migraciones) NUNCA llegan a bronze/gold: son internas del API,
+# desktop no las conoce y los agregados de oro no deben mezclarlas.
+INTERNAL_TABLE_PREFIXES = ("app_",)
+
+
+def list_all_tables(conn) -> set[str]:
+    """Listing real de la base (se usa con --tables-all)."""
+    cursor = conn.cursor()
+    cursor.execute("SHOW TABLES")
+    rows = cursor.fetchall()
+    cursor.close()
+    return {row[0] for row in rows}
+
+
+def resolve_dump_tables(
+    requested,
+    valid_tables: set,
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Aplica la política include/exclude sobre los pedidos del dump.
+
+    Devuelve ``(included, excluded)``:
+    - tablas internas `app_*` → excluidas («internal ERP write-path table…»)
+    - tablas que no existen en MySQL → excluidas con reporte explícito
+      (fail-fast basado en el listing real; sin dumps silenciosos vacíos)
+    - el resto → incluidas.
+    """
+    included: list[str] = []
+    excluded: list[tuple[str, str]] = []
+    for table in requested:
+        if any(table.startswith(prefix) for prefix in INTERNAL_TABLE_PREFIXES):
+            excluded.append((table, "internal ERP write-path table; kept out of bronze/gold"))
+        elif table not in valid_tables:
+            excluded.append((table, "not found in MySQL"))
+        else:
+            included.append(table)
+    return included, excluded
+
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent
 STAGING_DIR = PROJECT_ROOT / "_staging"
 
@@ -280,6 +319,8 @@ def parse_args() -> argparse.Namespace:
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--tables", nargs="+", help="Lista explícita de tablas")
     group.add_argument("--tables-core", action="store_true", help="Las 12 tablas core de F1")
+    group.add_argument("--tables-all", action="store_true",
+                       help="Todas las tablas de MySQL EXCEPTO las internas app_* (política ERP)")
     p.add_argument("--ingest-date", default=date.today().isoformat(), help="Fecha de ingesta (YYYY-MM-DD)")
     p.add_argument("--dry-run", action="store_true", help="No subir a Databricks; solo Parquet local")
     p.add_argument("--catch-up", action="store_true", help="Subir Parquets locales pendientes antes del dump")
@@ -289,14 +330,16 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     cfg = Config.from_env()
-    tables = TABLES_CORE if args.tables_core else args.tables
+    table_log = TABLES_CORE if args.tables_core else (
+        ["(listing completo de MySQL minus app_*)" if args.tables_all else list(args.tables)][0]
+    )
 
     log.info(
         f"Origen:  {cfg.mysql_user}@{cfg.mysql_host}:{cfg.mysql_port}/{cfg.mysql_database}"
     )
     log.info(f"Destino: {cfg.databricks_volume_path}  (host {cfg.databricks_host})")
     log.info(f"Fecha:   {args.ingest_date}")
-    log.info(f"Tablas:  {', '.join(tables)}")
+    log.info(f"Tablas:  {', '.join(table_log)}")
     if args.dry_run:
         log.info("Modo:    DRY-RUN (sin subida)")
     if args.catch_up:
@@ -312,6 +355,19 @@ def main() -> int:
             log.warning(f"Catch-up tuvo {catch_up_failures} fallos. Continuando con dump normal...")
         log.info("=== Catch-up completado ===\n")
     conn = open_connection(cfg)
+
+    # Política include/exclude contra el listing REAL de la base.
+    requested = TABLES_CORE if args.tables_core else (
+        sorted(list_all_tables(conn)) if args.tables_all else list(args.tables)
+    )
+    tables, excluded = resolve_dump_tables(requested, list_all_tables(conn))
+    for table, reason in excluded:
+        log.warning(f"  EXCLUIDA {table}: {reason}")
+    if not tables:
+        log.error("Ninguna tabla sobrevivió la política include/exclude; abortando.")
+        conn.close()
+        return 1
+    log.info(f"Tablas efectivas: {len(tables)} (excluidas: {len(excluded)})")
 
     summary = []
     t_start = time.time()
