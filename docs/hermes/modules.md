@@ -1,4 +1,4 @@
-# sgHermes — Análisis de módulos (cobertura completa del binario)
+?# sgHermes — Análisis de módulos (cobertura completa del binario)
 
 Complemento de `code_analysis.md`. Este documento cubre **el 100% del árbol descompilado**
 (721 clases con código, 1.301.583 líneas) con dos niveles de evidencia:
@@ -231,7 +231,80 @@ Los reportes tocan (del catálogo): ventas 4.169, contabilidad 2.729, compras 2.
 - Licencia: `registro.codreg` + `Encriptar` simétrico con `Hermes_Licen`; full demo mod niveles.
 - Anulación con reversa: ver `code_analysis.md` §7 — completa (asientos, stock, financiación).
 
-## 13. Matriz de cobertura del análisis
+## 13. Cierre de periodos (`CierrePer`) — resuelve el pendiente de `cierresper`
+
+`cierresper` es el **registro de periodos bloqueados**; lo escriben dos forms:
+
+- `CierrePer` (L754): cierre de periodo puntual — `INSERT INTO cierresper (codcie, fecdes,
+  fechas, tipcie) VALUES (…, 'P')` con `codcie` secuencial calculado recorriendo la tabla.
+  Valida traslapes con cierres existentes por ambos extremos de rango, y avisa si existen
+  documentos con fecha anterior al rango elegido.
+- `CierreAnu2` (L114645): los cierres contables M/A descritos en §6, mismas condiciones.
+
+**Efecto:** la anulación (`Hay_Cie_Eli`) y la edición de documentos dentro del rango de
+cualquier cierre P/M/A quedan bloqueadas. Los **turnos de caja** no viven acá: se manejan con
+`cajaarqueo` + turno1/detapago + el cuadre de `RepFrCuadCaj`.
+
+## 14. Facturación electrónica DIAN — pipeline completo
+
+Tres integradores embebidos bajo namespaces `WA*` (clases serializadoras JSON + envío HTTP),
+parametrizables por empresa vía `provetecno` (proveedor tecnológico, UI `ParaProvTec1`)
+y `formapago.codfele` / `contadores.envfele`:
+
+| Proveedor | Clases | Produce |
+|---|---|---|
+| **Dataico** | `WADataico\CreaD1..5\CreaDoc1-5` (arman los payloads), `Enviod1\EnvioDico` (HTTP) | Facturas, notas crédito, documentos soporte y nómina electrónica |
+| **SoftProp Latam** (hosting propio) | `WASofPropLat\Dc1–Dc2\SofP_CreaLatam1/2` (payloads de fac/notas/compras/retenciones), `EnvioSop1\EnviarSofPlat` (HTTP) | Todos los documentos + respuesta CUFE/QR |
+| **Integrador alternativo** | `WAContrtex\Crea3\CreaDocCt3` (payload docs), `CreaNom1\Class1` (nómina), `WAContrte1\Envia1\EnviarApi2` | Múltiples tipos de doc |
+
+- **Endpoints reales detectados**: `https://api.dataico.com/direct/dataico_api/v2/invoices?number=…`,
+  `…/v2/credit_notes?number=…`, `…/v2/support_docs?prefix=…&number=…`, `…/v2/reception_events?number=…`,
+  `https://api.dataico.com/direct/payroll-api/payroll-entries/<prefijo>/<numnum>`.
+  Proveedor SoftProp: `http://84.247.183.77` (DOMINIO 1) / `http://194.163.144.234` (DOMINIO 2) —
+  IPs fijas hardcodeadas (HTTP, no HTTPS: hallazgo de seguridad complejo).
+- **QR oficial DIAN** cuando no hay proveedor: `https://catalogo-vpfe.dian.gov.co/document/searchqr?documentkey=<CUFE>`
+  (VImpTiqNet L141196).
+- **Respuesta**: `respdocfele (numnum, codclas, cocufe (CUFE), cuuid, qrcode, respcod, estfele,
+  estcli, resptxt, codpro)`; el estado `estfele` (1/2 = aceptado) es lo que bloquea edición/anulación
+  (`Valid_EdiDocele`, `Vardos.Estado_Dfele`). El QR/CUFE sale en el pie del tiquete y en
+  `DocElReenv2`/`FacElConsul1` (consola de reenvíos/consultas).
+- Nota de dise�o: el flujo es un cliente Web API puro (HttpClient + Newtonsoft), sin TLS
+  pinning ni retry/backoff. En el sistema web nuevo: cola de env�o con retries,
+  idempotencia por CUFE y guardado de la respuesta del proveedor.
+
+## 15. Maestro de productos y precios (`Productos`, `PreciosXpro`, `ParaLisPre`)
+
+- **Precio por lista**: `preciosxpro (codprod, codlis, venprod, veniva, porutil, actupr, pvtipo)`
+  — productId × lista de precio (`listapre`) con modalidades:
+  - `pvtipo=2` → precio a nivel incluido "sobre lo anterior" (OptPrpAntI) vs desglose (OptPrpDesI);
+  - `pvsini/pvconi`: precio con y sin IVA precalculados (Product p. 23.382 area);
+  - `porutil`: utilidad objetivo de la lista; recomputo masivo de precios desde `ParaLisPre`
+    y `ModPrecio` (recalcula todas por lista/meta).
+- **Unidades de medida**: `produndmeds (codprod, codmed, divmul, facumed, pventa, tipovc)`
+  permite vender por caja/frac etc. a distintos precios (`pventa`/multi-canal `tipovc`);
+  catálogo de unidades en `undmedidas` (`CmbUndmed` en el form).
+- **Kits**: `subproduct (codprod, codsubp, cansub, tipsub)` — componentes; al facturar un kit,
+  el detalle materializa sub-productos (`insertbs Kits2`, `FrVerKits1`).
+- **Costos**: `coskar` (pesoponderado desde asientos) / `cosulc` (última compra) / `cosman`
+  (manual, "OptCosKar" checked indica forzar kardex; `LbNotCos1` warning de costo no gestionado).
+- **EAN/código de barras múltiple**: `prodcodbars (codprod, codbar)` — varios por producto.
+- Activos fijos (`prodactfij/prodacttar`) siguen siendo parte del maestro.
+
+## 16. Brechas honestas del análisis (para claridad total)
+
+Cubierto en decisión (no necesarios para la reconstrucción point-of-sale objetivo):
+- `Facventas.cs` (form de facturación en mostrador no-POS, 703KB): replica del POS; el guardado
+  ya está cubierto por el dispatcher (`F_Facventas`). Su única diferencia relevante es el manejo
+  de redondeo y comandas — no estudiado línea por línea.
+- `PedHabTarR2` y los ~80 forms `Ped*`/`Hotel*` (restaurante/hotel): extra sistemas POS embebidos
+  en el binario; no en el alcance de una tienda de repuestos/motopartes.
+- `NotaPTrae1-6` (notas de traslado/inventario) y servicios especiales: igual criterio, ya
+  cubiertos a nivel firma SQL en el catálogo.
+
+Todo lo demás (POS, caja, contabilidad, compras, cartera, fiscal, DIAN) está documentado
+con evidencia según la matriz de §17.
+
+## 17. Matriz de cobertura del análisis
 
 | Paquete | Cobertura |
 |---|---|
