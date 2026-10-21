@@ -15,6 +15,7 @@ from motoshop_api.auth.module_access import (
     ROUTE_MODULES,
     require_route_module,
 )
+from motoshop_api.erp.guards import ERP_ROUTE_MODULES
 from motoshop_api.auth.users import User
 from motoshop_api.main import app as production_app
 
@@ -101,13 +102,20 @@ def test_every_api_route_has_module_policy_or_documented_exception() -> None:
         for method in (getattr(route, "methods", set()) or set()) - {"HEAD", "OPTIONS"}:
             actual[(method, path)] = route
 
-    assert set(actual) == set(ROUTE_MODULES) | set(ROUTE_MODULE_EXCEPTIONS)
+    # ERP delta-spec routes (slices 2+) are policy-declared in
+    # erp.guards.ERP_ROUTE_MODULES and merged by route_modules(). The matrix
+    # also pre-declares future slices (invoices, annulment, cash…); only the
+    # entries actually mounted in the production app join the audited 1:1 set.
+    erp_mounted = set(ERP_ROUTE_MODULES) & set(actual.keys())
+    assert set(actual) == (
+        set(ROUTE_MODULES) | erp_mounted | set(ROUTE_MODULE_EXCEPTIONS)
+    )
 
     # data/status predates the matrix dependency but already carries an explicit
     # require_module("pipeline-observability") guard. Machine-token/admin routes
     # are deliberately listed as exceptions instead of weakening the dependency.
     direct_module_guards = {("GET", "/api/admin/data/status")}
-    for key in ROUTE_MODULES:
+    for key in set(ROUTE_MODULES) | erp_mounted:
         route = actual[key]
         dependencies = {dependency.call for dependency in route.dependant.dependencies}
         assert require_route_module in dependencies or key in direct_module_guards, key

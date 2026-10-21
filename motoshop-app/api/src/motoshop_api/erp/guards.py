@@ -29,6 +29,7 @@ __all__ = [
     "TenantErpConfig",
     "require_erp_annul",
     "require_erp_collections_write",
+    "require_erp_masters_write",
     "require_erp_tenant",
     "require_erp_write",
 ]
@@ -71,6 +72,17 @@ async def require_erp_write(user: User = Depends(get_current_user)) -> User:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Rol '{user.role}' no tiene permiso de escritura",
+        )
+    return user
+
+
+async def require_erp_masters_write(user: User = Depends(get_current_user)) -> User:
+    """Masters write guard (MW-5): legacy parity reserves create/edit to
+    admin/gerente — a matrix grant can never widen the role population."""
+    if user.role not in ERP_ERP_MANAGEMENT_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Rol '{user.role}' no tiene permiso de escritura de maestros",
         )
     return user
 

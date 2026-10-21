@@ -1,4 +1,4 @@
-"""Punto de entrada de la API FastAPI de MotoShop."""
+﻿"""Punto de entrada de la API FastAPI de MotoShop."""
 
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ from motoshop_api.auth.users import load_users
 from motoshop_api.config import settings
 from motoshop_api.data_catalog.router import catalog_router
 from motoshop_api.erp.router import router as erp_router
+from motoshop_api.erp.masters.router import router as erp_masters_router
 from motoshop_api.expiry.router import router as expiry_router
 from motoshop_api.forecast.router import router as forecast_router
 from motoshop_api.gastos.router import router as gastos_router
@@ -53,7 +54,7 @@ from motoshop_api.users.router import router as users_router
 
 
 def _is_localhost() -> bool:
-    """Detecta si la máquina actual es localhost."""
+    """Detecta si la mÃ¡quina actual es localhost."""
     try:
         hostname = socket.gethostname()
         ip = socket.gethostbyname(hostname)
@@ -68,7 +69,7 @@ async def lifespan(app: FastAPI):
     setup_logging()
     log = structlog.get_logger("motoshop")
 
-    # ── ENV guardrail (R16) ──────────────────────────────────────────
+    # â”€â”€ ENV guardrail (R16) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if settings.env == "test":
         allow_test = os.getenv("ALLOW_TEST_ENV_IN_PROD") == "true"
         if not _is_localhost() and not allow_test:
@@ -78,7 +79,7 @@ async def lifespan(app: FastAPI):
             )
     log.info("env_guardrail_ok", env=settings.env)
 
-    # ── Cargar usuarios ──────────────────────────────────────────────
+    # â”€â”€ Cargar usuarios â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     users_path = Path(settings.users_file_path)
     if not users_path.is_absolute():
         users_path = Path(__file__).resolve().parent.parent.parent / users_path
@@ -88,14 +89,14 @@ async def lifespan(app: FastAPI):
     else:
         log.warning("users_file_not_found", path=str(users_path))
 
-    # ── Superponer usuarios gestionados en Supabase (RBAC) ───────────
-    # Híbrido: los usuarios de YAML siguen funcionando; Supabase gana por username.
-    # Degrada en silencio si Supabase no está configurado.
+    # â”€â”€ Superponer usuarios gestionados en Supabase (RBAC) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # HÃ­brido: los usuarios de YAML siguen funcionando; Supabase gana por username.
+    # Degrada en silencio si Supabase no estÃ¡ configurado.
     from motoshop_api.users.service import sync_users_from_supabase
     supa_count = sync_users_from_supabase()
     log.info("supabase_users_synced", count=supa_count)
 
-    # ── Cargar tenants ──────────────────────────────────────────────
+    # â”€â”€ Cargar tenants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     tenants_path = Path(settings.tenants_file_path)
     if not tenants_path.is_absolute():
         tenants_path = Path(__file__).resolve().parent.parent.parent / tenants_path
@@ -112,11 +113,11 @@ async def lifespan(app: FastAPI):
     yield
     if purchase_assessment_worker is not None:
         purchase_assessment_worker.stop()
-    # ── Shutdown: cerrar conexiones DuckDB compartidas ────────────────
+    # â”€â”€ Shutdown: cerrar conexiones DuckDB compartidas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     from motoshop_api.metrics.repo_duckdb import close_all_shared_connections
     close_all_shared_connections()
     log.info("duckdb_shared_connections_closed")
-    # ── Shutdown: limpiar conexiones pendientes ───────────────────────
+    # â”€â”€ Shutdown: limpiar conexiones pendientes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     log.info("shutdown")
 
 
@@ -164,8 +165,8 @@ async def assistant_http_exception_handler(request: Request, exc: HTTPException)
         response.headers.update(exc.headers)
     return response
 
-# ── DuckDB re-descargando desde R2 → 503 'loading' (no 500) ──────────
-# Tras cada deploy/reinicio, Render borra el disco efímero y {tenant}_gold.duckdb
+# â”€â”€ DuckDB re-descargando desde R2 â†’ 503 'loading' (no 500) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Tras cada deploy/reinicio, Render borra el disco efÃ­mero y {tenant}_gold.duckdb
 # se re-descarga de R2 (~1 min). Durante esa ventana devolvemos 503 'loading'
 # para que el frontend muestre "servidor cargando" y reintente, en vez de crashear.
 @app.exception_handler(DuckDBNotReadyError)
@@ -176,7 +177,7 @@ async def duckdb_not_ready_handler(request: Request, _exc: DuckDBNotReadyError) 
         response = problem_response(
             503,
             "https://api.motoshop/errors/dependency-unavailable",
-            "Los datos del tenant todavía se están cargando. Reintentá en unos segundos.",
+            "Los datos del tenant todavÃ­a se estÃ¡n cargando. ReintentÃ¡ en unos segundos.",
             _assistant_request_id(request),
         )
         response.headers["Retry-After"] = "5"
@@ -185,24 +186,24 @@ async def duckdb_not_ready_handler(request: Request, _exc: DuckDBNotReadyError) 
         status_code=503,
         headers={"Retry-After": "5"},
         content={
-            "detail": "El servidor está terminando de cargar los datos. Reintentá en unos segundos.",
+            "detail": "El servidor estÃ¡ terminando de cargar los datos. ReintentÃ¡ en unos segundos.",
             "status": "loading",
             "retry_after_seconds": 5,
         },
     )
 
 
-# ── MySQL offline → 503 graceful (mitigación SPOF Windows, F6-D) ──────
+# â”€â”€ MySQL offline â†’ 503 graceful (mitigaciÃ³n SPOF Windows, F6-D) â”€â”€â”€â”€â”€â”€
 @app.exception_handler(sqlalchemy.exc.OperationalError)
 async def mysql_offline_handler(request: Request, _exc: sqlalchemy.exc.OperationalError) -> JSONResponse:
-    """Endpoints que dependen de MySQL devuelven 503 elegante cuando la PC está apagada."""
+    """Endpoints que dependen de MySQL devuelven 503 elegante cuando la PC estÃ¡ apagada."""
     logger = structlog.get_logger("motoshop")
     logger.warning("mysql_unavailable", path=str(request.url.path))
     if _assistant_path(request):
         return problem_response(
             503,
             "https://api.motoshop/errors/dependency-unavailable",
-            "La fuente de datos no está disponible temporalmente.",
+            "La fuente de datos no estÃ¡ disponible temporalmente.",
             _assistant_request_id(request),
         )
     return JSONResponse(
@@ -211,7 +212,7 @@ async def mysql_offline_handler(request: Request, _exc: sqlalchemy.exc.Operation
             "detail": (
                 "Funcionalidad no disponible en cloud. "
                 "Requiere el sistema operativo encendido. "
-                "Predicciones y alertas están disponibles 24/7."
+                "Predicciones y alertas estÃ¡n disponibles 24/7."
             ),
             "status": "degraded",
             "available_endpoints": ["/health", "/api/auth/*", "/api/alerts/*", "/api/forecast/*", "/api/metrics/*", "/api/products/*", "/api/purchase-plans/*"],
@@ -221,7 +222,7 @@ async def mysql_offline_handler(request: Request, _exc: sqlalchemy.exc.Operation
 # ETag / Conditional Requests (304 Not Modified)
 app.add_middleware(ETagMiddleware)
 
-# GZip Compression (ancho de banda outbound, mínimo 1000 bytes)
+# GZip Compression (ancho de banda outbound, mÃ­nimo 1000 bytes)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # CORS
@@ -236,7 +237,7 @@ app.add_middleware(
 # Request ID + PII redaction
 app.add_middleware(RequestIDMiddleware)
 
-# Routers — todos bajo /api (estándar REST)
+# Routers â€” todos bajo /api (estÃ¡ndar REST)
 app.include_router(auth_router, prefix="/api")
 module_access = [Depends(require_route_module)]
 app.include_router(pipeline_runs_router, prefix="/api", dependencies=module_access)
@@ -260,6 +261,7 @@ app.include_router(expiry_router, prefix="/api", dependencies=module_access)
 app.include_router(users_router)  # ya tiene prefix=/api/admin/users
 app.include_router(reports_router, prefix="/api")
 app.include_router(erp_router, prefix="/api/erp")
+app.include_router(erp_masters_router, prefix="/api", dependencies=module_access)
 
 
 class HealthResponse(BaseModel):
@@ -270,7 +272,7 @@ class HealthResponse(BaseModel):
 
 @app.get("/health", response_model=HealthResponse, tags=["meta"])
 def health() -> HealthResponse:
-    """Endpoint de salud usado por el túnel y el monitoreo."""
+    """Endpoint de salud usado por el tÃºnel y el monitoreo."""
     return HealthResponse(status="ok", version=__version__, env=settings.env)
 
 
@@ -282,6 +284,6 @@ def health_head() -> Response:
 
 @app.get("/demo", response_class=HTMLResponse, tags=["meta"])
 def demo():
-    """Página de demo interactiva para probar la API desde el celular."""
+    """PÃ¡gina de demo interactiva para probar la API desde el celular."""
     html_path = Path(__file__).parent / "demo.html"
     return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
