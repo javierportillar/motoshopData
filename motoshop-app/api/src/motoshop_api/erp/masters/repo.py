@@ -21,14 +21,28 @@ exactly like a real MySQL 5.0.45 unit.
 
 from __future__ import annotations
 
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Callable
 
 from motoshop_api.erp.engine import ErpSaveRequest, save_document
-from motoshop_api.erp.masters.schemas import TerceroCreate, TerceroUpdate
+from motoshop_api.erp.masters.schemas import (
+    BarcodeEntry,
+    ProductCreate,
+    ProductPriceEntry,
+    ProductUpdate,
+    TerceroCreate,
+    TerceroUpdate,
+    UnitEntry,
+)
 from motoshop_api.erp.masters.validators import (
     DuplicateMasterError,
+    LegacyValidationError,
+    recompute_porutil,
+    split_price,
+    validate_product_create,
     validate_tercero_create,
     validate_tercero_update,
+    validate_transaction_owned_fields,
 )
 
 _DICT_TABLES = {"terceros": "nitter", "productos": "codprod"}
@@ -42,7 +56,7 @@ class FakeMastersStore:
         self.terceros: dict[str, dict] = {}
         self.tercecorreo: list[dict] = []
         self.productos: dict[str, dict] = {}
-        self.produktdmeds: list[dict] = []  # productos slice renames to produndmeds
+        self.produktdmeds: list[dict] = []  # productos slice renames to produndmeds (kept for compat)
         self.preciosxpro: list[dict] = []
         self.prodcodbars: list[dict] = []
         self.fail_table: str | None = None  # inject a simulated insert failure
@@ -459,6 +473,633 @@ class RealTercerosRepo:
         )
 
 
+# ════════════════════════════ Productos ══════════════════════════════════
+
+_MONEY_Q = Decimal("0.01")
+
+
+def _money(value: Decimal) -> Decimal:
+    return value.quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+
+
+def _normalize_price(
+    entry: ProductPriceEntry, index: int, base_cost: Decimal
+) -> dict:
+    """Split one price level server-side, fields prefixed for the 422 aggregate.
+
+    Returns the ``preciosxpro`` payload (spec MW-2s3 + modules.md §15):
+    ``venprod`` exclusive, ``veniva`` = inclusive − exclusive, ``porutil``
+    recomputed from the transaction-owned cost base (0 when no cost yet).
+    """
+    try:
+        exclusive, inclusive, veniva = split_price(
+            entry.pvtipo, entry.pvsini, entry.pvconi, entry.iva_rate
+        )
+    except LegacyValidationError as exc:
+        prefixed = {f"prices[{index}].{k}": v for k, v in exc.fields.items()}
+        raise LegacyValidationError(prefixed, exc.message) from exc
+    return {
+        "codlis": str(entry.codlis),
+        "pvtipo": entry.pvtipo,
+        "pvsini": exclusive,
+        "pvconi": inclusive,
+        "iva_rate": entry.iva_rate,
+        "venprod": _money(exclusive),
+        "veniva": veniva,
+        "porutil": recompute_porutil(exclusive, base_cost),
+        "actupr": "S",  # legacy last-update flag (active list price)
+    }
+
+
+def _registered_barcodes(store: FakeMastersStore, skip: str | None = None) -> set[str]:
+    """Every `codbar` legacy knows: `prodcodbars` rows plus `productos.codbar`.
+
+    ``skip`` drops the rows owned by one `codprod` (its own replacement batch).
+    """
+    bars = {
+        row["codbar"]
+        for row in store.prodcodbars
+        if row["codprod"] != skip
+    }
+    bars |= {
+        str(row.get("codbar") or "").strip()
+        for key, row in store.productos.items()
+        if key != skip and str(row.get("codbar") or "").strip()
+    }
+    return bars
+
+
+def _first_dup(values: list[str]) -> str | None:
+    return next((v for v in values if values.count(v) > 1), None)
+
+
+def _price_view(price: dict) -> dict:
+    """Legacy-column projection of a normalized price payload."""
+    return {
+        k: price[k]
+        for k in ("codlis", "pvtipo", "venprod", "veniva", "porutil", "actupr")
+    }
+
+
+def _producto_core_row(body_dump: dict, prices: list[dict]) -> dict:
+    """`productos` core row — the first price level seeds pvsini/pvconi/pvtipo."""
+    core = {
+        k: v
+        for k, v in body_dump.items()
+        if k not in ("units", "barcodes", "prices", "exiprod")
+    }
+    if prices:
+        first = prices[0]
+        core["pvsini"] = _money(first["pvsini"])
+        core["pvconi"] = _money(first["pvconi"])
+        core["pvtipo"] = first["pvtipo"]
+    else:
+        core["pvsini"] = Decimal("0.00")
+        core["pvconi"] = Decimal("0.00")
+        core["pvtipo"] = "1"
+    return core
+
+
+class FakeProductosRepo:
+    """In-memory twin of the productos write path (spec MW-2 / MW-3)."""
+
+    def __init__(self, store: FakeMastersStore, journal=None, idempotency=None):
+        self.store = store
+        self.journal = journal
+        self.idempotency = idempotency
+        self.engine = FakeMastersEngine(store) if journal is not None else None
+
+    # ── read side ──
+    def get(self, codprod: str) -> dict | None:
+        row = self.store.productos.get(codprod)
+        if row is None:
+            return None
+        view = dict(row)
+        view["units"] = [
+            dict(u) for u in self.store.produktdmeds if u["codprod"] == codprod
+        ]
+        view["barcodes"] = [
+            dict(b) for b in self.store.prodcodbars if b["codprod"] == codprod
+        ]
+        view["prices"] = [
+            dict(p) for p in self.store.preciosxpro if p["codprod"] == codprod
+        ]
+        return view
+
+    def list(self, search: str = "", limit: int = 50, offset: int = 0) -> list[dict]:
+        needle = search.lower()
+        rows = [
+            self.get(key)  # type: ignore[arg-type] — cannot be None here
+            for key in self.store.productos
+            if needle in key.lower()
+            or needle in str(self.store.productos[key].get("nomprod", "")).lower()
+        ]
+        return rows[offset : offset + limit]
+
+    # ── write side ──
+    def create(
+        self, body: ProductCreate, *, tenant: str, empresa: str, actor: str,
+        request_id: str, idempotency_key: str,
+    ) -> dict:
+        # φ0 hoisted before validation (app_writes convention): replay wins
+        stored = self.idempotency.get(idempotency_key) if self.idempotency else None
+        if stored is not None:
+            return stored
+
+        dump = body.model_dump()
+        row = validate_product_create(dump)
+        codprod = str(row["codprod"]).strip()
+        if codprod in self.store.productos:
+            raise DuplicateMasterError("codprod", codprod)
+
+        bars = [str(e.codbar) for e in body.barcodes]
+        if body.codbar:
+            bars = [str(body.codbar), *bars]
+        registered = _registered_barcodes(self.store)
+        collision = next(iter(registered & set(bars)), None)
+        if collision is None:
+            collision = _first_dup(bars)
+        if collision:
+            raise DuplicateMasterError("codbar", collision)
+
+        prices = [
+            _normalize_price(entry, i, Decimal("0"))  # no cost yet on creation
+            for i, entry in enumerate(body.prices)
+        ]
+        units = [u.model_dump() for u in body.units]
+        core = _producto_core_row(dump, prices)
+
+        def _write(conn) -> dict:
+            conn.stage_upsert("productos", core)
+            for unit in units:
+                conn.stage_upsert("produndmeds", {"codprod": codprod, **unit})
+            for barcode in bars:
+                conn.stage_upsert(
+                    "prodcodbars", {"codprod": codprod, "codbar": barcode}
+                )
+            for price in prices:
+                conn.stage_upsert("preciosxpro", {
+                    "codprod": codprod,
+                    "codlis": price["codlis"],
+                    "pvtipo": price["pvtipo"],
+                    "venprod": price["venprod"],
+                    "veniva": price["veniva"],
+                    "porutil": price["porutil"],
+                    "actupr": price["actupr"],
+                })
+            return {
+                **core,
+                "units": [{"codprod": codprod, **u} for u in units],
+                "barcodes": [{"codprod": codprod, "codbar": b} for b in bars],
+                "prices": [{"codprod": codprod, **p} for p in prices],
+            }
+
+        def _cleanup(_number) -> None:
+            self.store.purge_key("producto", codprod)
+
+        return save_master_document(
+            journal=self.journal,
+            idempotency=self.idempotency,
+            doc_type="producto",
+            tenant=tenant,
+            empresa=empresa,
+            actor=actor,
+            request_id=request_id,
+            idempotency_key=idempotency_key,
+            engine=self.engine,
+            write_fn=_write,
+            cleanup_fn=_cleanup,
+        )
+
+    def update(
+        self, codprod: str, body: ProductUpdate, *, tenant: str, empresa: str,
+        actor: str, request_id: str,
+    ) -> dict:
+        existing = self.store.productos.get(codprod)
+        if existing is None:
+            raise LookupError(codprod)
+        changes = body.model_dump(exclude_none=True)
+        validate_transaction_owned_fields(changes)  # MW-3s2, aggregate 422
+
+        prices = (
+            [
+                _normalize_price(
+                    entry, i, Decimal(str(existing.get("cosprod") or 0))
+                )
+                for i, entry in enumerate(body.prices)  # type: ignore[union-attr]
+            ]
+            if body.prices is not None
+            else None
+        )
+        units = (
+            [u.model_dump() for u in body.units]  # type: ignore[union-attr]
+            if body.units is not None
+            else None
+        )
+        bars = (
+            [str(b.codbar) for b in body.barcodes]  # type: ignore[union-attr]
+            if body.barcodes is not None
+            else None
+        )
+        if bars is not None:
+            registered = _registered_barcodes(self.store, skip=codprod)
+            if body.codbar:
+                bars = [str(body.codbar), *bars]
+            collision = next(iter(registered & set(bars)), None)
+            if collision is None:
+                collision = _first_dup(bars)
+            if collision:
+                raise DuplicateMasterError("codbar", collision)
+
+        merged = dict(existing)
+        merged.update({
+            k: v for k, v in changes.items() if k not in ("units", "barcodes", "prices")
+        })
+        if prices:
+            merged["pvsini"] = _money(prices[0]["pvsini"])
+            merged["pvconi"] = _money(prices[0]["pvconi"])
+            merged["pvtipo"] = prices[0]["pvtipo"]
+
+        def _write(conn) -> dict:
+            if prices is not None:
+                conn.stage_delete("preciosxpro", "codprod", codprod)
+                for price in prices:
+                    conn.stage_upsert("preciosxpro", {
+                        "codprod": codprod,
+                        "codlis": price["codlis"],
+                        "pvtipo": price["pvtipo"],
+                        "venprod": price["venprod"],
+                        "veniva": price["veniva"],
+                        "porutil": price["porutil"],
+                        "actupr": price["actupr"],
+                    })
+            if units is not None:
+                conn.stage_delete("produndmeds", "codprod", codprod)
+                for unit in units:
+                    conn.stage_upsert("produndmeds", {"codprod": codprod, **unit})
+            if bars is not None:
+                conn.stage_delete("prodcodbars", "codprod", codprod)
+                for barcode in bars:
+                    conn.stage_upsert(
+                        "prodcodbars", {"codprod": codprod, "codbar": barcode}
+                    )
+            conn.stage_upsert("productos", merged)
+            prior = self.get(codprod) or {}
+            return {
+                **merged,
+                "units": (
+                    [{"codprod": codprod, **u} for u in units]
+                    if units is not None else prior.get("units", [])
+                ),
+                "barcodes": (
+                    [{"codprod": codprod, "codbar": b} for b in bars]
+                    if bars is not None else prior.get("barcodes", [])
+                ),
+                "prices": (
+                    [{"codprod": codprod, **p} for p in prices]
+                    if prices is not None else prior.get("prices", [])
+                ),
+            }
+
+        return save_master_document(
+            journal=self.journal,
+            idempotency=self.idempotency,  # edits never read the replay cache
+            doc_type="producto",
+            tenant=tenant,
+            empresa=empresa,
+            actor=actor,
+            request_id=request_id,
+            idempotency_key=None,
+            engine=self.engine,
+            write_fn=_write,
+        )
+
+
+class RealProductosRepo:
+    """Legacy MySQL writes for productos + `produndmeds` + `preciosxpro`
+    + `prodcodbars` (app_writer engine, single-statement per op)."""
+
+    _PRO_COLUMNS = (
+        "codprod", "nomprod", "codbar", "codmed", "valmed", "codlin1",
+        "actprod", "stockmin", "stockmax", "desprod", "pvsini", "pvconi",
+        "pvtipo",
+    )
+    _INSERT_PRO = (
+        "INSERT INTO productos (codprod, nomprod, codbar, codmed, valmed, "
+        "codlin1, actprod, stockmin, stockmax, desprod, pvsini, pvconi, "
+        "pvtipo) VALUES (:codprod, :nomprod, :codbar, :codmed, :valmed, "
+        ":codlin1, :actprod, :stockmin, :stockmax, :desprod, :pvsini, "
+        ":pvconi, :pvtipo)"
+    )
+
+    def __init__(self, journal=None, idempotency=None):
+        from motoshop_api.db.engine import get_erp_engine
+        from motoshop_api.erp.idempotency import get_idempotency_repo
+        from motoshop_api.erp.journal import get_journal_repo
+
+        self.journal = journal or get_journal_repo()
+        self.idempotency = idempotency or get_idempotency_repo()
+        self.engine_factory = get_erp_engine
+
+    # ── read side ──
+    def get(self, codprod: str) -> dict | None:
+        from sqlalchemy import text
+
+        from motoshop_api.db.engine import get_engine
+
+        with get_engine().connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT codprod, nomprod, codbar, codmed, valmed, codlin1, "
+                    "actprod, stockmin, stockmax, desprod, pvsini, pvconi, "
+                    "pvtipo FROM productos WHERE codprod = :c"
+                ),
+                {"c": codprod},
+            ).fetchone()
+        if row is None:
+            return None
+        view = dict(row._mapping)
+        view["units"] = [
+            dict(zip(("codprod", "codmed", "divmul", "facumed", "pventa", "tipovc"), r))
+            for r in conn.execute(
+                text(
+                    "SELECT codprod, codmed, divmul, facumed, pventa, tipovc "
+                    "FROM produndmeds WHERE codprod = :c"
+                ),
+                {"c": codprod},
+            ).fetchall()
+        ]
+        view["barcodes"] = [
+            dict(zip(("codprod", "codbar"), r))
+            for r in conn.execute(
+                text(
+                    "SELECT codprod, codbar FROM prodcodbars WHERE codprod = :c"
+                ),
+                {"c": codprod},
+            ).fetchall()
+        ]
+        view["prices"] = [
+            dict(zip(
+                ("codprod", "codlis", "pvtipo", "venprod", "veniva", "porutil",
+                 "actupr"), r,
+            ))
+            for r in conn.execute(
+                text(
+                    "SELECT codprod, codlis, pvtipo, venprod, veniva, porutil, "
+                    "actupr FROM preciosxpro WHERE codprod = :c"
+                ),
+                {"c": codprod},
+            ).fetchall()
+        ]
+        return view
+
+    def list(self, search: str = "", limit: int = 50, offset: int = 0) -> list[dict]:
+        from sqlalchemy import text
+
+        from motoshop_api.db.engine import get_engine
+
+        with get_engine().connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT codprod, nomprod, codmed, codlin1, actprod, "
+                    "pvsini, pvconi, pvtipo FROM productos "
+                    "WHERE (:s = '' OR CONCAT(codprod, ' ', nomprod) "
+                    "LIKE CONCAT('%', :s, '%')) ORDER BY codprod "
+                    "LIMIT :l OFFSET :o"
+                ),
+                {"s": search, "l": limit, "o": offset},
+            ).fetchall()
+        return [
+            dict(r._mapping)
+            | {"units": [], "barcodes": [], "prices": []}
+            for r in rows
+        ]
+
+    def _registered_barcodes(self, skip: str | None = None) -> set[str]:
+        from sqlalchemy import text
+
+        from motoshop_api.db.engine import get_engine
+
+        with get_engine().connect() as conn:
+            bars = conn.execute(
+                text("SELECT codbar FROM prodcodbars"), {}
+            ).fetchall()
+            products = conn.execute(
+                text("SELECT codprod, codbar FROM productos"), {}
+            ).fetchall()
+        owned = {
+            r[0]
+            for r in products
+            if r[0] != skip and str(r[1] or "").strip()
+        }
+        return {row[0] for row in bars} | owned
+
+    # ── write side ──
+    def create(self, body: ProductCreate, **context) -> dict:
+        dump = body.model_dump()
+        row = validate_product_create(dump)
+        codprod = str(row["codprod"]).strip()
+        if self.get(codprod) is not None:
+            raise DuplicateMasterError("codprod", codprod)
+        registered = self._registered_barcodes()
+        bars = [str(e.codbar) for e in body.barcodes]
+        if body.codbar:
+            bars = [str(body.codbar), *bars]
+        collision = next(iter(registered & set(bars)), None)
+        if collision is None:
+            collision = _first_dup(bars)
+        if collision:
+            raise DuplicateMasterError("codbar", collision)
+        prices = [
+            _normalize_price(entry, i, Decimal("0"))
+            for i, entry in enumerate(body.prices)
+        ]
+        core = _producto_core_row(dump, prices)
+        insert_values = {
+            col: (str(core[col]) if core.get(col) is not None else "")
+            for col in self._PRO_COLUMNS
+        }
+        units = [{**u.model_dump(), "codprod": codprod} for u in body.units]
+        price_rows = [
+            {
+                "codprod": codprod,
+                "codlis": p["codlis"],
+                "pvtipo": p["pvtipo"],
+                "venprod": str(p["venprod"]),
+                "veniva": str(p["veniva"]),
+                "porutil": str(p["porutil"]),
+                "actupr": p["actupr"],
+            }
+            for p in prices
+        ]
+
+        def _write(conn) -> dict:
+            from sqlalchemy import text
+
+            conn.execute(text(self._INSERT_PRO), insert_values)
+            for unit in units:
+                conn.execute(
+                    text(
+                        "INSERT INTO produndmeds (codprod, codmed, divmul, "
+                        "facumed, pventa, tipovc) VALUES (:codprod, :codmed, "
+                        ":divmul, :facumed, :pventa, :tipovc)"
+                    ),
+                    {k: str(v) for k, v in unit.items()},
+                )
+            for barcode in bars:
+                conn.execute(
+                    text(
+                        "INSERT INTO prodcodbars (codprod, codbar) "
+                        "VALUES (:codprod, :codbar)"
+                    ),
+                    {"codprod": codprod, "codbar": barcode},
+                )
+            for price_row in price_rows:
+                conn.execute(
+                    text(
+                        "INSERT INTO preciosxpro (codprod, codlis, pvtipo, "
+                        "venprod, veniva, porutil, actupr) VALUES (:codprod, "
+                        ":codlis, :pvtipo, :venprod, :veniva, :porutil, :actupr)"
+                    ),
+                    price_row,
+                )
+            return {
+                **insert_values,
+                "units": units,
+                "barcodes": [{"codprod": codprod, "codbar": b} for b in bars],
+                "prices": price_rows,
+            }
+
+        def _cleanup(_number) -> None:
+            from sqlalchemy import text
+
+            with self.engine_factory().connect() as conn:
+                for table in ("preciosxpro", "prodcodbars", "produndmeds", "productos"):
+                    conn.execute(
+                        text(f"DELETE FROM {table} WHERE codprod = :c"),
+                        {"c": codprod},
+                    )
+                conn.commit()
+
+        return save_master_document(
+            journal=self.journal,
+            idempotency=self.idempotency,
+            doc_type="producto",
+            tenant=context["tenant"],
+            empresa=context["empresa"],
+            actor=context["actor"],
+            request_id=context["request_id"],
+            idempotency_key=context["idempotency_key"],
+            engine=None,
+            write_fn=_write,
+            cleanup_fn=_cleanup,
+        )
+
+    def update(self, codprod: str, body: ProductUpdate, **context) -> dict:
+        current = self.get(codprod)
+        if current is None:
+            raise LookupError(codprod)
+        changes = body.model_dump(exclude_none=True)
+        validate_transaction_owned_fields(changes)  # MW-3s2, aggregate 422
+
+        changes_flat = {
+            k: v
+            for k, v in changes.items()
+            if k not in ("units", "barcodes", "prices")
+        }
+        prices = None
+        if body.prices is not None:
+            base_cost = Decimal(str(current.get("cosprod") or 0))
+            prices = [
+                _normalize_price(entry, i, base_cost)
+                for i, entry in enumerate(body.prices)
+            ]
+            changes_flat["pvsini"] = str(_money(prices[0]["pvsini"]))
+            changes_flat["pvconi"] = str(_money(prices[0]["pvconi"]))
+            changes_flat["pvtipo"] = prices[0]["pvtipo"]
+
+        def _write(conn) -> dict:
+            from sqlalchemy import text
+
+            if changes_flat:
+                sets = ", ".join(f"{col} = :{col}" for col in changes_flat)
+                conn.execute(
+                    text(f"UPDATE productos SET {sets} WHERE codprod = :c"),
+                    {**{k: (str(v) if v is not None else "") for k, v in changes_flat.items()}, "c": codprod},
+                )
+            if body.units is not None:
+                conn.execute(
+                    text("DELETE FROM produndmeds WHERE codprod = :c"),
+                    {"c": codprod},
+                )
+                for unit in body.units:
+                    values = {"codprod": codprod, **unit.model_dump()}
+                    conn.execute(
+                        text(
+                            "INSERT INTO produndmeds (codprod, codmed, divmul, "
+                            "facumed, pventa, tipovc) VALUES (:codprod, :codmed, "
+                            ":divmul, :facumed, :pventa, :tipovc)"
+                        ),
+                        {k: str(v) for k, v in values.items()},
+                    )
+            if body.barcodes is not None:
+                conn.execute(
+                    text("DELETE FROM prodcodbars WHERE codprod = :c"),
+                    {"c": codprod},
+                )
+                for barcode in body.barcodes:
+                    conn.execute(
+                        text(
+                            "INSERT INTO prodcodbars (codprod, codbar) "
+                            "VALUES (:codprod, :codbar)"
+                        ),
+                        {"codprod": codprod, "codbar": str(barcode.codbar)},
+                    )
+            if prices is not None:
+                conn.execute(
+                    text("DELETE FROM preciosxpro WHERE codprod = :c"),
+                    {"c": codprod},
+                )
+                for price in prices:
+                    conn.execute(
+                        text(
+                            "INSERT INTO preciosxpro (codprod, codlis, pvtipo, "
+                            "venprod, veniva, porutil, actupr) VALUES (:codprod, "
+                            ":codlis, :pvtipo, :venprod, :veniva, :porutil, :actupr)"
+                        ),
+                        {
+                            "codprod": codprod,
+                            "codlis": price["codlis"],
+                            "pvtipo": price["pvtipo"],
+                            "venprod": str(price["venprod"]),
+                            "veniva": str(price["veniva"]),
+                            "porutil": str(price["porutil"]),
+                            "actupr": price["actupr"],
+                        },
+                    )
+            return {
+                **current,
+                **changes_flat,
+                "prices": (
+                    [{"codprod": codprod, **_price_view(p)} for p in prices]
+                    if prices is not None else current.get("prices", [])
+                ),
+            }
+
+        return save_master_document(
+            journal=self.journal,
+            idempotency=self.idempotency,
+            doc_type="producto",
+            tenant=context["tenant"],
+            empresa=context["empresa"],
+            actor=context["actor"],
+            request_id=context["request_id"],
+            idempotency_key=None,
+            engine=None,
+            write_fn=_write,
+        )
+
+
 # ════════════════════════════ Factory ════════════════════════════════════
 
 
@@ -469,3 +1110,12 @@ def get_terceros_repo() -> FakeTercerosRepo | RealTercerosRepo:
     if settings.env != "test":
         return RealTercerosRepo()
     return FakeTercerosRepo(FakeMastersStore())
+
+
+def get_productos_repo() -> FakeProductosRepo | RealProductosRepo:
+    """Real in prod/dev, fresh Fake under tests (settings.env == 'test')."""
+    from motoshop_api.config import settings
+
+    if settings.env != "test":
+        return RealProductosRepo()
+    return FakeProductosRepo(FakeMastersStore())

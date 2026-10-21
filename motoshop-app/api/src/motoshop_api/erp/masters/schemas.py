@@ -112,11 +112,11 @@ class ProductCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     codprod: LegacyText = Field(min_length=1, max_length=20)
-    nomprod: LegacyText = Field(min_length=1, max_length=200)
+    nomprod: LegacyText | None = Field(default=None, max_length=200)  # aggregate (MW-3s1)
     codbar: LegacyText | None = Field(default=None, max_length=40)
     codmed: LegacyText = Field(min_length=1, max_length=3)
     valmed: ErpQty = Field(default=Decimal("1"), gt=Decimal("0"))
-    codlin1: LegacyText = Field(min_length=1, max_length=4)
+    codlin1: LegacyText | None = Field(default=None, max_length=4)  # aggregate (MW-3s1)
     actprod: Literal["A", "I", "S"] = "A"
     stockmin: ErpQty = Field(default=Decimal("0"), ge=Decimal("0"))
     stockmax: ErpQty = Field(default=Decimal("0"), ge=Decimal("0"))
