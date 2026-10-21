@@ -291,6 +291,8 @@ app_doc_journal = Table(
     Column("idempotency_key", String(64), nullable=True),
     Column("error_msg", String(500), nullable=True),
     Column("created_at", TIMESTAMP, nullable=False),
+    # F8-001 declares it; the journal stamps it on every state transition.
+    Column("updated_at", TIMESTAMP, nullable=True),
     Index("idx_status_created", "status", "created_at"),
     Index("idx_tenant_status", "tenant", "status"),
     Index("idx_codclas_docnum", "codclas", "pref", "docnum"),

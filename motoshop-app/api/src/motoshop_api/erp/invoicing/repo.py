@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Protocol
 
@@ -424,34 +425,77 @@ class _BaseInvoicesRepo:
         empresa: str,
         written: list[tuple[str, dict]],
     ) -> None:
+        """Write the legacy rows using the REAL MySQL 5.0.45 column names.
+
+        The legacy schema does not match the POS payload field names, so the
+        mapping is explicit here:
+
+        - ``facventas`` has no ``actor``/``empresa``. The web operator is
+          audited in ``app_doc_journal``/``app_idempotency``; the header keeps
+          the historical ``nomuso``/``codcaj`` and ``empresa`` lands in both
+          ``codemp`` and ``empcod``.
+        - ``detfventas`` has no ``prefven``/``numlin``: the correlative is
+          ``numite``.
+        - ``detapago`` numbers with ``numnum``/``predoc`` and keeps the
+          reference in ``numpag``.
+        - ``detcuentas`` numbers with ``numnum``/``prenum``, the credit side is
+          ``valhab`` and the third party is ``nitter``.
+
+        Values are clipped to the real column widths because the server runs
+        with STRICT_TRANS_TABLES: an oversized value is a 1406 error, not a
+        silent truncation.
+        """
         totals = computed["totals"]
+        doc_class = getattr(body, "codclas", None) or INVOICE_CODCON
+        emp_code = (empresa or "E01")[:3]
+        caja_code = str(body.codcaj or "01")[:4]
+        # facventas.codpag is NOT NULL without a default: mirror the first
+        # payment's form ("01" when the sale has no payment rows).
+        header_pag = str(body.payments[0].codpag if body.payments else "01")[:4]
+        now_dt = datetime.now()
+
         header = {
             "numfven": number,
+            "codclas": doc_class,
+            "nomdoc": "FACTURA DE VENTA",
             "prefven": pref,
+            "fecfven": now_dt,
             "nitter": body.nitter,
-            "nitvend": body.nitvend,
-            "clifven": body.nomclien or "",
-            "codcaj": body.codcaj,
-            "obsfven": body.obsfven,
+            "clifven": (body.nomclien or "")[:120],
+            "nitvend": body.nitvend or "",
+            "codcaj": caja_code,
+            "nomuso": (actor[:2] if actor else "01"),
+            "obsfven": body.obsfven or "",
             "subfven": totals["subfven"],
             "totdct": totals["totdct"],
             "totiva": totals["totiva"],
             "totipo": totals["totipo"],
             "totfven": totals["totfven"],
-            "fecfven": None,
-            "actor": actor,
-            "empresa": empresa,
+            "estfven": "B",
+            "codemp": emp_code,
+            "empcod": emp_code,
+            "estfele": "N",
+            "codpag": header_pag,
         }
         self.store.stage_insert(INVOICE_HEADER_TABLE, header)
         written.append((INVOICE_HEADER_TABLE, header))
 
         for index, line in enumerate(body.lines):
+            # detfventas.codmed is a real unit code from the legacy master
+            # ('001' in 6,450 of 7,840 lines); the POS payload defaults to the
+            # placeholder 'UND', which legacy only ever stored once.
+            product = self.store.productos.get(line.codprod) or {}
+            unit = str(product.get("codmed") or "").strip()
+            if not unit or unit.upper() == "UND":
+                unit = str(line.codmed or "").strip()
+            if not unit or unit.upper() == "UND":
+                unit = "001"
             line_row = {
                 "numfven": number,
-                "prefven": pref,
-                "numlin": index + 1,
+                "codclas": doc_class,
+                "numite": index + 1,
                 "codprod": line.codprod,
-                "nomdet": line.nomdet,
+                "nomdet": (line.nomdet or "")[:300],
                 "candet": line.candet,
                 "valuni": line.valuni,
                 "dctpes": line.dctpes,
@@ -460,48 +504,75 @@ class _BaseInvoicesRepo:
                 "dctpor": line.dctpor,
                 "ivapor": line.ivapor,
                 "ipopor": line.ipopor,
-                "codbod": line.codbod,
-                "codmed": line.codmed,
-                "facumed": line.facumed,
+                "codbod": (line.codbod or "01")[:4],
+                "codmed": unit[:3],
+                "facumed": line.facumed or Decimal("1"),
                 "totdet": computed["lines"][index]["totdet"],
             }
             self.store.stage_insert(INVOICE_LINES_TABLE, line_row)
             written.append((INVOICE_LINES_TABLE, line_row))
 
-        for payment in body.payments:
+        for index, payment in enumerate(body.payments):
             payment_row = {
-                "numfven": number,
-                "prefven": pref,
-                "codpag": payment.codpag,
+                "numnum": number,
+                "codclas": doc_class,
+                "predoc": pref,
+                "numite": index + 1,
+                "fecdoc": now_dt,
+                "codpag": str(payment.codpag or "01")[:4],
                 "valpag": payment.amount,
-                "referencia": payment.referencia,
+                "valefe": payment.amount,
+                # Legacy leaves despag empty (2,820 of 2,821 rows); the bank
+                # name is free text the POS never sends. Do not invent a
+                # description from the form code.
+                "despag": (getattr(payment, "despag", "") or "")[:100],
+                "numpag": (payment.referencia or "")[:20],
                 "soldeb": ZERO,
                 "solcre": payment.amount,
+                "codemp": emp_code,
+                "codcaj": caja_code,
+                "estado": "B",
             }
             self.store.stage_insert(INVOICE_PAYMENTS_TABLE, payment_row)
             written.append((INVOICE_PAYMENTS_TABLE, payment_row))
 
-        # Accounting causación (detcuentas): one debit per line at the
-        # invoice total — the accounts are resolved by the PUC at save time
-        # in the real writer; the twin records the balanced pair.
+        # Accounting causación (detcuentas): a balanced debit/credit pair at
+        # the invoice total. DEBT: the legacy ledger books PUC codes per line
+        # (11050501 caja, 41359501 ingreso, 24080102 IVA) while this writes the
+        # coarse 1305/4135 pair, so the VAT is not split out. Kept as-is until
+        # the PUC resolution lands; it does not block the sale itself.
         debit = {
-            "numfven": number,
-            "prefven": pref,
+            "numnum": number,
+            "codclas": doc_class,
+            "prenum": pref,
+            "numite": 1,
             "codcue": "1305",
+            "detcue": "CLIENTES",
             "valdeb": totals["totfven"],
-            "valcre": ZERO,
-            "nitope": body.nitter,
+            "valhab": ZERO,
+            "fecdoc": now_dt,
+            "nitter": body.nitter,
+            "codemp": emp_code,
+            "empcod": emp_code,
+            "estcue": "B",
         }
         self.store.stage_insert(INVOICE_JOURNAL_TABLE, debit)
         written.append((INVOICE_JOURNAL_TABLE, debit))
 
         credit = {
-            "numfven": number,
-            "prefven": pref,
+            "numnum": number,
+            "codclas": doc_class,
+            "prenum": pref,
+            "numite": 2,
             "codcue": "4135",
+            "detcue": "VENTAS COMERCIO",
             "valdeb": ZERO,
-            "valcre": totals["totfven"],
-            "nitope": body.nitter,
+            "valhab": totals["totfven"],
+            "fecdoc": now_dt,
+            "nitter": body.nitter,
+            "codemp": emp_code,
+            "empcod": emp_code,
+            "estcue": "B",
         }
         self.store.stage_insert(INVOICE_JOURNAL_TABLE, credit)
         written.append((INVOICE_JOURNAL_TABLE, credit))
