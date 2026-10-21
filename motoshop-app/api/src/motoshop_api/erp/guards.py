@@ -17,6 +17,7 @@ Server-side authorization decided here; the frontend only hides controls
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from datetime import date, datetime
 from decimal import Decimal
 
 from fastapi import Depends, HTTPException, status
@@ -30,8 +31,12 @@ __all__ = [
     "CausacionUnbalanced",
     "ERP_ROUTE_MODULES",
     "ERP_WRITE_ROLES",
+    "Hay_Cie_Eli",
+    "PeriodLockedError",
     "TenantErpConfig",
     "assert_causacion_balanced",
+    "assert_period_open",
+    "hay_cie_eli",
     "require_erp_annul",
     "require_erp_collections_write",
     "require_erp_masters_write",
@@ -59,6 +64,10 @@ ERP_ROUTE_MODULES: dict[tuple[str, str], tuple[str, ...]] = {
     ("POST", "/api/erp/invoices"): ("erp-invoicing",),
     ("GET", "/api/erp/invoices/{numfven}/receipt"): ("erp-invoicing",),
     ("POST", "/api/erp/receipts"): ("erp-cash",),
+    ("POST", "/api/erp/cash/movements"): ("erp-cash",),
+    ("POST", "/api/erp/cash/egresos"): ("erp-cash",),
+    ("POST", "/api/erp/cash/arqueo"): ("erp-cash",),
+    ("POST", "/api/erp/bank/consignments"): ("erp-cash",),
     ("POST", "/api/erp/documents/{codclas}/{numfven}/annulment"): ("erp-anulaciones",),
 }
 
@@ -123,6 +132,118 @@ def _as_decimal(value: object) -> Decimal:
     if value is None:
         return Decimal("0")
     return Decimal(str(value))
+
+
+# ─── period lock (Hay_Cie_Eli — shared by cash docs and slice 5) ───
+
+
+class PeriodLockedError(Exception):
+    """409: the document date falls inside a closed accounting period.
+
+    Shared contract: the cash write path (CC-6) and the annulment path
+    (slice 5, AN-1s2) reject the SAME truth — the ``cierresper`` closure.
+    Routers map ``detail()`` into ``HTTPException(409, detail=...)``.
+    """
+
+    def __init__(self, message: str, *, period: dict | None = None):
+        super().__init__(message)
+        self.message = message
+        self.period = period or {}
+
+    def detail(self) -> dict:
+        return {
+            "message": self.message,
+            "code": "period_locked",
+            "period": self.period,
+        }
+
+
+#: `cierresper.tipcie` values that close a period (P/M/A).
+LOCKED_PERIOD_TYPES = frozenset({"P", "M", "A"})
+
+
+def _as_date(value: object) -> date | None:
+    """Legacy date column (DATE/datetime/ISO string) → ``date``."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def hay_cie_eli(
+    periods: Iterable[Mapping[str, object]],
+    *,
+    fecha: object,
+    codclas: str = "",
+    numnum: str = "",
+) -> dict | None:
+    """``Hay_Cie_Eli`` parity: is ``fecha`` inside a closed accounting period?
+
+    ``periods`` are the ``cierresper`` rows (``fecdes``/``fechas``/``tipcie``
+    plus the optional ``codclas``/``numaju`` scope). A closure with a blank
+    ``codclas``/``numaju`` locks EVERY document of the period; a closure that
+    names them locks only that document. Returns the offending row or ``None``.
+
+    At CREATION time the document number is not reserved yet, so a closure
+    scoped to a single ``numaju`` cannot be matched yet — the class/date rule
+    is the one enforced (the annulment path, which works on an existing
+    document, matches the number too).
+    """
+    target = _as_date(fecha)
+    if target is None:
+        return None
+    for row in periods:
+        tipcie = str(row.get("tipcie") or "").upper()
+        if tipcie not in LOCKED_PERIOD_TYPES:
+            continue
+        row_class = str(row.get("codclas") or "").strip()
+        row_number = str(row.get("numaju") or "").strip()
+        if row_class and row_class != str(codclas or "").strip():
+            continue
+        if row_number and row_number != str(numnum or "").strip():
+            continue
+        start = _as_date(row.get("fecdes"))
+        end = _as_date(row.get("fechas"))
+        if start is None and end is None:
+            continue
+        if start is not None and target < start:
+            continue
+        if end is not None and target > end:
+            continue
+        return dict(row)
+    return None
+
+
+#: Legacy spelling kept as an alias so the traceability is explicit.
+Hay_Cie_Eli = hay_cie_eli
+
+
+def assert_period_open(
+    periods: Iterable[Mapping[str, object]],
+    *,
+    fecha: object,
+    codclas: str = "",
+    numnum: str = "",
+    what: str = "el documento",
+) -> None:
+    """Raise :class:`PeriodLockedError` when the date is inside a closure."""
+    locked = hay_cie_eli(periods, fecha=fecha, codclas=codclas, numnum=numnum)
+    if locked is None:
+        return
+    raise PeriodLockedError(
+        f"La fecha de {what} está dentro de un período contable cerrado "
+        f"({locked.get('fecdes')} - {locked.get('fechas')})",
+        period=locked,
+    )
 
 
 # ─── role gates ────────────────────────────────────────────────

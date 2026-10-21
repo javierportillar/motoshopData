@@ -28,9 +28,11 @@ from motoshop_api.auth.router import router as auth_router
 from motoshop_api.auth.users import load_users
 from motoshop_api.config import settings
 from motoshop_api.data_catalog.router import catalog_router
-from motoshop_api.erp.router import router as erp_router
+from motoshop_api.erp.cash.router import router as erp_cash_router
 from motoshop_api.erp.dian.router import router as dian_router
+from motoshop_api.erp.engine import ErpSaveFailed
 from motoshop_api.erp.masters.router import router as erp_masters_router
+from motoshop_api.erp.router import router as erp_router
 from motoshop_api.expiry.router import router as expiry_router
 from motoshop_api.forecast.router import router as forecast_router
 from motoshop_api.gastos.router import router as gastos_router
@@ -166,6 +168,25 @@ async def assistant_http_exception_handler(request: Request, exc: HTTPException)
         response.headers.update(exc.headers)
     return response
 
+
+@app.exception_handler(ErpSaveFailed)
+async def erp_save_failed_handler(request: Request, exc: ErpSaveFailed) -> JSONResponse:
+    """ERP document save failed → retryable 503 (never a silent 500).
+
+    The φ3 unit failed: the journal is FAILED, the legacy rows were
+    compensated and the caller can safely retry with the same Idempotency-Key
+    (design.md, "Errors: … 503(retryable)").
+    """
+    logger = structlog.get_logger("motoshop")
+    logger.warning(
+        "erp_save_failed", path=request.url.path, error=str(exc), docnum=exc.docnum
+    )
+    return JSONResponse(
+        status_code=503,
+        headers={"Retry-After": "5"},
+        content={"detail": str(exc), "retryable": exc.retryable},
+    )
+
 # â”€â”€ DuckDB re-descargando desde R2 â†’ 503 'loading' (no 500) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Tras cada deploy/reinicio, Render borra el disco efÃ­mero y {tenant}_gold.duckdb
 # se re-descarga de R2 (~1 min). Durante esa ventana devolvemos 503 'loading'
@@ -263,6 +284,7 @@ app.include_router(users_router)  # ya tiene prefix=/api/admin/users
 app.include_router(reports_router, prefix="/api")
 app.include_router(erp_router, prefix="/api/erp")
 app.include_router(erp_masters_router, prefix="/api", dependencies=module_access)
+app.include_router(erp_cash_router, prefix="/api", dependencies=module_access)
 app.include_router(dian_router, prefix="/api/erp/dian")
 
 

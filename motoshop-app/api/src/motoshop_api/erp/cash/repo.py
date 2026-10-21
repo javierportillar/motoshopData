@@ -34,7 +34,7 @@ from motoshop_api.erp.cash.store import (
     CashStore,
 )
 from motoshop_api.erp.engine import ErpSaveFailed
-from motoshop_api.erp.guards import assert_causacion_balanced
+from motoshop_api.erp.guards import assert_causacion_balanced, assert_period_open
 from motoshop_api.erp.idempotency import IdempotencyRepo
 from motoshop_api.erp.journal import JournalRepo
 from motoshop_api.erp.masters.validators import LegacyValidationError
@@ -289,6 +289,15 @@ class _BaseReceiptsRepo:
                 codclas=str(invoice.get("codclas") or "S15"),
                 numnum=str(body.numfven),
             )
+
+        # Hay_Cie_Eli: a document dated inside a closed accounting period is
+        # rejected at creation time (CC-6) — the same truth slice 5 uses.
+        assert_period_open(
+            self.store.locked_periods(),
+            fecha=body.fecha,
+            codclas=RECEIPT_CODCON,
+            what="el recibo",
+        )
 
         available = open_balance(self.store, body.numfven, self.cartera_cuenta)
         if available <= ZERO:
