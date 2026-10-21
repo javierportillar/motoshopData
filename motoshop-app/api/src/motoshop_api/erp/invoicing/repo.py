@@ -287,6 +287,48 @@ class _BaseInvoicesRepo:
             )
         return response
 
+    # ─── receipt (task 3.7) ──────────────────────────────────────
+
+    def receipt(self, numfven: int) -> dict | None:
+        """Assemble the printable receipt of a saved invoice.
+
+        Returns ``None`` when the invoice does not exist. The DIAN QR slot
+        stays a placeholder until the document is accepted (``estfele``);
+        the official catalogue URL is used once the CUFE is known.
+        """
+        from motoshop_api.erp.invoicing.receipt import build_receipt
+
+        header = next(
+            (row for row in self.store.facventas if row.get("numfven") == numfven),
+            None,
+        )
+        if header is None:
+            return None
+        lines = [
+            row
+            for row in self.store.detfventas
+            if row.get("numfven") == numfven
+        ]
+        payments = [
+            row
+            for row in self.store.detapago
+            if row.get("numfven") == numfven
+        ]
+        totals = {
+            "subfven": header.get("subfven", ZERO),
+            "totdct": header.get("totdct", ZERO),
+            "totiva": header.get("totiva", ZERO),
+            "totipo": header.get("totipo", ZERO),
+            "totfven": header.get("totfven", ZERO),
+        }
+        return build_receipt(
+            header=header,
+            resolution={"empresa": "", "caja": header.get("codcaj", "")},
+            lines=lines,
+            payments=payments,
+            totals=totals,
+        )
+
     # ─── validation (before φ1: nothing is reserved) ──────────────
 
     def _validate(self, body: InvoiceCreate) -> dict:
@@ -514,8 +556,8 @@ class RealInvoicesRepo(_BaseInvoicesRepo):
 
 def get_invoices_repo() -> InvoicesRepo:
     """FastAPI dependency: the real MySQL-backed repo."""
-    from motoshop_api.erp.invoicing.store import get_invoice_store
     from motoshop_api.erp.idempotency import get_idempotency_repo
+    from motoshop_api.erp.invoicing.store import get_invoice_store
     from motoshop_api.erp.journal import get_journal_repo
     from motoshop_api.erp.numbering import get_contadores_repo
 
