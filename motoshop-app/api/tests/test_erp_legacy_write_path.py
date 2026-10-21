@@ -100,5 +100,109 @@ def test_commit_binds_parameters_instead_of_shipping_named_placeholders():
     assert store._pending == [], "the buffer is drained after the commit"
 
 
+def test_commit_applies_the_stock_delta_with_the_invoice_rows():
+    engine = _FakeEngine()
+    store = RealInvoiceStore(engine_factory=lambda: engine)
+    store.stage_insert("facventas", {"numfven": 501})
+    store.stage_stock_decrement("PROD1", Decimal("0.250"))
+
+    store.commit()
+
+    assert len(engine.connection.statements) == 2
+    sql, params = engine.connection.statements[1]
+    assert "UPDATE productos" in sql
+    assert "ROUND(exiprod - :qty, 3)" in sql, "a delta, not an absolute value"
+    assert params == {"qty": Decimal("0.250"), "codprod": "PROD1"}
+    assert store._pending_stock == []
+
+
+# ─── Legacy header/causación conventions (fake twin) ─────────────────────
+
+
+def _fake_repo(candet: Decimal = Decimal("3")):
+    from motoshop_api.erp.idempotency import FakeIdempotencyRepo
+    from motoshop_api.erp.invoicing.repo import FakeInvoiceStore, FakeInvoicesRepo
+    from motoshop_api.erp.invoicing.schemas import (
+        InvoiceCreate,
+        InvoiceLineIn,
+        InvoicePaymentIn,
+    )
+    from motoshop_api.erp.journal import FakeJournalRepo
+
+    store = FakeInvoiceStore()
+    repo = FakeInvoicesRepo(
+        store=store, journal=FakeJournalRepo(), idempotency=FakeIdempotencyRepo()
+    )
+    unit_price = Decimal("10000.50")
+    discount = Decimal("500.25")
+    vat = Decimal("950.05")
+    total = (unit_price - discount + vat) * candet
+    body = InvoiceCreate(
+        nitter="222222222222",
+        nitvend="VEN01",
+        lines=[
+            InvoiceLineIn(
+                codprod="PROD1",
+                nomdet="BUJIA NGK",
+                candet=candet,
+                valuni=unit_price,
+                dctpes=discount,
+                ivapes=vat,
+            )
+        ],
+        payments=[InvoicePaymentIn(codpag="F01", amount=total)],
+    )
+    return repo, store, body
+
+
+def _save(repo, body):
+    return repo.create(
+        body,
+        tenant="masvital",
+        empresa="E01",
+        actor="cajero1",
+        request_id="r-legacy",
+        idempotency_key=None,
+    )
+
+
+def test_header_follows_the_legacy_operator_conventions():
+    repo, store, body = _fake_repo()
+
+    _save(repo, body)
+
+    header = store.facventas[0]
+    assert header["codemp"] == "59312669", "legacy stores the operator NIT"
+    assert header["empcod"] == ""
+    assert header["nomuso"] == ""
+    assert header["codcaj"] == "C1", "the payload placeholder 01 maps to C1"
+
+
+def test_causacion_books_the_legacy_puc_chart_and_balances():
+    repo, store, body = _fake_repo()
+
+    result = _save(repo, body)
+
+    entries = {row["codcue"]: row for row in store.detcuentas}
+    assert set(entries) == {"11050501", "41359501", "24080102"}
+    totals = result["totals"]
+    assert entries["11050501"]["valdeb"] == totals["totfven"]
+    assert entries["41359501"]["valhab"] == totals["totfven"] - totals["totiva"]
+    assert entries["24080102"]["valhab"] == totals["totiva"]
+    assert sum(r["valdeb"] for r in store.detcuentas) == sum(
+        r["valhab"] for r in store.detcuentas
+    )
+
+
+def test_fractional_stock_is_decremented_without_losing_precision():
+    repo, store, body = _fake_repo(candet=Decimal("0.250"))
+    before = Decimal(str(store.productos["PROD1"]["exiprod"]))
+
+    _save(repo, body)
+
+    after = Decimal(str(store.productos["PROD1"]["exiprod"]))
+    assert after == before - Decimal("0.250")
+
+
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-q"]))

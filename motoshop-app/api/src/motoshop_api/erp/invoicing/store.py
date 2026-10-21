@@ -10,6 +10,7 @@ crash detector.
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -22,21 +23,6 @@ INVOICE_LINES_TABLE = "detfventas"
 INVOICE_PAYMENTS_TABLE = "detapago"
 #: Legacy table holding the accounting causación.
 INVOICE_JOURNAL_TABLE = "detcuentas"
-
-_HEADER_COLUMNS = (
-    "numfven, prefven, nitter, nitvend, codcaj, obsfven, subfven, totdct, "
-    "totiva, totipo, totfven, fecfven"
-)
-_LINES_COLUMNS = (
-    "numfven, prefven, numlin, codprod, nomdet, candet, valuni, dctpes, "
-    "ivapes, ipopes, dctpor, ivapor, ipopor, codbod, codmed, facumed, totdet"
-)
-_PAYMENT_COLUMNS = (
-    "numfven, prefven, codpag, valpag, referencia, soldeb, solcre"
-)
-_JOURNAL_COLUMNS = (
-    "numfven, prefven, codcue, valdeb, valcre, nitope"
-)
 
 
 class _LazyMasterMap:
@@ -80,6 +66,7 @@ class RealInvoiceStore:
     def __init__(self, engine_factory: Any = None) -> None:
         self._engine_factory = engine_factory
         self._pending: list[tuple[str, dict]] = []
+        self._pending_stock: list[tuple[str, Decimal]] = []
         # Mirrors FakeInvoiceStore's mapping surface: `_validate` and the stock
         # block read the masters as dicts, so the real store must expose them.
         self.terceros = _LazyMasterMap(self.find_tercero)
@@ -166,11 +153,22 @@ class RealInvoiceStore:
     def stage_update(self, table: str, key: dict, values: dict) -> None:
         self._pending.append((table, {**key, **values}))
 
+    def stage_stock_decrement(self, codprod: str, qty: Decimal) -> None:
+        """Queue a stock delta applied with the invoice writes.
+
+        A delta (``exiprod = exiprod - qty``) instead of an absolute value so a
+        concurrent legacy sale between our read and our write is not lost.
+        Rounded to 3 decimals: the legacy ``productos.exiprod`` carries grams
+        (``1268.002``) and the column is a double, so an unrounded subtraction
+        accumulates binary noise across sales.
+        """
+        self._pending_stock.append((str(codprod), Decimal(str(qty))))
+
     def commit(self) -> None:
         """Apply the buffered writes in order inside the ERP write UoW."""
         from sqlalchemy import text
 
-        if not self._pending:
+        if not self._pending and not self._pending_stock:
             return
         engine = self._write_engine()
         with engine.begin() as conn:
@@ -184,7 +182,17 @@ class RealInvoiceStore:
                     text(f"INSERT INTO {table} ({columns}) VALUES ({placeholders})"),
                     row,
                 )
+            for codprod, qty in self._pending_stock:
+                conn.execute(
+                    text(
+                        "UPDATE productos "
+                        "SET exiprod = ROUND(exiprod - :qty, 3) "
+                        "WHERE codprod = :codprod"
+                    ),
+                    {"qty": qty, "codprod": codprod},
+                )
         self._pending.clear()
+        self._pending_stock.clear()
 
 
 def get_invoice_store() -> Any:

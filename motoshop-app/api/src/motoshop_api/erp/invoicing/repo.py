@@ -67,6 +67,17 @@ INVOICE_JOURNAL_TABLE = "detcuentas"
 #: Number field of the header table.
 INVOICE_NUM_FIELD = "numfven"
 
+# ─── Legacy MasVital conventions (measured on the 3,554 historical rows) ───
+#: `facventas.codemp` carries the OPERATOR NIT, not the company code: the
+#: constant 59312669 on every historical row, while `empcod` is empty.
+LEGACY_OPERATOR_NIT = "59312669"
+#: The cash register of the legacy POS (`facventas.codcaj` = C1, never 01).
+LEGACY_CASH_REGISTER = "C1"
+#: PUC accounts observed in the legacy `detcuentas` causación.
+LEGACY_ACCOUNT_CASH = "11050501"     # Caja general / efectivo
+LEGACY_ACCOUNT_INCOME = "41359501"   # Ingreso comercio
+LEGACY_ACCOUNT_IVA = "24080102"      # IVA generado
+
 ZERO = Decimal("0")
 
 
@@ -78,6 +89,8 @@ class InvoiceStore(Protocol):
     def discard(self, table: str, row: dict) -> None: ...
 
     def stage_update(self, table: str, key: dict, values: dict) -> None: ...
+
+    def stage_stock_decrement(self, codprod: str, qty: Decimal) -> None: ...
 
     def commit(self) -> None: ...
 
@@ -158,6 +171,13 @@ class FakeInvoiceStore:
         for row in self._rows_for(table):
             if all(row.get(k) == v for k, v in key.items()):
                 row.update(values)
+
+    def stage_stock_decrement(self, codprod: str, qty: Decimal) -> None:
+        """Mirror the real writer: decrement the in-memory product stock."""
+        row = self.productos.get(codprod)
+        if row is None:
+            return
+        row["exiprod"] = Decimal(str(row.get("exiprod", ZERO))) - Decimal(str(qty))
 
     def commit(self) -> None:
         self.committed = True
@@ -432,14 +452,16 @@ class _BaseInvoicesRepo:
 
         - ``facventas`` has no ``actor``/``empresa``. The web operator is
           audited in ``app_doc_journal``/``app_idempotency``; the header keeps
-          the historical ``nomuso``/``codcaj`` and ``empresa`` lands in both
-          ``codemp`` and ``empcod``.
+          the legacy conventions instead: ``codemp`` = operator NIT,
+          ``empcod`` empty, ``codcaj`` = ``C1`` and ``nomuso`` blank.
         - ``detfventas`` has no ``prefven``/``numlin``: the correlative is
           ``numite``.
         - ``detapago`` numbers with ``numnum``/``predoc`` and keeps the
           reference in ``numpag``.
-        - ``detcuentas`` numbers with ``numnum``/``prenum``, the credit side is
-          ``valhab`` and the third party is ``nitter``.
+        - ``detcuentas`` books the legacy PUC chart (11050501 / 41359501 /
+          24080102) numbered by ``numnum``/``prenum``.
+        - ``productos.exiprod`` is decremented by ``candet`` in the same
+          unit of work, as a delta.
 
         Values are clipped to the real column widths because the server runs
         with STRICT_TRANS_TABLES: an oversized value is a 1406 error, not a
@@ -447,8 +469,10 @@ class _BaseInvoicesRepo:
         """
         totals = computed["totals"]
         doc_class = getattr(body, "codclas", None) or INVOICE_CODCON
-        emp_code = (empresa or "E01")[:3]
-        caja_code = str(body.codcaj or "01")[:4]
+        # The payload defaults codcaj to the placeholder "01"; the legacy
+        # register is C1, so a real code only wins when it is not the default.
+        raw_caja = str(body.codcaj or "").strip()
+        caja_code = LEGACY_CASH_REGISTER if raw_caja in ("", "01") else raw_caja[:4]
         # facventas.codpag is NOT NULL without a default: mirror the first
         # payment's form ("01" when the sale has no payment rows).
         header_pag = str(body.payments[0].codpag if body.payments else "01")[:4]
@@ -464,7 +488,7 @@ class _BaseInvoicesRepo:
             "clifven": (body.nomclien or "")[:120],
             "nitvend": body.nitvend or "",
             "codcaj": caja_code,
-            "nomuso": (actor[:2] if actor else "01"),
+            "nomuso": "",
             "obsfven": body.obsfven or "",
             "subfven": totals["subfven"],
             "totdct": totals["totdct"],
@@ -472,8 +496,8 @@ class _BaseInvoicesRepo:
             "totipo": totals["totipo"],
             "totfven": totals["totfven"],
             "estfven": "B",
-            "codemp": emp_code,
-            "empcod": emp_code,
+            "codemp": LEGACY_OPERATOR_NIT,
+            "empcod": "",
             "estfele": "N",
             "codpag": header_pag,
         }
@@ -529,56 +553,49 @@ class _BaseInvoicesRepo:
                 "numpag": (payment.referencia or "")[:20],
                 "soldeb": ZERO,
                 "solcre": payment.amount,
-                "codemp": emp_code,
+                "codemp": LEGACY_OPERATOR_NIT,
                 "codcaj": caja_code,
                 "estado": "B",
             }
             self.store.stage_insert(INVOICE_PAYMENTS_TABLE, payment_row)
             written.append((INVOICE_PAYMENTS_TABLE, payment_row))
 
-        # Accounting causación (detcuentas): a balanced debit/credit pair at
-        # the invoice total. DEBT: the legacy ledger books PUC codes per line
-        # (11050501 caja, 41359501 ingreso, 24080102 IVA) while this writes the
-        # coarse 1305/4135 pair, so the VAT is not split out. Kept as-is until
-        # the PUC resolution lands; it does not block the sale itself.
-        debit = {
-            "numnum": number,
-            "codclas": doc_class,
-            "prenum": pref,
-            "numite": 1,
-            "codcue": "1305",
-            "detcue": "CLIENTES",
-            "valdeb": totals["totfven"],
-            "valhab": ZERO,
-            "fecdoc": now_dt,
-            "nitter": body.nitter,
-            "codemp": emp_code,
-            "empcod": emp_code,
-            "estcue": "B",
-        }
-        self.store.stage_insert(INVOICE_JOURNAL_TABLE, debit)
-        written.append((INVOICE_JOURNAL_TABLE, debit))
-
-        credit = {
-            "numnum": number,
-            "codclas": doc_class,
-            "prenum": pref,
-            "numite": 2,
-            "codcue": "4135",
-            "detcue": "VENTAS COMERCIO",
-            "valdeb": ZERO,
-            "valhab": totals["totfven"],
-            "fecdoc": now_dt,
-            "nitter": body.nitter,
-            "codemp": emp_code,
-            "empcod": emp_code,
-            "estcue": "B",
-        }
-        self.store.stage_insert(INVOICE_JOURNAL_TABLE, credit)
-        written.append((INVOICE_JOURNAL_TABLE, credit))
+        # Accounting causación (detcuentas) with the legacy PUC chart:
+        #   11050501 Caja general      DEBIT  total cobrado
+        #   41359501 Ingreso comercio  CREDIT base (total - IVA)
+        #   24080102 IVA generado      CREDIT IVA desglosado
+        # The income credit absorbs any impoconsumo (totipo) so the entry always
+        # balances; the observed legacy chart has no separate IPO account.
+        base = totals["totfven"] - totals["totiva"]
+        entries = (
+            (LEGACY_ACCOUNT_CASH, "Factura de Venta", totals["totfven"], ZERO),
+            (LEGACY_ACCOUNT_INCOME, "Ventas Comercio", ZERO, base),
+            (LEGACY_ACCOUNT_IVA, "IVA generado excluido", ZERO, totals["totiva"]),
+        )
+        for item_index, (account, label, debit_value, credit_value) in enumerate(
+            entries, start=1
+        ):
+            entry = {
+                "numnum": number,
+                "codclas": doc_class,
+                "prenum": pref,
+                "numite": item_index,
+                "codcue": account,
+                "detcue": label,
+                "valdeb": debit_value,
+                "valhab": credit_value,
+                "fecdoc": now_dt,
+                "nitter": body.nitter,
+                "codemp": LEGACY_OPERATOR_NIT,
+                "empcod": "",
+                "estcue": "B",
+            }
+            self.store.stage_insert(INVOICE_JOURNAL_TABLE, entry)
+            written.append((INVOICE_JOURNAL_TABLE, entry))
 
         # Stock decrement (Edi_CueInvProd parity): warning only when the
-        # balance goes negative unless the policy says "block".
+        # balance goes negative unless the policy says "block". The decrement
+        # is staged as a delta so a concurrent legacy sale cannot be lost.
         for index, line in enumerate(body.lines):
             product = self.store.productos.get(line.codprod)
             if product is None:
@@ -594,7 +611,7 @@ class _BaseInvoicesRepo:
                         )
                     }
                 )
-            product["exiprod"] = remaining
+            self.store.stage_stock_decrement(line.codprod, line.candet)
 
 
 class FakeInvoicesRepo(_BaseInvoicesRepo):
