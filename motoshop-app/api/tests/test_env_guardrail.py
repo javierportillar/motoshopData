@@ -23,9 +23,15 @@ from motoshop_api.main import _is_localhost, lifespan
 
 @pytest.fixture(autouse=True)
 def _reset_settings():
-    """Restaura settings.env después de cada test."""
+    """Restaura settings.env al valor original tras cada test.
+
+    Guarda el valor configurado al entrar (p. ej. 'test' en CI/pytest) y lo
+    restaura al salir; forzarlo a 'dev' envenenaba a los tests que corren
+    después de este módulo y leen settings.env (fábricas de repos ERP).
+    """
+    original = settings.env
     yield
-    settings.env = "dev"
+    settings.env = original
 
 
 class TestIsLocalhost:
