@@ -140,10 +140,17 @@ def test_un_flag_de_scraper_invalido_falla_rapido() -> None:
         load_node_config(_env_nodo(BANK_SCRAPER_ENABLED="quiz"))
 
 
+def test_dpapi_es_un_backend_de_vault_valido() -> None:
+    """En Windows no se puede pedir la frase en una tarea programada: DPAPI es válido."""
+    config = load_node_config(_env_nodo(BANK_VAULT_BACKEND="dpapi"))
+
+    assert config.vault_backend == "dpapi"
+
+
 def test_un_backend_de_vault_no_soportado_falla_rapido() -> None:
-    """`dpapi` sigue siendo un stub: no se puede seleccionar desde la configuración."""
+    """Un backend que no existe tiene que fallar nombrando la variable."""
     with pytest.raises(NodeConfigError, match="BANK_VAULT_BACKEND"):
-        load_node_config(_env_nodo(BANK_VAULT_BACKEND="dpapi"))
+        load_node_config(_env_nodo(BANK_VAULT_BACKEND="ninguno"))
 
 
 def test_el_intervalo_minimo_es_de_30_segundos() -> None:

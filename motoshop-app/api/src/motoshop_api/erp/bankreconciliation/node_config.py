@@ -64,7 +64,7 @@ INICIO_DEL_DIA = datetime.time(0, 0, 0)
 FIN_DEL_DIA = datetime.time(23, 59, 59)
 
 #: Backends de custodia soportados. `dpapi` sigue siendo un stub (ADR-0026).
-VAULT_BACKENDS = ("passphrase", "keychain")
+VAULT_BACKENDS = ("passphrase", "keychain", "dpapi")
 
 VERDADEROS = frozenset({"1", "true", "t", "yes", "y", "si", "sí", "on"})
 FALSOS = frozenset({"0", "false", "f", "no", "n", "off", ""})

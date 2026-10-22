@@ -27,6 +27,7 @@ from motoshop_api.erp.bankreconciliation.vault import (
     VaultDecryptionError,
     VaultError,
     VaultNotFound,
+    _DpapiCustody,
     _get_config_dir,
     decrypt_payload,
     derive_key,
@@ -147,8 +148,16 @@ def fake_keychain(monkeypatch: pytest.MonkeyPatch):
 def temp_vault_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Configura un entorno temporal para el vault (sin tocar el entorno global)."""
     # `monkeypatch.setenv` restaura el valor previo (o lo elimina) al final del test.
+    # Se fijan las DOS variables: el código resuelve `XDG_CONFIG_HOME` en POSIX y
+    # `APPDATA` en Windows. Sin `APPDATA` el test escribiría en el perfil REAL del
+    # operador cuando corre en Windows.
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg_config"))
-    return tmp_path / "xdg_config" / "motoshop"
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    # La ruta se resuelve con la MISMA función que usa el código, no con una copia
+    # de la regla: así el test vale en POSIX (XDG) y en Windows (APPDATA).
+    config_dir = _get_config_dir()
+    assert str(tmp_path) in str(config_dir), "el fixture tiene que aislar el config dir"
+    return config_dir
 
 
 @pytest.fixture
@@ -980,3 +989,134 @@ def test_cli_reveal_with_flag_prints_credentials(
 
     assert "usuario_secreto" in captured.out
     assert "clave_secreta_456" in captured.out
+
+
+# --- DPAPI (Windows) ---
+
+
+class _FakeDpapi:
+    """Custodia DPAPI simulada: guarda la clave en memoria.
+
+    Se inyecta en `CredentialVault(custody=...)` para probar el flujo completo en
+    cualquier plataforma: lo que se ejercita es el vault, no la API de Windows.
+    """
+
+    def __init__(self, clave: bytes | None = None) -> None:
+        self.clave = clave
+        self.llamadas: list[str] = []
+
+    def get_master_key(self, prompt: str) -> bytes:
+        self.llamadas.append("get")
+        if self.clave is None:
+            raise VaultNotFound("sin clave maestra")
+        return base64.urlsafe_b64encode(self.clave)
+
+    def store_master_key(self, master_key: bytes) -> None:
+        self.llamadas.append("store")
+        self.clave = master_key
+
+    def delete_master_key(self) -> None:
+        self.llamadas.append("delete")
+        self.clave = None
+
+
+def test_dpapi_guarda_y_lee_sin_pedir_frase(temp_vault_env: Path, mock_getpass):
+    """Con DPAPI no hay frase maestra: el operador no escribe nada."""
+    custody = _FakeDpapi()
+    vault = CredentialVault(custody_backend="dpapi", custody=custody)
+
+    vault.set_entry("bancolombia-motoshop", "usuario_dpapi", "clave_dpapi_123")
+    entry = vault.get_entry("bancolombia-motoshop")
+
+    assert entry.username == "usuario_dpapi"
+    assert entry.password == "clave_dpapi_123"
+    mock_getpass.assert_not_called()
+    # La clave queda cacheada en la instancia: leer con el mismo vault no vuelve
+    # a tocar la custodia. Un vault nuevo sí tiene que recuperarla del blob.
+    assert custody.llamadas == ["store"]
+
+    otro = CredentialVault(custody_backend="dpapi", custody=custody)
+    assert otro.get_entry("bancolombia-motoshop").password == "clave_dpapi_123"
+    assert custody.llamadas == ["store", "get"]
+
+
+def test_dpapi_declara_kdf_random_y_custodia_dpapi(temp_vault_env: Path, vault_path: Path):
+    """El sobre tiene que describir lo que se hizo: clave aleatoria, custodia DPAPI."""
+    CredentialVault(custody_backend="dpapi", custody=_FakeDpapi()).set_entry(
+        "bancolombia-motoshop", "usuario_dpapi", "clave_dpapi_123"
+    )
+
+    sobre = json.loads(vault_path.read_text(encoding="utf-8"))
+
+    assert sobre["key_custody"] == "dpapi"
+    assert sobre["kdf"]["algo"] == "random"
+
+
+def test_dpapi_rechaza_una_clave_maestra_ajena(temp_vault_env: Path):
+    """Si el blob DPAPI no es el que protegió el vault, no se puede leer."""
+    CredentialVault(custody_backend="dpapi", custody=_FakeDpapi(b"\x01" * 32)).set_entry(
+        "bancolombia-motoshop", "usuario_dpapi", "clave_dpapi_123"
+    )
+
+    ajeno = CredentialVault(custody_backend="dpapi", custody=_FakeDpapi(b"\x02" * 32))
+    with pytest.raises(VaultDecryptionError):
+        ajeno.get_entry("bancolombia-motoshop")
+
+
+def test_dpapi_sin_clave_maestra_reporta_vault_not_found(temp_vault_env: Path):
+    """Vault presente pero sin blob DPAPI: falta la clave, no es un archivo corrupto."""
+    CredentialVault(custody_backend="dpapi", custody=_FakeDpapi()).set_entry(
+        "bancolombia-motoshop", "usuario_dpapi", "clave_dpapi_123"
+    )
+
+    sin_clave = CredentialVault(custody_backend="dpapi", custody=_FakeDpapi(clave=None))
+    with pytest.raises(VaultNotFound):
+        sin_clave.get_entry("bancolombia-motoshop")
+
+
+def test_dpapi_guarda_el_blob_con_permisos_restringidos(
+    temp_vault_env: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """El archivo de la clave se crea 0600 y nunca guarda la clave en claro."""
+    from motoshop_api.erp.bankreconciliation import vault as vault_module
+
+    # DPAPI no existe fuera de Windows: se reemplaza sólo la transformación
+    # criptográfica (invertir bytes es simétrico), no el manejo del archivo.
+    monkeypatch.setattr(
+        vault_module,
+        "_dpapi_transform",
+        lambda data, *, desproteger: bytes(reversed(data)),
+    )
+    ruta = temp_vault_env / "master.key.dpapi"
+    custody = _DpapiCustody(ruta)
+    # Clave no palindrómica: si la transformación no se aplicara, el archivo
+    # guardaría la clave en claro y el test lo detectaría.
+    clave = bytes(range(32))
+
+    custody.store_master_key(clave)
+
+    assert ruta.exists()
+    assert ruta.read_bytes() == bytes(reversed(clave))
+    assert clave not in ruta.read_bytes()
+    if os.name == "posix":
+        assert stat.S_IMODE(ruta.stat().st_mode) == 0o600
+    assert custody.get_master_key("") == base64.urlsafe_b64encode(clave)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="DPAPI sólo existe en Windows")
+def test_dpapi_no_esta_disponible_fuera_de_windows():
+    """En macOS/Linux el backend tiene que fallar rápido y explícito."""
+    with pytest.raises(VaultBackendUnavailable):
+        CredentialVault(custody_backend="dpapi")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Requiere DPAPI real de Windows")
+def test_dpapi_round_trip_real_en_windows(temp_vault_env: Path):
+    """En el nodo Windows: proteger y desproteger una clave real, sin diálogos."""
+    from motoshop_api.erp.bankreconciliation.vault import _dpapi_transform
+
+    clave = b"\x2a" * 32
+    protegida = _dpapi_transform(clave, desproteger=False)
+
+    assert protegida != clave
+    assert _dpapi_transform(protegida, desproteger=True) == clave

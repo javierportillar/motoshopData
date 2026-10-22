@@ -29,7 +29,7 @@ Un proceso de API = **un tenant**. La configuración vive en el `.env` de cada m
 | `BANK_TENANT` | `masvital` | `motoshop` | tenant en pruebas | — |
 | `BANK_CREDENTIAL_ENTRY` | `bancolombia-masvital` | `bancolombia-motoshop` | `bancolombia-<tenant>` | — |
 | `BANK_ACCOUNT_LABEL` | `MasVital` | `Cuenta de Ahorros` | según tenant | — |
-| `BANK_VAULT_BACKEND` | `passphrase` | `passphrase` | `keychain` | — |
+| `BANK_VAULT_BACKEND` | `dpapi` | `dpapi` | `keychain` | — |
 | `BANK_PROFILE_DIR` | `%APPDATA%\motoshop\bank-profile\<tenant>` | ídem | `~/.config/motoshop/bank-profile/<tenant>` | — |
 | `BANK_CODPAG_TRANSFERENCIA_<TENANT>` | `F07` | `F07` | ídem | — |
 | `BANK_CODPAG_CONSIGNACION_<TENANT>` | `F05` | `F05` | ídem | — |
@@ -42,6 +42,10 @@ Reglas de la tabla:
   lo único que permite abrir la cuenta correcta sin abrir la de otro tenant.
 - `BANK_PROFILE_DIR` es el perfil del navegador (el perfil **es** la sesión). Nunca dentro del
   repositorio: el preflight lo rechaza.
+- `BANK_VAULT_BACKEND=dpapi` (Windows): la clave maestra es aleatoria y la protege DPAPI en
+  `%APPDATA%\motoshop\master.key.dpapi`. **No hay frase maestra** y el proceso que raspa tiene que
+  correr con el mismo usuario de Windows que guardó la credencial. `passphrase` en Windows obliga a
+  escribir la frase en cada corrida, así que no sirve para una tarea programada.
 - `BANK_SCRAPER_ENABLED=false` ⇒ ese nodo no raspa. En la nube es lo normal.
 - `BANK_CODPAG_*` vive en el catálogo `formapago` de **cada** empresa y **no se comparte**: el
   recibo por transferencia y la consignación bancaria son formas de pago distintas (filas distintas,

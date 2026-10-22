@@ -1,5 +1,6 @@
 # type: ignore # dynamic types, platform-specific for cryptography
 import base64
+import ctypes
 import dataclasses
 import datetime
 import getpass
@@ -435,22 +436,134 @@ def _run_security_prompt(
         os.close(master_fd)
 
 
-class _DpapiCustody(_MasterKeyCustody):
-    """Custodia de clave maestra via Windows DPAPI (NO IMPLEMENTADA)."""
+#: Entropía fija de la aplicación: sin ella cualquier proceso del mismo usuario
+#: podría desproteger el blob con una llamada cruda a DPAPI.
+DPAPI_ENTROPY = b"motoshop-bank-vault-master-key-v1"
 
-    MESSAGE = (
-        "El backend 'dpapi' no está implementado: la custodia de la clave maestra "
-        "mediante Windows DPAPI todavía no existe."
+#: Sin esta bandera DPAPI puede abrir un diálogo: el nodo tiene que correr sin
+#: sesión interactiva (tarea programada, servicio, job en segundo plano).
+CRYPTPROTECT_UI_FORBIDDEN = 0x1
+
+#: Nombre del archivo donde vive la clave maestra protegida por DPAPI.
+NOMBRE_CLAVE_DPAPI = "master.key.dpapi"
+
+
+def _dpapi_transform(data: bytes, *, desproteger: bool) -> bytes:
+    """Protege o desprotege ``data`` con Windows DPAPI (alcance del usuario).
+
+    DPAPI deriva la clave de cifrado del perfil de Windows: el blob sólo lo puede
+    leer (o escribir) el mismo usuario en la misma máquina. No hay frase maestra.
+    """
+    if sys.platform != "win32":  # pragma: no cover - sólo Windows
+        raise VaultBackendUnavailable(
+            "DPAPI sólo existe en Windows: el backend 'dpapi' no está disponible."
+        )
+
+    class _Blob(ctypes.Structure):  # pragma: no cover - Windows
+        _fields_ = [
+            ("cbData", ctypes.c_uint32),
+            ("pbData", ctypes.POINTER(ctypes.c_char)),
+        ]
+
+    crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)  # pragma: no cover
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # pragma: no cover
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
+
+    # Los buffers tienen que seguir vivos mientras dura la llamada: si sólo se
+    # pasara el puntero, `create_string_buffer` quedaría sin referencia y el GC
+    # podría liberarlo antes de que DPAPI lo lea.
+    entrada = ctypes.create_string_buffer(data, len(data))
+    entropia = ctypes.create_string_buffer(DPAPI_ENTROPY, len(DPAPI_ENTROPY))
+    blob_in = _Blob(len(data), ctypes.cast(entrada, ctypes.POINTER(ctypes.c_char)))
+    blob_entropia = _Blob(
+        len(DPAPI_ENTROPY), ctypes.cast(entropia, ctypes.POINTER(ctypes.c_char))
     )
+    blob_out = _Blob()
+
+    funcion = crypt32.CryptUnprotectData if desproteger else crypt32.CryptProtectData
+    funcion.argtypes = [
+        ctypes.POINTER(_Blob),
+        ctypes.c_void_p,
+        ctypes.POINTER(_Blob),
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.POINTER(_Blob),
+    ]
+    funcion.restype = ctypes.c_bool
+
+    ok = funcion(
+        ctypes.byref(blob_in),
+        None,
+        ctypes.byref(blob_entropia),
+        None,
+        None,
+        CRYPTPROTECT_UI_FORBIDDEN,
+        ctypes.byref(blob_out),
+    )
+    if not ok:  # pragma: no cover - Windows
+        verbo = "desproteger" if desproteger else "proteger"
+        raise VaultError(
+            f"DPAPI no pudo {verbo} la clave maestra "
+            f"(WinError {ctypes.get_last_error()})."
+        )
+    try:
+        return ctypes.string_at(blob_out.pbData, blob_out.cbData)
+    finally:  # pragma: no cover - Windows
+        if blob_out.pbData:
+            kernel32.LocalFree(blob_out.pbData)
+
+
+class _DpapiCustody(_MasterKeyCustody):
+    """Custodia de la clave maestra con Windows DPAPI (alcance del usuario).
+
+    La clave es aleatoria y queda protegida en ``master.key.dpapi``: sólo el
+    usuario de Windows que la guardó puede leerla y no se pide ninguna frase.
+    El proceso que raspa tiene que correr con ese mismo usuario (tarea
+    programada "run only when user is logged on" o servicio de ese usuario).
+    """
+
+    def __init__(self, ruta: Path | None = None) -> None:
+        self._ruta = ruta or (_get_config_dir() / NOMBRE_CLAVE_DPAPI)
 
     def get_master_key(self, prompt: str) -> bytes:
-        raise VaultBackendUnavailable(self.MESSAGE)
+        if not self._ruta.exists():
+            raise VaultNotFound(
+                "No hay clave maestra DPAPI en este usuario. Use el comando 'set' "
+                "para crear la credencial."
+            )
+        protegida = self._ruta.read_bytes()
+        return base64.urlsafe_b64encode(
+            _dpapi_transform(protegida, desproteger=True)
+        )
 
     def store_master_key(self, master_key: bytes) -> None:
-        raise VaultBackendUnavailable(self.MESSAGE)
+        protegida = _dpapi_transform(master_key, desproteger=False)
+        self._ruta.parent.mkdir(parents=True, exist_ok=True)
+        temporal = self._ruta.with_name(f"{self._ruta.name}.{os.getpid()}.tmp")
+        try:
+            if temporal.exists():
+                temporal.unlink()
+            # El archivo se crea con el modo final: nunca existe como 0644.
+            fd = os.open(temporal, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                handle = os.fdopen(fd, "wb")
+            except BaseException:
+                os.close(fd)
+                raise
+            with handle:
+                handle.write(protegida)
+            os.replace(temporal, self._ruta)
+        except Exception as exc:
+            if temporal.exists():
+                temporal.unlink(missing_ok=True)
+            raise VaultError(f"No se pudo guardar la clave maestra DPAPI: {exc}") from exc
 
     def delete_master_key(self) -> None:
-        raise VaultBackendUnavailable(self.MESSAGE)
+        # Borrar la clave maestra deja el vault ilegible: es intencional, la
+        # entrada no se puede recuperar sin el perfil de Windows que la protegió.
+        self._ruta.unlink(missing_ok=True)
 
 
 def _get_custody_backend(backend: Literal["passphrase", "keychain", "dpapi"]) -> _MasterKeyCustody:
@@ -486,12 +599,19 @@ class CredentialVault:
     _master_key: bytes | None = None
 
     def __init__(
-        self, custody_backend: Literal["passphrase", "keychain", "dpapi"] = "passphrase"
+        self,
+        custody_backend: Literal["passphrase", "keychain", "dpapi"] = "passphrase",
+        *,
+        custody: _MasterKeyCustody | None = None,
+        vault_path: Path | None = None,
     ) -> None:
-        _assert_backend_available(custody_backend)
-        self._vault_path = _get_vault_path()
+        # `custody` permite probar el flujo de un backend que no existe en la
+        # plataforma de test (p. ej. DPAPI en macOS) sin simular `sys.platform`.
+        if custody is None:
+            _assert_backend_available(custody_backend)
+        self._vault_path = vault_path or _get_vault_path()
         self._custody_backend = custody_backend
-        self._master_key_custody = _get_custody_backend(custody_backend)
+        self._master_key_custody = custody or _get_custody_backend(custody_backend)
         self._master_key: bytes | None = None
         self._new_salt: bytes | None = None
 
@@ -505,7 +625,7 @@ class CredentialVault:
         """Parámetros de derivación que el envelope DEBE declarar para este backend."""
         if self._custody_backend == "passphrase":
             return KDF_ALGORITHM, DEFAULT_KDF_ITERATIONS
-        # `keychain`: la clave es aleatoria y la custodia vive en el Keychain.
+        # `keychain`/`dpapi`: la clave es aleatoria y la custodia vive fuera del vault.
         return KDF_ALGORITHM_RANDOM, 0
 
     def _require_vault_exists(self) -> None:
@@ -644,10 +764,10 @@ class CredentialVault:
         if self._master_key and not for_write:
             return self._master_key
 
-        if self._custody_backend == "keychain":
+        if self._custody_backend in ("keychain", "dpapi"):
             if for_write and not self._vault_path.exists():
-                # Primera escritura: se genera una clave maestra aleatoria y se guarda
-                # en el Keychain. NO se intenta leerla antes de crearla.
+                # Primera escritura: se genera una clave maestra aleatoria y la custodia
+                # (Keychain o DPAPI) la guarda. NO se intenta leerla antes de crearla.
                 new_key = Fernet.generate_key()  # 32 bytes aleatorios en base64 urlsafe
                 raw_key = base64.urlsafe_b64decode(new_key)
                 self._master_key_custody.store_master_key(raw_key)
@@ -696,11 +816,11 @@ class CredentialVault:
             master_key_read = self._get_master_key("Ingrese la clave maestra", for_write=False)
             current_content = self._load_and_decrypt_content(master_key_read)
 
-        if self._custody_backend == "keychain" and not self._vault_path.exists():
-            # For keychain, if vault doesn't exist, we'll generate a new random key and store it
-            # and then use that key for encryption.
+        if self._custody_backend in ("keychain", "dpapi") and not self._vault_path.exists():
+            # Sin vault: se genera una clave maestra aleatoria y la custodia la
+            # guarda (Keychain en macOS, DPAPI en Windows). No se pide frase.
             master_key_for_write = self._get_master_key(
-                "Generando nueva clave maestra para Keychain", for_write=True
+                "Generando nueva clave maestra", for_write=True
             )
             # El salt no se usa para derivar (la clave es aleatoria), pero se mantiene
             # estable entre escrituras para que el envelope describa una sola operación.

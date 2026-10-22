@@ -98,7 +98,7 @@ conciliar nada.
 
 ```bash
 # si la entrada no existe todavía (el CLI pide usuario, clave y frase sin eco)
-uv run python -m motoshop_api.erp.bankreconciliation.cli --backend passphrase set bancolombia-motoshop
+uv run python -m motoshop_api.erp.bankreconciliation.cli --backend dpapi set bancolombia-motoshop
 
 uv run playwright install chromium
 ```

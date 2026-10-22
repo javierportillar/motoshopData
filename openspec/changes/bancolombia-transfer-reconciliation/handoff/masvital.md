@@ -116,7 +116,7 @@ el número.
 
 ```bash
 # si la entrada no existe todavía (el CLI pide usuario, clave y frase sin eco)
-uv run python -m motoshop_api.erp.bankreconciliation.cli --backend passphrase set bancolombia-masvital
+uv run python -m motoshop_api.erp.bankreconciliation.cli --backend dpapi set bancolombia-masvital
 
 # perfil del navegador fuera del repo y con permisos 700
 mkdir -p "$APPDATA/motoshop/bank-profile/masvital"   # Windows
