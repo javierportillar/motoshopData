@@ -47,9 +47,10 @@ __all__ = [
 #: Variable de entorno con la URL base del portal (sin barra final).
 ENV_URL_BASE = "BANK_PORTAL_BASE_URL"
 
-#: URL base por defecto. **No está verificada**: el operador la ajusta con
-#: `BANK_PORTAL_BASE_URL` si el banco cambia de dominio.
-URL_BASE_PORTAAL_POR_DEFECTO = "https://www.bancocolombia.com"
+#: URL base por defecto. **Verificada en vivo** el 21 oct 2026: la Sucursal
+#: Virtual de Personas vive en este subdominio, no en el portal general.
+#: Se puede ajustar con `BANK_PORTAL_BASE_URL` si el banco cambia de dominio.
+URL_BASE_PORTAAL_POR_DEFECTO = "https://svpersonas.apps.bancolombia.com"
 
 #: URL base efectiva (se resuelve en el momento de abrir el navegador).
 URL_BASE_PORTAAL = URL_BASE_PORTAAL_POR_DEFECTO
@@ -109,7 +110,7 @@ class PortalContract:
         pagination_prev: botón "Anterior".
     """
 
-    version: int = 1
+    version: int = 2
 
     # --- rutas confirmadas por el operador ---
     path_auth: str = "/autenticacion"
@@ -117,65 +118,72 @@ class PortalContract:
     path_movimientos: str = "/detalles-y-movimientos/cuentas"
 
     # --- acceso ---
+    # Verificado en vivo el 21 oct 2026: el login real es un form Angular con
+    # `input#username` e `input#password` (este último con `type="text"` y la
+    # máscara `svppasswordmask`), y el botón es `button[data-test='login-button']`
+    # — NO es `type=submit` y arranca `disabled` hasta que Angular valida el form.
     login_usuario: LocatorSpec = LocatorSpec(
-        rol="textbox",
-        nombre="Usuario",
-        css="input[name='usuario'], input[type='email'], input[autocomplete='username']",
+        etiqueta="Ingresar usuario",
+        css="input#username, input[formcontrolname='username']",
     )
     login_clave: LocatorSpec = LocatorSpec(
-        etiqueta="Contraseña",
-        css="input[type='password']",
+        etiqueta="Ingresa clave del cajero",
+        css="input#password, input[formcontrolname='password']",
     )
     login_enviar: LocatorSpec = LocatorSpec(
-        rol="button",
-        nombre="Ingresar",
-        texto="Ingresar",
-        css="button[type='submit']",
+        texto="Iniciar sesión",
+        css="button[data-test='login-button']",
     )
 
     # --- verificación en dos pasos ---
     otp_codigo: LocatorSpec = LocatorSpec(
         etiqueta="Código",
-        css="input[autocomplete='one-time-code'], input[name='codigo']",
+        css="input[autocomplete='one-time-code'], input[name='codigo'], input[maxlength='6']",
     )
     otp_enviar: LocatorSpec = LocatorSpec(
         rol="button",
         nombre="Validar",
-        texto="Validar",
-        css="button[type='submit']",
+        texto="Verificar",
+        css="button[type='submit'], button:has-text('Verificar')",
     )
     otp_prompt: str = "Código de verificación del banco (escríbalo aquí): "
 
     # --- cuentas y movimientos ---
+    # La etiqueta de la cuenta en el home es el <p> del card de producto:
+    # `p.bc-mb-1.bc-cibsans-font-style-4-bold.text-ellipsis`.
     account_cards: LocatorSpec = LocatorSpec(
         rol="article",
-        testid="cuenta",
-        css="article.account-card",
+        css="article",
     )
     account_card_label: LocatorSpec = LocatorSpec(
-        rol="heading",
-        css="h3.account-card__label",
+        css="p.bc-mb-1.bc-cibsans-font-style-4-bold.text-ellipsis, "
+        "h3.account-card__label, p[class*='text-ellipsis']",
     )
+    # La pestaña real es un <span> con el texto exacto "Movimientos", dentro de
+    # un <nav> que también contiene "Detalles".
     movements_tab: LocatorSpec = LocatorSpec(
-        rol="tab",
-        nombre="Movimientos",
         texto="Movimientos",
+        css="nav span, [role='tab']",
     )
     movements_table: LocatorSpec = LocatorSpec(
         rol="table",
         nombre="Tus movimientos",
-        css="table",
+        css="table.bc-table",
     )
+    # La paginación real son enlaces `<a>` con `aria-disabled` (no `disabled`).
     pagination_next: LocatorSpec = LocatorSpec(
-        rol="button",
-        nombre="Siguiente",
-        texto="Siguiente",
+        css="a.bc-paginator-v2-next-link",
     )
     pagination_prev: LocatorSpec = LocatorSpec(
-        rol="button",
-        nombre="Anterior",
-        texto="Anterior",
+        css="a.bc-paginator-v2-prev-link",
     )
+
+    # --- watchdog de inactividad ---
+    # El portal cancela el proceso a los 2 minutos de inactividad con un modal
+    # "¿Sigues ahí?". Se detecta por TEXTO: su contenedor se reporta invisible
+    # aunque su texto se renderice.
+    modal_inactividad_texto: str = "Sigues ahí"
+    modal_inactividad_boton: str = "Estoy aquí"
 
 
 #: Contrato vigente. Los módulos que raspan lo reciben inyectado.

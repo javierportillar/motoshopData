@@ -37,11 +37,13 @@ import hashlib
 import logging
 import os
 import sys
+import time
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 from motoshop_api.erp.bankreconciliation.node_config import (
     CODIGO_ANTIBOT,
@@ -111,6 +113,29 @@ PREFIJO_STAMP = ".banco-sesion"
 
 #: Variable de entorno para correr el navegador sin ventana.
 ENV_HEADLESS = "BANK_BROWSER_HEADLESS"
+
+#: Variable de entorno para elegir el navegador: `chrome` (real, por defecto:
+#: es el que pasa la protección Imperva/Incapsula del portal) o `chromium`
+#: (el que trae Playwright).
+ENV_CANAL = "BANK_BROWSER_CHANNEL"
+
+#: Variable de entorno para el locale del navegador (el portal es es-CO).
+ENV_LOCALE = "BANK_BROWSER_LOCALE"
+
+#: Variable de entorno para la zona horaria del navegador (América/Bogotá).
+ENV_TIMEZONE = "BANK_BROWSER_TIMEZONE"
+
+#: Guion que se inyecta antes de cada página para quitar las huellas más
+#: obvias de automatización (`navigator.webdriver`).
+_SCRIPT_SIN_AUTOMATIZACION = (
+    "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+    "window.chrome={runtime:{}};"
+)
+
+#: Texto del modal de inactividad del portal: a los 2 minutos sin actividad
+#: cancela el proceso ("¿Sigues ahí?"). Se detecta por TEXTO porque su
+#: contenedor se reporta invisible aunque el texto se renderice.
+MARCAS_INACTIVIDAD = ("sigues ahí", "sigues ahi", "cancelaremos tu proceso")
 
 #: Marcas de texto con las que el portal se queja (todo en minúsculas).
 MARCAS_CREDENCIAL_INVALIDA = (
@@ -212,6 +237,8 @@ class PortalSession(Protocol):
     def hay_pagina_siguiente(self) -> bool: ...
 
     def ir_a_pagina_siguiente(self) -> None: ...
+
+    def responder_inactividad(self) -> bool: ...
 
     def cerrar(self) -> None: ...
 
@@ -538,8 +565,12 @@ class BankScraper:
         try:
             self._autenticar(session, entrada)
             self._ir_a_home(session)
-            session.ir_a_movimientos()
+            # Orden real del portal (verificado en vivo): desde el home se abre
+            # la cuenta por su etiqueta y DESPUÉS se pulsa la pestaña
+            # "Movimientos". Navegar por URL a una ruta profunda reinicia la SPA
+            # y rompe la sesión.
             cuenta = self._abrir_cuenta(session, config)
+            session.ir_a_movimientos()
             movimientos, paginas = self._leer_movimientos(session, config, cuenta)
         finally:
             with contextlib.suppress(Exception):
@@ -560,6 +591,10 @@ class BankScraper:
             movimientos=movimientos,
             leido_en=slot.iniciado_en,
         )
+
+    def _spec(self, nombre: str) -> Any:
+        """Devuelve un selector del contrato (con respaldo al vigente)."""
+        return _spec_del_contrato(self._contrato, nombre)
 
     def _credencial(self, config: NodeConfig) -> Entry:
         """Resuelve la credencial **de este tenant** (nunca la de otro)."""
@@ -588,10 +623,15 @@ class BankScraper:
         session.escribir_credenciales(entrada.username, entrada.password)
         session.enviar_formulario()
 
-        if self._texto_indica(session, MARCAS_CREDENCIAL_INVALIDA):
+        if not self._esperar_ingreso_o_otp(session):
+            if self._texto_indica(session, MARCAS_CREDENCIAL_INVALIDA):
+                raise BankScrapeError(
+                    CODIGO_CREDENCIAL_INVALIDA,
+                    "el portal rechazó las credenciales de este tenant",
+                )
             raise BankScrapeError(
                 CODIGO_CREDENCIAL_INVALIDA,
-                "el portal rechazó las credenciales de este tenant",
+                "el portal no dejó entrar con la credencial de este tenant",
             )
 
         if session.hay_codigo_otp():
@@ -600,22 +640,40 @@ class BankScraper:
             codigo = self._pedir_codigo(self._contrato.otp_prompt)
             session.escribir_codigo_otp(codigo)
             session.enviar_formulario()
-            if session.hay_codigo_otp():
+            if not self._esperar_ingreso(session):
                 raise BankScrapeError(
                     CODIGO_CREDENCIAL_INVALIDA,
                     "el portal no aceptó el código de verificación",
                 )
 
-        if self._texto_indica(session, MARCAS_CREDENCIAL_INVALIDA):
-            raise BankScrapeError(
-                CODIGO_CREDENCIAL_INVALIDA,
-                "el portal rechazó las credenciales de este tenant",
-            )
-        if session.url_actual().rstrip("/").endswith(self._contrato.path_auth):
-            raise BankScrapeError(
-                CODIGO_CREDENCIAL_INVALIDA,
-                "el portal no dejó entrar con la credencial de este tenant",
-            )
+    def _esperar_ingreso_o_otp(
+        self, session: PortalSession, timeout: float = 45.0
+    ) -> bool:
+        """Espera a que la sesión quede abierta (o a que pida el código).
+
+        El portal procesa el login de forma asíncrona: la URL cambia un par de
+        segundos después del clic. Consultarla de inmediato daba un falso
+        negativo ("no dejó entrar") aunque el login fuera correcto.
+
+        La pantalla de verificación en dos pasos es un estado **intermedio
+        válido**: la URL sigue siendo la de autenticación, pero el portal ya
+        aceptó el usuario y la clave y está pidiendo el código.
+        """
+        limite = time.monotonic() + timeout
+        while time.monotonic() < limite:
+            actual = session.url_actual().rstrip("/")
+            if not actual.endswith(self._spec("path_auth").rstrip("/")):
+                return True
+            if session.hay_codigo_otp():
+                return True
+            if self._texto_indica(session, MARCAS_CREDENCIAL_INVALIDA):
+                return False
+            time.sleep(1.0)
+        return False
+
+    def _esperar_ingreso(self, session: PortalSession, timeout: float = 45.0) -> bool:
+        """Espera a que la sesión quede abierta (tras el código de un solo uso)."""
+        return self._esperar_ingreso_o_otp(session, timeout)
 
     def _ir_a_home(self, session: PortalSession) -> None:
         """Va a la pantalla principal y detecta la sesión expirada."""
@@ -625,7 +683,7 @@ class BankScraper:
                 CODIGO_SESION_EXPIRADA,
                 "la sesión del portal expiró: hay que volver a entrar a mano",
             )
-        if session.url_actual().rstrip("/").endswith(self._contrato.path_auth):
+        if session.url_actual().rstrip("/").endswith(self._spec("path_auth")):
             raise BankScrapeError(
                 CODIGO_SESION_EXPIRADA,
                 "el portal devolvió el nodo a la pantalla de autenticación",
@@ -633,8 +691,8 @@ class BankScraper:
 
     def _abrir_cuenta(self, session: PortalSession, config: NodeConfig) -> str:
         """Abre la cuenta **por etiqueta** y devuelve la etiqueta leída."""
-        tarjetas = session.tarjetas_de_cuenta()
-        elegida = self._buscar_etiqueta(tarjetas, config.account_label)
+        etiquetas = self._esperar_cuentas(session, config)
+        elegida = self._buscar_etiqueta(etiquetas, config.account_label)
         if elegida is None:
             raise BankScrapeError(
                 CODIGO_CUENTA_NO_ENCONTRADA,
@@ -645,6 +703,28 @@ class BankScraper:
             )
         session.abrir_cuenta(elegida)
         return elegida
+
+    def _esperar_cuentas(
+        self, session: PortalSession, config: NodeConfig, timeout: float = 45.0
+    ) -> list[str]:
+        """Espera a que el home renderice las cuentas.
+
+        El home es una SPA: los productos (y sus etiquetas) aparecen unos
+        segundos después del login. Consultarlos de inmediato daba
+        "cuenta no encontrada" aunque la cuenta estuviera ahí.
+        """
+        limite = time.monotonic() + timeout
+        etiquetas: list[str] = []
+        while time.monotonic() < limite:
+            self._responder_inactividad(session)
+            etiquetas = session.tarjetas_de_cuenta()
+            if self._buscar_etiqueta(etiquetas, config.account_label) is not None:
+                return etiquetas
+            if etiquetas:
+                # Hay cuentas pero no la del tenant: no se espera más.
+                return etiquetas
+            time.sleep(1.0)
+        return etiquetas
 
     @staticmethod
     def _buscar_etiqueta(tarjetas: Sequence[str], etiqueta: str) -> str | None:
@@ -665,8 +745,9 @@ class BankScraper:
         movimientos: list[ScrapedMovement] = []
         pagina = 1
         while True:
+            self._responder_inactividad(session)
             self._verificar_antibot(session)
-            filas = session.filas_de_movimientos()
+            filas = self._esperar_filas(session)
             self._verificar_antibot(session)
 
             leidos = [self._interpretar(fila, pagina, cuenta) for fila in filas]
@@ -682,6 +763,41 @@ class BankScraper:
             pagina += 1
 
         return tuple(movimientos), pagina
+
+    def _esperar_filas(
+        self, session: PortalSession, timeout: float = 45.0
+    ) -> list[list[str]]:
+        """Espera a que la tabla "Tus movimientos" traiga filas.
+
+        La tabla se arma con los datos de la API del banco: unos segundos
+        después de abrir la pestaña todavía está vacía (sólo el spinner). Sin
+        esta espera el scrape terminaba con cero movimientos.
+        """
+        limite = time.monotonic() + timeout
+        filas = session.filas_de_movimientos()
+        while time.monotonic() < limite and not filas:
+            self._responder_inactividad(session)
+            self._verificar_antibot(session)
+            time.sleep(1.0)
+            filas = session.filas_de_movimientos()
+        return filas
+
+    def _responder_inactividad(self, session: PortalSession) -> None:
+        """Contesta el modal de inactividad del portal, si aparece.
+
+        El portal cancela el proceso a los 2 minutos sin actividad. El modal se
+        detecta **por texto** (su contenedor se reporta invisible aunque el texto
+        se renderice) y se responde con su botón afirmativo.
+        """
+        try:
+            if session.responder_inactividad():
+                self._log.info(
+                    "El portal preguntó si el operador seguía presente; se respondió para "
+                    "no perder la sesión."
+                )
+        except Exception:
+            # Si el modal no está, no hay nada que hacer: el flujo sigue.
+            pass
 
     def _interpretar(self, fila: Sequence[str], pagina: int, cuenta: str) -> ScrapedMovement:
         """Convierte una fila del portal en movimiento (delega el formato al parser)."""
@@ -795,10 +911,7 @@ def default_session_factory(config: NodeConfig) -> PortalSession:
         # Sin `trace`, sin `video` y sin capturas: el login es un secreto.
         # Nunca corras el nodo con `DEBUG=pw:api`: Playwright imprime en
         # pantalla los valores que se escriben en los formularios.
-        contexto = gestor.chromium.launch_persistent_context(
-            user_data_dir=str(config.profile_dir.expanduser()),
-            headless=_headless(),
-        )
+        contexto = _abrir_contexto(gestor, config)
     except Exception as exc:
         with contextlib.suppress(Exception):
             gestor.stop()
@@ -815,6 +928,116 @@ def default_session_factory(config: NodeConfig) -> PortalSession:
         contrato=CONTRATO_PORTAAL,
         base_url=base,
     )
+
+
+#: Hosts del portal (y de sus proveedores) a los que se permite **navegar**.
+#:
+#: El portal abre *pop-under* de afiliados (en la captura real redirigió a
+#: `aliexpress.com` con `aff_fcid`), y esa redirección se lleva la pestaña
+#: mientras el nodo está escribiendo las credenciales. Cortar la navegación
+#: fuera del banco evita que el scrape se rompa a mitad de camino.
+HOSTS_NAVEGACION_PERMITIDOS = ("bancolombia.com",)
+
+
+def _spec_del_contrato(contrato: Any, nombre: str) -> Any:
+    """Devuelve un selector del contrato, con respaldo al contrato vigente.
+
+    El contrato inyectado manda; si no trae ese campo se usa el contrato
+    vigente y, si tampoco, el fallo es explícito.
+    """
+    valor = getattr(contrato, nombre, None)
+    if valor is None:
+        valor = getattr(CONTRATO_PORTAAL, nombre, None)
+    if valor is None:
+        raise BankScrapeError(
+            CODIGO_PORTAL_NO_DISPONIBLE,
+            f"el contrato del portal no define el selector '{nombre}'",
+        )
+    return valor
+
+
+def _es_host_permitido(host: str) -> bool:
+    """¿La navegación es a un host del banco (o a un esquema no-http)?"""
+    if not host:
+        return True
+    return any(
+        host == permitido or host.endswith(f".{permitido}")
+        for permitido in HOSTS_NAVEGACION_PERMITIDOS
+    )
+
+
+def _bloquear_redirecciones(contexto: Any) -> None:
+    """Corta las navegaciones fuera del banco y cierra los pop-up."""
+
+    def _al_navegar(ruta: Any) -> None:
+        try:
+            if ruta.request.is_navigation_request():
+                # Sólo las navegaciones de **nivel superior**: los iframes de
+                # terceros (Genesys, Medallia, el propio challenge de Incapsula)
+                # se dejan pasar, o la página del portal se rompe.
+                marco = ruta.request.frame
+                if marco is not None and marco.parent_frame is not None:
+                    ruta.continue_()
+                    return
+                host = urlparse(ruta.request.url).hostname or ""
+                if not _es_host_permitido(host):
+                    ruta.abort()
+                    return
+        except Exception:
+            pass
+        with contextlib.suppress(Exception):
+            ruta.continue_()
+
+    with contextlib.suppress(Exception):
+        contexto.route("**/*", _al_navegar)
+
+    def _al_abrir_pagina(pagina_nueva: Any) -> None:
+        # Los pop-up se abren como páginas nuevas: se cierran.
+        with contextlib.suppress(Exception):
+            if pagina_nueva != contexto.pages[0]:
+                pagina_nueva.close()
+
+    with contextlib.suppress(Exception):
+        contexto.on("page", _al_abrir_pagina)
+
+
+def _abrir_contexto(gestor: Any, config: NodeConfig) -> Any:
+    """Abre el navegador persistente con la huella menos automatizable posible.
+
+    El portal está detrás de Imperva/Incapsula, que **rebota** al Chromium
+    empaquetado por Playwright cuando corre en headless. Con Chrome real
+    (`channel="chrome"`), en headed, sin el flag `--enable-automation` y sin
+    `navigator.webdriver`, el challenge se resuelve.
+
+    Si Chrome no está instalado, se cae al Chromium de Playwright (con un
+    mensaje claro, porque probablemente el portal lo rechace).
+    """
+    argumentos = dict(
+        user_data_dir=str(config.profile_dir.expanduser()),
+        headless=_headless(),
+        locale=os.environ.get(ENV_LOCALE, "es-CO"),
+        timezone_id=os.environ.get(ENV_TIMEZONE, "America/Bogota"),
+        viewport={"width": 1440, "height": 960},
+        ignore_default_args=["--enable-automation"],
+        args=["--disable-blink-features=AutomationControlled"],
+    )
+    canal = os.environ.get(ENV_CANAL, "").strip() or "chrome"
+    try:
+        contexto = gestor.chromium.launch_persistent_context(channel=canal, **argumentos)
+    except Exception as exc:
+        if canal == "chrome":
+            # Chrome real no está instalado en esta máquina: se intenta el
+            # Chromium de Playwright (el portal puede rechazarlo).
+            contexto = gestor.chromium.launch_persistent_context(**argumentos)
+            with contextlib.suppress(Exception):
+                contexto.add_init_script(_SCRIPT_SIN_AUTOMATIZACION)
+            _bloquear_redirecciones(contexto)
+            return contexto
+        raise exc
+    with contextlib.suppress(Exception):
+        contexto.add_init_script(_SCRIPT_SIN_AUTOMATIZACION)
+    _bloquear_redirecciones(contexto)
+    return contexto
 
 
 class PlaywrightPortalSession:
@@ -840,19 +1063,40 @@ class PlaywrightPortalSession:
         self._contrato = contrato
         self._base_url = base_url.rstrip("/")
 
+    def _spec(self, nombre: str) -> Any:
+        """Devuelve un selector del contrato.
+
+        El contrato inyectado manda, pero si no trae ese campo (por ejemplo,
+        porque el proceso tiene una versión anterior del módulo cargada) se usa
+        el contrato vigente. Si tampoco está, el fallo es explícito.
+        """
+        return _spec_del_contrato(self._contrato, nombre)
+
     # --- navegación ---
 
     def ir_a_autenticacion(self) -> None:
         """Abre la pantalla de autenticación."""
-        self._ir(self._contrato.path_auth)
+        self._ir(self._spec("path_auth"))
 
     def ir_a_home(self) -> None:
-        """Abre la pantalla principal (si la sesión expiró, redirige al login)."""
-        self._ir(self._contrato.path_home)
+        """Asegura que la pantalla principal esté abierta.
+
+        **No** recarga si ya estamos ahí: tras el login la SPA ya quedó en
+        `/home`, y una recarga completa reinicia la aplicación (y con ella la
+        sesión en memoria).
+        """
+        if self.url_actual().rstrip("/").endswith(self._spec("path_home").rstrip("/")):
+            return
+        self._ir(self._spec("path_home"))
 
     def ir_a_movimientos(self) -> None:
-        """Abre la pantalla de cuentas y sus movimientos."""
-        self._ir(self._contrato.path_movimientos)
+        """Abre la pestaña "Movimientos" de la cuenta ya abierta.
+
+        **Nunca** navega por URL: recargar una ruta profunda reinicia la SPA y
+        destruye la sesión (el portal vuelve al login). La navegación real es
+        client-side: se abre la cuenta desde el home y se pulsa la pestaña.
+        """
+        self._abrir_pestana_movimientos()
 
     def url_actual(self) -> str:
         """URL de la página actual."""
@@ -865,21 +1109,36 @@ class PlaywrightPortalSession:
     # --- autenticación ---
 
     def escribir_credenciales(self, usuario: str, clave: str) -> None:
-        """Escribe usuario y contraseña (nunca se registran)."""
-        self._llamar(self._localizar(self._contrato.login_usuario).fill, usuario)
-        self._llamar(self._localizar(self._contrato.login_clave).fill, clave)
+        """Escribe usuario y contraseña con **eventos de teclado reales**.
+
+        El login real es un formulario Angular y el campo de clave está
+        enmascarado (`svppasswordmask`, `type="text"`). Con `fill()` los valores
+        no llegan al control: el form queda `ng-pristine` y el botón
+        `data-test='login-button'` **nunca** se habilita, así que el login no
+        ocurre. Con teclado real Angular registra los valores y habilita el
+        botón.
+
+        El campo de clave **nunca** se vuelve a leer: su valor visible es la
+        máscara (`●●●●`), no el secreto.
+        """
+        campo_usuario = self._localizar(self._spec("login_usuario"))
+        self._llamar(campo_usuario.click)
+        self._llamar(campo_usuario.press_sequentially, usuario, delay=80)
+        campo_clave = self._localizar(self._spec("login_clave"))
+        self._llamar(campo_clave.click)
+        self._llamar(campo_clave.press_sequentially, clave, delay=150)
 
     def enviar_formulario(self) -> None:
         """Envía el formulario que esté en pantalla (login o código)."""
         if self.hay_codigo_otp():
-            boton = self._localizar(self._contrato.otp_enviar)
+            boton = self._localizar(self._spec("otp_enviar"))
         else:
-            boton = self._localizar(self._contrato.login_enviar)
+            boton = self._localizar(self._spec("login_enviar"))
         self._llamar(boton.click)
 
     def hay_codigo_otp(self) -> bool:
         """¿El portal pide un código de un solo uso?"""
-        campo = self._localizar(self._contrato.otp_codigo)
+        campo = self._localizar(self._spec("otp_codigo"))
         try:
             return campo.count() > 0 and campo.is_visible()
         except Exception:
@@ -887,54 +1146,103 @@ class PlaywrightPortalSession:
 
     def escribir_codigo_otp(self, codigo: str) -> None:
         """Escribe el código en el campo del portal (no se persiste ni se registra)."""
-        self._llamar(self._localizar(self._contrato.otp_codigo).fill, codigo)
+        campo = self._localizar(self._spec("otp_codigo"))
+        self._llamar(campo.click)
+        self._llamar(campo.press_sequentially, codigo, delay=80)
 
     # --- cuentas y movimientos ---
 
     def tarjetas_de_cuenta(self) -> list[str]:
-        """Etiquetas de las tarjetas de cuenta, en el orden de la pantalla."""
-        tarjetas = self._localizar(self._contrato.account_cards)
+        """Etiquetas de las cuentas de la pantalla, en el orden en que aparecen.
+
+        En el home real cada producto es una tarjeta y su etiqueta es el `<p>`
+        con la clase `text-ellipsis` (ver `account_card_label` del contrato).
+        """
         etiquetas: list[str] = []
-        for tarjeta in self._llamar(tarjetas.all):
-            texto = self._etiqueta_de(tarjeta)
+        for elemento in self._llamar(self._localizar(self._spec("account_card_label")).all):
+            texto = str(self._llamar(elemento.inner_text) or "").strip()
             if texto:
                 etiquetas.append(texto)
         return etiquetas
 
     def abrir_cuenta(self, etiqueta: str) -> None:
         """Abre la cuenta con esa etiqueta (nunca por posición)."""
-        tarjetas = self._localizar(self._contrato.account_cards)
-        for tarjeta in self._llamar(tarjetas.all):
-            if self._etiqueta_de(tarjeta) == etiqueta:
-                self._llamar(tarjeta.click)
-                self._abrir_pestana_movimientos()
+        for elemento in self._llamar(self._localizar(self._spec("account_card_label")).all):
+            texto = str(self._llamar(elemento.inner_text) or "").strip()
+            if texto != etiqueta:
+                continue
+            try:
+                self._llamar(elemento.click)
                 return
+            except BankScrapeError:
+                # La etiqueta aparece más de una vez (por ejemplo, el nombre del
+                # producto y el de la cuenta): se prueba con la siguiente.
+                continue
         raise BankScrapeError(
             CODIGO_CUENTA_NO_ENCONTRADA,
             f"la etiqueta de cuenta '{etiqueta}' no está en la pantalla de cuentas",
         )
 
     def filas_de_movimientos(self) -> list[list[str]]:
-        """Celdas de cada fila de la tabla "Tus movimientos"."""
-        tabla = self._localizar(self._contrato.movements_table)
+        """Celdas de cada fila de la tabla "Tus movimientos".
+
+        Se leen por CSS (`tr` / `td`) y no por roles ARIA: la tabla del portal
+        es un componente propio y sus roles no siempre se computan. La celda
+        *sticky* que duplica la fecha la resuelve el parser.
+        """
+        tabla = self._localizar(self._spec("movements_table"))
         filas: list[list[str]] = []
-        for fila in self._llamar(tabla.get_by_role("row").all):
-            celdas = [celda.inner_text().strip() for celda in fila.get_by_role("cell").all()]
+        for fila in self._llamar(tabla.locator("tr").all):
+            celdas = [
+                str(self._llamar(celda.inner_text) or "").strip()
+                for celda in self._llamar(fila.locator("td").all)
+            ]
             if celdas:
                 filas.append(celdas)
         return filas
 
     def hay_pagina_siguiente(self) -> bool:
-        """¿Hay una página siguiente disponible?"""
-        boton = self._localizar(self._contrato.pagination_next)
+        """¿Hay una página siguiente disponible?
+
+        La paginación real del portal son enlaces `<a>` con `aria-disabled`
+        (no el atributo `disabled`), así que el estado se lee de ahí.
+        """
+        boton = self._localizar(self._spec("pagination_next"))
         try:
-            return boton.count() > 0 and boton.is_enabled()
+            if boton.count() == 0:
+                return False
+            if str(self._llamar(boton.get_attribute, "aria-disabled")).lower() == "true":
+                return False
+            return bool(boton.is_enabled())
         except Exception:
             return False
 
     def ir_a_pagina_siguiente(self) -> None:
         """Avanza a la página siguiente de la tabla."""
-        self._llamar(self._localizar(self._contrato.pagination_next).click)
+        self._llamar(self._localizar(self._spec("pagination_next")).click)
+
+    def responder_inactividad(self) -> bool:
+        """Contesta el modal "¿Sigues ahí?" del portal, si está en pantalla.
+
+        El modal se busca **por texto** porque su contenedor se reporta
+        invisible aunque el texto se renderice. Devuelve `True` si lo contestó.
+        """
+        try:
+            texto = str(self.texto_visible() or "").lower()
+        except Exception:
+            return False
+        if not any(marca in texto for marca in MARCAS_INACTIVIDAD):
+            return False
+        try:
+            boton = self._pagina.get_by_text(
+                self._spec("modal_inactividad_boton"), exact=False
+            )
+            if boton.count() > 0:
+                self._llamar(boton.first.click)
+                return True
+        except Exception:
+            pass
+        return False
 
     def cerrar(self) -> None:
         """Cierra el navegador y su perfil."""
@@ -950,20 +1258,29 @@ class PlaywrightPortalSession:
         url = f"{self._base_url}{ruta if ruta.startswith('/') else f'/{ruta}'}"
         self._llamar(self._pagina.goto, url, wait_until="domcontentloaded")
 
-    def _abrir_pestana_movimientos(self) -> None:
-        """Abre la pestaña "Movimientos" si la pantalla la tiene."""
-        pestana = self._localizar(self._contrato.movements_tab)
-        try:
-            if pestana.count() > 0 and pestana.is_visible():
-                self._llamar(pestana.click)
-        except Exception:
-            # La pestaña puede no existir en el DOM real: la tabla manda.
-            pass
+    def _abrir_pestana_movimientos(self, timeout: float = 45.0) -> None:
+        """Abre la pestaña "Movimientos" en cuanto aparece.
+
+        Al abrir la cuenta, el portal tarda unos segundos en pintar el panel con
+        las pestañas ("Detalles | Movimientos"). Buscarlas de inmediato daba
+        `count=0` y el scrape terminaba con cero movimientos.
+        """
+        limite = time.monotonic() + timeout
+        while time.monotonic() < limite:
+            pestana = self._localizar(self._contrato.movimientos_tab)
+            try:
+                if pestana.count() > 0 and pestana.is_visible():
+                    self._llamar(pestana.click)
+                    return
+            except Exception:
+                # La pestaña puede no existir en el DOM real: la tabla manda.
+                pass
+            time.sleep(1.0)
 
     def _etiqueta_de(self, tarjeta: Any) -> str:
         """Etiqueta (nombre visible) de una tarjeta de cuenta."""
         try:
-            etiqueta = self._localizar(self._contrato.account_card_label, tarjeta)
+            etiqueta = self._localizar(self._spec("account_card_label"), tarjeta)
             if etiqueta.count() > 0:
                 return etiqueta.inner_text().strip()
         except Exception:
@@ -989,13 +1306,17 @@ class PlaywrightPortalSession:
         for locator in candidatos:
             if locator.count() > 0:
                 return locator
-        return candidatos[0] if candidatos else base.locator("body")
+        # Ninguno coincidió: se devuelve el **último** candidato (el CSS, que
+        # es el más específico) y no el primero. Devolver el primero dejaba
+        # cada operación esperando el timeout de Playwright sobre un elemento
+        # que no existe, en vez de fallar rápido con un error claro.
+        return candidatos[-1] if candidatos else base.locator("body")
 
     @staticmethod
-    def _llamar(accion: Callable[..., Any], *args: Any) -> Any:
+    def _llamar(accion: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """Ejecuta una operación de Playwright y traduce sus fallos."""
         try:
-            return accion(*args)
+            return accion(*args, **kwargs)
         except BankScrapeError:
             raise
         except Exception as exc:

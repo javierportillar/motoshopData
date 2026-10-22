@@ -5,20 +5,27 @@ las **celdas** de una fila del portal y devuelve un movimiento tipado. Es
 determinista: las mismas celdas producen siempre el mismo movimiento, y por eso
 se puede probar con fixtures offline (sin portal).
 
-Contrato con el portal
-----------------------
-La tabla "Tus movimientos" del portal Bancolombia tiene cuatro columnas:
+Contrato con el portal (verificado contra el portal real el 21 oct 2026)
+---------------------------------------------------------------------------
+La tabla "Tus movimientos" del portal Bancolombia tiene cuatro columnas, pero
+cada fila entrega **cinco celdas**: la primera es una celda *sticky* que
+**duplica la fecha** (el header real es `Fecha | Fecha | Descripción | Referencia
+| Valor | exchange`). El parser descarta esa celda fija.
 
     Fecha | Descripción | Referencia | Valor
 
-- **Fecha**: `DD/MM/YYYY` (día primero: `10/02/2025` es 10 de febrero).
-- **Descripción**: el texto de la operación. Sólo las descripciones que
-  **empiezan** con `PAGO QR` traen el nombre del pagador; cualquier otra
-  descripción deja el pagador vacío y **nunca** lanza una excepción.
+- **Fecha**: dos formatos reales, ambos aceptados:
+  `21 oct 2026` (mes en letras, es lo que muestra el portal) y `DD/MM/YYYY`
+  (`10/02/2025` es 10 de febrero).
+- **Descripción**: el texto de la operación. Las descripciones que **empiezan**
+  con `PAGO QR`, `PAGO LLAVE` o `PAGO PSE` traen el nombre del pagador (o la
+  razón social); cualquier otra descripción deja el pagador vacío y **nunca**
+  lanza una excepción.
 - **Referencia**: puede venir con el sufijo `" null"` que el portal agrega
   cuando la referencia no existe, o ser una referencia de sólo ceros
-  (`0000000000`), que **no** sirve para conciliar.
-- **Valor**: importes en formato colombiano (`$ 458.200,00`, `- $ 7.590,00`).
+  (`00000000000`), que **no** sirve para conciliar.
+- **Valor**: importes en formato colombiano (`$ 458.200,00`, `- $ 7.590,00`)
+  con **espacio no separable** (U+00A0) entre el símbolo y las cifras.
 
 Reglas de dinero (ADR-0008-07)
 -----------------------------
@@ -113,11 +120,41 @@ ORDEN_DE_COLUMNAS = ("fecha", "descripcion", "referencia", "valor")
 #: nunca por posición a ciegas.
 ORDEN_DE_COLUMNAS_ALTERNATIVO = ("descripcion", "referencia", "valor", "fecha")
 
-#: Prefijo de la descripción que trae el nombre del pagador.
+#: Prefijos de la descripción que traen el nombre del pagador.
+#:
+#: Verificados contra el portal real: `PAGO QR <nombre>` (pago con QR) y
+#: `PAGO LLAVE <nombre>` (transferencia por llave) son **entradas** y traen el
+#: nombre de quien pagó. `PAGO PSE <razón social>` **no** entra: en este portal
+#: es una salida (el nombre es a quién se le pagó, no quién pagó), igual que
+#: `CONSIGNACION CORRESPONSAL CB` o `ABONO INTERESES AHORROS`.
+PREFIJOS_DE_PAGO = ("PAGO QR", "PAGO LLAVE")
+
+#: Prefijo de la descripción que trae el nombre del pagador (alias del primero).
 PREFIJO_PAGO_QR = "PAGO QR"
 
+#: Meses en abreviatura, como los muestra el portal (`21 oct 2026`).
+MESES_EN_ABREVIATURA = {
+    "ene": 1,
+    "feb": 2,
+    "mar": 3,
+    "abr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "ago": 8,
+    "sep": 9,
+    "set": 9,
+    "oct": 10,
+    "nov": 11,
+    "dic": 12,
+}
+
 _RE_FECHA = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
-_RE_PAGO_QR = re.compile(r"^PAGO\s+QR\s+(?P<nombre>\S.*)$", re.IGNORECASE)
+_RE_FECHA_CON_MES = re.compile(r"^(\d{1,2})\s+([a-záéíóúñ]{3,10})\s+(\d{4})$", re.IGNORECASE)
+_RE_PAGO = re.compile(
+    r"^(?P<prefijo>PAGO\s+(?:QR|LLAVE))\s+(?P<nombre>\S.*)$",
+    re.IGNORECASE,
+)
 _RE_NULO_AL_FINAL = re.compile(r"\s*null$", re.IGNORECASE)
 _RE_ESPACIOS = re.compile(r"\s+")
 #: Espacios (incluido el espacio duro del portal: `\s` también lo cubre) y el
@@ -185,20 +222,21 @@ def sanitize_reference(raw: str) -> str:
     Returns:
         La referencia saneada (puede quedar vacía).
     """
-    texto = _RE_ESPACIOS.sub(" ", (raw or "")).strip()
+    texto = _normalizar_texto(raw)
     return _RE_NULO_AL_FINAL.sub("", texto).strip()
 
 
 def parse_movement_row(cells: Sequence[str]) -> ParsedMovement:
     """Interpreta las celdas de una fila de la tabla "Tus movimientos".
 
-    Las celdas llegan en el orden del portal —`Fecha | Descripción | Referencia
-    | Valor`—; el orden se confirma por contenido (la fecha `DD/MM/YYYY` y el
-    importe se reconocen solos), de modo que también se acepta la variante con
-    la fecha al final.
+    Las celdas llegan en el orden del portal. La fila real trae **cinco** celdas:
+    la primera es una celda *sticky* que duplica la fecha y se descarta. El orden
+    de las columnas se confirma por contenido (la fecha y el importe se
+    reconocen solos), de modo que también se acepta la variante con la fecha al
+    final.
 
     Args:
-        cells: las cuatro celdas de la fila, en cualquier orden reconocible.
+        cells: las celdas de la fila, en cualquier orden reconocible.
 
     Returns:
         El movimiento interpretado, con importes exactos (`Decimal`).
@@ -208,6 +246,7 @@ def parse_movement_row(cells: Sequence[str]) -> ParsedMovement:
             reconoce la fecha o el importe, o si el importe no es un número.
     """
     celdas = [str(celda or "").strip() for celda in cells]
+    celdas = _descartar_celda_fija(celdas)
     if len(celdas) != 4:
         raise FormatoDeMovimientoInvalido(
             "La fila del portal debe traer 4 celdas (Fecha, Descripción, Referencia y "
@@ -219,19 +258,41 @@ def parse_movement_row(cells: Sequence[str]) -> ParsedMovement:
     descripcion = _normalizar_texto(celdas[orden["descripcion"]])
     referencia = sanitize_reference(celdas[orden["referencia"]])
     valor = parse_colombian_amount(celdas[orden["valor"]])
+    es_ingreso = valor > 0
 
     return ParsedMovement(
         fecha=fecha,
         descripcion=descripcion,
         referencia=referencia,
         referencia_utilizable=_referencia_utilizable(referencia),
-        pagador_nombre=_extraer_pagador(descripcion),
+        # El pagador sólo existe en los **ingresos**: en una salida (`PAGO PSE
+        # ASOPAGOS`, `PAGO PSE HAAN SAS`) el nombre es a quién se le pagó, no
+        # quién pagó.
+        pagador_nombre=_extraer_pagador(descripcion) if es_ingreso else "",
         valor=valor,
         direccion=(
             MovementDirection.EGRESO if valor < 0 else MovementDirection.INGRESO
         ),
-        es_candidato_pago=valor > 0,
+        es_candidato_pago=es_ingreso,
     )
+
+
+def _descartar_celda_fija(celdas: list[str]) -> list[str]:
+    """Quita la celda *sticky* que duplica la fecha.
+
+    El portal entrega la primera columna dos veces: una como celda fija
+    (`bc-table-fixed-column-left`) para que la fecha quede visible al
+    desplazamiento horizontal, y la otra como la columna sortable real. Cuando
+    las dos primeras celdas son la misma fecha, se descarta la primera.
+    """
+    if (
+        len(celdas) == 5
+        and _es_fecha(celdas[0])
+        and _es_fecha(celdas[1])
+        and _parsear_fecha(celdas[0]) == _parsear_fecha(celdas[1])
+    ):
+        return celdas[1:]
+    return celdas
 
 
 def _partir_cifras(texto: str) -> tuple[str, str | None]:
@@ -266,8 +327,12 @@ def _detectar_orden(celdas: list[str]) -> dict[str, int]:
 
 
 def _es_fecha(celda: str) -> bool:
-    """¿La celda es una fecha `DD/MM/YYYY` que existe en el calendario?"""
-    if not _RE_FECHA.match(celda):
+    """¿La celda es una fecha que existe en el calendario?
+
+    Acepta los dos formatos reales del portal: `21 oct 2026` (mes en letras) y
+    `DD/MM/YYYY`.
+    """
+    if not _RE_FECHA.match(celda) and not _RE_FECHA_CON_MES.match(celda):
         return False
     try:
         _parsear_fecha(celda)
@@ -284,24 +349,48 @@ def _parece_importe(celda: str) -> bool:
 
 
 def _parsear_fecha(celda: str) -> datetime.date:
-    """Fecha `DD/MM/YYYY` del portal (día primero)."""
-    coincidencia = _RE_FECHA.match(celda.strip())
-    if coincidencia is None:
-        raise FormatoDeMovimientoInvalido(
-            f"La fecha del movimiento no tiene el formato DD/MM/YYYY: {celda!r}"
-        )
-    dia, mes, anio = (int(grupo) for grupo in coincidencia.groups())
+    """Fecha del portal: `21 oct 2026` (mes en letras) o `DD/MM/YYYY`."""
+    texto = celda.strip()
+    coincidencia = _RE_FECHA.match(texto)
+    if coincidencia is not None:
+        dia, mes, anio = (int(grupo) for grupo in coincidencia.groups())
+        return _construir_fecha(dia, mes, anio, texto)
+
+    coincidencia = _RE_FECHA_CON_MES.match(texto)
+    if coincidencia is not None:
+        dia, mes_texto, anio = coincidencia.groups()
+        clave = mes_texto.strip().lower()[:3]
+        mes = MESES_EN_ABREVIATURA.get(clave)
+        if mes is None:
+            raise FormatoDeMovimientoInvalido(
+                f"La fecha del movimiento tiene un mes desconocido: {celda!r}"
+            )
+        return _construir_fecha(int(dia), mes, int(anio), texto)
+
+    raise FormatoDeMovimientoInvalido(
+        f"La fecha del movimiento no tiene un formato reconocido: {celda!r}"
+    )
+
+
+def _construir_fecha(dia: int, mes: int, anio: int, original: str) -> datetime.date:
+    """Construye la fecha o explica que no existe en el calendario."""
     try:
         return datetime.date(anio, mes, dia)
     except ValueError as exc:
         raise FormatoDeMovimientoInvalido(
-            f"La fecha del movimiento no existe en el calendario: {celda!r}"
+            f"La fecha del movimiento no existe en el calendario: {original!r}"
         ) from exc
 
 
 def _extraer_pagador(descripcion: str) -> str:
-    """Nombre del pagador, sólo si la descripción empieza con `PAGO QR`."""
-    coincidencia = _RE_PAGO_QR.match(descripcion)
+    """Nombre del pagador si la descripción es un pago **entrante**.
+
+    El portal real usa dos prefijos de entrada: `PAGO QR <nombre>` y
+    `PAGO LLAVE <nombre>`. `PAGO PSE` es una salida (el nombre es el
+    acreedor), así que no trae pagador. Cualquier otra descripción deja el
+    pagador vacío y no lanza excepción.
+    """
+    coincidencia = _RE_PAGO.match(descripcion)
     if coincidencia is None:
         return ""
     return _normalizar_texto(coincidencia.group("nombre"))
@@ -315,5 +404,11 @@ def _referencia_utilizable(referencia: str) -> bool:
 
 
 def _normalizar_texto(texto: str) -> str:
-    """Espacios colapsados y sin bordes."""
-    return _RE_ESPACIOS.sub(" ", texto).strip()
+    """Espacios colapsados y sin bordes.
+
+    El portal usa espacios **no separables** (U+00A0) entre el símbolo pesos y
+    las cifras, y a veces U+202F. Se convierten a un espacio normal para que el
+    resto del análisis no dependa del carácter exacto.
+    """
+    limpio = (texto or "").replace("\u00a0", " ").replace("\u202f", " ")
+    return _RE_ESPACIOS.sub(" ", limpio).strip()

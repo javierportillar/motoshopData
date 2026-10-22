@@ -78,8 +78,10 @@ def _config(
         "BANK_PROFILE_DIR": str(tmp_path / "perfil"),
     }
     if ventana_amplia:
-        env["BANK_WINDOW_START"] = "2025-01-01"
-        env["BANK_WINDOW_END"] = "2025-12-31"
+        # Los fixtures son una captura REAL del portal (21 oct 2026): la
+        # ventana tiene que cubrir esa fecha.
+        env["BANK_WINDOW_START"] = "2026-01-01"
+        env["BANK_WINDOW_END"] = "2026-12-31"
     return load_node_config(env)
 
 
@@ -181,7 +183,7 @@ def test_recorre_todas_las_paginas_de_la_ventana_y_expone_pagina_y_ventana(tmp_p
 
     assert resultado.paginas == 2
     objetivo = next(
-        mov for mov in resultado.movimientos if mov.pagador_nombre == "CRISTOPHER BENAMIDES P"
+        mov for mov in resultado.movimientos if mov.pagador_nombre == "CRISTOPHER BENAVIDES P"
     )
     assert objetivo.pagina == 2
     assert objetivo.cuenta_origen == ETIQUETA_TENANT
@@ -202,8 +204,21 @@ def test_ventana_por_defecto_es_el_dia_en_curso(tmp_path: Path) -> None:
 
 
 def test_los_movimientos_fuera_de_la_ventana_no_se_ingresan(tmp_path: Path) -> None:
-    """La ventana acota qué movimientos se leen del portal."""
-    config = _config(tmp_path, ventana_amplia=False)
+    """La ventana acota qué movimientos se leen del portal.
+
+    Los fixtures son una captura real del 21 oct 2026: la ventana de esta
+    prueba termina el día anterior, así que ninguno debe entrar.
+    """
+    env = {
+        "BANK_SCRAPER_ENABLED": "true",
+        "BANK_TENANT": "masvital",
+        "BANK_ACCOUNT_LABEL": ETIQUETA_TENANT,
+        "BANK_CREDENTIAL_ENTRY": "bancolombia-masvital",
+        "BANK_PROFILE_DIR": str(tmp_path / "perfil"),
+        "BANK_WINDOW_START": "2026-10-01",
+        "BANK_WINDOW_END": "2026-10-20",
+    }
+    config = load_node_config(env)
 
     resultado = _scraper(_sesion()).scrape(config)
 
@@ -329,9 +344,8 @@ def test_ejecucion_concurrente_rechazada_por_lock(tmp_path: Path) -> None:
     """Dos corridas a la vez no pueden: la segunda encuentra el lock."""
     config = _config(tmp_path)
 
-    with acquire_session_slot(config):
-        with pytest.raises(SessionSlotError) as error:
-            _scraper(_sesion()).scrape(config)
+    with acquire_session_slot(config), pytest.raises(SessionSlotError) as error:
+        _scraper(_sesion()).scrape(config)
 
     assert error.value.motivo == "ejecucion_concurrente"
 
@@ -401,3 +415,163 @@ def test_el_contrato_centraliza_los_selectores_del_portal() -> None:
         "pagination_prev",
     ):
         assert getattr(contrato, campo) is not None
+
+
+# --- Hechos verificados contra el portal real (21 oct 2026) ---
+
+
+class _ElementoFalso:
+    """Elemento mínimo que registra los clics."""
+
+    def __init__(self) -> None:
+        self.clics = 0
+
+    def click(self) -> None:
+        self.clics += 1
+
+    def inner_text(self) -> str:
+        return "Estoy aquí"
+
+
+class _LocadorFalso:
+    """Localizador mínimo: cuenta, visibilidad y elementos."""
+
+    def __init__(
+        self, elementos: list[_ElementoFalso] | None = None, texto: str = ""
+    ) -> None:
+        self._elementos = elementos or []
+        self._texto = texto
+
+    def all(self) -> list[_ElementoFalso]:
+        return self._elementos
+
+    def count(self) -> int:
+        return len(self._elementos)
+
+    def is_visible(self) -> bool:
+        return bool(self._elementos)
+
+    @property
+    def first(self) -> _ElementoFalso:
+        # En Playwright `locator.first` es una propiedad, no un método.
+        return self._elementos[0]
+
+    def inner_text(self) -> str:
+        return self._texto
+
+
+class _PaginaFalsa:
+    """Página que registra cualquier navegación por URL."""
+
+    def __init__(self, texto: str = "") -> None:
+        self.gotos: list[str] = []
+        self.texto = texto
+
+    def goto(self, url: str, **_kwargs: object) -> None:
+        self.gotos.append(url)
+
+    def locator(self, _css: str) -> _LocadorFalso:
+        return _LocadorFalso(texto=self.texto)
+
+    def get_by_text(self, _texto: str, **_kwargs: object) -> _LocadorFalso:
+        return _LocadorFalso([_ElementoFalso()])
+
+
+def test_ir_a_movimientos_no_navega_por_url() -> None:
+    """Navegar por URL a una ruta profunda reinicia la SPA y rompe la sesión.
+
+    El portal real pierde la sesión si se recarga una ruta profunda: vuelve al
+    login. La navegación tiene que ser client-side (clic en la cuenta y clic
+    en la pestaña).
+    """
+    from motoshop_api.erp.bankreconciliation.scraper import PlaywrightPortalSession
+
+    pagina = _PaginaFalsa()
+    sesion = PlaywrightPortalSession(
+        gestor=None,
+        contexto=None,
+        pagina=pagina,
+        contrato=CONTRATO_PORTAAL,
+        base_url="https://svpersonas.apps.bancolombia.com",
+    )
+
+    sesion.ir_a_movimientos()
+
+    assert pagina.gotos == []
+
+
+def test_el_scraper_abre_la_cuenta_antes_de_los_movimientos(tmp_path: Path) -> None:
+    """El orden real del portal: home → cuenta → pestaña Movimientos."""
+    sesion = _sesion()
+
+    _scraper(sesion).scrape(_config(tmp_path))
+
+    assert sesion.acciones.index("ir_a_home") < sesion.acciones.index(
+        "abrir_cuenta:MasVital"
+    )
+    assert sesion.acciones.index("abrir_cuenta:MasVital") < sesion.acciones.index(
+        "ir_a_movimientos"
+    )
+
+
+def test_el_modal_de_inactividad_se_responde_por_texto() -> None:
+    """El portal cancela el proceso a los 2 minutos: hay que contestar."""
+    from motoshop_api.erp.bankreconciliation.scraper import PlaywrightPortalSession
+
+    pagina = _PaginaFalsa(texto="¿Sigues ahí? Por seguridad, cancelaremos tu proceso")
+    sesion = PlaywrightPortalSession(
+        gestor=None,
+        contexto=None,
+        pagina=pagina,
+        contrato=CONTRATO_PORTAAL,
+        base_url="https://svpersonas.apps.bancolombia.com",
+    )
+
+    assert sesion.responder_inactividad() is True
+
+
+def test_sin_modal_de_inactividad_no_hay_que_responder_nada() -> None:
+    """Fuera del modal, `responder_inactividad` no hace nada."""
+    from motoshop_api.erp.bankreconciliation.scraper import PlaywrightPortalSession
+
+    pagina = _PaginaFalsa(texto="Tus productos")
+    sesion = PlaywrightPortalSession(
+        gestor=None,
+        contexto=None,
+        pagina=pagina,
+        contrato=CONTRATO_PORTAAL,
+        base_url="https://svpersonas.apps.bancolombia.com",
+    )
+
+    assert sesion.responder_inactividad() is False
+
+
+def test_la_paginacion_real_se_lee_de_aria_disabled() -> None:
+    """La paginación real son enlaces `<a>` con `aria-disabled`, no `disabled`."""
+    from tests.bank_fakes import leer_fixture, paginacion_habilitada
+
+    assert paginacion_habilitada(leer_fixture("movimientos_pagina1.html")) is True
+    assert paginacion_habilitada(leer_fixture("movimientos_pagina2.html")) is False
+
+
+def test_ir_a_autenticacion_navega_con_wait_until() -> None:
+    """La navegación inicial SÍ puede ser por URL (antes del login).
+
+    Regresión: `_llamar` no aceptaba `**kwargs`, así que `goto(..., wait_until=)`
+    reventaba con `TypeError` y el login nunca empezaba. La suite offline no lo
+    cubría porque el doble no navega.
+    """
+    from motoshop_api.erp.bankreconciliation.scraper import PlaywrightPortalSession
+
+    pagina = _PaginaFalsa()
+    sesion = PlaywrightPortalSession(
+        gestor=None,
+        contexto=None,
+        pagina=pagina,
+        contrato=CONTRATO_PORTAAL,
+        base_url="https://svpersonas.apps.bancolombia.com",
+    )
+
+    sesion.ir_a_autenticacion()
+
+    assert pagina.gotos == ["https://svpersonas.apps.bancolombia.com/autenticacion"]

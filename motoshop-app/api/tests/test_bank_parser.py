@@ -233,3 +233,79 @@ def test_las_descripciones_reales_del_portal_se_clasifican_bien(
 
     assert movimiento.pagador_nombre == pagador
     assert movimiento.descripcion == descripcion
+
+
+# --- Hechos verificados contra el portal real (21 oct 2026) ---
+
+
+def test_la_fila_real_trae_cinco_celdas_por_la_fecha_duplicada() -> None:
+    """El portal entrega la fecha dos veces: una celda *sticky* y la sortable.
+
+    La fila real es `Fecha | Fecha | Descripción | Referencia | Valor`: la
+    primera celda es fija (`bc-table-fixed-column-left`) para que la fecha
+    quede visible al desplazar la tabla.
+    """
+    fila_real = [
+        "21 oct 2026",
+        "21 oct 2026",
+        "PAGO QR CAMILA PEREZ LOPEZ",
+        "0092055984",
+        "$\xa024.600,00",
+    ]
+
+    movimiento = parse_movement_row(fila_real)
+
+    assert movimiento.fecha == datetime.date(2026, 10, 21)
+    assert movimiento.descripcion == "PAGO QR CAMILA PEREZ LOPEZ"
+    assert movimiento.referencia == "0092055984"
+    assert movimiento.valor == Decimal("24600.00")
+    assert movimiento.pagador_nombre == "CAMILA PEREZ LOPEZ"
+
+
+def test_la_fecha_del_portal_es_mes_en_letras() -> None:
+    """El portal muestra `21 oct 2026`, no `DD/MM/YYYY`."""
+    movimiento = parse_movement_row(
+        ["21 oct 2026", "PAGO QR LIZETH STEPHANIA PORTI", "0092055984 null", "$ 80.700,00"]
+    )
+
+    assert movimiento.fecha == datetime.date(2026, 10, 21)
+
+
+def test_el_importe_usa_espacio_no_separable() -> None:
+    """El portal separa el símbolo pesos de las cifras con U+00A0."""
+    movimiento = parse_movement_row(
+        ["21 oct 2026", "COMISION TRASLADO OTROS BANCOS", "", "-$\xa07.590,00"]
+    )
+
+    assert movimiento.valor == Decimal("-7590.00")
+    assert movimiento.direccion.value == "egreso"
+
+
+def test_el_pagador_sale_de_un_pago_llave() -> None:
+    """`PAGO LLAVE <nombre>` es una entrada y trae el nombre de quien pagó."""
+    movimiento = parse_movement_row(
+        ["21 oct 2026", "PAGO LLAVE LIZETH BURGOS", "0092055984 null", "$\xa023.000,00"]
+    )
+
+    assert movimiento.pagador_nombre == "LIZETH BURGOS"
+    assert movimiento.es_candidato_pago is True
+
+
+def test_pago_pse_no_trae_pagador_porque_es_una_salida() -> None:
+    """`PAGO PSE` es un pago hecho por la empresa: el nombre es el acreedor."""
+    movimiento = parse_movement_row(
+        ["21 oct 2026", "PAGO PSE ASOPAGOS", "760321133", "-$\xa0864.100,00"]
+    )
+
+    assert movimiento.pagador_nombre == ""
+    assert movimiento.es_candidato_pago is False
+
+
+def test_una_referencia_de_solo_ceros_no_es_utilizable() -> None:
+    """`00000000000` no sirve para conciliar."""
+    movimiento = parse_movement_row(
+        ["21 oct 2026", "IVA COMIS TRASLADO OTROS BCOS", "00000000000", "-$\xa01.442,10"]
+    )
+
+    assert movimiento.referencia == "00000000000"
+    assert movimiento.referencia_utilizable is False

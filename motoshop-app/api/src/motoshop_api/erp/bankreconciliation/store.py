@@ -124,6 +124,14 @@ class BankStore(Protocol):
         hasta: date | None = None,
     ) -> list[BankMovementOut]: ...
 
+    def list_movimientos(
+        self,
+        tenant: str,
+        estado: EstadoMovimiento | None = None,
+        desde: date | None = None,
+        hasta: date | None = None,
+    ) -> list[BankMovementOut]: ...
+
     def find_movement(self, tenant: str, id_movimiento: str) -> BankMovementOut | None: ...
 
     def move_to_state(
@@ -193,6 +201,16 @@ class FakeBankStore:
         filas.sort(key=lambda fila: fila["id_externo"])
         filas.sort(key=lambda fila: fila["fecha_movimiento"], reverse=True)
         return [BankMovementOut(**fila) for fila in filas]
+
+    def list_movimientos(
+        self,
+        tenant: str,
+        estado: EstadoMovimiento | None = None,
+        desde: date | None = None,
+        hasta: date | None = None,
+    ) -> list[BankMovementOut]:
+        """Alias en español de `list_movements` (mismo resultado, otro nombre)."""
+        return self.list_movements(tenant, estado, desde, hasta)
 
     def find_movement(self, tenant: str, id_movimiento: str) -> BankMovementOut | None:
         fila = self._fila(tenant, id_movimiento)
@@ -272,6 +290,16 @@ class RealBankStore:
         with self._motor().connect() as conn:
             rows = conn.execute(text(sql), params).fetchall()
         return [_a_movimiento(row) for row in rows]
+
+    def list_movimientos(
+        self,
+        tenant: str,
+        estado: EstadoMovimiento | None = None,
+        desde: date | None = None,
+        hasta: date | None = None,
+    ) -> list[BankMovementOut]:
+        """Alias en español de `list_movements` (mismo resultado, otro nombre)."""
+        return self.list_movements(tenant, estado, desde, hasta)
 
     def find_movement(self, tenant: str, id_movimiento: str) -> BankMovementOut | None:
         from sqlalchemy import text

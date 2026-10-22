@@ -13,17 +13,25 @@ determinista.
 
 from __future__ import annotations
 
+import html
 import re
 from pathlib import Path
 
 RUTA_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "bank"
 
 _TARJETA = re.compile(r'<article class="account-card".*?</article>', re.S)
-_ETIQUETA = re.compile(r'<h3 class="account-card__label">(.*?)</h3>', re.S)
+# La etiqueta real de la cuenta en el home es el <p> del card de producto.
+_ETIQUETA = re.compile(
+    r'<p[^>]*class="[^"]*bc-cibsans-font-style-4-bold[^"]*"[^>]*>(.*?)</p>', re.S
+)
 _FILA = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S)
 _CELDA = re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", re.S)
-_BOTON = re.compile(r"<button([^>]*)>(.*?)</button>", re.S)
+# La paginación real son enlaces <a> con aria-disabled (no el atributo disabled).
+_PAGINACION = re.compile(
+    r'<a class="bc-link[^"]*bc-paginator-v2-(?:next|prev)-link"([^>]*)>(.*?)</a>', re.S
+)
 _TAG = re.compile(r"<[^>]+>")
+_ESPACIOS = re.compile(r"[ \t\r\n]+")
 _CABECERA = ("Fecha", "Descripción", "Referencia", "Valor")
 
 
@@ -33,8 +41,16 @@ def leer_fixture(nombre: str) -> str:
 
 
 def _texto(bruto: str) -> str:
-    """Texto visible de un fragmento de HTML (sin etiquetas, espacios colapsados)."""
-    return " ".join(_TAG.sub(" ", bruto).split())
+    """Texto visible de un fragmento de HTML, como el `inner_text` del navegador.
+
+    Las entidades se desescapan (el portal real escribe los importes con
+    `&nbsp;`, espacio **no separable**, entre el símbolo pesos y las cifras) y
+    sólo se colapsan los espacios ASCII: el espacio no separable se conserva
+    para que el número quede igual que en el portal (`$ 7.590,00`, sin
+    separación entre la coma y los centavos).
+    """
+    texto = html.unescape(_TAG.sub("", bruto))
+    return _ESPACIOS.sub(" ", texto).strip()
 
 
 def etiquetas_de_cuentas(html: str) -> list[str]:
@@ -59,10 +75,14 @@ def filas_de_movimientos(html: str) -> list[list[str]]:
 
 
 def paginacion_habilitada(html: str) -> bool:
-    """`True` si el botón "Siguiente" existe y no está deshabilitado."""
-    for atributos, contenido in _BOTON.findall(html):
+    """`True` si el enlace "Siguiente" existe y no está deshabilitado.
+
+    El portal real marca la paginación con `aria-disabled` en un `<a>`, así que
+    el atributo `disabled` no aplica.
+    """
+    for atributos, contenido in _PAGINACION.findall(html):
         if "Siguiente" in _texto(contenido):
-            return "disabled" not in atributos.lower()
+            return 'aria-disabled="true"' not in atributos.lower()
     return False
 
 
@@ -187,6 +207,11 @@ class PortalFalso:
     def ir_a_pagina_siguiente(self) -> None:
         self.acciones.append("ir_a_pagina_siguiente")
         self.pagina += 1
+
+    def responder_inactividad(self) -> bool:
+        """El modal "¿Sigues ahí?" aparece si el nodo tarda más de 2 minutos."""
+        self.acciones.append("responder_inactividad")
+        return False
 
     def cerrar(self) -> None:
         self.acciones.append("cerrar")
