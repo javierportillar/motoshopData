@@ -70,17 +70,18 @@ Los códigos ya están confirmados contra los datos, no por el nombre:
 - **transferencia** (recibo de factura pagada por transferencia) ⇒ `F07`;
 - **consignación** (plata que entra sin factura) ⇒ `F05`.
 
-`F07` está confirmado en esta base (`TRANSFERENCIA BANCO` → `11100501`). `F05` **no aparece en el
-snapshot** de `masvital`, así que hay que verificar que la fila exista antes de usarla:
+Los dos están confirmados en esta base (y en `sgHermes`): `F05 CONSIGNACION BANCO....` y
+`F07 TRANSFERENCIA BANCO....`, ambas con `codcue = 11100501` y `codban` vacío. Verificá igual:
 
 ```sql
 SELECT codpag, forpag, codban, codcue FROM formapago WHERE codpag IN ('F05','F07');
 SELECT codpag, COUNT(*) FROM detapago GROUP BY codpag ORDER BY 2 DESC;
 ```
 
-Reportá las dos salidas tal cual. Si `F05` no existe o su `forpag` no es una consignación bancaria,
-**no** definas `BANK_CODPAG_CONSIGNACION_MASVITAL`: las consignaciones quedan pendientes (409
-`codpag_no_confirmado`), que es el comportamiento correcto. No reutilices `F07` como consignación.
+Reportá las dos salidas tal cual. Si `F05` no existiera o su `forpag` no fuera una consignación
+bancaria, **no** definas `BANK_CODPAG_CONSIGNACION_MASVITAL` y reportalo: no reutilices `F07` como
+consignación. El diseño separa transferencia (recibo `S01`) de consignación (documento `CC`) por
+`factura_id`, así que compartir `codcue` no las cruza.
 
 ## Paso 4 — Variables de entorno (sólo cuando el paso 3 esté confirmado)
 
@@ -98,7 +99,7 @@ BANK_CODPAG_CONSIGNACION_MASVITAL=F05
 `BANK_ACCOUNT_LABEL=MasVital` es la etiqueta de la tarjeta del home del portal (cuenta
 879-000605-71). La comparación es **exacta** (normaliza espacios y mayúsculas): si el portal
 muestra otro texto, el scrape falla con `cuenta_no_encontrada` y hay que corregir la etiqueta, no
-el número. La línea de consignación sólo se deja si el Paso 3 confirmó `F05`; si no, se omite.
+el número.
 
 - Si `BANK_TENANT`, `BANK_SCRAPER_ENABLED`, `BANK_CREDENTIAL_ENTRY` o `BANK_PROFILE_DIR` ya tienen
   valor, **no los toques**: sólo verificá que coincidan con lo de arriba.
@@ -167,7 +168,14 @@ Los archivos ahora están en UTF-8 real, sin BOM. Lo único que puede quedar pen
 el runner puede abortar con `ChecksumMismatchError`. Si aparece:
 
 - calculá el checksum **con la función del runner** (nunca `sha256sum`, que no normaliza fines de
-  línea), desde la raíz del repo:
+  línea). Con los archivos de `e0ae132` tiene que dar exactamente:
+
+  ```
+  F9-002  12cd6c540db18b4a9712581f3833d09a6c544730ae8fec2f3cf3a7a9d78b18fc
+  F9-004  d56581a294cd2607e9552195a1687337c3d88cec1d93a7117bbba91cf0e47cd2
+  ```
+
+  Si no coincide, no sigas: el archivo no es el de la rama. Comando:
 
   ```bash
   python -c "from pathlib import Path; from infra.migrations.run_migrations import sha256_file; print(sha256_file(Path('infra/migrations/F9-002-grant_app_writer_bank.sql')))"
@@ -209,6 +217,29 @@ Tests (sacando el `pragma: no cover` de la rama):
   dos veces no lanza y el archivo no queda;
 - `Path.unlink` que falla con `PermissionError` la primera vez y funciona en el reintento: no lanza
   y el archivo se borra.
+
+## Paso 6.7 — Portabilidad de la suite en Windows
+
+La suite medida en este nodo da 59 fallas sobre un baseline de 69. Unas 13 son el lock del Paso
+6.6.3 (bug real). Las otras ~42 son **tests que asumen POSIX**, no bugs del código: fijan
+`XDG_CONFIG_HOME` y el código en Windows resuelve `%APPDATA%` (`node_config.py:216`,
+`vault.py:106`), usan keychain con pseudo-terminal, o esperan que DPAPI no exista.
+
+Arreglo, con un commit `test(banco): ...` y sin tocar lógica de producción:
+
+1. Un helper compartido (en el `conftest.py` de los tests del módulo) que fije la variable que el
+   código realmente lee según la plataforma: `APPDATA` en Windows, `XDG_CONFIG_HOME` en POSIX.
+   Reemplazá los `monkeypatch.setenv("XDG_CONFIG_HOME", ...)` por ese helper. Nada de duplicar la
+   regla: si podés, resolvé la ruta con la misma función que usa el código.
+2. `pytest.mark.skipif` **sólo** para lo que no existe en la plataforma: backend `keychain` con
+   pseudo-terminal y las expectativas de ausencia de DPAPI. Cada skip con `reason=` que nombre la
+   capacidad que falta. Nada de `skip` genérico por `sys.platform` a nivel módulo.
+3. No debilites aserciones para que pasen: si un test falla por una diferencia real de
+   comportamiento, es un hallazgo y va al reporte, no un skip.
+
+Aceptación: volvé a medir la suite completa y reportá el número final de fallas y de skips. Los
+tests del módulo bancario tienen que pasar **enteros** en Windows (salvo los skips justificados);
+las fallas que queden no pueden ser del módulo bancario ni del lock.
 
 ## Paso 7 — API arriba y verificación de lectura
 

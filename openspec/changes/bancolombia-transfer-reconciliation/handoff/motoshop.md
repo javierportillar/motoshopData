@@ -68,9 +68,9 @@ SELECT codpag, forpag, codban, codcue FROM formapago WHERE codpag IN ('F05','F07
 SELECT codpag, COUNT(*) FROM detapago GROUP BY codpag ORDER BY 2 DESC;
 ```
 
-Reportá las dos salidas tal cual y seguí: no hace falta esperar confirmación. Si `F05` no existe o
-su `forpag` no es una consignación bancaria, **no** definas `BANK_CODPAG_CONSIGNACION_MOTOSHOP` y
-seguí con el resto (las consignaciones quedan pendientes con 409, que es lo correcto).
+Las dos filas existen (verificado también en la base `masvital`): `F05 CONSIGNACION BANCO....` y
+`F07 TRANSFERENCIA BANCO....`, con `codcue = 11100501` y `codban` vacío en todas las filas. Reportá
+las dos salidas tal cual y seguí: no hace falta esperar confirmación.
 
 ## Paso 4 — Variable de entorno (sólo cuando el paso 3 esté confirmado)
 

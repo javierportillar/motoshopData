@@ -32,7 +32,7 @@ Un proceso de API = **un tenant**. La configuración vive en el `.env` de cada m
 | `BANK_VAULT_BACKEND` | `passphrase` | `passphrase` | `keychain` | — |
 | `BANK_PROFILE_DIR` | `%APPDATA%\motoshop\bank-profile\<tenant>` | ídem | `~/.config/motoshop/bank-profile/<tenant>` | — |
 | `BANK_CODPAG_TRANSFERENCIA_<TENANT>` | `F07` | `F07` | ídem | — |
-| `BANK_CODPAG_CONSIGNACION_<TENANT>` | `F05` *(verificar)* | `F05` | ídem | — |
+| `BANK_CODPAG_CONSIGNACION_<TENANT>` | `F05` | `F05` | ídem | — |
 
 Reglas de la tabla:
 
@@ -69,11 +69,12 @@ El `codpag` no se adivina por el nombre de la forma de pago: se toma de la distr
 - `BANK_ACCOUNT_LABEL` es la etiqueta de la tarjeta del home (`<p class="text-ellipsis">`): se
   compara **exacta** tras normalizar espacios y mayúsculas. MasVital = `MasVital`
   (879-000605-71); MotoShop = `Cuenta de Ahorros` (879-777844-40).
-- En la base `masvital` está confirmado `F07 TRANSFERENCIA BANCO → 11100501`. **F05 no aparece en
-  el snapshot**: antes de habilitar consignaciones en ese nodo, correr
-  `SELECT codpag, forpag FROM formapago WHERE codpag = 'F05';` y, si no existe, **no** definir
-  `BANK_CODPAG_CONSIGNACION_MASVITAL` (fail-closed: el movimiento queda pendiente en vez de
-  postear con una contrapartida equivocada).
+- Verificado en vivo en las dos bases (`sgHermes` y `masvital`): existen las 20 filas y las dos
+  que importan son `F05 CONSIGNACION BANCO....` y `F07 TRANSFERENCIA BANCO....`, ambas con
+  `codcue = 11100501`. Comparten la cuenta bancaria de contrapartida pero describen hechos
+  distintos: transferencia entra con factura (recibo `S01`) y consignación entra sin factura
+  (documento `CC`). El código las separa por `factura_id`, no por el código de forma de pago.
+- `codban` va vacío en todas las filas: la cuenta sale de `codcue`, no de `codban`.
 
 Para re-verificar por empresa:
 
