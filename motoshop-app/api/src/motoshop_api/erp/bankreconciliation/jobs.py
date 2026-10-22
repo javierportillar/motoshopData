@@ -154,7 +154,11 @@ class FakeVerificationJobStore:
         importe = _valor_normalizado(valor)
         id_dominio = id_dominio_job(tenant, factura_id, importe)
         existente = self.jobs.get(id_dominio)
-        if existente is not None:
+        # La idempotencia protege la verificación EN CURSO (no se raspa dos
+        # veces lo mismo). Un job terminado no bloquea el reintento: si el
+        # portal falló o el OTP caducó, el operador tiene que poder pedirlo de
+        # nuevo para la misma factura y el mismo importe.
+        if existente is not None and existente.estado not in ESTADOS_TERMINALES:
             return existente
         ahora = self._reloj()
         job = VerificationJob(
@@ -209,9 +213,7 @@ class FakeVerificationJobStore:
                 continue
             if job.expira_en > now:
                 continue
-            self.jobs[id_dominio] = replace(
-                job, estado=EstadoJob.EXPIRADO, actualizado_en=now
-            )
+            self.jobs[id_dominio] = replace(job, estado=EstadoJob.EXPIRADO, actualizado_en=now)
             expirados += 1
         return expirados
 
@@ -245,8 +247,25 @@ VALUES
 ON DUPLICATE KEY UPDATE id = VALUES(id)
 """
 
-_SQL_EXPIRAR = """
+#: Revive el job de dominio cuando el anterior ya terminó: es el reintento del
+#: operador (portal caído, OTP caducado), no una verificación nueva en paralelo.
+#: El `job_id` público cambia: quien sondee el intento viejo ve el estado viejo.
+_SQL_REVIVIR = """
 UPDATE app_bank_verification_jobs
+SET job_id = :job_id,
+    estado = 'en_cola',
+    nodo = NULL,
+    resultado_json = NULL,
+    error_codigo = NULL,
+    creado_en = :creado_en,
+    actualizado_en = :actualizado_en,
+    expira_en = :expira_en
+WHERE tenant = :tenant
+  AND id = :id
+  AND estado IN ('resuelto', 'sin_coincidencia', 'ambiguo', 'fallido', 'expirado')
+"""
+
+_SQL_EXPIRAR = """UPDATE app_bank_verification_jobs
 SET estado = 'expirado', actualizado_en = :now
 WHERE estado NOT IN ('resuelto', 'sin_coincidencia', 'ambiguo', 'fallido', 'expirado')
   AND expira_en <= :now
@@ -287,9 +306,12 @@ class RealVerificationJobStore:
             "expira_en": ahora + timedelta(seconds=TTL_SEGUNDOS),
         }
         with self._motor().connect() as conn:
-            # La idempotencia es de la tabla: si el job ya existe (otra
-            # corrida, otra petición), la fila gana y se devuelve tal cual.
+            # La idempotencia es de la tabla y protege el job EN CURSO: si ya
+            # existe (otra corrida, otra petición), la fila gana y se devuelve
+            # tal cual. Si la fila ya terminó, `_SQL_REVIVIR` la devuelve a
+            # `en_cola` con un `job_id` público nuevo: es un reintento.
             conn.execute(text(_SQL_INSERT), params)
+            conn.execute(text(_SQL_REVIVIR), params)
             conn.commit()
             row = conn.execute(
                 text(_SQL_SELECT + " AND id = :id LIMIT 1"),

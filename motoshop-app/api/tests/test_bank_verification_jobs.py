@@ -10,7 +10,6 @@ Los estados son exactamente los del contrato: `en_cola`, `ejecutando`,
 `expirado`.
 """
 
-
 from __future__ import annotations
 
 import datetime
@@ -102,9 +101,10 @@ def test_job_actualiza_estado_y_marca_error_sin_filas_parciales() -> None:
     job = store.create_job(TENANT, FACTURA, VALOR)
 
     assert store.update_job(TENANT, job.job_id, EstadoJob.EJECUTANDO) is True
-    assert store.update_job(
-        TENANT, job.job_id, EstadoJob.FALLIDO, error_codigo="credencial_ausente"
-    ) is True
+    assert (
+        store.update_job(TENANT, job.job_id, EstadoJob.FALLIDO, error_codigo="credencial_ausente")
+        is True
+    )
 
     guardado = store.get_job(TENANT, job.job_id)
     assert guardado is not None
@@ -116,10 +116,7 @@ def test_job_actualiza_estado_y_marca_error_sin_filas_parciales() -> None:
     assert store.get_job(OTRO_TENANT, job.job_id) is None
     # Un job inexistente no se crea: la actualización falla limpio.
     assert (
-        store.update_job(
-            TENANT, "00000000-0000-4000-8000-000000000000", EstadoJob.FALLIDO
-        )
-        is False
+        store.update_job(TENANT, "00000000-0000-4000-8000-000000000000", EstadoJob.FALLIDO) is False
     )
     assert len(store.jobs) == 1
 
@@ -153,9 +150,7 @@ def test_el_job_de_otro_tenant_no_es_visible() -> None:
     job = store.create_job(TENANT, FACTURA, VALOR)
 
     assert store.get_job(OTRO_TENANT, job.job_id) is None
-    assert (
-        store.update_job(OTRO_TENANT, job.job_id, EstadoJob.FALLIDO) is False
-    )
+    assert store.update_job(OTRO_TENANT, job.job_id, EstadoJob.FALLIDO) is False
     intacto = store.get_job(TENANT, job.job_id)
     assert intacto is not None
     assert intacto.estado == EstadoJob.EN_COLA
@@ -207,3 +202,44 @@ def test_el_resultado_se_guarda_como_json_en_la_fila() -> None:
         "ventana": {"desde": "2026-10-22T00:00:00"},
         "nodo": "pc-motoshop",
     }
+
+
+def test_un_job_terminado_no_bloquea_el_reintento() -> None:
+    """Si el intento falló, el operador puede pedir la misma verificación otra vez.
+
+    El job es de dominio (`tenant:factura:valor`), así que sin revivir la fila
+    una factura cuya verificación falló quedaría bloqueada para siempre.
+    """
+    instante = datetime.datetime(2026, 10, 22, 8, 0, 0)
+    store = FakeVerificationJobStore(reloj=lambda: instante)
+    primero = store.create_job(TENANT, FACTURA, VALOR)
+    store.update_job(
+        TENANT,
+        primero.job_id,
+        EstadoJob.FALLIDO,
+        resultado={"candidatos": 0},
+        error_codigo="credencial_ausente",
+    )
+
+    segundo = store.create_job(TENANT, FACTURA, VALOR)
+
+    assert segundo.id == primero.id
+    assert segundo.job_id != primero.job_id
+    assert segundo.estado == EstadoJob.EN_COLA
+    assert segundo.error_codigo is None
+    assert segundo.resultado is None
+    assert segundo.creado_en == instante
+    assert len(store.jobs) == 1
+
+
+def test_un_job_en_curso_no_se_duplica_al_pedirlo_de_nuevo() -> None:
+    """La idempotencia sigue protegiendo el scrape que está corriendo."""
+    store = FakeVerificationJobStore()
+    primero = store.create_job(TENANT, FACTURA, VALOR)
+    store.update_job(TENANT, primero.job_id, EstadoJob.EJECUTANDO)
+
+    segundo = store.create_job(TENANT, FACTURA, VALOR)
+
+    assert segundo.job_id == primero.job_id
+    assert segundo.estado == EstadoJob.EJECUTANDO
+    assert len(store.jobs) == 1

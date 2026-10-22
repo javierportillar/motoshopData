@@ -289,3 +289,40 @@ def test_la_app_de_produccion_monta_el_router_bancario() -> None:
 
     paths = {getattr(route, "path", "") for route in production_app.routes}
     assert "/api/erp/bank/verificaciones" in paths
+
+
+def test_post_verificaciones_tras_un_fallo_es_un_reintento_nuevo(tmp_path: Path) -> None:
+    """Después de un job fallido, el POST no devuelve el intento muerto.
+
+    Con la fila de dominio reutilizada tal cual, el front recibía `202` con
+    `estado: fallido` y el error viejo pegado: la factura quedaba sin forma de
+    reintentar cuando el portal o el OTP habían fallado.
+    """
+    jobs = FakeVerificationJobStore()
+    despachados: list = []
+    client = _cliente(
+        tmp_path,
+        jobs=jobs,
+        config=_config_nodo(tmp_path),
+        despachados=despachados,
+    )
+    headers = _headers("ger1", "gerente", ("erp-cash",))
+    primero = client.post("/api/erp/bank/verificaciones", json=BODY, headers=headers).json()
+    jobs.update_job(
+        TENANT_ID,
+        primero["job_id"],
+        EstadoJob.FALLIDO,
+        error_codigo="credencial_ausente",
+    )
+
+    response = client.post("/api/erp/bank/verificaciones", json=BODY, headers=headers)
+
+    assert response.status_code == 202, response.text
+    payload = response.json()
+    assert payload["job_id"] != primero["job_id"]
+    assert payload["estado"] == EstadoJob.EN_COLA.value
+    guardado = jobs.get_job(TENANT_ID, payload["job_id"])
+    assert guardado is not None
+    assert guardado.error_codigo is None
+    assert guardado.resultado is None
+    assert [job.job_id for job in despachados] == [primero["job_id"], payload["job_id"]]

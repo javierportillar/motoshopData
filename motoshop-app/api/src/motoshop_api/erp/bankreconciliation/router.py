@@ -158,8 +158,12 @@ def crear_verificacion(
 ) -> dict:
     """Crea el job de verificación y lo despacha al worker del nodo.
 
-    La idempotencia es del job: pedir dos veces la verificación de la misma
-    factura por el mismo importe devuelve el **mismo** `job_id`.
+    La idempotencia protege la verificación **en curso**: pedir dos veces la
+    verificación de la misma factura por el mismo importe, mientras corre,
+    devuelve el **mismo** `job_id`. Si el intento anterior terminó (`fallido`,
+    `expirado`, `resuelto`…), el pedido es un **reintento**: se reusa la fila
+    del job pero con un `job_id` público nuevo y el error viejo limpio, así el
+    operador puede volver a probar cuando el portal falló o el OTP caducó.
     """
     _exigir_nodo_capaz(config, tenant)
     job = jobs.create_job(tenant.id, body.factura_id, body.valor)
