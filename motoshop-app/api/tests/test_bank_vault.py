@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+
 from motoshop_api.erp.bankreconciliation import cli
 from motoshop_api.erp.bankreconciliation.vault import (
     CredentialVault,
