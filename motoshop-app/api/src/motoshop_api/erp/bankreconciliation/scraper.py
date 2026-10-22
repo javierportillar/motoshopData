@@ -358,6 +358,10 @@ class _Candado:
     la creación exclusiva del archivo (se borra al liberar).
     """
 
+    #: Windows puede tener el archivo tomado un instante (antivirus, indexador).
+    BORRADO_INTENTOS = 5
+    BORRADO_ESPERA_S = 0.05
+
     def __init__(self, ruta: Path) -> None:
         self._ruta = ruta
         self._fd: int | None = None
@@ -376,26 +380,53 @@ class _Candado:
                     "ya hay una corrida en curso en este nodo",
                 ) from exc
             return
-        try:  # pragma: no cover - Windows
+        try:
             self._fd = os.open(self._ruta, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
-        except FileExistsError as exc:  # pragma: no cover - Windows
+        except FileExistsError as exc:
             raise SessionSlotError(
                 MOTIVO_CONCURRENTE,
                 "ya hay una corrida en curso en este nodo",
             ) from exc
 
     def liberar(self) -> None:
-        """Devuelve el candado (idempotente)."""
-        if self._fd is None:
+        """Devuelve el candado (idempotente).
+
+        El handle se cierra ANTES de borrar: Windows no permite eliminar un
+        archivo con un descriptor vivo (`PermissionError [WinError 32]`). En
+        POSIX se libera el `flock` y se cierra el descriptor, que ya alcanza.
+
+        Si el borrado no prospera tras los reintentos se deja el archivo y se
+        avisa: este método corre en un `finally`, y levantar acá enmascararía el
+        error que se esté propagando desde el bloque protegido.
+        """
+        fd = self._fd
+        if fd is None:
             return
+        self._fd = None
         try:
             if fcntl is not None:
-                fcntl.flock(self._fd, fcntl.LOCK_UN)
-            else:  # pragma: no cover - Windows
-                self._ruta.unlink(missing_ok=True)
+                fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
-            os.close(self._fd)
-            self._fd = None
+            os.close(fd)
+        if fcntl is None:
+            self._borrar_archivo()
+
+    def _borrar_archivo(self) -> None:
+        """Borra el archivo del candado reintentando ante un handle ajeno."""
+        for intento in range(1, self.BORRADO_INTENTOS + 1):
+            try:
+                self._ruta.unlink(missing_ok=True)
+                return
+            except PermissionError:
+                if intento == self.BORRADO_INTENTOS:
+                    logging.getLogger(__name__).warning(
+                        "no se pudo borrar el candado %s tras %s intentos: "
+                        "va a bloquear la próxima corrida",
+                        self._ruta,
+                        self.BORRADO_INTENTOS,
+                    )
+                    return
+                time.sleep(self.BORRADO_ESPERA_S)
 
 
 def _preparar_perfil(config: NodeConfig) -> Path:

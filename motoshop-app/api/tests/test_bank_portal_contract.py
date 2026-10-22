@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+from motoshop_api.erp.bankreconciliation import scraper as scraper_module
 from motoshop_api.erp.bankreconciliation.node_config import (
     REPO_ROOT,
     NodeConfig,
@@ -348,6 +349,51 @@ def test_ejecucion_concurrente_rechazada_por_lock(tmp_path: Path) -> None:
         _scraper(_sesion()).scrape(config)
 
     assert error.value.motivo == "ejecucion_concurrente"
+
+
+def test_candado_windows_cierra_el_handle_antes_de_borrar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows no deja borrar un archivo con el descriptor abierto (WinError 32)."""
+    monkeypatch.setattr(scraper_module, "fcntl", None)
+    ruta = tmp_path / scraper_module.NOMBRE_LOCK
+    candado = scraper_module._Candado(ruta)
+
+    candado.adquirir()
+    assert ruta.exists()
+
+    candado.liberar()
+    candado.liberar()  # idempotente: el segundo llamado no hace nada
+
+    assert not ruta.exists()
+
+
+def test_candado_reintenta_el_borrado_tras_permission_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un antivirus puede tener el archivo tomado un instante."""
+    monkeypatch.setattr(scraper_module, "fcntl", None)
+    monkeypatch.setattr(scraper_module.time, "sleep", lambda _segundos: None)
+    ruta = tmp_path / scraper_module.NOMBRE_LOCK
+    candado = scraper_module._Candado(ruta)
+    candado.adquirir()
+
+    unlink_original = Path.unlink
+    intentos = {"n": 0}
+
+    def unlink_con_un_fallo(self: Path, *args: object, **kwargs: object) -> None:
+        intentos["n"] += 1
+        if intentos["n"] == 1:
+            raise PermissionError(32, "El proceso no tiene acceso al archivo")
+        unlink_original(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "unlink", unlink_con_un_fallo)
+
+    candado.liberar()
+
+    assert intentos["n"] == 2
+    monkeypatch.setattr(Path, "unlink", unlink_original)
+    assert not ruta.exists()
 
 
 def test_corrida_reciente_dentro_del_intervalo_minimo_rechazada(tmp_path: Path) -> None:
