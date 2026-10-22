@@ -1,0 +1,57 @@
+<!doctype html>
+<!--
+  APROXIMACIÓN del DOM real del portal (NO es una captura verificada).
+  Ver el README.md de este directorio. Tabla "Tus movimientos" con las cuatro
+  columnas reales: Fecha | Descripción | Referencia | Valor. Los importes
+  usan el formato colombiano ($ 458.200,00) y los negativos llevan el signo
+  adelante (- $ 7.590,00).
+-->
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <title>Movimientos</title>
+  </head>
+  <body>
+    <main>
+      <nav role="tablist">
+        <button type="button" role="tab" aria-selected="true">Movimientos</button>
+        <button type="button" role="tab" aria-selected="false">Resumen</button>
+      </nav>
+      <table>
+        <caption>Tus movimientos</caption>
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Descripción</th>
+            <th>Referencia</th>
+            <th>Valor</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>10/02/2025</td>
+            <td>PAGO QR LIZETH STEPHANIA PORTI</td>
+            <td>0092055984 null</td>
+            <td>$ 458.200,00</td>
+          </tr>
+          <tr>
+            <td>11/02/2025</td>
+            <td>COMISION TRASLADO OTROS BANCOS</td>
+            <td>0000000000</td>
+            <td>- $ 7.590,00</td>
+          </tr>
+          <tr>
+            <td>12/02/2025</td>
+            <td>COMPRA INTL APPLE.COM/BILL</td>
+            <td>3157991001</td>
+            <td>- $ 45.000,00</td>
+          </tr>
+        </tbody>
+      </table>
+      <nav class="paginacion">
+        <button type="button" disabled>Anterior</button>
+        <button type="button">Siguiente</button>
+      </nav>
+    </main>
+  </body>
+</html>

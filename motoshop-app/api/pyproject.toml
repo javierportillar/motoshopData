@@ -38,6 +38,12 @@ dev = [
   "pytest-cov>=5",
   "aiosqlite>=0.20",
 ]
+# Scraper del portal (slice S5): sólo la necesitan los NODOS LOCALES que
+# raspan el banco. La nube y la suite completa NO la necesitan: Playwright se
+# importa perezosamente, así que el paquete importa sin esta dependencia.
+bank = [
+  "playwright>=1.47",
+]
 
 [tool.ruff]
 line-length = 100

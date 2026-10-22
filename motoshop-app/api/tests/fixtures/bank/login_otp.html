@@ -1,0 +1,23 @@
+<!doctype html>
+<!--
+  APROXIMACIÓN del DOM real del portal (NO es una captura verificada).
+  Ver el README.md de este directorio. Pantalla de verificación de dos pasos:
+  el código se pide en la CONSOLA del nodo, nunca en el navegador.
+-->
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <title>Verificación</title>
+  </head>
+  <body>
+    <main>
+      <h1>Verificación de dos pasos</h1>
+      <p>Enviamos un código de verificación a tu celular</p>
+      <form>
+        <label for="codigo">Código</label>
+        <input id="codigo" name="codigo" inputmode="numeric" autocomplete="one-time-code" />
+        <button type="submit">Validar</button>
+      </form>
+    </main>
+  </body>
+</html>

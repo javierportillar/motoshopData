@@ -1,0 +1,28 @@
+<!doctype html>
+<!--
+  APROXIMACIÓN del DOM real del portal (NO es una captura verificada).
+  Ver el README.md de este directorio. La estructura refleja la semántica de
+  las columnas que el operador vio en pantalla: "Cuentas (2)" y una tarjeta
+  por cuenta, cada una con su etiqueta.
+-->
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <title>Cuentas</title>
+  </head>
+  <body>
+    <main>
+      <h1>Cuentas (2)</h1>
+      <section class="cuentas">
+        <article class="account-card" data-testid="cuenta">
+          <h3 class="account-card__label">Distribuidora del Norte S.A.</h3>
+          <p class="account-card__number">*** 4821</p>
+        </article>
+        <article class="account-card" data-testid="cuenta">
+          <h3 class="account-card__label">MasVital</h3>
+          <p class="account-card__number">*** 9037</p>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

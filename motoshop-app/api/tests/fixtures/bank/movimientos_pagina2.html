@@ -1,0 +1,56 @@
+<!doctype html>
+<!--
+  APROXIMACIÓN del DOM real del portal (NO es una captura verificada).
+  Ver el README.md de este directorio. Segunda página de "Tus movimientos":
+  el botón "Siguiente" viene deshabilitado (última página) y el botón
+  "Anterior" habilitado.
+-->
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <title>Movimientos</title>
+  </head>
+  <body>
+    <main>
+      <nav role="tablist">
+        <button type="button" role="tab" aria-selected="true">Movimientos</button>
+        <button type="button" role="tab" aria-selected="false">Resumen</button>
+      </nav>
+      <table>
+        <caption>Tus movimientos</caption>
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Descripción</th>
+            <th>Referencia</th>
+            <th>Valor</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>13/02/2025</td>
+            <td>PAGO QR CRISTOPHER BENAMIDES P</td>
+            <td>0092055984 null</td>
+            <td>$ 458.200,00</td>
+          </tr>
+          <tr>
+            <td>14/02/2025</td>
+            <td>CONSIGNACION CORRESPONSAL CB</td>
+            <td>760321133</td>
+            <td>$ 1.200.000,00</td>
+          </tr>
+          <tr>
+            <td>15/02/2025</td>
+            <td>PAGO PSE ASOPAGOS</td>
+            <td>760321133</td>
+            <td>$ 320.000,00</td>
+          </tr>
+        </tbody>
+      </table>
+      <nav class="paginacion">
+        <button type="button">Anterior</button>
+        <button type="button" disabled>Siguiente</button>
+      </nav>
+    </main>
+  </body>
+</html>
