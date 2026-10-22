@@ -22,12 +22,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--backend",
-        choices=["passphrase", "keychain"],
+        choices=["passphrase", "keychain", "dpapi"],
         default="passphrase",
         help=(
             "Backend para la custodia de la clave maestra.\n"
             "  passphrase: Se solicita una frase de contraseña al usuario (por defecto).\n"
-            "  keychain: Almacena la clave maestra en el Keychain de macOS (solo macOS)."
+            "  keychain: Almacena la clave maestra en el Keychain de macOS (solo macOS).\n"
+            "  dpapi: Protege la clave maestra aleatoria con DPAPI del usuario de Windows."
         ),
     )
 

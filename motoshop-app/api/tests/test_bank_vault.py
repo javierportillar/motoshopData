@@ -682,28 +682,32 @@ def test_empty_passphrase_is_rejected_on_read(
 
 
 def test_dpapi_backend_raises_unavailable(temp_vault_env: Path):
-    """El backend DPAPI no está implementado: debe fallar con VaultBackendUnavailable."""
+    """El backend DPAPI sólo existe en Windows: en el resto falla al instanciar."""
     if sys.platform != "win32":
         with pytest.raises(VaultBackendUnavailable, match="dpapi"):
             CredentialVault(custody_backend="dpapi")
     else:
         vault = CredentialVault(custody_backend="dpapi")
         assert vault._custody_backend == "dpapi"
-        with pytest.raises(VaultBackendUnavailable, match="no está implementado"):
-            vault.check()
+        # Sin vault todavía: check() responde False sin excepción ni frase maestra.
+        assert vault.check() is False
 
 
-def test_dpapi_is_not_a_cli_choice(
+def test_dpapi_is_a_cli_choice(
     temp_vault_env: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ):
-    """El backend `dpapi` no debe ofrecerse en la CLI hasta que exista."""
+    """La CLI ofrece `dpapi` (custodia DPAPI en Windows, ADR-0026).
+
+    `list` sobre un vault inexistente falla limpio: exit 1 con ERROR, no un
+    rechazo de argparse (exit 2) ni un prompt de frase maestra.
+    """
     monkeypatch.setattr(sys, "argv", ["motoshop-vault", "--backend", "dpapi", "list"])
     with pytest.raises(SystemExit) as exc_info:
         cli.main()
     captured = capsys.readouterr()
 
-    assert exc_info.value.code == 2
-    assert "dpapi" in captured.err
+    assert exc_info.value.code == 1
+    assert "ERROR" in captured.err
 
 
 # --- W7: el directorio de configuración NO se cachea ---
