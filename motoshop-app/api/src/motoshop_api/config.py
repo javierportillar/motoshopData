@@ -42,18 +42,25 @@ SYNC_KEYS = {
     "JWT_SECRET",
 }
 
+#: Prefijo de las variables que se copian al entorno del proceso. El cargador de
+#: la reconciliación bancaria (`load_node_config`) lee `os.environ`, no el objeto
+#: `Settings`, así que sin esto la API y los scripts dependerían de que el shell
+#: que los lanza haya exportado las `BANK_*` a mano.
+SYNC_PREFIX = "BANK_"
+
 
 def _sync_env_to_os_environ() -> None:
     for path in _candidate_env_paths():
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
                     if line and not line.startswith("#") and "=" in line:
                         k, v = line.split("=", 1)
                         k = k.strip().upper()
                         v = v.strip().strip("\"'")
-                        if k in SYNC_KEYS and v and not os.environ.get(k):
+                        sincronizar = k in SYNC_KEYS or k.startswith(SYNC_PREFIX)
+                        if sincronizar and v and not os.environ.get(k):
                             os.environ[k] = v
         except Exception:
             pass

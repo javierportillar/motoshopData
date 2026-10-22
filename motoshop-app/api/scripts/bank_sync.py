@@ -33,6 +33,10 @@ import os
 import sys
 from typing import NamedTuple
 
+# Carga el `.env` del repo en `os.environ`: `load_node_config` lee el entorno del
+# proceso, no el objeto `Settings`, y sin esto el script sólo funciona en una
+# consola donde alguien exportó las `BANK_*` a mano.
+import motoshop_api.config  # noqa: F401  (efecto de importación: sincroniza el .env)
 from motoshop_api.erp.bankreconciliation.node_config import (
     ENV_SCRAPER_ENABLED,
     ENV_TENANT,
