@@ -637,7 +637,7 @@ class BankScraper:
         if session.hay_codigo_otp():
             # El código lo pide el nodo, en su consola. No se persiste ni se
             # registra: sólo viaja de la consola al formulario del navegador.
-            codigo = self._pedir_codigo(self._contrato.otp_prompt)
+            codigo = self._pedir_codigo(self._spec("otp_prompt"))
             session.escribir_codigo_otp(codigo)
             session.enviar_formulario()
             if not self._esperar_ingreso(session):
@@ -1267,7 +1267,7 @@ class PlaywrightPortalSession:
         """
         limite = time.monotonic() + timeout
         while time.monotonic() < limite:
-            pestana = self._localizar(self._contrato.movimientos_tab)
+            pestana = self._localizar(self._spec("movements_tab"))
             try:
                 if pestana.count() > 0 and pestana.is_visible():
                     self._llamar(pestana.click)

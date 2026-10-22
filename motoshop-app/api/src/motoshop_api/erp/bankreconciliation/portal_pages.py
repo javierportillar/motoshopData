@@ -156,14 +156,16 @@ class PortalContract:
         css="article",
     )
     account_card_label: LocatorSpec = LocatorSpec(
-        css="p.bc-mb-1.bc-cibsans-font-style-4-bold.text-ellipsis, "
-        "h3.account-card__label, p[class*='text-ellipsis']",
+        css="div.account-item__account p.bc-mb-1.bc-cibsans-font-style-4-bold."
+        "text-ellipsis, p.bc-mb-1.bc-cibsans-font-style-4-bold.text-ellipsis",
     )
     # La pestaña real es un <span> con el texto exacto "Movimientos", dentro de
     # un <nav> que también contiene "Detalles".
     movements_tab: LocatorSpec = LocatorSpec(
+        rol="tab",
+        nombre="Movimientos",
         texto="Movimientos",
-        css="nav span, [role='tab']",
+        css="li[role='tab'][aria-label='Movimientos'], nav span",
     )
     movements_table: LocatorSpec = LocatorSpec(
         rol="table",

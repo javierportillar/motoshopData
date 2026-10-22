@@ -476,6 +476,9 @@ class _PaginaFalsa:
     def get_by_text(self, _texto: str, **_kwargs: object) -> _LocadorFalso:
         return _LocadorFalso([_ElementoFalso()])
 
+    def get_by_role(self, _rol: str, **_kwargs: object) -> _LocadorFalso:
+        return _LocadorFalso([_ElementoFalso()])
+
 
 def test_ir_a_movimientos_no_navega_por_url() -> None:
     """Navegar por URL a una ruta profunda reinicia la SPA y rompe la sesión.
