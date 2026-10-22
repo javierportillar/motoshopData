@@ -103,7 +103,7 @@ def preparar(
         facturas=lambda _tenant, _empresa: [factura],
         receipts=DocumentoFake(),
         consignments=DocumentoFake(),
-        codpag_transferencia="F07",
+        codpag_transferencia={"motoshop": "F07"},
     )
     return store, factura, repo
 
@@ -276,3 +276,61 @@ def test_movimiento_de_otro_tenant_no_se_encuentra() -> None:
 def test_la_clave_de_idempotencia_es_estable_por_movimiento() -> None:
     assert clave_idempotencia("motoshop", "mov-1") == clave_idempotencia("motoshop", "mov-1")
     assert clave_idempotencia("motoshop", "mov-1") != clave_idempotencia("masvital", "mov-1")
+
+
+def test_cada_tenant_usa_su_propio_codpag_de_transferencia() -> None:
+    """El catálogo de formas de pago es de cada empresa, no del proceso."""
+    store, _factura, _repo = preparar()
+    store.upsert_movements(
+        "masvital",
+        "01",
+        [
+            BankMovementIn(
+                id_externo="mov-mv",
+                fecha_movimiento=date(2026, 10, 21),
+                valor=Decimal("100000.00"),
+                referencia="0092055984",
+                referencia_norm="0092055984",
+                pagador_nombre="DISTRIBUIDORA EL SOL",
+            )
+        ],
+    )
+    repo = BankReconciliationRepo(
+        movements=store,
+        facturas=lambda _tenant, _empresa: [
+            FacturaCandidata(
+                factura_id="F-9",
+                tenant="masvital",
+                numfven=900,
+                prefven="MV",
+                nitter="900123456",
+                cliente_nombre="DISTRIBUIDORA EL SOL",
+                saldo=Decimal("150000.00"),
+                referencia="0092055984",
+            )
+        ],
+        receipts=DocumentoFake(),
+        consignments=DocumentoFake(),
+        codpag_transferencia={"motoshop": "F07", "masvital": "F09"},
+    )
+
+    repo.apply("masvital", "01", id_dominio_movimiento("masvital", "mov-mv"), "F-9")
+
+    assert repo.receipts.creados[0]["codpag"] == "F09"  # type: ignore[attr-defined]
+
+
+def test_tenant_sin_codpag_propio_usa_el_global_de_compatibilidad() -> None:
+    """Con una sola empresa por proceso, el global sigue sirviendo."""
+    store, _factura, _repo = preparar()
+    repo = BankReconciliationRepo(
+        movements=store,
+        facturas=lambda _tenant, _empresa: [],
+        receipts=DocumentoFake(),
+        consignments=DocumentoFake(),
+        codpag_transferencia={"masvital": "F09"},
+        codpag_comun="F07",
+    )
+
+    repo.apply("motoshop", "01", MOV_ID, None)
+
+    assert repo.consignments.creados[0]["codpag"] == "F07"  # type: ignore[attr-defined]

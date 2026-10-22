@@ -34,7 +34,7 @@ from __future__ import annotations
 import datetime
 import os
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from typing import Annotated
 
@@ -327,8 +327,46 @@ def get_reconciliation_repo(
         facturas=facturas,  # type: ignore[arg-type]
         receipts=receipts,  # type: ignore[arg-type]
         consignments=consignments,  # type: ignore[arg-type]
-        codpag_transferencia=os.environ.get("BANK_CODPAG_TRANSFERENCIA") or None,
+        codpag_transferencia=_codpags_declarados(),
+        codpag_comun=_codpag_comun(),
     )
+
+
+def _codpags_declarados() -> dict[str, str]:
+    """Códigos por tenant declarados en el entorno."""
+    return codpags_por_tenant()[0]
+
+
+def _codpag_comun() -> str | None:
+    """Código global de compatibilidad (una sola empresa por proceso)."""
+    return codpags_por_tenant()[1]
+
+
+def codpags_por_tenant(
+    env: Mapping[str, str] | None = None,
+) -> tuple[dict[str, str], str | None]:
+    """`codpag` de transferencia **por tenant**, desde el entorno.
+
+    Una sola API sirve a varias empresas y cada una tiene su catálogo de
+    formas de pago: el código de MotoShop no necesariamente existe en
+    MasVital. Se acepta el específico (`BANK_CODPAG_TRANSFERENCIA_MOTOSHOP`)
+    y, como compatibilidad, uno global (`BANK_CODPAG_TRANSFERENCIA`).
+
+    Sin código para un tenant el resultado es fail-closed: `apply` responde
+    **409** `codpag_no_confirmado` en vez de adivinar.
+    """
+    valores = os.environ if env is None else env
+    comun = (valores.get("BANK_CODPAG_TRANSFERENCIA") or "").strip() or None
+    por_tenant: dict[str, str] = {}
+    prefijo = "BANK_CODPAG_TRANSFERENCIA_"
+    for clave, valor in valores.items():
+        if not clave.startswith(prefijo):
+            continue
+        tenant = clave[len(prefijo) :].strip().lower()
+        codigo = (valor or "").strip()
+        if tenant and codigo:
+            por_tenant[tenant] = codigo
+    return por_tenant, comun
 
 
 def _movimiento_json(movimiento: BankMovementOut) -> dict[str, object]:
@@ -404,7 +442,7 @@ def aplicar_movimiento(
     try:
         return repo.apply(
             tenant.id,
-            getattr(tenant, "empresa", "") or "",
+            tenant.erp.empresa,
             movimiento_id,
             factura_id,
             idempotency_key=idempotency_key,

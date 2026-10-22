@@ -25,6 +25,7 @@ from motoshop_api.erp.bankreconciliation.matching import FacturaCandidata
 from motoshop_api.erp.bankreconciliation.node_config import NodeConfig, load_node_config
 from motoshop_api.erp.bankreconciliation.repo import BankReconciliationRepo
 from motoshop_api.erp.bankreconciliation.router import (
+    codpags_por_tenant,
     get_node_config,
     get_reconciliation_repo,
 )
@@ -68,6 +69,7 @@ class DocumentoFake:
             "numero": f"{len(self.creados) + 1:04d}",
             "prefijo": "S01",
             "tenant": tenant,
+            "empresa": empresa,
             "idempotency_key": idempotency_key,
             **cuerpo,
         }
@@ -185,7 +187,7 @@ def _repo(
         facturas=lambda _tenant, _empresa: [factura],
         receipts=receipts or DocumentoFake(),
         consignments=consignments or DocumentoFake(),
-        codpag_transferencia="F07",
+        codpag_transferencia={"motoshop": "F07", "masvital": "F09"},
     )
 
 
@@ -348,3 +350,41 @@ def test_sync_status_devuelve_ultima_ingesta_nodo_y_ventana(tmp_path: Path) -> N
         "desde": datetime(2026, 10, 20, 0, 0).isoformat(),
         "hasta": datetime(2026, 10, 20, 23, 59, 59).isoformat(),
     }
+
+def test_apply_posteael_documento_con_la_empresa_del_tenant(tmp_path: Path) -> None:
+    """La empresa del asiento sale de `tenant.erp.empresa`, no del request."""
+    store = _store()
+    receipts = DocumentoFake()
+    client = _cliente(tmp_path, store=store, repo=_repo(store, receipts=receipts))
+
+    response = client.post(
+        f"/api/erp/bank/reconciliation/{ID_MOV}/apply",
+        params={"factura_id": "F-1"},
+        headers=_headers("ger8"),
+    )
+
+    assert response.status_code == 200, response.text
+    assert receipts.creados[0]["empresa"] == "E01"
+    assert receipts.creados[0]["tenant"] == TENANT_ID
+
+
+def test_el_codpag_especifico_del_tenant_gana_al_global() -> None:
+    """Cada empresa tiene su catálogo: el código específico manda."""
+    por_tenant, comun = codpags_por_tenant(
+        {
+            "BANK_CODPAG_TRANSFERENCIA": "F07",
+            "BANK_CODPAG_TRANSFERENCIA_MOTOSHOP": "F07",
+            "BANK_CODPAG_TRANSFERENCIA_MASVITAL": "F09",
+        }
+    )
+
+    assert por_tenant == {"motoshop": "F07", "masvital": "F09"}
+    assert comun == "F07"
+
+
+def test_sin_codpag_configurado_el_mapa_queda_vacio_y_el_apply_falla_cerrado() -> None:
+    """Sin entorno configurado no se inventa un código de forma de pago."""
+    por_tenant, comun = codpags_por_tenant({})
+
+    assert por_tenant == {}
+    assert comun is None

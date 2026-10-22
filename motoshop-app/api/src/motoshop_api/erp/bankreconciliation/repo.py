@@ -24,7 +24,7 @@ Invariantes:
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
@@ -122,13 +122,18 @@ class BankReconciliationRepo:
         facturas: FacturasProvider,
         receipts: DocumentoRepo,
         consignments: DocumentoRepo,
-        codpag_transferencia: str | None = None,
+        codpag_transferencia: Mapping[str, str] | None = None,
+        codpag_comun: str | None = None,
     ) -> None:
+        # El `codpag` vive en el catálogo de formas de pago de CADA empresa:
+        # una sola API sirve a varios tenants y comparten el proceso, así que
+        # una cadena global postearía con el código de otra empresa.
         self.movements = movements
         self.facturas = facturas
         self.receipts = receipts
         self.consignments = consignments
-        self.codpag_transferencia = codpag_transferencia
+        self.codpag_transferencia: Mapping[str, str] = dict(codpag_transferencia or {})
+        self.codpag_comun = codpag_comun
 
     # ── Lectura / decisión ───────────────────────────────────────────────
 
@@ -211,7 +216,7 @@ class BankReconciliationRepo:
                 "replay": True,
             }
 
-        codpag = self.codpag_transferencia
+        codpag = self.codpag_transferencia.get(tenant) or self.codpag_comun
         if not codpag:
             # Fail-closed: sin la forma de pago real confirmada no se adivina.
             raise CodpagNoConfirmadoError(
