@@ -31,6 +31,8 @@ Un proceso de API = **un tenant**. La configuración vive en el `.env` de cada m
 | `BANK_ACCOUNT_LABEL` | etiqueta MasVital | etiqueta MotoShop *(por confirmar)* | según tenant | — |
 | `BANK_VAULT_BACKEND` | `passphrase` | `passphrase` | `keychain` | — |
 | `BANK_PROFILE_DIR` | `%APPDATA%\motoshop\bank-profile\<tenant>` | ídem | `~/.config/motoshop/bank-profile/<tenant>` | — |
+| `BANK_CODPAG_TRANSFERENCIA_<TENANT>` | código de transferencia | ídem | ídem | — |
+| `BANK_CODPAG_CONSIGNACION_<TENANT>` | código de consignación | ídem | ídem | — |
 
 Reglas de la tabla:
 
@@ -41,6 +43,11 @@ Reglas de la tabla:
 - `BANK_PROFILE_DIR` es el perfil del navegador (el perfil **es** la sesión). Nunca dentro del
   repositorio: el preflight lo rechaza.
 - `BANK_SCRAPER_ENABLED=false` ⇒ ese nodo no raspa. En la nube es lo normal.
+- `BANK_CODPAG_*` vive en el catálogo `formapago` de **cada** empresa y **no se comparte**: el
+  recibo por transferencia y la consignación bancaria son formas de pago distintas (filas distintas,
+  cuentas de contrapartida distintas). Los globales sin sufijo sólo existen para procesos de una
+  sola empresa: nunca se usa el código de transferencia como consignación. Sin el código
+  confirmado, aplicar responde **409 `codpag_no_confirmado`** y el movimiento queda pendiente.
 
 ### Variables opcionales
 

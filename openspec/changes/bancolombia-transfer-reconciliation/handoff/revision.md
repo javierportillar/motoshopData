@@ -56,3 +56,18 @@ conciliación en esa empresa.
       operador, no por el agente.
 - [ ] Una aplicación real de punta a punta por empresa, con un movimiento conocido, verificando que
       el documento generado tenga la **fecha del movimiento** (no la de hoy) y el `codpag` correcto.
+
+## G. Arreglos del arnés de migraciones
+
+- `run_migrations.py` filtra estado y checksums por el prefijo de la corrida: `--prefix F9` no
+  exige archivos de F8 y sigue detectando checksums alterados **del mismo prefijo**.
+- Test de regresión: estado con F8 + corrida F9 aplica sólo F9; la segunda corrida es no-op.
+- `sys.stdout.reconfigure(encoding="utf-8", errors="replace")` y los mensajes intactos.
+- Ningún `INSERT` manual en `app_migration_state`.
+
+## H. `codpag` de consignación
+
+- `BANK_CODPAG_CONSIGNACION_<TENANT>` existe y se usa en el camino `factura_id = None`.
+- El global `BANK_CODPAG_CONSIGNACION` se resuelve aparte del de transferencia: **nunca** se cruzan.
+- Test que lo prueba: consignación con `codpag_consignacion={"motoshop": "F05"}` y
+  `codpag_transferencia={"motoshop": "F07"}` postea `F05`.

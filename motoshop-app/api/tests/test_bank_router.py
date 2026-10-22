@@ -388,3 +388,25 @@ def test_sin_codpag_configurado_el_mapa_queda_vacio_y_el_apply_falla_cerrado() -
 
     assert por_tenant == {}
     assert comun is None
+
+
+def test_los_codpags_de_consignacion_se_resuelven_aparte_de_los_de_transferencia() -> None:
+    """`CONSIGNACION BANCO` y `TRANSFERENCIA BANCO` no comparten catálogo."""
+    entorno = {
+        "BANK_CODPAG_TRANSFERENCIA": "F07",
+        "BANK_CODPAG_TRANSFERENCIA_MOTOSHOP": "F07",
+        "BANK_CODPAG_CONSIGNACION": "C05",
+        "BANK_CODPAG_CONSIGNACION_MOTOSHOP": "F05",
+    }
+
+    transferencia, comun_transferencia = codpags_por_tenant(
+        entorno, prefijo="BANK_CODPAG_TRANSFERENCIA_", variable="BANK_CODPAG_TRANSFERENCIA"
+    )
+    consignacion, comun_consignacion = codpags_por_tenant(
+        entorno, prefijo="BANK_CODPAG_CONSIGNACION_", variable="BANK_CODPAG_CONSIGNACION"
+    )
+
+    assert transferencia == {"motoshop": "F07"}
+    assert comun_transferencia == "F07"
+    assert consignacion == {"motoshop": "F05"}
+    assert comun_consignacion == "C05"

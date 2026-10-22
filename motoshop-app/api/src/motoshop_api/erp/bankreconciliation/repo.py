@@ -123,7 +123,9 @@ class BankReconciliationRepo:
         receipts: DocumentoRepo,
         consignments: DocumentoRepo,
         codpag_transferencia: Mapping[str, str] | None = None,
+        codpag_consignacion: Mapping[str, str] | None = None,
         codpag_comun: str | None = None,
+        codpag_comun_consignacion: str | None = None,
     ) -> None:
         # El `codpag` vive en el catálogo de formas de pago de CADA empresa:
         # una sola API sirve a varios tenants y comparten el proceso, así que
@@ -133,7 +135,15 @@ class BankReconciliationRepo:
         self.receipts = receipts
         self.consignments = consignments
         self.codpag_transferencia: Mapping[str, str] = dict(codpag_transferencia or {})
+        # El recibo de una factura y la consignación bancaria son formas de pago
+        # DISTINTAS en el catálogo legacy (`TRANSFERENCIA BANCO` vs
+        # `CONSIGNACION BANCO`): usar una sola para los dos caminos cambia el
+        # asiento y la cuenta de contrapartida.
+        self.codpag_consignacion: Mapping[str, str] = dict(codpag_consignacion or {})
         self.codpag_comun = codpag_comun
+        # El global de consignación es aparte: caer al código de transferencia
+        # postearía la forma de pago equivocada, así que no se cruzan.
+        self.codpag_comun_consignacion = codpag_comun_consignacion
 
     # ── Lectura / decisión ───────────────────────────────────────────────
 
@@ -216,12 +226,19 @@ class BankReconciliationRepo:
                 "replay": True,
             }
 
-        codpag = self.codpag_transferencia.get(tenant) or self.codpag_comun
+        if factura_id is None:
+            codpag = (
+                self.codpag_consignacion.get(tenant)
+                or self.codpag_comun_consignacion
+            )
+            faltante = "consignación bancaria"
+        else:
+            codpag = self.codpag_transferencia.get(tenant) or self.codpag_comun
+            faltante = "transferencia bancaria"
         if not codpag:
             # Fail-closed: sin la forma de pago real confirmada no se adivina.
             raise CodpagNoConfirmadoError(
-                "Falta el codpag de transferencia bancaria confirmado; "
-                "el movimiento queda pendiente."
+                f"Falta el codpag de {faltante} confirmado; el movimiento queda pendiente."
             )
 
         clave = idempotency_key or clave_idempotencia(tenant, movimiento.id_externo)

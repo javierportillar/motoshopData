@@ -319,46 +319,54 @@ def get_reconciliation_repo(
 ) -> BankReconciliationRepo:
     """Repo de conciliación con los caminos de caja reales.
 
-    El ``codpag`` de transferencia bancaria es **fail-closed** (Q5): sin la
-    variable de entorno confirmada, ``apply`` no postea nada.
+    El ``codpag`` es **fail-closed** (Q5): sin la variable de entorno
+    confirmada, ``apply`` no postea nada. Recibo por transferencia y
+    consignación bancaria usan códigos distintos y no se cruzan.
     """
     return BankReconciliationRepo(
         movements=store,
         facturas=facturas,  # type: ignore[arg-type]
         receipts=receipts,  # type: ignore[arg-type]
         consignments=consignments,  # type: ignore[arg-type]
-        codpag_transferencia=_codpags_declarados(),
-        codpag_comun=_codpag_comun(),
+        codpag_transferencia=_codpags("BANK_CODPAG_TRANSFERENCIA_"),
+        codpag_consignacion=_codpags("BANK_CODPAG_CONSIGNACION_"),
+        codpag_comun=_codpag_comun("BANK_CODPAG_TRANSFERENCIA"),
+        codpag_comun_consignacion=_codpag_comun("BANK_CODPAG_CONSIGNACION"),
     )
 
 
-def _codpags_declarados() -> dict[str, str]:
-    """Códigos por tenant declarados en el entorno."""
-    return codpags_por_tenant()[0]
+def _codpags(prefijo: str) -> dict[str, str]:
+    """Códigos por tenant declarados en el entorno para ese prefijo."""
+    return codpags_por_tenant(prefijo=prefijo)[0]
 
 
-def _codpag_comun() -> str | None:
+def _codpag_comun(variable: str) -> str | None:
     """Código global de compatibilidad (una sola empresa por proceso)."""
-    return codpags_por_tenant()[1]
+    return codpags_por_tenant(variable=variable)[1]
 
 
 def codpags_por_tenant(
     env: Mapping[str, str] | None = None,
+    *,
+    prefijo: str = "BANK_CODPAG_TRANSFERENCIA_",
+    variable: str = "BANK_CODPAG_TRANSFERENCIA",
 ) -> tuple[dict[str, str], str | None]:
-    """`codpag` de transferencia **por tenant**, desde el entorno.
+    """`codpag` **por tenant** para una forma de pago, desde el entorno.
 
     Una sola API sirve a varias empresas y cada una tiene su catálogo de
     formas de pago: el código de MotoShop no necesariamente existe en
-    MasVital. Se acepta el específico (`BANK_CODPAG_TRANSFERENCIA_MOTOSHOP`)
-    y, como compatibilidad, uno global (`BANK_CODPAG_TRANSFERENCIA`).
+    MasVital. Se resuelven **dos** códigos distintos —recibo por
+    transferencia y consignación bancaria— porque también son filas distintas
+    del catálogo legacy. Se acepta el específico
+    (`BANK_CODPAG_TRANSFERENCIA_<TENANT>` / `BANK_CODPAG_CONSIGNACION_<TENANT>`)
+    y, como compatibilidad, uno global.
 
     Sin código para un tenant el resultado es fail-closed: `apply` responde
     **409** `codpag_no_confirmado` en vez de adivinar.
     """
     valores = os.environ if env is None else env
-    comun = (valores.get("BANK_CODPAG_TRANSFERENCIA") or "").strip() or None
+    comun = (valores.get(variable) or "").strip() or None
     por_tenant: dict[str, str] = {}
-    prefijo = "BANK_CODPAG_TRANSFERENCIA_"
     for clave, valor in valores.items():
         if not clave.startswith(prefijo):
             continue

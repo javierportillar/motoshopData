@@ -63,19 +63,24 @@ Este dato es el único que puede bloquear el despliegue. Consultalo y **reportá
 SELECT codpag, forpag, codban, codcue FROM formapago;
 ```
 
-Necesito saber **cuál de esos códigos es la transferencia/consignación bancaria** según el negocio
-de MotoShop. No lo deduzcas por el nombre si hay dudas: reportá las filas y esperá confirmación.
+Necesito **dos** códigos: el de **transferencia bancaria** (recibo de factura pagada por
+transferencia) y el de **consignación bancaria** (entrada de plata sin factura). En el catálogo
+suelen ser filas distintas y pueden tener cuentas de contrapartida distintas. No los deduzcas por el
+nombre si hay dudas: reportá las filas y esperá confirmación.
 
 ## Paso 4 — Variable de entorno (sólo cuando el paso 3 esté confirmado)
 
 En el `.env` de **esta máquina**:
 
 ```dotenv
-BANK_CODPAG_TRANSFERENCIA_MOTOSHOP=<codpag confirmado>
+BANK_CODPAG_TRANSFERENCIA_MOTOSHOP=<codpag de transferencia>
+BANK_CODPAG_CONSIGNACION_MOTOSHOP=<codpag de consignación>
 ```
 
-- Una sola API sirve a varias empresas: el código va **por tenant**. No uses el global
-  `BANK_CODPAG_TRANSFERENCIA` salvo que esta máquina sirva un único tenant.
+- Una sola API sirve a varias empresas: los códigos van **por tenant**. No uses los globales salvo
+  que esta máquina sirva un único tenant.
+- Transferencia y consignación **no se cruzan**: el código de consignación nunca cae al de
+  transferencia, aunque sólo uno esté configurado.
 - Sin esta variable, aplicar una transferencia responde **409 `codpag_no_confirmado`** y el
   movimiento queda pendiente. Eso es correcto, no un bug.
 

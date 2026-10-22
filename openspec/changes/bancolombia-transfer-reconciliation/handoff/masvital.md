@@ -61,15 +61,20 @@ SELECT name, applied_at FROM app_migration_state WHERE name LIKE 'F9-%';
 
 Esperado: las dos tablas y cuatro filas de estado.
 
-## Paso 3 — El `codpag` real de transferencia (sólo lectura)
+## Paso 3 — Los `codpag` reales (sólo lectura)
 
 ```sql
 SELECT codpag, forpag, codban, codcue FROM formapago;
 ```
 
-Reportá la lista completa con los nombres tal como están. Necesito saber **cuál es el código de la
-transferencia/consignación bancaria en MasVital**. No lo deduzcas si hay dudas: reportá y esperá
-confirmación.
+Reportá la lista completa con los nombres tal como están. Necesito **dos** códigos distintos:
+
+1. **transferencia bancaria** (recibo de una factura pagada por transferencia);
+2. **consignación bancaria** (plata que entra sin factura).
+
+En el catálogo suelen ser filas distintas (`TRANSFERENCIA BANCO` vs `CONSIGNACION BANCO`) y
+**pueden tener cuentas de contrapartida distintas**. No los deduzcas por el nombre si hay dudas:
+reportá las filas y esperá confirmación.
 
 ## Paso 4 — Variables de entorno (sólo cuando el paso 3 esté confirmado)
 
@@ -79,7 +84,8 @@ En el `.env` de **esta máquina**:
 BANK_TENANT=masvital
 BANK_SCRAPER_ENABLED=true
 BANK_CREDENTIAL_ENTRY=bancolombia-masvital
-BANK_CODPAG_TRANSFERENCIA_MASVITAL=<codpag confirmado>
+BANK_CODPAG_TRANSFERENCIA_MASVITAL=<codpag de transferencia>
+BANK_CODPAG_CONSIGNACION_MASVITAL=<codpag de consignación>
 ```
 
 - Si `BANK_TENANT`, `BANK_SCRAPER_ENABLED`, `BANK_CREDENTIAL_ENTRY` o `BANK_PROFILE_DIR` ya tienen
@@ -87,8 +93,12 @@ BANK_CODPAG_TRANSFERENCIA_MASVITAL=<codpag confirmado>
 - `BANK_ACCOUNT_LABEL` tiene que ser la **etiqueta real de la cuenta de MasVital** en el portal (no
   el número de cuenta, no la etiqueta de MotoShop). Si no la sabés, reportala como pendiente: es lo
   único que evita abrir la cuenta equivocada.
-- El `codpag` va **por tenant**. Sin esta variable, aplicar responde **409
-  `codpag_no_confirmado`** y el movimiento queda pendiente: eso es el comportamiento correcto.
+- Los `codpag` van **por tenant y por tipo**. El global `BANK_CODPAG_TRANSFERENCIA` sólo existe
+  para compatibilidad de procesos de una sola empresa; en esta máquina usá las variables
+  específicas. El código de transferencia **no** se usa como consignación: son formas de pago
+  distintas.
+- Sin la variable que corresponda, aplicar responde **409 `codpag_no_confirmado`** y el movimiento
+  queda pendiente: eso es el comportamiento correcto.
 
 ## Paso 5 — Credencial del portal, perfil y navegador
 
@@ -113,6 +123,25 @@ uv run python scripts/bank_verify.py --tenant masvital
 
 Esperado: `PREFLIGHT OK: el nodo 'masvital' está listo.` y código de salida `0`. Si falla por
 vault, perfil o etiqueta, reportá el código de error tal cual y **no** sigas.
+
+## Paso 6.5 — Arreglos de infraestructura autorizados
+
+Dos bugs del arnés, **no** de la change. Van en commits separados sobre la misma rama, cada uno con
+su test y con la suite completa en verde:
+
+1. **`run_migrations.py --prefix`** aborta con `MissingSqlFileError` porque `validate_order` exige
+   que toda fila de `app_migration_state` tenga archivo, pero `discover_f8_files` filtra por
+   prefijo. Arreglo: filtrar `applied_names` y `checksums` por el prefijo de la corrida (prefijo =
+   `nombre.split("-", 1)[0]`) antes de validar. Test de regresión en `tests/test_erp_migrations.py`:
+   estado con F8 registrado + corrida `--prefix F9` aplica F9 y no exige F8; segunda corrida es
+   no-op.
+2. **`UnicodeEncodeError` en consola cp1252** al imprimir `→`: en el entrypoint del runner,
+   `sys.stdout.reconfigure(encoding="utf-8", errors="replace")` (y `stderr` si hace falta). No
+   cambies el texto de los mensajes.
+
+Nada de esto toca datos ni migraciones aplicadas. **No** registres `F8-004` a mano en
+`app_migration_state`: queda documentado como aplicado por fuera del runner y un futuro `--prefix F8`
+lo verá pendiente (el GRANT es idempotente).
 
 ## Paso 7 — API arriba y verificación de lectura
 

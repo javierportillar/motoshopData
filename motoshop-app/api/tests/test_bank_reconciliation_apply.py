@@ -104,6 +104,7 @@ def preparar(
         receipts=DocumentoFake(),
         consignments=DocumentoFake(),
         codpag_transferencia={"motoshop": "F07"},
+        codpag_consignacion={"motoshop": "F05"},
     )
     return store, factura, repo
 
@@ -329,8 +330,28 @@ def test_tenant_sin_codpag_propio_usa_el_global_de_compatibilidad() -> None:
         consignments=DocumentoFake(),
         codpag_transferencia={"masvital": "F09"},
         codpag_comun="F07",
+        codpag_comun_consignacion="F05",
     )
 
     repo.apply("motoshop", "01", MOV_ID, None)
 
-    assert repo.consignments.creados[0]["codpag"] == "F07"  # type: ignore[attr-defined]
+    # motoshop no tiene código propio de consignación: cae al global de
+    # consignación, nunca al de transferencia.
+    assert repo.consignments.creados[0]["codpag"] == "F05"  # type: ignore[attr-defined]
+
+
+def test_la_consignacion_usa_su_propio_codpag_y_no_el_de_transferencia() -> None:
+    """`CONSIGNACION BANCO` y `TRANSFERENCIA BANCO` son formas de pago distintas."""
+    store, _factura, _repo = preparar()
+    repo = BankReconciliationRepo(
+        movements=store,
+        facturas=lambda _tenant, _empresa: [],
+        receipts=DocumentoFake(),
+        consignments=DocumentoFake(),
+        codpag_transferencia={"motoshop": "F07"},
+        codpag_consignacion={"motoshop": "F05"},
+    )
+
+    repo.apply("motoshop", "01", MOV_ID, None)
+
+    assert repo.consignments.creados[0]["codpag"] == "F05"  # type: ignore[attr-defined]
