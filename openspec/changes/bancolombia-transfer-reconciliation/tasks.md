@@ -120,19 +120,33 @@ Reglas:
 
 > Un proceso de API = un tenant. La configuración vive en el `.env` de cada máquina; el código debe fallar rápido si la configuración es incompleta y nunca debe operar con la configuración de otro tenant.
 
-- [ ] **3.1** `[AUTO]` **`node_config.py`: configuración por nodo, fail-fast y convención de entrada de vault** `[ING-6s1, ING-6s2, ING-6s3, ING-8s2]`
+- [x] **3.1** `[AUTO]` **`node_config.py`: configuración por nodo, fail-fast y convención de entrada de vault** `[ING-6s1, ING-6s2, ING-6s3, ING-8s2]`
   - RED: `motoshop-app/api/tests/test_bank_node_config.py` — `test_scraper_habilitado_sin_tenant_falla_rapido` (`NodeConfigError`), `test_scraper_habilitado_sin_etiqueta_de_cuenta_falla_rapido`, `test_scraper_habilitado_sin_credencial_resuelta_falla_rapido`, `test_scraper_deshabilitado_no_exige_credencial_ni_etiqueta` (en la nube: `BANK_SCRAPER_ENABLED=false` ⇒ config válida), `test_entrada_de_vault_por_tenant_usa_la_convencion_bancolombia_tenant` (`tenant=motoshop` ⇒ `bancolombia-motoshop`; `tenant=masvital` ⇒ `bancolombia-masvital`), `test_ventana_por_defecto_es_el_dia_en_curso` (desde = hoy 00:00, hasta = hoy 23:59:59, `ventana_por_defecto=dia`).
   - GREEN: `motoshop-app/api/src/motoshop_api/erp/bankreconciliation/node_config.py` — dataclass `NodeConfig(tenant, scraper_enabled, credential_entry, account_label, vault_backend, profile_dir, window_start, window_end, min_interval_seconds)` + `load_node_config(env: Mapping[str, str] | None = None) -> NodeConfig` + `NodeConfigError`; lee `BANK_SCRAPER_ENABLED`, `BANK_TENANT`, `BANK_CREDENTIAL_ENTRY`, `BANK_ACCOUNT_LABEL`, `BANK_VAULT_BACKEND`, `BANK_PROFILE_DIR`; `credential_entry` por defecto = `bancolombia-<tenant>`; `min_interval_seconds = 30` (D2).
   - Verify: `cd motoshop-app/api && uv run pytest tests/test_bank_node_config.py -q`.
+  - Evidencia (cwd `motoshop-app/api`): RED sin el módulo → `ModuleNotFoundError: No module named 'motoshop_api.erp.bankreconciliation.node_config'` (2 errores de colección, los dos archivos de test). GREEN → `uv run pytest tests/test_bank_node_config.py tests/test_bank_node_preflight.py -q` → **24 passed**; `uv run pytest tests/ -q -k "not integration"` → **1026 passed, 15 deselected** (base 1002 + 24 tests nuevos); `uv run ruff check` sobre los 4 archivos creados → **All checks passed!**
+  - Detalles de implementación (decisiones tomadas al ejecutar la spec):
+    - `NodeConfig` valida en `__post_init__`: con el scraper habilitado exige tenant, etiqueta y credencial; con el scraper deshabilitado (nube) la configuración es válida sin credencial ni etiqueta.
+    - El vault **no** se consulta en la carga: los nombres de las entradas viven dentro del payload cifrado, así que resolverlos exigiría la clave maestra (prompt interactivo) — imposible en el proceso de la API, que corre como servicio sin consola. La resolución de la credencial es del preflight (3.2) y del scraper (S5).
+    - `credential_entry` con `BANK_CREDENTIAL_ENTRY` presente pero vacía ⇒ `NodeConfigError` (la credencial no se puede resolver); si la variable no está, se deriva `bancolombia-<tenant>`.
+    - Ventana por defecto = día local del nodo (`00:00:00` → `23:59:59`); ajustable con `BANK_WINDOW_START` / `BANK_WINDOW_END` (ISO-8601) y auditable vía `NodeConfig.ventana_por_defecto` (`dia` | `personalizada`).
+    - `profile_dir` por defecto = `<config dir del usuario>/bank-profile/<tenant>` (misma regla que `vault._get_config_dir`, pero parametrizada por el `env` recibido para que la carga sea hermética).
   - Depends: 2.1
 
-- [ ] **3.2** `[AUTO]` **Preflight del nodo (`scripts/bank_verify.py`)** `[ING-6s2, ING-2s2]`
+- [x] **3.2** `[AUTO]` **Preflight del nodo (`scripts/bank_verify.py`)** `[ING-6s2, ING-2s2]`
   - RED: `motoshop-app/api/tests/test_bank_node_preflight.py` — `test_preflight_falla_si_falta_la_etiqueta_de_cuenta`, `test_preflight_falla_si_la_entrada_de_vault_del_tenant_no_existe` (⇒ `credencial_ausente`), `test_preflight_falla_si_el_perfil_del_nodo_esta_dentro_del_repo` (ruta bajo el repo ⇒ rechazo), `test_preflight_falla_si_el_perfil_no_tiene_permisos_700` (en POSIX; `skipif win32`), `test_preflight_ok_devuelve_resumen_sin_revelar_secretos` (el resultado NO contiene usuario ni contraseña).
   - GREEN: `motoshop-app/api/src/motoshop_api/erp/bankreconciliation/node_config.py` (`run_preflight(config: NodeConfig) -> PreflightResult`), `motoshop-app/api/scripts/bank_verify.py` (CLI: `python scripts/bank_verify.py --tenant motoshop [--check]`; importa `motoshop_api.erp.bankreconciliation.node_config`; código de salida 1 con motivo explícito).
   - Verify: `cd motoshop-app/api && uv run pytest tests/test_bank_node_preflight.py -q`.
+  - Evidencia (cwd `motoshop-app/api`): RED → mismo `ModuleNotFoundError` (2 errores de colección). GREEN → `uv run pytest tests/test_bank_node_config.py tests/test_bank_node_preflight.py -q` → **24 passed** (12 de preflight: los 5 de la spec + 7 de control). CLI comprobada contra una config desechable (`XDG_CONFIG_HOME=$(mktemp -d)`): caso válido ⇒ `PREFLIGHT OK: el nodo 'motoshop' está listo.` (exit **0**); caso inválido (sin etiqueta + perfil `755`) ⇒ `PREFLIGHT FALLO: cuenta_no_encontrada` (exit **1**); preflight completo contra un vault inexistente ⇒ `credencial_ausente` (exit **1**, sin pedir la clave maestra).
+  - Detalles de implementación (decisiones tomadas al ejecutar la spec):
+    - `run_preflight(config, vault=None, *, verificar_credencial=True)`: el vault es inyectable (Protocol `CredentialLookup` con **sólo** `list_entries()`), de modo que es estructuralmente imposible que el diagnóstico toque usuario o contraseña. Motivos distinguidos: `credencial_ausente`, `cuenta_no_encontrada`, `vault_no_accesible`, `perfil_dentro_del_repo`, `perfil_inexistente`, `perfil_permisos_insuficientes`, `tenant_no_configurado`, `configuracion_invalida`. `sesion_expirada`, `antibot` y `portal_no_disponible` quedan **declarados** (`CODIGOS_DEL_SCRAPER`) pero el preflight NO los produce: exigirán una sesión viva contra el portal (S5).
+    - El perfil se valida contra la raíz del repo (`REPO_ROOT`, 6 niveles arriba del módulo) y exige modo `0700` en POSIX (`skipif win32` en el test).
+    - `load_node_config(env, estricto=False)` construye la configuración **sin** la validación de presencia: el preflight debe poder *diagnosticar* una configuración rota, no reventar con ella. El proceso de la API sigue usando la carga estricta (fail-fast).
+    - `--check` = comprobación sin vault (no pide la clave maestra): configuración, etiqueta y perfil. Sin `--check`, el preflight consulta el vault (metadatos).
+    - El script vive en `motoshop-app/api/scripts/bank_verify.py`, que es la convención del repo (`scripts/index_business_knowledge.py`, `scripts/reset_admin_password.py`).
   - Depends: 3.1
 
-- [ ] **3.3** `[AUTO]` **Runbook operativo `docs/runbook-banco.md`** `[operativo]`
+- [x] **3.3** `[AUTO]` **Runbook operativo `docs/runbook-banco.md`** `[operativo]`
   - RED: revisión documental por el revisor (no automatizable) — checklist de contenido obligatorio abajo.
   - GREEN: `motoshopData/docs/runbook-banco.md` con estas secciones, todas con comandos copiables:
     1. **Topología por nodo** — tabla PC MasVital / PC MotoShop / Mac dev / Render con `BANK_SCRAPER_ENABLED`, `BANK_TENANT`, `BANK_CREDENTIAL_ENTRY`, `BANK_ACCOUNT_LABEL`, `BANK_VAULT_BACKEND`, `BANK_PROFILE_DIR` (mismos valores que la tabla del design).
@@ -143,6 +157,7 @@ Reglas:
     6. **Errores frecuentes** — `credencial_ausente`, `cuenta_no_encontrada` (⇒ falta `BANK_ACCOUNT_LABEL` o la etiqueta no existe en la sesión), `sesion_expirada`, `antibot` (⇒ parar y re-loguear a mano; no automatizar), `portal_no_disponible`.
     7. **Reversa** — apagar el flag, quitar las rutas de `ERP_ROUTE_MODULES`, `DROP TABLE app_bank_verification_jobs`, anular recibos posteados por `erp/annulment/`, revocar con `cli delete`.
   - Verify: `cd motoshop-app/api && uv run pytest -q` (verde) + revisión del checklist en el PR.
+  - Evidencia: `motoshopData/docs/runbook-banco.md` creado en español con las 7 secciones obligatorias (checklist verificado una por una), la tabla de topología con los mismos valores que el design, los comandos copiables del CLI de vault (Windows `passphrase` / Mac `keychain`), `playwright install chromium`, `chmod 700` del perfil fuera del repo (y su equivalente `icacls` en Windows), y los 5 códigos de error del portal + los motivos propios del preflight. Verificación: `uv run pytest tests/ -q -k "not integration"` → **1026 passed, 15 deselected**.
   - Depends: 3.1, 3.2
 
 - [ ] **3.4** `[CHECKPOINT]` **ADR-0026 `Proposed` → `Accepted`** `[ING-1, riesgo legal]`
