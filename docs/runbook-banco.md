@@ -80,10 +80,29 @@ El `codpag` no se adivina por el nombre de la forma de pago: se toma de la distr
   (documento `CC`). El código las separa por `factura_id`, no por el código de forma de pago.
 - `codban` va vacío en todas las filas: la cuenta sale de `codcue`, no de `codban`.
 
+#### Hallazgo de datos (2026-10-22): la venta nunca usa `F07`
+
+Verificado en las dos bases con el cruce contra la cabecera de la venta: **ninguna factura de
+`facventas` tiene `codpag = 'F07'`**. La distribución real de `facventas.codpag` es `F01` 2.787,
+`F05` 755, vacío 40, `F10` 21, `F03` 3, `F14` 2, `F04` 1. Las filas `F07` de `detapago` (218 en
+`masvital`) pertenecen todas a compras: `codclas = S18`, `predoc = COM` (pagos a proveedores,
+plata que **sale**), no a recaudos.
+
+Consecuencias, para no volver a tropezar:
+
+- La cobranza bancaria real de estos negocios es **`F05` consignación**. La rama de transferencia
+  (`S01`) queda configurada y fail-closed, pero en estas bases **no tiene datos detrás**: no se
+  puede probar el flujo con una factura de transferencia porque no existe.
+- Las pruebas manuales del botón **Comprobar** se hacen con una factura `F05` real, no con una
+  transferencia.
+- El cruce no depende del `codpag`: el código separa por `factura_id`. Por eso una factura `F05`
+  concilia igual contra el movimiento del banco.
+
 Para re-verificar por empresa:
 
 ```sql
 SELECT codpag, COUNT(*) FROM detapago GROUP BY codpag ORDER BY 2 DESC;
+SELECT codpag, COUNT(*) FROM facventas GROUP BY codpag ORDER BY 2 DESC;
 SELECT codpag, forpag, codcue FROM formapago ORDER BY codpag;
 ```
 
@@ -284,3 +303,21 @@ Para dejar el sistema como estaba, en este orden:
    abierta del portal.
 
 El flag apagado es reversible en cualquier momento: no hay migración de datos que deshacer.
+
+### Automatización: la cuenta de Windows del proceso que raspa
+
+El scrape corre **dentro del proceso de la API** (el botón *Comprobar* despacha un hilo del mismo
+proceso, `router.py`), así que la cuenta que decide si funciona es la del servicio/tarea que levanta
+la API, no la de la consola del operador. DPAPI y `%APPDATA%` son **por usuario**:
+
+- Como `SYSTEM`, `%APPDATA%` es `C:\Windows\system32\config\systemprofile\AppData\Roaming`: ahí no
+  están ni `master.key.dpapi` ni `bank-profile\<tenant>`. El job falla en **`credencial_ausente`**
+  (`VaultNotFound`), que no es lo mismo que `vault_no_accesible` (vault presente pero ilegible).
+  Probado en MotoShop: job `fallido` / `credencial_ausente` sin tocar el portal.
+- La tarea tiene que correr con el **usuario que guardó la credencial** (`MotoShop`, `ProDesk`).
+- Si la tarea corre «aunque el usuario no haya iniciado sesión», no hay escritorio interactivo y
+  Chromium no puede abrir ventana: hay que poner `BANK_BROWSER_HEADLESS=true` **y validar que el
+  portal no lo tome como antibot**. La alternativa pragmática en una PC de local es la tarea con
+  «sólo cuando el usuario inició sesión», que conserva el navegador con ventana.
+- No se re-crea el vault bajo `SYSTEM`: además de no resolver el perfil del navegador, dejaría la
+  credencial del banco al alcance de cualquier proceso que corra como `SYSTEM`.
