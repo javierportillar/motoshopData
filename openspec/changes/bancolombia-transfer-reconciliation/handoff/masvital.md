@@ -27,7 +27,7 @@ funcionar para MasVital igual que para MotoShop. Falta dejar este nodo listo con
 
 ```bash
 git fetch --all
-git checkout feat/banco-transfer-25-tenant-config   # o main, si ya está mergeado
+git checkout feat/banco-transfer-25-tenant-config   # rama explícita: NO uses main
 git pull
 cd motoshop-app/api && uv sync
 ```

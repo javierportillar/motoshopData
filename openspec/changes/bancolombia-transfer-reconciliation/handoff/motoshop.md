@@ -24,7 +24,7 @@ dejar este nodo listo. La misma tarea existe para MasVital con sus propios valor
 
 ```bash
 git fetch --all
-git checkout feat/banco-transfer-25-tenant-config   # o main, si ya está mergeado
+git checkout feat/banco-transfer-25-tenant-config   # rama explícita: NO uses main
 git pull
 cd motoshop-app/api && uv sync
 ```
