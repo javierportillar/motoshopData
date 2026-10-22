@@ -21,9 +21,7 @@ from __future__ import annotations
 import datetime
 import logging
 import os
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
-from decimal import Decimal
+from collections.abc import Callable
 from typing import Any
 
 from motoshop_api.erp.bankreconciliation.jobs import (
@@ -41,6 +39,12 @@ from motoshop_api.erp.bankreconciliation.scraper import (
     SessionSlotError,
 )
 from motoshop_api.erp.bankreconciliation.store import BankStore, get_bank_store
+from motoshop_api.erp.bankreconciliation.value_match import (
+    Candidato,
+    ValueMatch,
+    desde_movimiento_raspado,
+    match_by_value,
+)
 
 #: Variable de entorno con el identificador del nodo (el que corrió el job).
 ENV_NODO = "BANK_NODE_ID"
@@ -63,73 +67,34 @@ def _pedir_codigo_en_consola(prompt: str) -> str:
     return input(prompt)
 
 
-@dataclass(frozen=True)
-class Candidato:
-    """Movimiento que puede ser el pago que se está verificando."""
-
-    id_externo: str
-    valor: Decimal
-    pagador_nombre: str
-    referencia: str
-    fecha: datetime.date
-
-    def a_dict(self) -> dict[str, str]:
-        """Forma JSON del candidato (el front la usa para el prellenado)."""
-        return {
-            "id": self.id_externo,
-            "valor": str(self.valor),
-            "pagador_nombre": self.pagador_nombre,
-            "referencia": self.referencia,
-            "fecha": self.fecha.isoformat(),
-        }
-
-
-@dataclass(frozen=True)
-class ResultadoClasificacion:
-    """Veredicto del worker sobre los movimientos leídos."""
-
-    estado: EstadoJob
-    candidatos: tuple[Candidato, ...]
-
-
-def clasificar_por_valor(
-    valor: Decimal,
-    movimientos: Sequence[ScrapedMovement],
-) -> ResultadoClasificacion:
-    """Clasifica el job según los movimientos con el **mismo importe**.
+def _estado_del_job(coincidencia: ValueMatch) -> EstadoJob:
+    """El veredicto del matching, expresado en estados del job.
 
     - 0 candidatos ⇒ `sin_coincidencia`;
     - 1 candidato ⇒ `resuelto`;
     - 2 o más ⇒ `ambiguo`: el worker **no elige** (la elección es del
       operador en el POS).
 
-    Sólo cuentan los ingresos (`es_candidato_pago`): un egreso con el mismo
-    importe no es un pago.
-
-    Nota: el matching completo por valor (ventana, puntaje, referencia) es de
-    la slice S7 (`value_match.py`); aquí sólo está el criterio mínimo que
-    decide el estado del job.
+    La regla (qué es un candidato) no vive aquí: vive en
+    `value_match.match_by_value`, que es la **misma** que usa el endpoint de
+    candidatos.
     """
-    iguales = [
-        movimiento
-        for movimiento in movimientos
-        if movimiento.es_candidato_pago and movimiento.valor == valor
-    ]
-    candidatos = tuple(
-        Candidato(
-            id_externo=movimiento.id_externo,
-            valor=movimiento.valor,
-            pagador_nombre=movimiento.pagador_nombre,
-            referencia=movimiento.referencia,
-            fecha=movimiento.fecha,
-        )
-        for movimiento in iguales
-    )
-    if not candidatos:
-        return ResultadoClasificacion(EstadoJob.SIN_COINCIDENCIA, ())
-    if len(candidatos) > 1:
-        return ResultadoClasificacion(EstadoJob.AMBIGUO, candidatos)
-    return ResultadoClasificacion(EstadoJob.RESUELTO, candidatos)
+    if not coincidencia.candidatos:
+        return EstadoJob.SIN_COINCIDENCIA
+    if coincidencia.ambiguo:
+        return EstadoJob.AMBIGUO
+    return EstadoJob.RESUELTO
+
+
+def _candidato_json(candidato: Candidato) -> dict[str, str]:
+    """Candidato → JSON del resultado del job (el front lo usa para el prellenado)."""
+    return {
+        "id": candidato.id,
+        "valor": str(candidato.valor),
+        "pagador_nombre": candidato.pagador_nombre,
+        "referencia": candidato.referencia,
+        "fecha": candidato.fecha.isoformat(),
+    }
 
 
 def _a_ingesta(movimiento: ScrapedMovement) -> BankMovementIn:
@@ -230,11 +195,18 @@ class BankVerificationWorker:
         # La ingesta ocurre DESPUÉS del scrape completo: un fallo del portal
         # deja cero movimientos (nada de filas parciales).
         self._ingerir(resultado)
-        clasificacion = clasificar_por_valor(job.valor, resultado.movimientos)
+        coincidencia = match_by_value(
+            job.valor,
+            [
+                desde_movimiento_raspado(movimiento, resultado.tenant)
+                for movimiento in resultado.movimientos
+            ],
+            resultado.ventana,
+        )
         self._actualizar(
             job,
-            clasificacion.estado,
-            resultado=self._resultado_json(resultado, clasificacion),
+            _estado_del_job(coincidencia),
+            resultado=self._resultado_json(resultado, coincidencia),
         )
 
     # --- implementación ---
@@ -282,13 +254,11 @@ class BankVerificationWorker:
     def _resultado_json(
         self,
         resultado: ScrapeResult,
-        clasificacion: ResultadoClasificacion,
+        coincidencia: ValueMatch,
     ) -> dict[str, Any]:
         """Lo que se persiste en `resultado_json`: ventana, nodo e ingesta."""
         inicio, fin = resultado.ventana
-        candidato = (
-            clasificacion.candidatos[0].a_dict() if len(clasificacion.candidatos) == 1 else None
-        )
+        candidato = coincidencia.seleccionado
         return {
             "ventana": {"desde": inicio.isoformat(), "hasta": fin.isoformat()},
             "nodo": self._nodo,
@@ -296,6 +266,6 @@ class BankVerificationWorker:
             "cuenta": resultado.cuenta,
             "paginas": resultado.paginas,
             "movimientos": len(resultado.movimientos),
-            "candidatos": len(clasificacion.candidatos),
-            "candidato": candidato,
+            "candidatos": len(coincidencia.candidatos),
+            "candidato": _candidato_json(candidato) if candidato is not None else None,
         }

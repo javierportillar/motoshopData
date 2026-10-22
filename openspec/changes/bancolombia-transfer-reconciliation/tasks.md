@@ -322,16 +322,38 @@ Reglas:
 
 ## S7 — Coincidencia por valor + API de candidatos (PR #7, base: rama PR #6)
 
-- [ ] **7.1** `[AUTO]` **Match por valor: 0 / 1 / 2+ candidatos** `[REC-1s1, REC-1s2, REC-2s1, REC-3s1, REC-4s1]`
+- [x] **7.1** `[AUTO]` **Match por valor: 0 / 1 / 2+ candidatos** `[REC-1s1, REC-1s2, REC-2s1, REC-3s1, REC-4s1]`
   - RED: `motoshop-app/api/tests/test_bank_value_match.py` — `test_valor_igual_dentro_de_la_ventana_devuelve_el_candidato` (458200 ⇒ 1 candidato), `test_sin_coincidencias_en_la_ventana_no_devuelve_candidatos`, `test_mismo_valor_de_ayer_no_es_candidato` (frontera de ventana), `test_dos_movimientos_con_el_mismo_valor_reporta_ambiguedad_y_lista_ambos_sin_elegir` (`ambiguo=True`, 2 candidatos, `seleccionado is None`), `test_candidato_expone_pagador_y_referencia_saneada` (`PAGO QR CRISTOPHER BENAMIDES P` + `0092055984 null` ⇒ pagador `CRISTOPHER BENAMIDES P`, referencia `0092055984`), `test_fila_no_pago_qr_expone_pagador_vacio`.
   - GREEN: `motoshop-app/api/src/motoshop_api/erp/bankreconciliation/value_match.py` — `match_by_value(valor: Decimal, movimientos: Sequence[BankMovement], ventana: tuple[date, date]) -> ValueMatch`; `ValueMatch(ambiguo: bool, candidatos: list[Candidato], ventana)`; `Candidato(id, valor, pagador_nombre, referencia, fecha)`; sólo movimientos **positivos** son candidatos; el valor se compara con `Decimal` exacto.
   - Verify: `cd motoshop-app/api && uv run pytest tests/test_bank_value_match.py -q`.
+  - Evidencia (cwd `motoshop-app/api`): RED sin el módulo → `ModuleNotFoundError: No module named 'motoshop_api.erp.bankreconciliation.value_match'` (1 error de colección). GREEN → `uv run pytest tests/test_bank_value_match.py -q` → **6 passed** (los 6 nombrados en la spec). `uv run pytest tests/ -q -k "not integration"` → **1144 passed, 15 deselected, 7 failed (PREEXISTENTES de `tests/test_reports.py`)**; baseline medido ANTES del cambio → **1131 passed, 15 deselected, 7 failed** ⇒ delta **+13** (6 de esta task + 7 de 7.2). `uv run ruff check` sobre los archivos creados → **All checks passed!**
+  - Detalles de implementación (decisiones tomadas al ejecutar la spec):
+    - **La función es pura y normaliza la entrada**: `match_by_value(valor, movimientos, ventana)` recibe `MovimientoCoincidible` (la forma mínima: `id_externo`, `tenant`, `valor`, `pagador_nombre`, `referencia`, `fecha`, `es_candidato_pago`), no el `ParsedMovement` del parser: el candidato necesita un **id de dominio** (`uuid5` de `tenant:id_externo`) y `ParsedMovement` no lleva tenant ni `id_externo`. Hay dos adaptadores (`desde_movimiento_raspado`, `desde_movimiento_persistido`) y el `Protocol` `MovimientoRaspado` evita que el módulo puro arrastre el scraper.
+    - **El `id` del candidato es el de dominio** (`id_dominio_movimiento(tenant, id_externo)`): es el mismo id con el que la API apunta a la fila del movimiento, así que la UI puede llevar el candidato al conciliador sin ambigüedad.
+    - **`ValueMatch.seleccionado`**: el candidato único o `None` (cero **o** dos o más ⇒ `None` ⇒ el sistema nunca elige en la ambigüedad).
+    - **Sólo ingresos**: la regla es `es_candidato_pago and valor > 0`. En la forma persistida `es_candidato_pago` se deduce del **signo**; en la forma del portal manda la bandera del scraper (un egreso con importe positivo tampoco es un pago — es lo que fija `test_un_egreso_no_es_candidato_del_job` de S6).
+    - **La ventana se normaliza a días** (`date`): el `tuple[date, date]` de la spec y el `tuple[datetime, datetime]` de la ventana del nodo son la misma cota (un instante se recorta a su día). La comparación es **inclusiva** en los dos extremos.
+    - **El worker ahora usa esta misma regla** (`worker.py`): se borró `clasificar_por_valor()` (la costura deliberada de S6) y `run_once` llama a `match_by_value` con la ventana del scrape; el worker sólo traduce el veredicto a estado de job (`0 → sin_coincidencia`, `1 → resuelto`, `2+ → ambiguo`).
+  - Desviación menor: el `id` del `resultado_json.candidato` del job (S6) pasa de `id_externo` al **id de dominio** (el mismo que expone la API de candidatos). No lo fija ningún test de S6 y unifica el contrato para el front de S8.
   - Depends: 6.3
 
-- [ ] **7.2** `[AUTO]` **`GET /api/erp/bank/candidates`** `[REC-1s1, REC-3s1, REC-4s1, REC-11s1, REC-11s2]`
+- [x] **7.2** `[AUTO]` **`GET /api/erp/bank/candidates`** `[REC-1s1, REC-3s1, REC-4s1, REC-11s1, REC-11s2]`
   - RED: `motoshop-app/api/tests/test_bank_candidates_router.py` — `test_candidates_200_devuelve_ambiguo_ventana_y_candidatos`, `test_candidates_200_con_lista_vacia_sin_coincidencia` (no es error), `test_candidates_solo_consulta_movimientos_del_tenant_actual`, `test_candidates_403_sin_permisos_de_cobranzas`, `test_candidates_403_sin_tenant_erp`.
   - GREEN: `motoshop-app/api/src/motoshop_api/erp/bankreconciliation/router.py` (`GET /erp/bank/candidates?valor=&desde=&hasta=` → `{ambiguo, ventana, candidatos:[{id,valor,pagadorNombre,referencia,fecha}], ultimaIngestaAt}`), `motoshop-app/api/src/motoshop_api/erp/guards.py` (`("GET","/api/erp/bank/candidates"): ("erp-cash",)`), `.../main.py` (ya registrado el router en 6.3).
   - Verify: `cd motoshop-app/api && uv run pytest tests/test_bank_candidates_router.py -q`.
+  - Evidencia (cwd `motoshop-app/api`): RED sin la ruta → **404 Not Found** en los 7 tests (`{"detail":"Not Found"}`). GREEN → `uv run pytest tests/test_bank_candidates_router.py -q` → **7 passed** (los 5 nombrados en la spec + `test_candidates_422_con_un_importe_invalido` + `test_candidates_sin_ingesta_devuelve_ultima_ingesta_null`). Suite completa → **1144 passed, 15 deselected, 7 failed (preexistentes)**. `uv run ruff check` sobre los archivos tocados → **All checks passed!**
+  - Contrato de la API (lo que consume el front de S8):
+    - `GET /api/erp/bank/candidates?valor=<decimal>&desde=<YYYY-MM-DD>&hasta=<YYYY-MM-DD>`.
+    - `valor` es **obligatorio** y debe ser un decimal válido de **2 decimales** (`max_digits=18`, `decimal_places=2`): si no, **422**. `desde`/`hasta` son opcionales; por defecto la ventana es **el día en curso**. Una ventana invertida (`desde > hasta`) es **422**.
+    - **200** → `{"ambiguo": bool, "ventana": {"desde": "YYYY-MM-DD", "hasta": "YYYY-MM-DD"}, "candidatos": [{"id": "<uuid5>", "valor": "458200.00", "pagadorNombre": "...", "referencia": "0092055984", "fecha": "YYYY-MM-DD"}], "ultimaIngestaAt": "2026-10-21T12:00:00" | null}`.
+    - Sin coincidencia → **200** con `candidatos: []` y `ambiguo: false` (**no** es un error). `ultimaIngestaAt` es el `scraped_at` más reciente del tenant (`null` si nunca ingirió).
+    - El importe viaja como **texto** (`"458200.00"`): nunca como `float` (ADR-0008-07).
+  - Guardas (decisión explícita): `require_erp_tenant` + módulo `erp-cash` en `ERP_ROUTE_MODULES` (`("GET","/api/erp/bank/candidates"): ("erp-cash",)`). Es una **lectura**: no pide rol de cobranzas (a diferencia del `POST` de S6, que sí crea un job).
+  - Detalles de implementación (decisiones tomadas al ejecutar la spec):
+    - **El router no reimplementa la regla**: lee los movimientos del tenant y llama a `value_match.match_by_value` (la misma función que usa el worker del nodo).
+    - **Una sola lectura al store**: `list_movimientos(tenant.id)` (filtrado por tenant en el store) y de ahí salen los candidatos y el `ultimaIngestaAt` (`max(scraped_at)`). El filtro de ventana lo aplica la función pura, no el SQL.
+    - El `id` del candidato sale del **id de dominio** (`id_dominio_movimiento(tenant, id_externo)`): el mismo id con el que la API de movimientos (S9) apunta a la fila.
+  - Pendiente de 7.2 (NO es trabajo de esta slice): la lectura trae **todos** los movimientos del tenant (sin paginación ni índice por importe); con volúmenes grandes el `sync-status` de S9 debería exponer la última ingesta desde la base y no desde el listado.
   - Depends: 7.1
 
 **S7 DoD**: el match por valor es una función pura explicable y la API expone candidatos sólo del tenant activo.

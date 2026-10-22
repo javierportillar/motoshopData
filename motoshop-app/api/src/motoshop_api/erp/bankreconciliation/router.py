@@ -21,14 +21,23 @@ Errores (el cuerpo es `{"detail": {...}}`):
 Guardas: `POST` exige `require_erp_tenant` **+** `require_erp_collections_write`
 (crear un job es una escritura de cobranzas); `GET` exige `require_erp_tenant`
 y el módulo `erp-cash` (es el sondeo del POS).
+
+Además, `GET /api/erp/bank/candidates` (S7) devuelve los **candidatos por
+importe** del tenant activo: es la lectura que la UI del POS usa para
+prellenar la captura del pago. La regla de coincidencia vive en
+`value_match.py` (función pura); aquí sólo se leen los movimientos del tenant
+y se traduce el resultado a JSON.
 """
 
 from __future__ import annotations
 
+import datetime
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from decimal import Decimal
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from motoshop_api.auth.users import User
@@ -42,8 +51,13 @@ from motoshop_api.erp.bankreconciliation.node_config import (
     NodeConfigError,
     load_node_config,
 )
-from motoshop_api.erp.bankreconciliation.schemas import BankMoney
+from motoshop_api.erp.bankreconciliation.schemas import BankMoney, BankMovementOut
 from motoshop_api.erp.bankreconciliation.store import BankStore, get_bank_store
+from motoshop_api.erp.bankreconciliation.value_match import (
+    Candidato,
+    desde_movimiento_persistido,
+    match_by_value,
+)
 from motoshop_api.erp.bankreconciliation.worker import BankVerificationWorker
 from motoshop_api.erp.guards import require_erp_collections_write, require_erp_tenant
 from motoshop_api.tenants import Tenant
@@ -182,3 +196,81 @@ def leer_verificacion(
     if job.error_codigo is not None:
         respuesta["error"] = job.error_codigo
     return respuesta
+
+
+@router.get("/bank/candidates")
+def listar_candidatos(
+    valor: Annotated[Decimal, Query(max_digits=18, decimal_places=2)],
+    desde: datetime.date | None = Query(default=None),
+    hasta: datetime.date | None = Query(default=None),
+    tenant: Tenant = Depends(require_erp_tenant),
+    store: BankStore = Depends(get_bank_store),
+) -> dict:
+    """Candidatos con el mismo importe dentro de la ventana de consulta.
+
+    Es una **lectura**: sólo se ven los movimientos del tenant activo y la
+    regla de coincidencia es la de `value_match.match_by_value` (la misma que
+    usa el worker del nodo).
+
+    - `valor` es obligatorio y debe ser un decimal válido de dos decimales
+      (si no, la API responde **422**);
+    - `desde`/`hasta` acotan la ventana; por defecto es **el día en curso**;
+    - sin coincidencia la respuesta es **200** con `candidatos` vacío: no es
+      un error;
+    - `ambiguo` es `True` cuando hay dos o más candidatos: se listan todos y
+      **no** se elige ninguno (la elección es del operador).
+
+    Respuesta **200**:
+
+        {
+          "ambiguo": false,
+          "ventana": {"desde": "2026-10-21", "hasta": "2026-10-21"},
+          "candidatos": [
+            {"id": "<uuid5>", "valor": "458200.00", "pagadorNombre": "...",
+             "referencia": "0092055984", "fecha": "2026-10-21"}
+          ],
+          "ultimaIngestaAt": "2026-10-21T12:00:00"
+        }
+
+    El importe viaja como **texto** (`"458200.00"`): nunca como `float`.
+    """
+    hoy = datetime.date.today()
+    inicio = desde or hoy
+    fin = hasta or hoy
+    if inicio > fin:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La ventana de consulta está invertida: 'desde' es posterior a 'hasta'.",
+        )
+
+    movimientos = store.list_movimientos(tenant.id)
+    coincidencia = match_by_value(
+        valor,
+        [desde_movimiento_persistido(movimiento) for movimiento in movimientos],
+        (inicio, fin),
+    )
+    return {
+        "ambiguo": coincidencia.ambiguo,
+        "ventana": {"desde": inicio.isoformat(), "hasta": fin.isoformat()},
+        "candidatos": [_candidato_json(candidato) for candidato in coincidencia.candidatos],
+        "ultimaIngestaAt": _ultima_ingesta(movimientos),
+    }
+
+
+def _candidato_json(candidato: Candidato) -> dict[str, str]:
+    """Candidato → JSON de la API (el importe viaja como texto: nunca `float`)."""
+    return {
+        "id": candidato.id,
+        "valor": str(candidato.valor),
+        "pagadorNombre": candidato.pagador_nombre,
+        "referencia": candidato.referencia,
+        "fecha": candidato.fecha.isoformat(),
+    }
+
+
+def _ultima_ingesta(movimientos: Sequence[BankMovementOut]) -> str | None:
+    """Instante de la última ingesta del tenant (`None` si nunca ingirió)."""
+    instantes = [movimiento.scraped_at for movimiento in movimientos if movimiento.scraped_at]
+    if not instantes:
+        return None
+    return max(instantes).isoformat()
