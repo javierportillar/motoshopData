@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 # Set test environment BEFORE any imports
 os.environ["JWT_SECRET"] = "test-secret-key-for-testing-only-32chars!"
@@ -18,7 +19,21 @@ from fastapi.testclient import TestClient
 from motoshop_api.auth.router import limiter
 from motoshop_api.auth.users import User, _users_cache
 from motoshop_api.db.engine import reset_engine
+from motoshop_api.erp.bankreconciliation.vault import _get_config_dir
 from motoshop_api.main import app
+
+
+def config_dir_for(monkeypatch: pytest.MonkeyPatch, base: Path) -> Path:
+    """Fija el directorio de perfil que el código lee en esta plataforma.
+
+    `vault._get_config_dir` resuelve `%APPDATA%` en Windows y `XDG_CONFIG_HOME`
+    en POSIX. Se fijan las DOS variables y la ruta esperada se resuelve con la
+    misma función que usa el código, así el test no duplica la regla ni escribe
+    en el perfil real del usuario.
+    """
+    monkeypatch.setenv("APPDATA", str(base))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(base))
+    return _get_config_dir()
 
 
 @pytest.fixture(autouse=True)

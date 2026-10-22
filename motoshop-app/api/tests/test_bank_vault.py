@@ -28,10 +28,10 @@ from motoshop_api.erp.bankreconciliation.vault import (
     VaultError,
     VaultNotFound,
     _DpapiCustody,
-    _get_config_dir,
     decrypt_payload,
     derive_key,
 )
+from tests.conftest import config_dir_for
 
 # --- Helpers ---
 
@@ -151,11 +151,7 @@ def temp_vault_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     # Se fijan las DOS variables: el código resuelve `XDG_CONFIG_HOME` en POSIX y
     # `APPDATA` en Windows. Sin `APPDATA` el test escribiría en el perfil REAL del
     # operador cuando corre en Windows.
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg_config"))
-    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
-    # La ruta se resuelve con la MISMA función que usa el código, no con una copia
-    # de la regla: así el test vale en POSIX (XDG) y en Windows (APPDATA).
-    config_dir = _get_config_dir()
+    config_dir = config_dir_for(monkeypatch, tmp_path / "config")
     assert str(tmp_path) in str(config_dir), "el fixture tiene que aislar el config dir"
     return config_dir
 
@@ -713,21 +709,22 @@ def test_dpapi_is_a_cli_choice(
 # --- W7: el directorio de configuración NO se cachea ---
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="Usa XDG_CONFIG_HOME (POSIX)")
 def test_config_dir_is_not_cached(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Cambiar `XDG_CONFIG_HOME` debe cambiar el directorio resuelto (sin cache_clear)."""
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "uno"))
-    first = _get_config_dir()
+    """Cambiar el directorio base debe cambiar el directorio resuelto (sin cache_clear)."""
+    uno = config_dir_for(monkeypatch, tmp_path / "uno")
+    dos = config_dir_for(monkeypatch, tmp_path / "dos")
 
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "dos"))
-    second = _get_config_dir()
-
-    assert first == tmp_path / "uno" / "motoshop"
-    assert second == tmp_path / "dos" / "motoshop"
-    assert first != second
+    assert uno == tmp_path / "uno" / "motoshop"
+    assert dos == tmp_path / "dos" / "motoshop"
+    assert uno != dos
 
 
 # --- C1 / W5 / W10 / W11: backend `keychain` ---
+
+requiere_pty = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="el backend keychain pregunta por pseudo-terminal (pty): no existe en Windows",
+)
 
 
 def test_keychain_backend_skipped_on_non_macos(temp_vault_env: Path):
@@ -740,6 +737,7 @@ def test_keychain_backend_skipped_on_non_macos(temp_vault_env: Path):
         assert vault._custody_backend == "keychain"
 
 
+@requiere_pty
 def test_keychain_set_rotate_delete(
     temp_vault_env: Path, mock_getpass, fake_keychain: _FakeKeychain, vault_path: Path
 ):
@@ -761,6 +759,7 @@ def test_keychain_set_rotate_delete(
     assert vault_lector.list_entries() == []
 
 
+@requiere_pty
 def test_keychain_secret_never_appears_in_argv(
     temp_vault_env: Path, fake_keychain: _FakeKeychain, vault_path: Path
 ):
@@ -782,6 +781,7 @@ def test_keychain_secret_never_appears_in_argv(
             assert not any(secret in arg for arg in argv)
 
 
+@requiere_pty
 def test_keychain_envelope_declares_the_real_kdf(
     temp_vault_env: Path, fake_keychain: _FakeKeychain, vault_path: Path
 ):
@@ -801,6 +801,7 @@ def test_keychain_envelope_declares_the_real_kdf(
     assert second_envelope["kdf"]["salt"] == first_salt
 
 
+@requiere_pty
 def test_keychain_vault_stays_readable_across_writes(
     temp_vault_env: Path, fake_keychain: _FakeKeychain, vault_path: Path
 ):
@@ -830,6 +831,7 @@ def test_keychain_missing_item_raises_vault_not_found(
     assert exc_info.value.__class__ is VaultNotFound
 
 
+@requiere_pty
 def test_keychain_malformed_key_raises_vault_error(
     temp_vault_env: Path, fake_keychain: _FakeKeychain, vault_path: Path
 ):

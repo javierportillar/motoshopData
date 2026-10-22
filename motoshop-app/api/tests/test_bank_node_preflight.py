@@ -189,7 +189,10 @@ def test_el_preflight_reporta_todos_los_problemas(tmp_path: Path) -> None:
     motivos = {check.motivo for check in resultado.fallos}
     assert "cuenta_no_encontrada" in motivos
     assert "credencial_ausente" in motivos
-    assert "perfil_permisos_insuficientes" in motivos
+    if sys.platform != "win32":
+        # El modo 0o700 del perfil no tiene equivalente en Windows: ahí el
+        # preflight no reporta esta falla.
+        assert "perfil_permisos_insuficientes" in motivos
 
 
 def test_el_scraper_deshabilitado_no_pide_la_credencial(tmp_path: Path) -> None:
