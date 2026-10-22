@@ -34,6 +34,7 @@ tenants:
       - briefing-diario
       - pipeline-observability
       - data-catalog
+      - bank-reconciliation
     briefing:
       activo: true
       hora_cron_utc: "0 11 * * *"

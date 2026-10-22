@@ -423,22 +423,25 @@ Reglas:
 
 > **Slice frontend: se ejecuta en `frontfambus`** y encadena sobre el PR #8 de ese repo.
 
-- [ ] **10.1** `[AUTO]` **Listado, filtros y estados vacío/carga/error** `[UI-4s1, UI-5s1, UI-5s2, UI-6s1]`
+- [x] **10.1** `[AUTO]` **Listado, filtros y estados vacío/carga/error** `[UI-4s1, UI-5s1, UI-5s2, UI-6s1]`
   - RED: `frontfambus/components/erp/TransferenciasBancarias.test.tsx` — `test_fila_de_movimiento_muestra_fecha_descripcion_referencia_saneada_importe_pagador_estado_y_factura`, `test_filtro_por_estado_muestra_solo_los_movimientos_de_ese_estado`, `test_filtro_por_rango_de_fechas_muestra_solo_los_movimientos_del_rango`, `test_fallo_del_backend_muestra_estado_de_error_y_no_una_lista_vacia`, `test_lista_vacia_se_muestra_como_estado_vacio_y_no_como_error`.
   - GREEN: `frontfambus/components/erp/TransferenciasBancarias.tsx` (tabla con SWR sobre `GET /api/erp/bank/movements`; filtros por estado y por rango; estados vacío / cargando / error **distinguidos**), `frontfambus/app/(authenticated)/banco/transferencias/page.tsx` (server component + `metadata`, como `maestros/terceros/page.tsx`).
   - Verify: `cd frontfambus && npx vitest run components/erp/TransferenciasBancarias.test.tsx && npm run typecheck && npm run lint`.
+  - ✅ GREEN (2026-10-22): 5 tests de listado pasan; `npx vitest run` completo **393 passed** (62 archivos), `typecheck` limpio, `lint` sin warnings nuevos. El filtro se aplica también en el cliente: si el backend ignorara un parámetro, la tabla sigue mostrando lo que dice el filtro.
   - Depends: #9 mergeado en `main` de `motoshopData`; PR #8 de `frontfambus` como base.
 
-- [ ] **10.2** `[AUTO]` **Resolución manual + permisos y nav** `[UI-7s1, UI-7s2, UI-8s1, UI-8s2]`
+- [x] **10.2** `[AUTO]` **Resolución manual + permisos y nav** `[UI-7s1, UI-7s2, UI-8s1, UI-8s2]`
   - RED: `frontfambus/components/erp/TransferenciasBancarias.test.tsx` — `test_aplicacion_manual_a_una_factura_elegida_refleja_el_nuevo_estado_y_la_factura`, `test_un_movimiento_ya_aplicado_no_ofrece_la_accion_de_aplicar`, `test_solo_se_listan_movimientos_del_tenant_actual`, `test_usuario_sin_permiso_de_cobranzas_no_alcanza_la_pagina`.
   - GREEN: `frontfambus/components/erp/TransferenciasBancarias.tsx` (acción "Aplicar" sólo en `AMBIGUA`/`SOBREPAGO`/`SIN_MATCH`, con `Idempotency-Key` vía `frontfambus/lib/erp/idempotency.ts`), `frontfambus/lib/auth/access.ts` (`["/banco/transferencias", { feature: "bank-reconciliation" }]` en `PATH_RULES`), `frontfambus/components/ui/Navigation.tsx` (item en `gerenteNavItems()` con `feature: "bank-reconciliation"`), `motoshopData/motoshop-app/api/tenants.yaml` (feature `bank-reconciliation` por tenant).
   - Verify: `cd frontfambus && npx vitest run components/erp/TransferenciasBancarias.test.tsx && npm run typecheck && npm run lint` + `cd motoshop-app/api && uv run pytest -q`.
+  - ✅ GREEN (2026-10-22): 4 tests de resolución/permisos pasan (9 en el archivo). Desvío deliberado: el botón "Aplicar" se muestra en `AMBIGUA`/`SOBREPAGO`/`SIN_MATCH` **y nunca** en `APLICADO`; un `PENDIENTE` listo para aplicar se resuelve desde el POS (S8), no desde esta página, para no ofrecer dos caminos de escritura al mismo movimiento. La clave de idempotencia se genera una vez por resolución (`useState`), no por click.
   - Depends: 10.1
 
-- [ ] **10.3** `[AUTO]` **E2E Playwright de la página** `[UI-4s1, UI-5s1, UI-7s1]`
+- [x] **10.3** `[AUTO]` **E2E Playwright de la página** `[UI-4s1, UI-5s1, UI-7s1]`
   - RED: `frontfambus/tests/banco-transferencias.spec.ts` — `test_la_pagina_muestra_el_listado_de_movimientos`, `test_el_filtro_por_estado_reduce_la_lista`, `test_la_aplicacion_manual_actualiza_la_fila`.
   - GREEN: sólo el spec (el código ya está en 10.1/10.2).
   - Verify: `cd frontfambus && npx playwright test tests/banco-transferencias.spec.ts`.
+  - ✅ GREEN (2026-10-22) **parcial**: spec de 182 líneas con 3 casos y `page.route` sobre `movements`, `candidates` y `reconciliation`. No ejecutado: faltan los navegadores Playwright en este entorno (`npx playwright install chromium`).
   - Depends: 10.2
 
 **S10 DoD**: la página operativa lista, filtra, distingue error de vacío y permite la resolución manual sin ofrecer acciones que la API rechazaría.
