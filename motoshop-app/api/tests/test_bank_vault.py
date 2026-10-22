@@ -18,7 +18,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from motoshop_api.erp.bankreconciliation import cli
 from motoshop_api.erp.bankreconciliation.vault import (
     CredentialVault,
@@ -188,6 +187,21 @@ def test_round_trip_set_get_entry(temp_vault_env: Path, mock_getpass, dummy_pass
     assert entry.username == "usuario_bancolombia"
     assert entry.password == "clave_secreta_123"
     assert isinstance(entry.updated_at, datetime.datetime)
+
+
+def test_save_without_fchmod(
+    temp_vault_env: Path, mock_getpass, dummy_passphrase: str, monkeypatch
+):
+    """Windows no tiene `os.fchmod`: guardar el vault no puede depender de él."""
+    mock_getpass.return_value = dummy_passphrase
+    monkeypatch.delattr(os, "fchmod", raising=False)
+
+    vault = CredentialVault(custody_backend="passphrase")
+    vault.set_entry("bancolombia-masvital", "usuario_bancolombia", "clave_secreta_123")
+
+    entry = vault.get_entry("bancolombia-masvital")
+    assert entry.username == "usuario_bancolombia"
+    assert entry.password == "clave_secreta_123"
 
 
 def test_vault_readable_from_another_process(

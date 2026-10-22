@@ -621,7 +621,11 @@ class CredentialVault:
                 temp_vault_path.unlink()
             fd = os.open(temp_vault_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             try:
-                os.fchmod(fd, 0o600)  # immune to the process umask
+                # `os.fchmod` is POSIX-only. On Windows `os.open` already applied
+                # the mode and NTFS inherits the ACL from the config directory.
+                fchmod = getattr(os, "fchmod", None)
+                if fchmod is not None:
+                    fchmod(fd, 0o600)  # immune to the process umask
                 # `os.fdopen` takes ownership of the fd: from here the `with` closes it.
                 handle = os.fdopen(fd, "w", encoding="utf-8")
             except BaseException:
