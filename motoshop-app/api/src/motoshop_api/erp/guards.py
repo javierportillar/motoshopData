@@ -70,6 +70,8 @@ ERP_ROUTE_MODULES: dict[tuple[str, str], tuple[str, ...]] = {
     ("POST", "/api/erp/cash/egresos"): ("erp-cash",),
     ("POST", "/api/erp/cash/arqueo"): ("erp-cash",),
     ("POST", "/api/erp/bank/consignments"): ("erp-cash",),
+    ("POST", "/api/erp/bank/verificaciones"): ("erp-cash",),
+    ("GET", "/api/erp/bank/verificaciones/{job_id}"): ("erp-cash",),
     ("POST", "/api/erp/documents/{codclas}/{numfven}/annulment"): ("erp-anulaciones",),
 }
 

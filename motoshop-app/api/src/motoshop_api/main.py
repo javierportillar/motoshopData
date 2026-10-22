@@ -29,6 +29,7 @@ from motoshop_api.auth.users import load_users
 from motoshop_api.config import settings
 from motoshop_api.data_catalog.router import catalog_router
 from motoshop_api.erp.annulment.router import router as erp_annulment_router
+from motoshop_api.erp.bankreconciliation.router import router as erp_bank_router
 from motoshop_api.erp.cash.router import router as erp_cash_router
 from motoshop_api.erp.dian.router import router as dian_router
 from motoshop_api.erp.engine import ErpSaveFailed
@@ -290,6 +291,7 @@ app.include_router(erp_masters_router, prefix="/api", dependencies=module_access
 app.include_router(erp_cash_router, prefix="/api", dependencies=module_access)
 app.include_router(erp_invoicing_router, prefix="/api", dependencies=module_access)
 app.include_router(erp_annulment_router, prefix="/api", dependencies=module_access)
+app.include_router(erp_bank_router, prefix="/api", dependencies=module_access)
 app.include_router(erp_pos_router, dependencies=module_access)
 app.include_router(dian_router, prefix="/api/erp/dian")
 
