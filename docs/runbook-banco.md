@@ -321,3 +321,6 @@ la API, no la de la consola del operador. DPAPI y `%APPDATA%` son **por usuario*
   «sólo cuando el usuario inició sesión», que conserva el navegador con ventana.
 - No se re-crea el vault bajo `SYSTEM`: además de no resolver el perfil del navegador, dejaría la
   credencial del banco al alcance de cualquier proceso que corra como `SYSTEM`.
+- Con la tarea «sólo cuando el usuario inició sesión», el autostart ocurre **al iniciar sesión**, no
+  al arrancar Windows. Si la PC reinicia y nadie entra, no hay API: cae el ERP entero, no sólo el
+  botón. Quien opera el local tiene que saberlo y entrar como el usuario de la tarea.
