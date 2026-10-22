@@ -14,10 +14,12 @@ funcionar para MasVital igual que para MotoShop. Falta dejar este nodo listo con
 
 - **No** modifiques `formapago`, `facventas`, `consbancab` ni ningún catálogo. Esta tarea **no
   escribe** en las tablas legacy.
-- **No** adivines el `codpag` de transferencia. Si no lo podés confirmar con datos, el paso queda
-  **pendiente** y lo reportás: el sistema está diseñado para fallar cerrado en ese caso.
-- **No** cambies `MYSQL_*`, `R2_*`, `BANK_TENANT`, `BANK_ACCOUNT_LABEL`, `BANK_CREDENTIAL_ENTRY`
-  ni `BANK_PROFILE_DIR` si ya tienen valor. Sólo agregás lo que falta.
+- Los `codpag` **ya están confirmados con datos** (`F07` transferencia, `F05` consignación): el
+  Paso 3 sólo verifica que existan en esta base. No los reemplaces por uno inventado ni copies el
+  de otra empresa.
+- **No** cambies `MYSQL_*`, `R2_*`, `BANK_TENANT`, `BANK_CREDENTIAL_ENTRY` ni `BANK_PROFILE_DIR` si
+  ya tienen valor: sólo verificá que coincidan. Si `BANK_ACCOUNT_LABEL` ya tiene un valor distinto
+  de `MasVital`, reportalo antes de tocarlo.
 - **No** copies valores de MotoShop. El catálogo de formas de pago, la base y la etiqueta de cuenta
   son de esta empresa.
 - Antes de aplicar migraciones, **respaldá** la base: `mysqldump --single-transaction <DB> > backup-f9-$(date +%F).sql`.
@@ -61,20 +63,24 @@ SELECT name, applied_at FROM app_migration_state WHERE name LIKE 'F9-%';
 
 Esperado: las dos tablas y cuatro filas de estado.
 
-## Paso 3 — Los `codpag` reales (sólo lectura)
+## Paso 3 — Verificar los `codpag` en `formapago` (sólo lectura)
+
+Los códigos ya están confirmados contra los datos, no por el nombre:
+
+- **transferencia** (recibo de factura pagada por transferencia) ⇒ `F07`;
+- **consignación** (plata que entra sin factura) ⇒ `F05`.
+
+`F07` está confirmado en esta base (`TRANSFERENCIA BANCO` → `11100501`). `F05` **no aparece en el
+snapshot** de `masvital`, así que hay que verificar que la fila exista antes de usarla:
 
 ```sql
-SELECT codpag, forpag, codban, codcue FROM formapago;
+SELECT codpag, forpag, codban, codcue FROM formapago WHERE codpag IN ('F05','F07');
+SELECT codpag, COUNT(*) FROM detapago GROUP BY codpag ORDER BY 2 DESC;
 ```
 
-Reportá la lista completa con los nombres tal como están. Necesito **dos** códigos distintos:
-
-1. **transferencia bancaria** (recibo de una factura pagada por transferencia);
-2. **consignación bancaria** (plata que entra sin factura).
-
-En el catálogo suelen ser filas distintas (`TRANSFERENCIA BANCO` vs `CONSIGNACION BANCO`) y
-**pueden tener cuentas de contrapartida distintas**. No los deduzcas por el nombre si hay dudas:
-reportá las filas y esperá confirmación.
+Reportá las dos salidas tal cual. Si `F05` no existe o su `forpag` no es una consignación bancaria,
+**no** definas `BANK_CODPAG_CONSIGNACION_MASVITAL`: las consignaciones quedan pendientes (409
+`codpag_no_confirmado`), que es el comportamiento correcto. No reutilices `F07` como consignación.
 
 ## Paso 4 — Variables de entorno (sólo cuando el paso 3 esté confirmado)
 
@@ -84,15 +90,20 @@ En el `.env` de **esta máquina**:
 BANK_TENANT=masvital
 BANK_SCRAPER_ENABLED=true
 BANK_CREDENTIAL_ENTRY=bancolombia-masvital
-BANK_CODPAG_TRANSFERENCIA_MASVITAL=<codpag de transferencia>
-BANK_CODPAG_CONSIGNACION_MASVITAL=<codpag de consignación>
+BANK_ACCOUNT_LABEL=MasVital
+BANK_CODPAG_TRANSFERENCIA_MASVITAL=F07
+BANK_CODPAG_CONSIGNACION_MASVITAL=F05
 ```
+
+`BANK_ACCOUNT_LABEL=MasVital` es la etiqueta de la tarjeta del home del portal (cuenta
+879-000605-71). La comparación es **exacta** (normaliza espacios y mayúsculas): si el portal
+muestra otro texto, el scrape falla con `cuenta_no_encontrada` y hay que corregir la etiqueta, no
+el número. La línea de consignación sólo se deja si el Paso 3 confirmó `F05`; si no, se omite.
 
 - Si `BANK_TENANT`, `BANK_SCRAPER_ENABLED`, `BANK_CREDENTIAL_ENTRY` o `BANK_PROFILE_DIR` ya tienen
   valor, **no los toques**: sólo verificá que coincidan con lo de arriba.
-- `BANK_ACCOUNT_LABEL` tiene que ser la **etiqueta real de la cuenta de MasVital** en el portal (no
-  el número de cuenta, no la etiqueta de MotoShop). Si no la sabés, reportala como pendiente: es lo
-  único que evita abrir la cuenta equivocada.
+- `BANK_ACCOUNT_LABEL` es la **etiqueta** de la tarjeta, no el número de cuenta ni la etiqueta de
+  MotoShop: es lo único que evita abrir la cuenta equivocada. En esta máquina es `MasVital`.
 - Los `codpag` van **por tenant y por tipo**. El global `BANK_CODPAG_TRANSFERENCIA` sólo existe
   para compatibilidad de procesos de una sola empresa; en esta máquina usá las variables
   específicas. El código de transferencia **no** se usa como consignación: son formas de pago
@@ -142,6 +153,62 @@ su test y con la suite completa en verde:
 Nada de esto toca datos ni migraciones aplicadas. **No** registres `F8-004` a mano en
 `app_migration_state`: queda documentado como aplicado por fuera del runner y un futuro `--prefix F8`
 lo verá pendiente (el GRANT es idempotente).
+
+## Paso 6.6 — Defectos encontrados en la revisión
+
+Tres defectos de lo ya entregado. Dos ya están corregidos en la rama (`e0ae132` y el commit de
+imports); **sólo queda el lock de Windows**. Cada arreglo va en su commit, con la suite completa en
+verde antes de seguir.
+
+### 1. Mojibake en `F9-002` y `F9-004` — corregido en `e0ae132`
+
+Los archivos ahora están en UTF-8 real, sin BOM. Lo único que puede quedar pendiente es el
+**estado**: el checksum registrado en `app_migration_state` es el del archivo con mojibake, así que
+el runner puede abortar con `ChecksumMismatchError`. Si aparece:
+
+- calculá el checksum **con la función del runner** (nunca `sha256sum`, que no normaliza fines de
+  línea), desde la raíz del repo:
+
+  ```bash
+  python -c "from pathlib import Path; from infra.migrations.run_migrations import sha256_file; print(sha256_file(Path('infra/migrations/F9-002-grant_app_writer_bank.sql')))"
+  ```
+
+- confirmá con `split_statements` que las sentencias son idénticas a las que ya corrieron: en el
+  archivo sólo cambiaron comentarios;
+- actualizá el estado con ese valor:
+
+  ```sql
+  UPDATE app_migration_state SET checksum = '<nuevo>' WHERE migration_name = 'F9-002-grant_app_writer_bank.sql';
+  ```
+
+  Ídem `F9-004`.
+- Verificación: segunda corrida no-op. Si el mismatch persiste, **no borres la fila**: reportá.
+
+### 2. `ruff I001` en `tests/test_bank_vault.py` — corregido
+
+Era sólo el orden de imports; ya está arreglado en la rama. `uv run ruff check .` tiene que quedar
+limpio.
+
+### 3. Lock de Windows (`PermissionError [WinError 32]`) — pendiente, bloqueante del scraper
+
+`_Candado.liberar()` (`erp/bankreconciliation/scraper.py`, ~387) en Windows hace
+`self._ruta.unlink()` con el descriptor **todavía abierto**: Windows no permite borrar un archivo
+con un handle vivo. Con `fcntl` disponible (POSIX) nunca se ve; por eso la rama Windows está
+`# pragma: no cover` y pasó la suite.
+
+Orden correcto en `liberar()`:
+
+1. sacar `self._fd` del estado y **cerrar el handle** (`os.close`);
+2. recién ahí `unlink`, con hasta 5 reintentos y 50 ms entre intentos (un antivirus puede tener el
+   archivo tomado un instante);
+3. idempotente: si `_fd` es `None`, no hace nada.
+
+Tests (sacando el `pragma: no cover` de la rama):
+
+- simulando Windows con `monkeypatch.setattr(scraper, "fcntl", None)`: `adquirir()` + `liberar()`
+  dos veces no lanza y el archivo no queda;
+- `Path.unlink` que falla con `PermissionError` la primera vez y funciona en el reintento: no lanza
+  y el archivo se borra.
 
 ## Paso 7 — API arriba y verificación de lectura
 

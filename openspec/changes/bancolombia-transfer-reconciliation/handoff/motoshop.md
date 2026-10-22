@@ -55,27 +55,37 @@ SELECT name, applied_at FROM app_migration_state WHERE name LIKE 'F9-%';
 
 Esperado: las dos tablas y cuatro filas de estado.
 
-## Paso 3 — El `codpag` real de transferencia (sólo lectura)
+## Paso 3 — Verificar los `codpag` en `formapago` (sólo lectura)
 
-Este dato es el único que puede bloquear el despliegue. Consultalo y **reportá la lista completa**:
+Confirmados contra la distribución real de `detapago.codpag` de `sgHermes`
+(`docs/hermes/hermes_reverse_engineering_blueprint.md` §2.4): `F05 CONSIGNACIÓN BANCO` 826 usos,
+`F07 TRANSFERENCIA` 4 usos. Transferencia ⇒ `F07`; consignación ⇒ `F05`.
+
+Verificá que las dos filas existan en **esta** base y que su `forpag` sea el esperado:
 
 ```sql
-SELECT codpag, forpag, codban, codcue FROM formapago;
+SELECT codpag, forpag, codban, codcue FROM formapago WHERE codpag IN ('F05','F07');
+SELECT codpag, COUNT(*) FROM detapago GROUP BY codpag ORDER BY 2 DESC;
 ```
 
-Necesito **dos** códigos: el de **transferencia bancaria** (recibo de factura pagada por
-transferencia) y el de **consignación bancaria** (entrada de plata sin factura). En el catálogo
-suelen ser filas distintas y pueden tener cuentas de contrapartida distintas. No los deduzcas por el
-nombre si hay dudas: reportá las filas y esperá confirmación.
+Reportá las dos salidas tal cual y seguí: no hace falta esperar confirmación. Si `F05` no existe o
+su `forpag` no es una consignación bancaria, **no** definas `BANK_CODPAG_CONSIGNACION_MOTOSHOP` y
+seguí con el resto (las consignaciones quedan pendientes con 409, que es lo correcto).
 
 ## Paso 4 — Variable de entorno (sólo cuando el paso 3 esté confirmado)
 
 En el `.env` de **esta máquina**:
 
 ```dotenv
-BANK_CODPAG_TRANSFERENCIA_MOTOSHOP=<codpag de transferencia>
-BANK_CODPAG_CONSIGNACION_MOTOSHOP=<codpag de consignación>
+BANK_ACCOUNT_LABEL=Cuenta de Ahorros
+BANK_CODPAG_TRANSFERENCIA_MOTOSHOP=F07
+BANK_CODPAG_CONSIGNACION_MOTOSHOP=F05
 ```
+
+`BANK_ACCOUNT_LABEL=Cuenta de Ahorros` es la etiqueta de la tarjeta (cuenta 879-777844-40). La
+comparación es **exacta** (normaliza espacios y mayúsculas). Si el home tuviera **dos** tarjetas con
+esa misma etiqueta, el scraper abre la primera: en ese caso hay que frenar y avisar antes de
+conciliar nada.
 
 - Una sola API sirve a varias empresas: los códigos van **por tenant**. No uses los globales salvo
   que esta máquina sirva un único tenant.

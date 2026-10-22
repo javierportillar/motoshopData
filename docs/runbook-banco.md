@@ -28,11 +28,11 @@ Un proceso de API = **un tenant**. La configuración vive en el `.env` de cada m
 | `BANK_SCRAPER_ENABLED` | `true` | `true` | `true` | `false` |
 | `BANK_TENANT` | `masvital` | `motoshop` | tenant en pruebas | — |
 | `BANK_CREDENTIAL_ENTRY` | `bancolombia-masvital` | `bancolombia-motoshop` | `bancolombia-<tenant>` | — |
-| `BANK_ACCOUNT_LABEL` | etiqueta MasVital | etiqueta MotoShop *(por confirmar)* | según tenant | — |
+| `BANK_ACCOUNT_LABEL` | `MasVital` | `Cuenta de Ahorros` | según tenant | — |
 | `BANK_VAULT_BACKEND` | `passphrase` | `passphrase` | `keychain` | — |
 | `BANK_PROFILE_DIR` | `%APPDATA%\motoshop\bank-profile\<tenant>` | ídem | `~/.config/motoshop/bank-profile/<tenant>` | — |
-| `BANK_CODPAG_TRANSFERENCIA_<TENANT>` | código de transferencia | ídem | ídem | — |
-| `BANK_CODPAG_CONSIGNACION_<TENANT>` | código de consignación | ídem | ídem | — |
+| `BANK_CODPAG_TRANSFERENCIA_<TENANT>` | `F07` | `F07` | ídem | — |
+| `BANK_CODPAG_CONSIGNACION_<TENANT>` | `F05` *(verificar)* | `F05` | ídem | — |
 
 Reglas de la tabla:
 
@@ -48,6 +48,39 @@ Reglas de la tabla:
   cuentas de contrapartida distintas). Los globales sin sufijo sólo existen para procesos de una
   sola empresa: nunca se usa el código de transferencia como consignación. Sin el código
   confirmado, aplicar responde **409 `codpag_no_confirmado`** y el movimiento queda pendiente.
+
+### Valores confirmados (evidencia, no nombres)
+
+El `codpag` no se adivina por el nombre de la forma de pago: se toma de la distribución real de
+`detapago.codpag` (blueprint de `sgHermes`, §2.4):
+
+| Código | Forma | Usos en `sgHermes` |
+|---|---|---:|
+| F01 | EFECTIVO | 8.082 |
+| F05 | **CONSIGNACIÓN BANCO** | **826** |
+| F11 | CUENTAS X PAGAR | 312 |
+| F06 | CHEQUE | 83 |
+| F10 | CUENTAS X COBRAR | 6 |
+| F07 | **TRANSFERENCIA** | **4** |
+| F03 | TARJETA DÉBITO | 1 |
+
+- Transferencia bancaria (cobro de factura) ⇒ **F07**.
+- Consignación bancaria (sin factura) ⇒ **F05**.
+- `BANK_ACCOUNT_LABEL` es la etiqueta de la tarjeta del home (`<p class="text-ellipsis">`): se
+  compara **exacta** tras normalizar espacios y mayúsculas. MasVital = `MasVital`
+  (879-000605-71); MotoShop = `Cuenta de Ahorros` (879-777844-40).
+- En la base `masvital` está confirmado `F07 TRANSFERENCIA BANCO → 11100501`. **F05 no aparece en
+  el snapshot**: antes de habilitar consignaciones en ese nodo, correr
+  `SELECT codpag, forpag FROM formapago WHERE codpag = 'F05';` y, si no existe, **no** definir
+  `BANK_CODPAG_CONSIGNACION_MASVITAL` (fail-closed: el movimiento queda pendiente en vez de
+  postear con una contrapartida equivocada).
+
+Para re-verificar por empresa:
+
+```sql
+SELECT codpag, COUNT(*) FROM detapago GROUP BY codpag ORDER BY 2 DESC;
+SELECT codpag, forpag, codcue FROM formapago ORDER BY codpag;
+```
 
 ### Variables opcionales
 
