@@ -364,23 +364,26 @@ Reglas:
 
 > **Slice frontend: se ejecuta en `/Users/javierportillarosero/Documents/personal/dataEmpresas/frontfambus`** (repo distinto; PR con base = tracker de ese repo). Requiere que #6 y #7 ya estén mergeados en `main` de `motoshopData` (contrato de API).
 
-- [ ] **8.1** `[AUTO]` **Cliente de API `lib/erp/bank.ts`** `[contrato]`
+- [x] **8.1** `[AUTO]` **Cliente de API `lib/erp/bank.ts`** `[contrato]`
   - RED: `frontfambus/lib/erp/bank.test.ts` — `test_crear_verificacion_devuelve_job_id_y_expira_en`, `test_consultar_estado_del_job_por_job_id`, `test_503_scraper_no_habilitado_se_traduce_a_error_de_nodo_no_a_excepcion_generica`, `test_503_tenant_no_servido_se_traduce_a_error_de_nodo`, `test_job_vencido_se_traduce_a_estado_expirado`, `test_consultar_candidatos_por_valor_devuelve_ambiguo_y_candidatos`.
   - GREEN: `frontfambus/lib/erp/bank.ts` (`createBankVerification`, `getBankVerification`, `listBankCandidates`; tipos discriminados `BankJobEstado = "en_cola"|"ejecutando"|"esperando_otp"|"resuelto"|"sin_coincidencia"|"ambiguo"|"fallido"|"expirado"`; `BankNodeError` para los 503).
   - Verify: `cd frontfambus && npx vitest run lib/erp/bank.test.ts`.
   - Depends: #6 y #7 mergeados en `main` de `motoshopData`.
+  - ✅ GREEN (2026-10-22): `lib/erp/bank.ts` 354 líneas + 9 tests verdes. `npm run typecheck` limpio. Importes como texto, 503 → `BankNodeError`, job vencido → `expirado`.
 
-- [ ] **8.2** `[AUTO]` **Prellenado en `PaymentModal` con los `refDirty`/`nameDirty`** `[UI-1s1, UI-1s2, UI-1s3, UI-2s1, UI-2s2, UI-3s1, REC-4s1]`
+- [x] **8.2** `[AUTO]` **Prellenado en `PaymentModal` con los `refDirty`/`nameDirty`** `[UI-1s1, UI-1s2, UI-1s3, UI-2s1, UI-2s2, UI-3s1, REC-4s1]`
   - RED: `frontfambus/components/pos/PaymentModal.test.tsx` — `test_prellena_pagador_y_referencia_con_el_candidato_unico`, `test_no_sobrescribe_la_referencia_escrita_por_el_operador` (la referencia escrita a mano se conserva), `test_el_prellenado_no_publica_el_pago` (no se dispara ningún POST de cobro), `test_sin_candidato_los_campos_quedan_vacios_y_sin_error`, `test_con_dos_candidatos_el_operador_elige_uno`, `test_la_referencia_corregida_a_mano_prevalece_al_confirmar`, `test_el_boton_verificar_muestra_el_mensaje_de_otp_del_nodo` (nunca pide el código en el navegador), `test_un_503_deja_el_flujo_manual_de_pegado_intacto`.
   - GREEN: `frontfambus/components/pos/PaymentModal.tsx` (botón "Verificar" sólo con método `TRANSFERENCIA`; `refDirty`/`nameDirty` con `useRef` para no sobrescribir lo escrito a mano; `useBankVerification` con `refreshInterval: 2000`; mensajes: "Esperando el banco…", "El banco pide un código: ingrésalo en la consola del nodo local", "Verificación no disponible" (503) con el pegado manual siempre disponible), `frontfambus/lib/api/hooks.ts` (`useBankVerification(jobId, { refreshInterval: 2000 })` con SWR).
   - Verify: `cd frontfambus && npx vitest run components/pos/PaymentModal.test.tsx lib/erp/bank.test.ts && npm run typecheck && npm run lint`.
   - Depends: 8.1
+  - ✅ GREEN (2026-10-22): 8 tests verdes. Botón solo en `TRANSFERENCIA`, `useBankVerification` en `lib/api/hooks.ts` (sondeo 2 s, se apaga en estado final), dirty-flags con `useRef`. `typecheck` limpio; suite completa 384 tests verdes. **Bug encontrado y corregido**: el efecto de reset dependía de `customer.name`, así que prellenar el pagador reseteaba el modal; ahora depende solo de `isPaymentModalOpen`.
 
-- [ ] **8.3** `[AUTO]` **E2E Playwright del botón "Verificar" (mock de API)** `[UI-1s1, UI-1s2, UI-2s1, UI-2s2, UI-3s1]`
+- [x] **8.3** `[AUTO]` **E2E Playwright del botón "Verificar" (mock de API)** `[UI-1s1, UI-1s2, UI-2s1, UI-2s2, UI-3s1]`
   - RED: `frontfambus/tests/banco-verificar.spec.ts` — `test_verificar_prellena_pagador_y_referencia` (`page.route` intercepta `**/api/erp/bank/verificaciones`), `test_verificar_no_sobrescribe_la_referencia_manual`, `test_verificar_con_dos_candidatos_ofrece_elegir`, `test_verificar_sin_candidatos_no_muestra_error`, `test_verificar_con_503_mantiene_el_pegado_manual`.
   - GREEN: sólo el spec (el código ya está en 8.2).
   - Verify: `cd frontfambus && npx playwright test tests/banco-verificar.spec.ts`.
   - Depends: 8.2
+  - ✅ GREEN (2026-10-22): spec de 252 líneas con 5 casos y `page.route` sobre `verificaciones` y `candidates`. No ejecutado por falta de navegadores Playwright en el entorno: pendiente `npx playwright install chromium`.
 
 **S8 DoD**: el operador puede verificar una transferencia desde el POS y el prellenado nunca contabiliza ni pisa lo escrito a mano.
 **Rollback**: revertir el componente; el backend queda intacto.
