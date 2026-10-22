@@ -233,6 +233,32 @@ def test_prefix_run_second_time_is_noop_and_keeps_other_series(tmp_path):
     ]
 
 
+def test_console_encoding_is_hardened_for_utf8(monkeypatch):
+    """cp1252 consoles raised UnicodeEncodeError while printing the failure."""
+    calls: list[dict[str, str]] = []
+
+    class _Stream:
+        def reconfigure(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr(runner.sys, "stdout", _Stream())
+    monkeypatch.setattr(runner.sys, "stderr", _Stream())
+
+    runner._harden_console_encoding()
+
+    assert calls == [
+        {"encoding": "utf-8", "errors": "replace"},
+        {"encoding": "utf-8", "errors": "replace"},
+    ]
+
+
+def test_console_encoding_tolerates_streams_without_reconfigure(monkeypatch):
+    monkeypatch.setattr(runner.sys, "stdout", object())
+    monkeypatch.setattr(runner.sys, "stderr", object())
+
+    runner._harden_console_encoding()  # no raise
+
+
 def test_checksum_drift_on_applied_file_is_error(tmp_path):
     name = "F8-001-app_doc_journal.sql"
     (tmp_path / name).write_text("CREATE TABLE x (id INT);\n", encoding="utf-8")

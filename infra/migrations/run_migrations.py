@@ -369,7 +369,22 @@ def _build_conn_from_env(args: argparse.Namespace):
     )
 
 
+def _harden_console_encoding() -> None:
+    """Emit UTF-8 even on consoles that default to cp1252 (legacy Windows).
+
+    The runner prints arrows and Spanish text; a cp1252 stdout raised
+    UnicodeEncodeError *while reporting an error*, hiding the real message.
+    `errors="replace"` keeps the exit code meaningful on terminals that still
+    cannot render a glyph.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _harden_console_encoding()
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dir", default=str(DEFAULT_MIGRATIONS_DIR))
     parser.add_argument("--prefix", default=DEFAULT_PREFIX)
