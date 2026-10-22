@@ -32,12 +32,13 @@ y se traduce el resultado a JSON.
 from __future__ import annotations
 
 import datetime
+import os
 import threading
 from collections.abc import Callable, Sequence
 from decimal import Decimal
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from motoshop_api.auth.users import User
@@ -51,7 +52,7 @@ from motoshop_api.erp.bankreconciliation.node_config import (
     NodeConfigError,
     load_node_config,
 )
-from motoshop_api.erp.bankreconciliation.schemas import BankMoney, BankMovementOut
+from motoshop_api.erp.bankreconciliation.schemas import BankMoney, BankMovementOut, EstadoMovimiento
 from motoshop_api.erp.bankreconciliation.store import BankStore, get_bank_store
 from motoshop_api.erp.bankreconciliation.value_match import (
     Candidato,
@@ -274,3 +275,165 @@ def _ultima_ingesta(movimientos: Sequence[BankMovementOut]) -> str | None:
     if not instantes:
         return None
     return max(instantes).isoformat()
+
+
+# ── S9: movimientos, sync-status y aplicación ─────────────────────────────
+
+from motoshop_api.erp.bankreconciliation.repo import (  # noqa: E402
+    BankReconciliationRepo,
+    CodpagNoConfirmadoError,
+    FacturaNoEncontradaError,
+    MovimientoNoEncontradoError,
+)
+from motoshop_api.erp.cash.repo import (  # noqa: E402
+    get_consignment_repo,
+    get_receipts_repo,
+)
+from motoshop_api.erp.guards import PeriodLockedError  # noqa: E402
+
+
+class FacturasNoConfiguradasError(Exception):
+    """El nodo no tiene cableado el proveedor de facturas abiertas.
+
+    Fail-closed a propósito: devolver una lista vacía haría que todo
+    movimiento sin match terminara como consignación, sin que nadie lo note.
+    """
+
+    codigo = "facturas_no_configuradas"
+
+
+def get_facturas_provider() -> Callable[[str, str], Sequence[object]]:
+    """Facturas abiertas del tenant.
+
+    Todavía no hay proveedor real cableado (depende del esquema de cartera del
+    tenant). Hasta entonces la conciliación responde 503 en vez de adivinar.
+    """
+    raise FacturasNoConfiguradasError("No hay proveedor de facturas abiertas cableado")
+
+
+def get_reconciliation_repo(
+    store: BankStore = Depends(get_bank_store),
+    facturas: Callable[[str, str], Sequence[object]] = Depends(get_facturas_provider),
+    receipts: object = Depends(get_receipts_repo),
+    consignments: object = Depends(get_consignment_repo),
+) -> BankReconciliationRepo:
+    """Repo de conciliación con los caminos de caja reales.
+
+    El ``codpag`` de transferencia bancaria es **fail-closed** (Q5): sin la
+    variable de entorno confirmada, ``apply`` no postea nada.
+    """
+    return BankReconciliationRepo(
+        movements=store,
+        facturas=facturas,  # type: ignore[arg-type]
+        receipts=receipts,  # type: ignore[arg-type]
+        consignments=consignments,  # type: ignore[arg-type]
+        codpag_transferencia=os.environ.get("BANK_CODPAG_TRANSFERENCIA") or None,
+    )
+
+
+def _movimiento_json(movimiento: BankMovementOut) -> dict[str, object]:
+    return {
+        "id": movimiento.id,
+        "fecha": movimiento.fecha_movimiento.isoformat(),
+        "valor": str(movimiento.valor),
+        "descripcion": movimiento.descripcion,
+        "referencia": movimiento.referencia,
+        "pagadorNombre": movimiento.pagador_nombre,
+        "estado": movimiento.estado.value,
+        "reciboNumero": movimiento.recibo_numero,
+        "confianza": movimiento.confianza,
+        "razones": movimiento.razones,
+    }
+
+
+@router.get("/bank/movements")
+def listar_movimientos(
+    estado: Annotated[EstadoMovimiento | None, Query()] = None,
+    desde: datetime.date | None = Query(default=None),
+    hasta: datetime.date | None = Query(default=None),
+    tenant: Tenant = Depends(require_erp_tenant),
+    store: BankStore = Depends(get_bank_store),
+) -> dict:
+    """Movimientos del tenant activo, filtrables por estado y rango de fechas.
+
+    Sólo se ven los movimientos propios: el tenant sale del request, nunca de
+    un parámetro.
+    """
+    movimientos = store.list_movimientos(tenant.id, estado=estado, desde=desde, hasta=hasta)
+    return {"movimientos": [_movimiento_json(m) for m in movimientos]}
+
+
+@router.get("/bank/sync-status")
+def sync_status(
+    tenant: Tenant = Depends(require_erp_tenant),
+    store: BankStore = Depends(get_bank_store),
+    config: NodeConfig | None = Depends(get_node_config),
+) -> dict:
+    """Última ingesta, nodo y ventana de consulta del tenant activo."""
+    movimientos = store.list_movimientos(tenant.id)
+    return {
+        "ultimaIngestaAt": _ultima_ingesta(movimientos),
+        "nodo": (config.account_label or config.tenant) if config is not None else None,
+        "scraperHabilitado": bool(config and config.scraper_enabled),
+        "ventana": (
+            {
+                "desde": config.window_start.isoformat(),
+                "hasta": config.window_end.isoformat(),
+            }
+            if config is not None
+            else None
+        ),
+    }
+
+
+@router.post("/bank/reconciliation/{movimiento_id}/apply")
+def aplicar_movimiento(
+    movimiento_id: str,
+    factura_id: Annotated[str | None, Query()] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    tenant: Tenant = Depends(require_erp_tenant),
+    user: User = Depends(require_erp_collections_write),
+    repo: BankReconciliationRepo = Depends(get_reconciliation_repo),
+) -> dict:
+    """Confirma la aplicación de un movimiento (confirmación humana).
+
+    ``factura_id`` presente ⇒ recibo S01; ausente ⇒ consignación bancaria.
+    Con el mismo ``Idempotency-Key`` (o el mismo movimiento) no se duplica el
+    documento. Periodo cerrado ⇒ **409** y el movimiento queda pendiente.
+    """
+    try:
+        return repo.apply(
+            tenant.id,
+            getattr(tenant, "empresa", "") or "",
+            movimiento_id,
+            factura_id,
+            idempotency_key=idempotency_key,
+        )
+    except MovimientoNoEncontradoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error_codigo": exc.codigo, "message": "El movimiento no existe."},
+        ) from exc
+    except FacturaNoEncontradaError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error_codigo": exc.codigo, "message": "La factura no está abierta."},
+        ) from exc
+    except CodpagNoConfirmadoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error_codigo": exc.codigo, "message": str(exc)},
+        ) from exc
+    except PeriodLockedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_codigo": "periodo_cerrado",
+                "message": "El periodo está cerrado; el movimiento queda pendiente.",
+            },
+        ) from exc
+    except FacturasNoConfiguradasError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_codigo": exc.codigo, "message": str(exc)},
+        ) from exc
