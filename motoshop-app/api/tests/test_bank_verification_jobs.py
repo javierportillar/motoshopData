@@ -233,7 +233,7 @@ def test_un_job_terminado_no_bloquea_el_reintento() -> None:
 
 
 def test_un_job_en_curso_no_se_duplica_al_pedirlo_de_nuevo() -> None:
-    """La idempotencia sigue protegiendo el scrape que está corriendo."""
+    """La idempotencia sigue protegiendo el scrape que estǭ corriendo."""
     store = FakeVerificationJobStore()
     primero = store.create_job(TENANT, FACTURA, VALOR)
     store.update_job(TENANT, primero.job_id, EstadoJob.EJECUTANDO)
@@ -243,3 +243,32 @@ def test_un_job_en_curso_no_se_duplica_al_pedirlo_de_nuevo() -> None:
     assert segundo.job_id == primero.job_id
     assert segundo.estado == EstadoJob.EJECUTANDO
     assert len(store.jobs) == 1
+
+
+def test_reclamar_ejecucion_toma_el_job_en_cola_una_sola_vez() -> None:
+    """El claim atómico `en_cola → ejecutando` lo gana un único hilo.
+
+    El despacho levanta un hilo por petición: en el doble clic llegan dos
+    hilos al mismo job. El que pierde el claim no debe tocar estados (antes
+    marcaba `fallido` y enmascaraba el resultado real del scrape).
+    """
+    store = FakeVerificationJobStore()
+    job = store.create_job(TENANT, FACTURA, VALOR)
+
+    assert store.reclamar_ejecucion(TENANT, job.job_id, nodo="nodo-test") is True
+    tomado = store.get_job(TENANT, job.job_id)
+    assert tomado.estado is EstadoJob.EJECUTANDO
+    assert tomado.nodo == "nodo-test"
+
+    assert store.reclamar_ejecucion(TENANT, job.job_id) is False
+    assert store.get_job(TENANT, job.job_id).estado is EstadoJob.EJECUTANDO
+
+
+def test_reclamar_ejecucion_no_resucita_un_job_terminado() -> None:
+    """Un job en estado terminal ya no es reclamable (el revivir es de create_job)."""
+    store = FakeVerificationJobStore()
+    job = store.create_job(TENANT, FACTURA, VALOR)
+    store.update_job(TENANT, job.job_id, EstadoJob.SIN_COINCIDENCIA)
+
+    assert store.reclamar_ejecucion(TENANT, job.job_id) is False
+    assert store.get_job(TENANT, job.job_id).estado is EstadoJob.SIN_COINCIDENCIA

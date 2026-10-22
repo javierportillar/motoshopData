@@ -112,6 +112,10 @@ class VerificationJobStore(Protocol):
 
     def expire_stale_jobs(self, now: datetime) -> int: ...
 
+    def reclamar_ejecucion(
+        self, tenant: str, job_id: str, *, nodo: str | None = None
+    ) -> bool: ...
+
 
 def id_dominio_job(tenant: str, factura_id: str, valor: Decimal) -> str:
     """Identificador de dominio del job: `uuid5` de `tenant:factura_id:valor`.
@@ -205,6 +209,28 @@ class FakeVerificationJobStore:
         self.jobs[actualizado.id] = actualizado
         return True
 
+    def reclamar_ejecucion(
+        self, tenant: str, job_id: str, *, nodo: str | None = None
+    ) -> bool:
+        """Toma el job sólo si sigue `en_cola` (claim atómico del worker).
+
+        El despacho levanta un hilo por petición y el doble clic llega con dos
+        hilos para el mismo `job`: el primero reclama y raspa, el segundo
+        entra acá, no reclama y muere **sin tocar estados** (un `fallido`
+        espurio del segundo hilo enmascaraba el resultado del primero).
+        """
+        job = self._buscar(tenant, job_id)
+        if job is None or job.estado is not EstadoJob.EN_COLA:
+            return False
+        cambios: dict[str, Any] = {
+            "estado": EstadoJob.EJECUTANDO,
+            "actualizado_en": self._reloj(),
+        }
+        if nodo is not None:
+            cambios["nodo"] = nodo
+        self.jobs[job.id] = replace(job, **cambios)
+        return True
+
     def expire_stale_jobs(self, now: datetime) -> int:
         """Pasa a `expirado` los jobs vencidos que siguen en curso."""
         expirados = 0
@@ -269,6 +295,16 @@ _SQL_EXPIRAR = """UPDATE app_bank_verification_jobs
 SET estado = 'expirado', actualizado_en = :now
 WHERE estado NOT IN ('resuelto', 'sin_coincidencia', 'ambiguo', 'fallido', 'expirado')
   AND expira_en <= :now
+"""
+
+#: Claim atómico: sólo un hilo de los varios que el despacho puede levantar
+#: para el mismo job (doble clic) logra el paso `en_cola → ejecutando`.
+_SQL_RECLAMAR = """UPDATE app_bank_verification_jobs
+SET estado = 'ejecutando', nodo = :nodo, actualizado_en = :now
+WHERE tenant = :tenant
+  AND (job_id = :job_id OR id = :job_id)
+  AND estado = 'en_cola'
+  AND expira_en > :now
 """
 
 
@@ -357,6 +393,21 @@ class RealVerificationJobStore:
             resultado_ejecucion = conn.execute(
                 text(sql),
                 {**valores, "tenant": tenant, "job_id": job_id},
+            )
+            conn.commit()
+            impacted = resultado_ejecucion.rowcount
+        return bool(impacted)
+
+    def reclamar_ejecucion(
+        self, tenant: str, job_id: str, *, nodo: str | None = None
+    ) -> bool:
+        """Claim atómico `en_cola → ejecutando` (`rowcount` decide el ganador)."""
+        from sqlalchemy import text
+
+        with self._motor().connect() as conn:
+            resultado_ejecucion = conn.execute(
+                text(_SQL_RECLAMAR),
+                {"tenant": tenant, "job_id": job_id, "nodo": nodo, "now": _ahora()},
             )
             conn.commit()
             impacted = resultado_ejecucion.rowcount

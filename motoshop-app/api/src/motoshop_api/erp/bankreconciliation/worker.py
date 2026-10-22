@@ -175,7 +175,12 @@ class BankVerificationWorker:
             job: job a ejecutar (debe estar en `en_cola`).
         """
         self._job_actual = job
-        self._actualizar(job, EstadoJob.EJECUTANDO)
+        # Claim atómico `en_cola → ejecutando`: el despacho levanta un hilo
+        # por petición y el doble clic llega con dos hilos para el mismo job.
+        # El que pierde el claim muere acá sin tocar estados: si marcara
+        # `fallido`, enmascararía el resultado del hilo que sí está raspando.
+        if not self._jobs.reclamar_ejecucion(job.tenant, job.job_id, nodo=self._nodo):
+            return
         try:
             resultado = self._scraper.scrape(self._config)
         except BankScrapeError as exc:

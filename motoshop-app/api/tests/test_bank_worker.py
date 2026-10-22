@@ -275,6 +275,37 @@ def test_worker_no_deja_movimientos_parciales_ante_un_error(tmp_path: Path) -> N
     assert store.list_movements(config.tenant) == []
 
 
+def test_hilo_que_pierde_el_claim_no_corrompe_al_ganador(tmp_path: Path) -> None:
+    """Doble despacho del mismo job: el segundo `run_once` muere sin tocar nada.
+
+    El despachador levanta un hilo por petición; en el doble clic los dos
+    hilos corren `run_once` con el mismo job. El claim atómico decide: el
+    ganador raspa y clasifica; el perdedor muere **antes de raspear** y sin
+    escribir `fallido` (que enmascaraba el resultado del ganador).
+    """
+    jobs = FakeVerificationJobStore()
+    scraper = _ScraperFalso(_resultado(_movimiento(VALOR, id_externo="t1")))
+    worker = _worker(
+        tmp_path,
+        jobs=jobs,
+        store=FakeBankStore(),
+        scraper_factory=lambda pedir_codigo: scraper,
+    )
+    job = jobs.create_job("masvital", FACTURA, VALOR)
+
+    # Otro hilo ya reclamó el job (el ganador del doble despacho).
+    assert jobs.reclamar_ejecucion("masvital", job.job_id, nodo="pc-masvital")
+    antes = jobs.get_job("masvital", job.job_id)
+
+    worker.run_once(job)
+
+    despues = jobs.get_job("masvital", job.job_id)
+    assert despues is not None
+    assert despues.estado is antes.estado is EstadoJob.EJECUTANDO
+    # El perdedor no toca el portal ni vuelve a raspar.
+    assert scraper.llamadas == 0
+
+
 def test_worker_rechaza_un_segundo_job_simultaneo(tmp_path: Path) -> None:
     """Con el turno de sesión tomado, el segundo job no entra al portal."""
     jobs = FakeVerificationJobStore()
