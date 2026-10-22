@@ -156,6 +156,83 @@ def test_second_run_is_noop_with_recorded_state(tmp_path):
     assert applied == []  # nothing re-executed
 
 
+class _StateConn:
+    """Fake conn whose `app_migration_state` is preloaded with other series."""
+
+    def __init__(self, state: list[tuple[str, str]]):
+        self.state = list(state)
+        self.executed: list[str] = []
+
+    def cursor(self):
+        return _StateCursor(self)
+
+    def commit(self) -> None:
+        pass
+
+
+class _StateCursor:
+    def __init__(self, conn: _StateConn):
+        self._conn = conn
+        self._rows: list[tuple[str, str]] = []
+
+    def execute(self, sql, params=None):
+        sql = sql.strip()
+        if params and sql.startswith("INSERT INTO app_migration_state"):
+            self._conn.state.append((params[0], params[1]))
+            self._conn.executed.append(sql)
+            self._rows = []
+        elif sql.startswith("SELECT migration_name"):
+            self._rows = list(self._conn.state)
+        else:
+            self._conn.executed.append(sql)
+            self._rows = []
+
+    def fetchall(self):
+        return list(self._rows)
+
+    def close(self) -> None:
+        pass
+
+
+def test_prefix_run_ignores_state_of_other_series(tmp_path):
+    """A `--prefix F9` run must not trip over F8 rows already recorded."""
+    d = tmp_path / "migrations"
+    d.mkdir()
+    (d / "F8-001-app_doc_journal.sql").write_text(
+        "CREATE TABLE app_doc_journal (id INT);\n", encoding="utf-8"
+    )
+    (d / "F9-001-app_bank_movements.sql").write_text(
+        "CREATE TABLE app_bank_movements (id INT);\n", encoding="utf-8"
+    )
+    files = runner.discover_f8_files(d, prefix="F9")
+    conn = _StateConn([("F8-001-app_doc_journal.sql", "a" * 64)])
+
+    applied = runner.run_against_conn(conn, files, prefix="F9")
+
+    assert applied == ["F9-001-app_bank_movements.sql"]
+    assert not any("app_doc_journal" in s for s in conn.executed)
+
+
+def test_prefix_run_second_time_is_noop_and_keeps_other_series(tmp_path):
+    d = tmp_path / "migrations"
+    d.mkdir()
+    (d / "F8-001-app_doc_journal.sql").write_text(
+        "CREATE TABLE app_doc_journal (id INT);\n", encoding="utf-8"
+    )
+    (d / "F9-001-app_bank_movements.sql").write_text(
+        "CREATE TABLE app_bank_movements (id INT);\n", encoding="utf-8"
+    )
+    files = runner.discover_f8_files(d, prefix="F9")
+    conn = _StateConn([("F8-001-app_doc_journal.sql", "a" * 64)])
+
+    runner.run_against_conn(conn, files, prefix="F9")
+    assert runner.run_against_conn(conn, files, prefix="F9") == []
+    assert [name for name, _checksum in conn.state] == [
+        "F8-001-app_doc_journal.sql",
+        "F9-001-app_bank_movements.sql",
+    ]
+
+
 def test_checksum_drift_on_applied_file_is_error(tmp_path):
     name = "F8-001-app_doc_journal.sql"
     (tmp_path / name).write_text("CREATE TABLE x (id INT);\n", encoding="utf-8")

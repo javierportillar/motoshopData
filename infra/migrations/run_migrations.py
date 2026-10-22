@@ -332,9 +332,25 @@ def apply_migrations(conn, migrations: list[MigrationFile]) -> list[str]:  # typ
     return applied_now
 
 
-def run_against_conn(conn, migration_files: list[MigrationFile]) -> list[str]:  # type: ignore[valid-type]
+def run_against_conn(
+    conn,  # type: ignore[valid-type]
+    migration_files: list[MigrationFile],
+    prefix: str | None = None,
+) -> list[str]:
+    """Validate and apply one series; other series in the state table are ignored.
+
+    `app_migration_state` is shared by every series (F5, F7, F8, F9…), but
+    `discover_f8_files` only sees the series being run. Validating the whole
+    recorded history against one series used to raise MissingSqlFileError for
+    every previously applied series. Scope the recorded state to the same
+    prefix as the discovery (defaults to the series of the files passed in).
+    """
     _ensure_state_table(conn)
     applied_names, checksums = _load_state(conn)
+    series = prefix or (migration_files[0].name.split("-", 1)[0] if migration_files else "")
+    if series:
+        applied_names = [n for n in applied_names if n.split("-", 1)[0] == series]
+        checksums = {n: c for n, c in checksums.items() if n.split("-", 1)[0] == series}
     pending = validate_order(applied_names, migration_files, checksums)
     return apply_migrations(conn, pending)
 
@@ -380,7 +396,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         try:
-            applied = run_against_conn(conn, files)
+            applied = run_against_conn(conn, files, prefix=args.prefix)
         except PrecheckFailedError as exc:
             print(f"[ABORTED before DDL] {exc}")
             return 2
