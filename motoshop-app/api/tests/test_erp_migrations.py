@@ -339,6 +339,34 @@ def test_f8_files_present_and_parseable():
         assert stmts and all(s.strip() for s in stmts)
 
 
+def test_f9_grant_verifications_query_table_privileges():
+    """`SCHEMA_PRIVILEGES` has no TABLE_NAME column: F9-002/F9-004 aborted there."""
+    for name, table in (
+        ("F9-002-grant_app_writer_bank.sql", "app_bank_movements"),
+        ("F9-004-grant_app_writer_bank_jobs.sql", "app_bank_verification_jobs"),
+    ):
+        text = (_REAL_MIGRATIONS_DIR / name).read_text(encoding="utf-8")
+        assert "information_schema.TABLE_PRIVILEGES" in text, name
+        assert "TABLE_SCHEMA = DATABASE()" in text, name
+        assert f"TABLE_NAME = '{table}'" in text, name
+        assert "SCHEMA_PRIVILEGES" not in text, name
+
+
+def test_f9_files_present_and_parseable():
+    """The F9 series ships four files and every one splits into statements."""
+    expected = (
+        "F9-001-app_bank_movements.sql",
+        "F9-002-grant_app_writer_bank.sql",
+        "F9-003-app_bank_verification_jobs.sql",
+        "F9-004-grant_app_writer_bank_jobs.sql",
+    )
+    for name in expected:
+        path = _REAL_MIGRATIONS_DIR / name
+        assert path.is_file(), f"{name} missing"
+        stmts = runner.split_statements(path.read_text(encoding="utf-8"))
+        assert stmts and all(s.strip() for s in stmts), name
+
+
 # ─── 3.2: F8-003 unique doc index + pre-check directives (WF-6s2) ──
 
 
