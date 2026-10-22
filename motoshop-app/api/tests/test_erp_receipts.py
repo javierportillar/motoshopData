@@ -11,8 +11,10 @@ Scenarios (spec erp-collections-cash):
   ``solcre`` with ``soldeb=0``.
 
 The open balance is the LIVE truth ``SUM(detcuentas.valdeb − valhab)`` on the
-cartera account of the target document — the receipt's own credit row lands
-on that document, so the balance always reflects what was collected.
+cartera accounts (canonical ``13050501`` + legacy alias ``1305``) of the
+target document — the receipt's own credit row lands on that document, so the
+balance always reflects what was collected. The account set itself is
+covered in ``tests/test_erp_cash_cartera.py``.
 """
 
 from __future__ import annotations
@@ -123,10 +125,15 @@ def test_cc1s1_receipt_causation_credits_cartera_and_debits_cash():
     _create(repo)
 
     cartera = [r for r in store.detcuentas if r["codcue"] == "1305"]
-    assert len(cartera) == 2  # the invoice debit + the receipt credit
-    credit = [r for r in cartera if r["valhab"] == Decimal("150000")]
+    assert len(cartera) == 1  # the invoice debit (written before the fix)
+    assert cartera[0]["valdeb"] == Decimal("150000")
+    assert cartera[0]["valhab"] == Decimal("0")
+
+    # the receipt credit lands on the CANONICAL cartera account
+    credit = [r for r in store.detcuentas if r["codcue"] == "13050501"]
     assert len(credit) == 1
     assert credit[0]["numnum"] == "100"  # lands on the collected invoice
+    assert credit[0]["valhab"] == Decimal("150000")
     assert credit[0]["valdeb"] == Decimal("0")
 
     cash = [r for r in store.detcuentas if r["codcue"] == "1105"]

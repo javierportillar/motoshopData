@@ -5,9 +5,10 @@ Legacy parity (docs/hermes):
   ``soldeb`` for normal payment documents (S01 receipts, S02/S03 cash docs…)
   and ``solcre`` for the note-type classes (S14/S21) — never both non-zero.
 - **Live CxC balance**: the open balance of a receivable is the truth
-  ``SUM(detcuentas.valdeb − valhab)`` on the cartera account of that
-  document. A receipt NEVER over-applies (CC-1) and NEVER targets an annulled
-  document (``estfven='A'``).
+  ``SUM(detcuentas.valdeb − valhab)`` on the cartera accounts of that
+  document — the canonical ``13050501`` AND its legacy alias ``1305`` (the
+  account the receipts credited before the fix). A receipt NEVER over-applies
+  (CC-1) and NEVER targets an annulled document (``estfven='A'``).
 - **Hay_Cie_Eli**: a document dated inside a closed accounting period
   (``cierresper`` rows of type P/M/A) is rejected at creation time (CC-6).
 - **Arqueo invariants**: ``cajaarqueo.salcaj`` must equal the denomination
@@ -55,10 +56,18 @@ logger = logging.getLogger(__name__)
 RECEIPT_CODCON = "S01"
 #: Journal/audit document type of the receipt.
 RECEIPT_DOC_TYPE = "recibo_caja"
-#: Cartera account (CxC) — the account the receivable balance lives on.
-CARTERA_CUENTA = "1305"
+#: Cartera account (CxC) — the CANONICAL account, the one the invoice
+#: causación writes (``erp/invoicing/repo.py``). Every NEW row lands here.
+CARTERA_CUENTA = "13050501"
+#: Legacy aliases of the cartera account: the rows written before the fix
+#: live here. They are READ (never written) — reading only the canonical
+#: account would make the customers pay twice.
+CARTERA_CUENTA_ALIASES: tuple[str, ...] = ("1305",)
 #: Default cash account when the payment form does not carry one.
 CASH_CUENTA = "1105"
+#: Legacy width of ``detapago.numpag`` (varchar(20)) — the shared clip for
+#: every writer of that column (cash AND invoice paths).
+NUMPAG_MAX_LEN = 20
 
 #: Document classes whose payment rows are written as a CREDIT (``solcre``).
 SOLCRE_TIPCLAS = frozenset({"S14", "S21"})
@@ -94,11 +103,15 @@ def open_balance(store: CashStore, numfven: int, codcue: str = CARTERA_CUENTA) -
     """The LIVE open balance of a receivable (CC-1).
 
     ``SUM(detcuentas.valdeb − valhab)`` over the rows of that document on the
-    cartera account — the receipt's own credit rows land on the same document,
-    so the balance always reflects what has actually been collected.
+    cartera account — the canonical one AND its legacy aliases — the
+    receipt's own credit rows land on the same document, so the balance
+    always reflects what has actually been collected.
+
+    The accounts are read in ONE statement, so a row is never counted twice.
     """
+    cuentas = tuple(dict.fromkeys((codcue, *CARTERA_CUENTA_ALIASES)))
     total = ZERO
-    for row in store.ledger_rows(str(numfven), codcue):
+    for row in store.ledger_rows_for_accounts(str(numfven), cuentas):
         total += _dec(row.get("valdeb")) - _dec(row.get("valhab"))
     return total
 
@@ -431,7 +444,7 @@ class _BaseReceiptsRepo(_CashDocumentRepo):
             "valpag": amount,
             "valefe": amount,
             "despag": body.concepto or "",
-            "numpag": body.referencia or "",
+            "numpag": (body.referencia or "")[:NUMPAG_MAX_LEN],
             "fecche": body.fecha,
             "soldeb": soldeb,
             "solcre": solcre,
@@ -451,7 +464,9 @@ class _BaseReceiptsRepo(_CashDocumentRepo):
 
         # Causación: the credit lands on the RECEIVED invoice's cartera
         # account (that is what closes its balance) and the matching debit
-        # lands on the cash/bank account of the payment form.
+        # lands on the cash/bank account of the payment form. The credit
+        # always uses the CANONICAL cartera account — the legacy alias is
+        # read only, never written.
         credit_row = {
             "numnum": str(body.numfven),
             "codclas": str(computed["invoice"].get("codclas") or "S15"),
@@ -1295,6 +1310,7 @@ __all__ = [
     "ARQUEO_DOC_TYPE",
     "ArqueoRepo",
     "CARTERA_CUENTA",
+    "CARTERA_CUENTA_ALIASES",
     "CASH_CUENTA",
     "CONSIGNMENT_AFEPAG",
     "CONSIGNMENT_CODCLAS",
@@ -1313,6 +1329,7 @@ __all__ = [
     "INGRESS_DOC_TYPE",
     "MOVEMENT_ENTRADA",
     "MOVEMENT_SALIDA",
+    "NUMPAG_MAX_LEN",
     "PAYMENT_TIPCLAS",
     "RECEIPT_CODCON",
     "RECEIPT_DOC_TYPE",

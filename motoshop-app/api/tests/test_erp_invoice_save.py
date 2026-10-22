@@ -27,7 +27,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from motoshop_api.erp.engine import ErpSaveFailed
 from motoshop_api.erp.idempotency import FakeIdempotencyRepo
-from motoshop_api.erp.invoicing.repo import FakeInvoiceStore, FakeInvoicesRepo
+from motoshop_api.erp.invoicing.repo import FakeInvoicesRepo, FakeInvoiceStore
 from motoshop_api.erp.invoicing.schemas import InvoiceCreate, InvoiceLineIn
 from motoshop_api.erp.journal import FakeJournalRepo
 from motoshop_api.erp.masters.validators import (
@@ -98,6 +98,26 @@ def test_saved_invoice_stores_server_totals():
     assert header["totiva"] == Decimal("2850.15")
     assert repo.store.detfventas[0]["totdet"] == Decimal("31350.90")
     assert repo.journal.entries[-1]["status"] == "COMMITTED"
+
+
+# ─── detapago.numpag: el ancho legacy (varchar(20)) ──────────────
+#
+# The payment reference is clipped on the write path: the server runs with
+# STRICT_TRANS_TABLES, so an oversized reference is a 1406 error (a 503),
+# not a silent truncation. The collections path clips the same column at the
+# same width.
+
+
+def test_la_referencia_del_pago_se_guarda_truncada_al_ancho_legacy():
+    repo = _repo()
+    referencia = "REF" + "0" * 37  # 40 characters — the request limit
+
+    _create(repo, _body(payments=[{"codpag": "F01", "amount": 31350.90,
+                                    "referencia": referencia}]))
+
+    row = repo.store.detapago[0]
+    assert row["numpag"] == referencia[:20]
+    assert len(row["numpag"]) == 20
 
 
 # ─── SI-5s2: client totals mismatch ────────────────────────────

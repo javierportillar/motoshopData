@@ -15,6 +15,7 @@ expense concepts) and ``cierresper`` (closed accounting periods).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any, Protocol
 
@@ -51,7 +52,9 @@ class CashStore(Protocol):
 
     # ── reads ──
     def find_invoice(self, numfven: int, prefven: str) -> dict | None: ...
-    def ledger_rows(self, numnum: str, codcue: str) -> list[dict]: ...
+    def ledger_rows_for_accounts(
+        self, numnum: str, codcues: Sequence[str]
+    ) -> list[dict]: ...
     def locked_periods(self) -> list[dict]: ...
     def find_formapago(self, codpag: str) -> dict | None: ...
     def find_concept(self, codcon: str) -> dict | None: ...
@@ -140,11 +143,20 @@ class FakeCashStore:
                 return dict(row)
         return None
 
-    def ledger_rows(self, numnum: str, codcue: str) -> list[dict]:
+    def ledger_rows_for_accounts(
+        self, numnum: str, codcues: Sequence[str]
+    ) -> list[dict]:
+        """The ``detcuentas`` rows of one document on the given accounts.
+
+        One read, one snapshot: the cartera balance is read on the canonical
+        account AND its legacy alias without double counting a row.
+        """
+        wanted = {str(codcue) for codcue in codcues}
         return [
             dict(row)
             for row in self.detcuentas
-            if str(row.get("numnum")) == str(numnum) and row.get("codcue") == codcue
+            if str(row.get("numnum")) == str(numnum)
+            and str(row.get("codcue")) in wanted
         ]
 
     def locked_periods(self) -> list[dict]:
@@ -245,17 +257,22 @@ class RealCashStore:
             ).fetchone()
         return dict(row._mapping) if row is not None else None
 
-    def ledger_rows(self, numnum: str, codcue: str) -> list[dict]:
-        from sqlalchemy import text
+    def ledger_rows_for_accounts(
+        self, numnum: str, codcues: Sequence[str]
+    ) -> list[dict]:
+        from sqlalchemy import bindparam, text
 
+        accounts = [str(codcue) for codcue in codcues]
+        if not accounts:
+            return []
+        stmt = text(
+            "SELECT numnum, codclas, prenum, codcue, valdeb, valhab, "
+            "nitter, estcue FROM detcuentas "
+            "WHERE numnum = :n AND codcue IN :codcues"
+        ).bindparams(bindparam("codcues", expanding=True))
         with self._read_engine().connect() as conn:
             rows = conn.execute(
-                text(
-                    "SELECT numnum, codclas, prenum, codcue, valdeb, valhab, "
-                    "nitter, estcue FROM detcuentas "
-                    "WHERE numnum = :n AND codcue = :c"
-                ),
-                {"n": str(numnum), "c": str(codcue)},
+                stmt, {"n": str(numnum), "codcues": accounts}
             ).fetchall()
         return [dict(r._mapping) for r in rows]
 

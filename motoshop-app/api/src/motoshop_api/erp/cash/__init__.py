@@ -8,7 +8,8 @@ Modules:
 
 Legacy parity lives here: ``Graba_Fpago`` duality (soldeb/solcre by tipclas),
 the live CxC balance (``SUM(detcuentas.valdeb − valhab)`` on the cartera
-account), ``Hay_Cie_Eli`` period lock, ``cajaarqueo``/``detcajarq`` arqueo
+accounts: the canonical ``13050501`` and its legacy alias ``1305``),
+``Hay_Cie_Eli`` period lock, ``cajaarqueo``/``detcajarq`` arqueo
 invariants and the ``consbancab`` bank counter (``formapago.numcon``).
 """
 

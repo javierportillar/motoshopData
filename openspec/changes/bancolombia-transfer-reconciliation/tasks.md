@@ -79,16 +79,20 @@ Reglas:
 
 > Corrige dos defectos del path reusado que bloquean la conciliación: el saldo abierto se leía de una cuenta por defecto (`"1305"`) que no es la cuenta de cartera real (`13050501`), y `detapago.numpag` no se recortaba (error MySQL 1406 con referencias > 20 chars).
 
-- [ ] **1.1** `[AUTO]` **Saldo abierto contra la cartera real (`13050501`) con alias `1305`** `[CC-2s1, CC-2s2, CC-2s3, CC-2s4]`
+- [x] **1.1** `[AUTO]` **Saldo abierto contra la cartera real (`13050501`) con alias `1305`** `[CC-2s1, CC-2s2, CC-2s3, CC-2s4]`
   - RED: `motoshop-app/api/tests/test_erp_cash_cartera.py` — `test_open_balance_lee_la_cuenta_cartera_canonica_13050501` (fila con `codcue="13050501"` entra en el saldo), `test_open_balance_suma_el_alias_1305` (fila legacy con `codcue="1305"` también entra), `test_open_balance_de_otra_cuenta_no_entra` (fila con `codcue="1105"` no suma), `test_receipt_sobre_factura_con_alias_1305_cierra_el_saldo_a_cero` (recibo 150 000 contra factura sembrada en `1305` deja el saldo en 0 y el journal `COMMITTED`).
   - GREEN: `motoshop-app/api/src/motoshop_api/erp/cash/repo.py` (`CARTERA_CUENTA = "13050501"`, `CARTERA_CUENTA_ALIASES: tuple[str, ...] = ("1305",)`, `open_balance()` itera los códigos canónico + alias), `motoshop-app/api/src/motoshop_api/erp/cash/store.py` (nuevo `ledger_rows_for_accounts(numnum: str, codcues: Sequence[str]) -> list[dict]` en `CashStore`/`FakeCashStore`/`RealCashStore`; `WRITABLE_TABLES` intacto).
   - Verify: `cd motoshop-app/api && uv run pytest tests/test_erp_cash_cartera.py tests/test_erp_receipts.py -q` y `uv run ruff check src tests`.
+  - Evidencia (cwd `motoshop-app/api`): RED con el código original → **6 failed** (`open_balance` leía 0 para la fila `13050501`; el recibo contra esa factura moría con «no tiene saldo en cartera»). GREEN → `uv run pytest tests/test_erp_cash_cartera.py -q` → **8 passed**; `uv run pytest tests/ -q -k "not integration"` → **1002 passed, 15 deselected** (base 989 + 13 tests nuevos). `uv run ruff check src/motoshop_api/erp/ tests/test_erp_receipts.py` → **45 errores, los mismos preexistentes** (baseline idéntico; los archivos tocados: 0 violaciones).
+  - Desviación menor: `ledger_rows(numnum, codcue)` (una sola cuenta) se REEMPLAZÓ por `ledger_rows_for_accounts(numnum, codcues)` en lugar de convivir — el método de cuenta única quedaba como código muerto tras el fix. `WRITABLE_TABLES` intacto.
   - Depends: —
 
-- [ ] **1.2** `[AUTO]` **Clip de `numpag` a 20 caracteres en el path de caja** `[CC-1s1, CC-1s2]`
+- [x] **1.2** `[AUTO]` **Clip de `numpag` a 20 caracteres en el path de caja** `[CC-1s1, CC-1s2]`
   - RED: `motoshop-app/api/tests/test_erp_cash_reference_limit.py` — `test_receipt_con_referencia_de_40_chars_responde_201_y_guarda_los_20_primeros` (respuesta 201, `detapago.numpag` == referencia[:20], ningún error), `test_receipt_con_referencia_de_12_chars_se_guarda_verbatim`, `test_el_clip_no_altera_el_importe_la_factura_ni_la_fecha` (el importe, `numfven` y `fecha` del documento no cambian al truncar).
   - GREEN: `motoshop-app/api/src/motoshop_api/erp/cash/repo.py` (constante compartida `NUMPAG_MAX_LEN = 20`; `"numpag": (body.referencia or "")[:NUMPAG_MAX_LEN]`), `motoshop-app/api/src/motoshop_api/erp/invoicing/repo.py` (importa `NUMPAG_MAX_LEN` de `erp.cash.repo` en vez del literal `[:20]` de la línea 586).
   - Verify: `cd motoshop-app/api && uv run pytest tests/test_erp_cash_reference_limit.py tests/test_erp_invoice_save.py -q`.
+  - Evidencia (cwd `motoshop-app/api`): RED con el código original → `test_receipt_con_referencia_de_40_chars_responde_201_y_guarda_los_20_primeros` falló (`numpag` traía los 40 chars; en MySQL eso es error 1406 ⇒ 503). GREEN → `uv run pytest tests/test_erp_cash_reference_limit.py tests/test_erp_invoice_save.py -q` → **21 passed**; suite completa **1002 passed, 15 deselected**; ruff sin violaciones nuevas.
+  - Nota: la validación de request (`max_length=40`) queda intacta — 41 chars siguen siendo 422 (`test_una_referencia_de_mas_de_40_chars_sigue_siendo_422`).
   - Depends: 1.1
 
 **S1 DoD**: el saldo abierto de una factura lee la cuenta de cartera real (con alias legacy) y un recibo con referencia larga se postea sin error 1406.

@@ -38,6 +38,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Protocol
 
+from motoshop_api.erp.cash.repo import NUMPAG_MAX_LEN
 from motoshop_api.erp.engine import ErpSaveFailed
 from motoshop_api.erp.idempotency import IdempotencyRepo
 from motoshop_api.erp.invoicing.schemas import InvoiceCreate
@@ -583,7 +584,7 @@ class _BaseInvoicesRepo:
                 # name is free text the POS never sends. Do not invent a
                 # description from the form code.
                 "despag": (getattr(payment, "despag", "") or "")[:100],
-                "numpag": (payment.referencia or "")[:20],
+                "numpag": (payment.referencia or "")[:NUMPAG_MAX_LEN],
                 "soldeb": ZERO,
                 "solcre": payment.amount,
                 "codemp": LEGACY_OPERATOR_NIT,
