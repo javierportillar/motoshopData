@@ -35,9 +35,9 @@ function Log([string]$m) {
   Add-Content -Path $log -Value $linea -Encoding utf8
 }
 
-function Git([string]$dir, [string[]]$args) {
+function Git([string]$dir, [string[]]$gitArgs) {
   Push-Location $dir
-  try { $out = & git @args 2>&1; return @{ code = $LASTEXITCODE; out = ($out -join "`n") } }
+  try { $out = & git @gitArgs 2>&1; return @{ code = $LASTEXITCODE; out = ($out -join "`n") } }
   finally { Pop-Location }
 }
 
@@ -145,7 +145,7 @@ while ($true) {
       "SEQ: {0:D4}" -f $seq,
       "TIPO: avance",
       "REQUIERE_RESPUESTA: no",
-      "REFS: $sha Ãƒâ€šÃ‚Â· guardian",
+      "REFS: $sha ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· guardian",
       "",
       "Latido del guardian (el agente de desarrollo puede estar muerto: este mensaje sale igual).",
       "",
