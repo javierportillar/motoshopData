@@ -793,7 +793,47 @@ class BankScraper:
             session.ir_a_pagina_siguiente()
             pagina += 1
 
-        return tuple(movimientos), pagina
+        return self._colapsar_duplicados(movimientos), pagina
+
+    def _colapsar_duplicados(
+        self, movimientos: Sequence[ScrapedMovement]
+    ) -> tuple[ScrapedMovement, ...]:
+        """Colapsa el duplicado truncado que el banco manda por cada PAGO QR.
+
+        La API del banco devuelve, para el mismo pago, dos registros con la misma
+        fecha, importe y referencia: uno con el nombre completo del pagador y
+        otro con el nombre corto (por ejemplo `PAGO QR VALERIA CASTR` junto a
+        `PAGO QR VALERIA CASTRILLON SAL`). La tabla del portal muestra los dos y
+        la verificacion terminaba en `ambiguo` porque veia dos candidatos con el
+        mismo valor. Se descarta el corto: la descripcion larga es un superconjunto
+        y aporta el dato que se muestra al operador.
+
+        Solo se colapsa cuando una descripcion es **prefijo estricto** de otra
+        con el mismo dia, valor y referencia; dos pagos distintos del mismo
+        importe (descripciones no relacionadas) se conservan.
+        """
+        conservados: list[ScrapedMovement] = []
+        for mov in movimientos:
+            tapado = False
+            for otro in movimientos:
+                if otro is mov or otro.descripcion == mov.descripcion:
+                    continue
+                if (
+                    otro.fecha == mov.fecha
+                    and otro.valor == mov.valor
+                    and otro.referencia == mov.referencia
+                    and otro.descripcion.startswith(mov.descripcion)
+                ):
+                    tapado = True
+                    self._log.info(
+                        "duplicado truncado del banco colapsado: %r (se conserva %r)",
+                        mov.descripcion,
+                        otro.descripcion,
+                    )
+                    break
+            if not tapado:
+                conservados.append(mov)
+        return tuple(conservados)
 
     def _esperar_filas(
         self, session: PortalSession, timeout: float = 45.0

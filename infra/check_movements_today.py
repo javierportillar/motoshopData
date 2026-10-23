@@ -106,9 +106,15 @@ def main(argv: list[str] | None = None) -> int:
     print(f"dia local={hoy.isoformat()} ventana={desde}..{hasta} tenant={args.tenant}")
     print(f"movimientos en la ventana={len(movimientos)}  del dia={len(del_dia)}")
     total = 0.0
+    ignorados = 0.0
     for m in del_dia:
         valor = float(m.get("valor") or 0)
-        total += valor
+        # Los IGNORADO son el duplicado truncado que manda el banco por cada
+        # pago: sumarlos inflaria el total del dia al doble.
+        if str(m.get("estado") or "").upper() == "IGNORADO":
+            ignorados += valor
+        else:
+            total += valor
         print(
             "  {fecha}  {valor:>12}  {estado:<16} ref={referencia}  {pagador}".format(
                 fecha=m.get("fecha"),
@@ -119,6 +125,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     print(f"TOTAL del dia={total:,.2f}")
+    if ignorados:
+        print(f"  (duplicados truncados ignorados, fuera del total={ignorados:,.2f})")
     print(
         "sync: ultimaIngestaAt={} nodo={} scraper={} ventana={}".format(
             sync.get("ultimaIngestaAt"),

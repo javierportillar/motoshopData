@@ -624,3 +624,66 @@ def test_ir_a_autenticacion_navega_con_wait_until() -> None:
     sesion.ir_a_autenticacion()
 
     assert pagina.gotos == ["https://svpersonas.apps.bancolombia.com/autenticacion"]
+
+# --- Duplicado truncado que manda el banco ---
+
+
+def _movimiento(
+    descripcion: str,
+    *,
+    valor: str = "115000.00",
+    dia: datetime.date = datetime.date(2026, 10, 22),
+) -> scraper_module.ScrapedMovement:
+    """Movimiento con lo justo para probar el colapso de duplicados."""
+    from decimal import Decimal
+
+    return scraper_module.ScrapedMovement(
+        id_externo=descripcion,
+        fecha=dia,
+        descripcion=descripcion,
+        referencia="0092405445",
+        referencia_utilizable=True,
+        pagador_nombre=descripcion,
+        valor=Decimal(valor),
+        direccion=scraper_module.MovementDirection.INGRESO,
+        es_candidato_pago=True,
+        pagina=1,
+        cuenta_origen=ETIQUETA_TENANT,
+    )
+
+
+def test_el_duplicado_truncado_del_banco_se_colapsa(tmp_path: Path) -> None:
+    """El banco manda el mismo pago dos veces: nombre corto y nombre completo.
+
+    Caso real (nodo motoshop, 2026-10-22): la API devolvio "PAGO QR VALERIA
+    CASTR" y "PAGO QR VALERIA CASTRILLON SAL" con el mismo valor y referencia.
+    Sin colapsarlo la verificacion veia dos candidatos y terminaba en "ambiguo".
+    """
+    scraper = _scraper(_sesion())
+    largo = _movimiento("PAGO QR VALERIA CASTRILLON SAL")
+    corto = _movimiento("PAGO QR VALERIA CASTR")
+
+    conservados = scraper._colapsar_duplicados([largo, corto])
+
+    assert conservados == (largo,)
+
+
+def test_dos_pagos_del_mismo_valor_no_se_colapsan(tmp_path: Path) -> None:
+    """Dos pagadores distintos con el mismo importe son dos pagos, no un duplicado."""
+    scraper = _scraper(_sesion())
+    uno = _movimiento("PAGO QR VALERIA CASTRILLON SAL")
+    otro = _movimiento("PAGO QR JESUS STIVEN ROJAS MOS")
+
+    conservados = scraper._colapsar_duplicados([uno, otro])
+
+    assert conservados == (uno, otro)
+
+
+def test_el_mismo_texto_repetido_no_se_toca(tmp_path: Path) -> None:
+    """Dos filas identicas se conservan: el colapso exige un prefijo estricto."""
+    scraper = _scraper(_sesion())
+    fila = _movimiento("PAGO QR VALERIA CASTRILLON SAL")
+
+    conservados = scraper._colapsar_duplicados([fila, fila])
+
+    assert conservados == (fila, fila)
