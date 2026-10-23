@@ -644,3 +644,112 @@ def test_variantes_numfven_quita_el_prefijo_del_pos() -> None:
 
     assert _variantes_numfven("FVP-3600") == ["FVP-3600", "3600"]
     assert _variantes_numfven("3600") == ["3600"]
+
+
+# --- Modo "pago": sin factura, el POS manda importe (+ NIT y nombre) ---
+
+
+def _movimiento_nombrado(valor: Decimal, *, id_externo: str, pagador: str) -> ScrapedMovement:
+    """Movimiento del portal con el nombre que publicó el banco."""
+    return dataclasses.replace(
+        _movimiento(valor, id_externo=id_externo),
+        pagador_nombre=pagador,
+        descripcion=f"PAGO QR {pagador}",
+    )
+
+
+def _job_de_pago(
+    jobs: FakeVerificationJobStore,
+    valor: Decimal = VALOR,
+    **solicitud,
+) -> object:
+    """Job de modo pago: sin factura y con la solicitud del POS."""
+    return jobs.create_job("masvital", "", valor, solicitud={"modo": "pago", **solicitud})
+
+
+def test_modo_pago_resuelve_con_un_solo_candidato(tmp_path: Path) -> None:
+    """Un único pago con el importe exacto resuelve y devuelve NIT y nombre."""
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    job = _job_de_pago(jobs, nitter="900123456", nombre_esperado="Valeria Castrillón")
+    scraper = _ScraperFalso(
+        _resultado(_movimiento_nombrado(VALOR, id_externo="a", pagador="VALERIA CASTRILLON SAL"))
+    )
+    worker = _worker(tmp_path, jobs=jobs, store=store, scraper_factory=lambda _pedir: scraper)
+
+    worker.run_once(job)
+
+    guardado = jobs.get_job("masvital", job.job_id)
+    assert guardado is not None
+    assert guardado.estado == EstadoJob.RESUELTO
+    candidato = (guardado.resultado or {})["candidato"]
+    assert candidato["pagador_nombre"] == "VALERIA CASTRILLON SAL"
+    assert candidato["nitter"] == "900123456"
+    assert candidato["cliente_nombre"] == "Valeria Castrillón"
+    assert candidato["coincide_nombre"] is True
+    assert "candidatos_detalle" not in (guardado.resultado or {})
+
+
+def test_modo_pago_sin_nit_ni_nombre_no_rompe(tmp_path: Path) -> None:
+    """Verificar sólo por importe es válido: no se inventan datos del cliente."""
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    job = _job_de_pago(jobs)
+    scraper = _ScraperFalso(_resultado(_movimiento(VALOR, id_externo="a")))
+    worker = _worker(tmp_path, jobs=jobs, store=store, scraper_factory=lambda _pedir: scraper)
+
+    worker.run_once(job)
+
+    guardado = jobs.get_job("masvital", job.job_id)
+    assert guardado is not None
+    assert guardado.estado == EstadoJob.RESUELTO
+    candidato = (guardado.resultado or {})["candidato"]
+    assert "nitter" not in candidato
+    assert "cliente_nombre" not in candidato
+    assert "coincide_nombre" not in candidato
+
+
+def test_modo_pago_con_dos_iguales_sigue_ambiguo_aunque_coincida_el_nombre(
+    tmp_path: Path,
+) -> None:
+    """`nombre_esperado` es señal, no decisión: dos importes iguales = ambiguo."""
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    job = _job_de_pago(jobs, nombre_esperado="Valeria Castrillón")
+    scraper = _ScraperFalso(
+        _resultado(
+            _movimiento_nombrado(VALOR, id_externo="a", pagador="OTRO PAGADOR"),
+            _movimiento_nombrado(VALOR, id_externo="b", pagador="VALERIA CASTRILLON SAL"),
+        )
+    )
+    worker = _worker(tmp_path, jobs=jobs, store=store, scraper_factory=lambda _pedir: scraper)
+
+    worker.run_once(job)
+
+    guardado = jobs.get_job("masvital", job.job_id)
+    assert guardado is not None
+    assert guardado.estado == EstadoJob.AMBIGUO
+    resultado = guardado.resultado or {}
+    assert resultado["candidato"] is None
+    detalle = resultado["candidatos_detalle"]
+    assert len(detalle) == 2
+    # El que coincide por nombre va primero, pero el estado no cambia.
+    assert detalle[0]["pagador_nombre"] == "VALERIA CASTRILLON SAL"
+    assert detalle[0]["coincide_nombre"] is True
+    assert detalle[1]["coincide_nombre"] is False
+
+
+def test_modo_pago_sin_movimientos_es_sin_coincidencia(tmp_path: Path) -> None:
+    """Ningún pago con ese importe: `sin_coincidencia`, sin candidato."""
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    job = _job_de_pago(jobs, valor=Decimal("999.00"))
+    scraper = _ScraperFalso(_resultado(_movimiento(VALOR, id_externo="a")))
+    worker = _worker(tmp_path, jobs=jobs, store=store, scraper_factory=lambda _pedir: scraper)
+
+    worker.run_once(job)
+
+    guardado = jobs.get_job("masvital", job.job_id)
+    assert guardado is not None
+    assert guardado.estado == EstadoJob.SIN_COINCIDENCIA
+    assert (guardado.resultado or {})["candidato"] is None

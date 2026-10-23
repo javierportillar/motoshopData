@@ -92,12 +92,23 @@ class VerificationJob:
     nodo: str | None = None
     resultado: dict[str, Any] | None = None
     error_codigo: str | None = None
+    #: Lo que pidió el cliente (`modo`, `nitter`, `nombre_esperado`). En modo
+    #: "pago" no hay factura y el worker necesita esos datos para armar el
+    #: resultado; sobrevive al reintento (no se limpia como `resultado`).
+    solicitud: dict[str, Any] | None = None
 
 
 class VerificationJobStore(Protocol):
     """Contrato de persistencia de los jobs (doble falso y real)."""
 
-    def create_job(self, tenant: str, factura_id: str, valor: Decimal) -> VerificationJob: ...
+    def create_job(
+        self,
+        tenant: str,
+        factura_id: str,
+        valor: Decimal,
+        *,
+        solicitud: dict[str, Any] | None = None,
+    ) -> VerificationJob: ...
 
     def get_job(self, tenant: str, job_id: str) -> VerificationJob | None: ...
 
@@ -158,7 +169,14 @@ class FakeVerificationJobStore:
         # reproduce con un lock para que dos hilos no ganen la misma fila.
         self._lock = threading.Lock()
 
-    def create_job(self, tenant: str, factura_id: str, valor: Decimal) -> VerificationJob:
+    def create_job(
+        self,
+        tenant: str,
+        factura_id: str,
+        valor: Decimal,
+        *,
+        solicitud: dict[str, Any] | None = None,
+    ) -> VerificationJob:
         importe = _valor_normalizado(valor)
         id_dominio = id_dominio_job(tenant, factura_id, importe)
         ahora = self._reloj()
@@ -183,6 +201,7 @@ class FakeVerificationJobStore:
             creado_en=ahora,
             actualizado_en=ahora,
             expira_en=ahora + timedelta(seconds=self._ttl),
+            solicitud=dict(solicitud) if solicitud else None,
         )
         self.jobs[id_dominio] = job
         return job
@@ -267,7 +286,7 @@ class FakeVerificationJobStore:
 
 _SQL_SELECT = """
 SELECT id, job_id, tenant, factura_id, valor, estado, nodo, resultado_json,
-       error_codigo, creado_en, actualizado_en, expira_en
+       solicitud_json, error_codigo, creado_en, actualizado_en, expira_en
 FROM app_bank_verification_jobs
 WHERE tenant = :tenant
 """
@@ -275,10 +294,10 @@ WHERE tenant = :tenant
 _SQL_INSERT = """
 INSERT INTO app_bank_verification_jobs
   (id, job_id, tenant, factura_id, valor, estado, nodo, resultado_json,
-   error_codigo, creado_en, actualizado_en, expira_en)
+   solicitud_json, error_codigo, creado_en, actualizado_en, expira_en)
 VALUES
   (:id, :job_id, :tenant, :factura_id, :valor, :estado, :nodo, :resultado_json,
-   :error_codigo, :creado_en, :actualizado_en, :expira_en)
+   :solicitud_json, :error_codigo, :creado_en, :actualizado_en, :expira_en)
 ON DUPLICATE KEY UPDATE id = VALUES(id)
 """
 
@@ -296,6 +315,7 @@ SET job_id = :job_id,
     estado = 'en_cola',
     nodo = NULL,
     resultado_json = NULL,
+    solicitud_json = :solicitud_json,
     error_codigo = NULL,
     creado_en = :creado_en,
     actualizado_en = :actualizado_en,
@@ -338,7 +358,14 @@ class RealVerificationJobStore:
 
         return get_writer_engine()
 
-    def create_job(self, tenant: str, factura_id: str, valor: Decimal) -> VerificationJob:
+    def create_job(
+        self,
+        tenant: str,
+        factura_id: str,
+        valor: Decimal,
+        *,
+        solicitud: dict[str, Any] | None = None,
+    ) -> VerificationJob:
         from sqlalchemy import text
 
         importe = _valor_normalizado(valor)
@@ -353,6 +380,9 @@ class RealVerificationJobStore:
             "estado": EstadoJob.EN_COLA.value,
             "nodo": None,
             "resultado_json": None,
+            "solicitud_json": json.dumps(solicitud, ensure_ascii=False)
+            if solicitud
+            else None,
             "error_codigo": None,
             "creado_en": ahora,
             "actualizado_en": ahora,
@@ -451,6 +481,9 @@ def _a_job(row: Any) -> VerificationJob:
     resultado = datos.get("resultado_json")
     if isinstance(resultado, str):
         resultado = json.loads(resultado) if resultado else None
+    solicitud = datos.get("solicitud_json")
+    if isinstance(solicitud, str):
+        solicitud = json.loads(solicitud) if solicitud else None
     return VerificationJob(
         id=str(datos["id"]),
         job_id=str(datos["job_id"]),
@@ -464,6 +497,7 @@ def _a_job(row: Any) -> VerificationJob:
         nodo=datos.get("nodo"),
         resultado=resultado,
         error_codigo=datos.get("error_codigo"),
+        solicitud=solicitud,
     )
 
 

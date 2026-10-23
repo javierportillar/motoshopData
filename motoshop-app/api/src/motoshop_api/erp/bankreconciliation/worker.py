@@ -31,6 +31,7 @@ from motoshop_api.erp.bankreconciliation.jobs import (
     VerificationJob,
     VerificationJobStore,
 )
+from motoshop_api.erp.bankreconciliation.matching import normalizar_nombre
 from motoshop_api.erp.bankreconciliation.node_config import (
     CODIGO_PORTAL_NO_DISPONIBLE,
     NodeConfig,
@@ -95,6 +96,33 @@ def _estado_del_job(coincidencia: ValueMatch) -> EstadoJob:
     if coincidencia.ambiguo:
         return EstadoJob.AMBIGUO
     return EstadoJob.RESUELTO
+
+
+def _candidato_con_senales(
+    candidato: Candidato,
+    modo: str,
+    solicitud: dict[str, Any],
+    datos_factura: dict[str, str],
+) -> dict[str, Any]:
+    """Candidato en JSON con los datos del cliente y la senal del nombre."""
+    datos: dict[str, Any] = _candidato_json(candidato)
+    if modo == "pago":
+        if solicitud.get("nitter"):
+            datos["nitter"] = str(solicitud["nitter"])
+        if solicitud.get("nombre_esperado"):
+            datos["cliente_nombre"] = str(solicitud["nombre_esperado"])
+    else:
+        if datos_factura.get("nitter"):
+            datos["nitter"] = datos_factura["nitter"]
+        if datos_factura.get("cliente_nombre"):
+            datos["cliente_nombre"] = datos_factura["cliente_nombre"]
+    esperado = solicitud.get("nombre_esperado")
+    if esperado:
+        # Senal, no decision: con dos importes iguales el job sigue ambiguo.
+        datos["coincide_nombre"] = normalizar_nombre(esperado) in normalizar_nombre(
+            candidato.pagador_nombre
+        )
+    return datos
 
 
 def _candidato_json(candidato: Candidato) -> dict[str, str]:
@@ -374,20 +402,34 @@ class BankVerificationWorker:
     ) -> dict[str, Any]:
         """Lo que se persiste en `resultado_json`: ventana, nodo e ingesta.
 
-        Al candidato se le suman `nitter` y `cliente_nombre` de la factura: la
-        web los muestra al lado del pagador, y el NIT no existe del lado del
-        banco (la referencia de un QR es el convenio, igual para todos).
+        El resultado sirve a los dos modos del contrato:
+
+        - **factura**: al candidato se le suman `nitter` y `cliente_nombre` de
+          la factura del ERP (es el modo histórico).
+        - **pago**: no hay factura; se devuelven los `nitter`/`cliente_nombre`
+          que mandó el POS (si los mandó) y el pagador que publicó el banco.
+
+        `nombre_esperado` agrega una **señal** por candidato
+        (`coincide_nombre`), nunca una decisión: con dos importes iguales el
+        job sigue siendo `ambiguo` aunque uno de los nombres coincida.
         """
         inicio, fin = resultado.ventana
-        candidato = coincidencia.seleccionado
-        candidato_json = _candidato_json(candidato) if candidato is not None else None
-        if candidato_json is not None:
+        solicitud = job.solicitud or {}
+        modo = solicitud.get("modo", "factura")
+        datos_factura: dict[str, str] = {}
+        if modo == "factura" and job.factura_id:
             datos_factura = self._datos_factura(job.factura_id)
-            if datos_factura.get("nitter"):
-                candidato_json["nitter"] = datos_factura["nitter"]
-            if datos_factura.get("cliente_nombre"):
-                candidato_json["cliente_nombre"] = datos_factura["cliente_nombre"]
-        return {
+
+        detalle = [
+            _candidato_con_senales(candidato, modo, solicitud, datos_factura)
+            for candidato in coincidencia.candidatos
+        ]
+        # Orden estable: primero los que coinciden por nombre. Es presentación:
+        # la decisión sale del conteo de candidatos, no de este orden.
+        detalle.sort(key=lambda item: not item.get("coincide_nombre", False))
+
+        candidato_json = detalle[0] if len(detalle) == 1 else None
+        payload: dict[str, Any] = {
             "ventana": {"desde": inicio.isoformat(), "hasta": fin.isoformat()},
             "nodo": self._nodo,
             "ingesta_at": resultado.leido_en.isoformat(),
@@ -397,6 +439,11 @@ class BankVerificationWorker:
             "candidatos": len(coincidencia.candidatos),
             "candidato": candidato_json,
         }
+        if len(detalle) > 1:
+            # Sólo cuando es ambiguo: la lista completa para que el operador
+            # elija. `candidatos` (el número) se conserva como estaba.
+            payload["candidatos_detalle"] = detalle
+        return payload
 
     def _datos_factura(self, factura_id: str) -> dict[str, str]:
         """Datos del cliente de la factura; si el ERP falla, el job no se cae."""

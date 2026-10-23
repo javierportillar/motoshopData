@@ -825,8 +825,15 @@ class BankScraper:
                     and otro.descripcion.startswith(mov.descripcion)
                 ):
                     tapado = True
+                    # Linea estable y auditable: la parsea
+                    # `infra/check_qr_duplicates.py` para contar pares por dia
+                    # sin abrir la base. Los cuatro datos que pide el operador:
+                    # dia, valor, referencia y las dos descripciones.
                     self._log.info(
-                        "duplicado truncado del banco colapsado: %r (se conserva %r)",
+                        "qr_duplicado dia=%s valor=%s referencia=%s descartada=%r conservada=%r",
+                        mov.fecha.isoformat(),
+                        mov.valor,
+                        mov.referencia,
                         mov.descripcion,
                         otro.descripcion,
                     )

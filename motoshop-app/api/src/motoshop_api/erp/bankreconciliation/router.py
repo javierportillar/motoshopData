@@ -36,10 +36,10 @@ import os
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from motoshop_api.auth.users import User
 from motoshop_api.erp.bankreconciliation.jobs import (
@@ -74,12 +74,56 @@ CODIGO_JOB_NO_ENCONTRADO = "job_no_encontrado"
 
 
 class VerificacionCreate(BaseModel):
-    """Qué se quiere verificar: la factura y el importe capturado."""
+    """Qué se quiere verificar, en uno de los dos modos del contrato.
+
+    - ``modo="factura"`` (por defecto si viene ``factura_id``): el operador
+      está cobrando una factura concreta; el importe y el NIT salen de la
+      factura del ERP. Es el comportamiento histórico.
+    - ``modo="pago"`` (sin ``factura_id``): el POS todavía no tiene factura
+      (el modal de cobro se abre ANTES de crear la venta). Manda el importe y,
+      si los tiene, el NIT y el nombre del cliente.
+
+    ``extra="forbid"``: un campo desconocido es un error del cliente, no algo
+    que se ignore en silencio.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    factura_id: str = Field(min_length=1, max_length=64)
+    modo: Literal["factura", "pago"] | None = None
+    factura_id: str | None = Field(default=None, min_length=1, max_length=64)
     valor: BankMoney
+    nitter: str | None = Field(default=None, min_length=1, max_length=32)
+    nombre_esperado: str | None = Field(default=None, min_length=2, max_length=120)
+
+    @model_validator(mode="after")
+    def _normalizar_modo(self) -> VerificacionCreate:
+        """Deriva el modo y rechaza combinaciones incoherentes."""
+        modo = self.modo or ("factura" if self.factura_id else "pago")
+        if modo == "factura":
+            if not self.factura_id:
+                raise ValueError("modo 'factura' exige factura_id")
+            if self.nitter or self.nombre_esperado:
+                raise ValueError(
+                    "modo 'factura' toma el NIT de la factura: no envíes "
+                    "nitter ni nombre_esperado"
+                )
+        else:
+            if self.factura_id:
+                raise ValueError("modo 'pago' no admite factura_id")
+        self.modo = modo
+        return self
+
+    @property
+    def solicitud(self) -> dict[str, str] | None:
+        """Lo que el worker necesita para armar el resultado (modo pago)."""
+        if self.modo != "pago":
+            return None
+        datos = {"modo": "pago"}
+        if self.nitter:
+            datos["nitter"] = self.nitter.strip()
+        if self.nombre_esperado:
+            datos["nombre_esperado"] = self.nombre_esperado.strip()
+        return datos
 
 
 def get_node_config() -> NodeConfig | None:
@@ -166,7 +210,15 @@ def crear_verificacion(
     operador puede volver a probar cuando el portal falló o el OTP caducó.
     """
     _exigir_nodo_capaz(config, tenant)
-    job = jobs.create_job(tenant.id, body.factura_id, body.valor)
+    # En modo "pago" no hay factura: la clave de idempotencia queda en el
+    # importe (`tenant::valor`), que es exactamente lo que distingue un doble
+    # clic de una verificación nueva. El NIT y el nombre viajan en `solicitud`.
+    job = jobs.create_job(
+        tenant.id,
+        body.factura_id or "",
+        body.valor,
+        solicitud=body.solicitud,
+    )
     despachar(job)
     return {
         "job_id": job.job_id,

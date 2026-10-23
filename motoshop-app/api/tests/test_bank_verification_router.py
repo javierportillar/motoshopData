@@ -326,3 +326,93 @@ def test_post_verificaciones_tras_un_fallo_es_un_reintento_nuevo(tmp_path: Path)
     assert guardado.error_codigo is None
     assert guardado.resultado is None
     assert [job.job_id for job in despachados] == [primero["job_id"], payload["job_id"]]
+
+
+# --- Modo "pago": el POS todavía no tiene factura ---
+
+
+def test_post_modo_pago_crea_el_job_sin_factura(tmp_path: Path) -> None:
+    """Sin `factura_id` el job es de modo pago y guarda NIT y nombre."""
+    jobs = FakeVerificationJobStore()
+    client = _cliente(tmp_path, jobs=jobs, config=_config_nodo(tmp_path))
+
+    response = client.post(
+        "/api/erp/bank/verificaciones",
+        json={
+            "valor": "115000.00",
+            "nitter": "900123456",
+            "nombre_esperado": "Valeria Castrillón",
+        },
+        headers=_headers("ger1", "gerente", ("erp-cash",)),
+    )
+
+    assert response.status_code == 202, response.text
+    guardado = jobs.get_job(TENANT_ID, response.json()["job_id"])
+    assert guardado is not None
+    assert guardado.factura_id == ""
+    assert guardado.valor == Decimal("115000.00")
+    assert guardado.solicitud == {
+        "modo": "pago",
+        "nitter": "900123456",
+        "nombre_esperado": "Valeria Castrillón",
+    }
+
+
+def test_post_modo_pago_sin_nit_ni_nombre_tambien_entra(tmp_path: Path) -> None:
+    """El POS puede verificar sólo por importe: los datos del cliente son opcionales."""
+    jobs = FakeVerificationJobStore()
+    client = _cliente(tmp_path, jobs=jobs, config=_config_nodo(tmp_path))
+
+    response = client.post(
+        "/api/erp/bank/verificaciones",
+        json={"modo": "pago", "valor": "62000.00"},
+        headers=_headers("ger1", "gerente", ("erp-cash",)),
+    )
+
+    assert response.status_code == 202, response.text
+    guardado = jobs.get_job(TENANT_ID, response.json()["job_id"])
+    assert guardado is not None
+    assert guardado.solicitud == {"modo": "pago"}
+
+
+def test_post_modo_factura_explicito_es_el_de_siempre(tmp_path: Path) -> None:
+    """`modo="factura"` con factura_id se comporta igual que antes (sin solicitud)."""
+    jobs = FakeVerificationJobStore()
+    client = _cliente(tmp_path, jobs=jobs, config=_config_nodo(tmp_path))
+
+    response = client.post(
+        "/api/erp/bank/verificaciones",
+        json={"modo": "factura", **BODY},
+        headers=_headers("ger1", "gerente", ("erp-cash",)),
+    )
+
+    assert response.status_code == 202, response.text
+    guardado = jobs.get_job(TENANT_ID, response.json()["job_id"])
+    assert guardado is not None
+    assert guardado.factura_id == "FVP-100"
+    assert guardado.solicitud is None
+
+
+@pytest.mark.parametrize(
+    "cuerpo",
+    [
+        {"modo": "pago", "valor": "1000.00", "factura_id": "FVP-1"},
+        {"modo": "factura", "valor": "1000.00"},
+        {"factura_id": "FVP-1", "valor": "1000.00", "nitter": "900123456"},
+        {"valor": "1000.00", "campo_desconocido": "x"},
+        {"modo": "otro", "valor": "1000.00"},
+    ],
+)
+def test_post_rechaza_combinaciones_incoherentes(tmp_path: Path, cuerpo: dict) -> None:
+    """`extra="forbid"` y la coherencia de modo: 422 y ningún job creado."""
+    jobs = FakeVerificationJobStore()
+    client = _cliente(tmp_path, jobs=jobs, config=_config_nodo(tmp_path))
+
+    response = client.post(
+        "/api/erp/bank/verificaciones",
+        json=cuerpo,
+        headers=_headers("ger1", "gerente", ("erp-cash",)),
+    )
+
+    assert response.status_code == 422, response.text
+    assert jobs.jobs == {}
