@@ -58,15 +58,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tenant", default="motoshop")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument(
+        "--fecha",
+        default="",
+        help="dia local a chequear (YYYY-MM-DD). Por defecto, hoy.",
+    )
+    parser.add_argument(
         "--margen-dias",
         type=int,
         default=1,
-        help="dias de margen a cada lado de hoy local (por el desfase UTC)",
+        help="dias de margen a cada lado de la fecha (por el desfase UTC)",
     )
     parser.add_argument("--json", action="store_true", help="salida JSON cruda")
     args = parser.parse_args(argv)
 
-    hoy = dt.date.today()
+    hoy = dt.date.fromisoformat(args.fecha) if args.fecha else dt.date.today()
     desde = (hoy - dt.timedelta(days=args.margen_dias)).isoformat()
     hasta = (hoy + dt.timedelta(days=args.margen_dias)).isoformat()
     params = {"desde": desde, "hasta": hasta}
@@ -98,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    print(f"hoy local={hoy.isoformat()} ventana={desde}..{hasta} tenant={args.tenant}")
+    print(f"dia local={hoy.isoformat()} ventana={desde}..{hasta} tenant={args.tenant}")
     print(f"movimientos en la ventana={len(movimientos)}  del dia={len(del_dia)}")
     total = 0.0
     for m in del_dia:
