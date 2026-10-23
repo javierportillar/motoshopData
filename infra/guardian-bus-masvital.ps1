@@ -28,7 +28,8 @@ param(
   [string]$TareaApi = "MasVitalBackendService",
   [string]$Health   = "http://127.0.0.1:8000/health",
   [int]$IntervaloSeg = 300,
-  [int]$SilencioMin  = 15
+  [int]$SilencioMin  = 15,
+  [int]$MinutosColgado = 6
 )
 
 $ErrorActionPreference = "Continue"
@@ -118,8 +119,8 @@ while ($true) {
     if ($tarea -and $tarea.State -eq "Running") {
       $info = Get-ScheduledTaskInfo -TaskName $TareaApi -ErrorAction SilentlyContinue
       $minutos = if ($info -and $info.LastRunTime) { [int]((Get-Date) - $info.LastRunTime).TotalMinutes } else { 0 }
-      if ($minutos -gt 6) {
-        $colgados = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -match 'run_api\.py' }
+      if ($minutos -gt $MinutosColgado) {
+        $colgados = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -match 'run_api' }
         foreach ($p in $colgados) {
           Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.ProcessId)" -ErrorAction SilentlyContinue |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
