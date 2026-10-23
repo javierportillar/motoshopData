@@ -68,7 +68,7 @@ if ($apiProcs.Count -gt 0) {
 # 2. Verificar MySQL
 Write-Log "Verificando MySQL..."
 try {
-    $result = & "C:\Program Files (x86)\MySQL\MySQL Server 5.0\bin\mysqladmin.exe" ping -u root 2>&1
+    $result = ""; $LASTEXITCODE = 0; try { $__tc = New-Object System.Net.Sockets.TcpClient; $__tc.Connect("127.0.0.1", 3306); $__tc.Close(); $__tc.Dispose() } catch { $LASTEXITCODE = 1; $result = "MySQL no acepta conexiones en 127.0.0.1:3306" }  # sin credenciales: no depende de root
     if ($LASTEXITCODE -eq 0) {
         Write-Log "MySQL: OK"
     } else {
