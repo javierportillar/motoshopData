@@ -1,14 +1,14 @@
-"""Worker del nodo (S6 · 6.2): un job a la vez, lock y estados.
+﻿"""Worker del nodo (S6 Â· 6.2): un job a la vez, lock y estados.
 
 El worker corre **en el nodo local** (el proceso de la API del tenant): toma
-el turno de sesión del scraper (lock + 30 s de intervalo mínimo), lee los
-movimientos de la cuenta del tenant y **reporta** lo que encontró. Nunca
+el turno de sesiÃ³n del scraper (lock + 30 s de intervalo mÃ­nimo), lee los
+movimientos de la cuenta del tenant y **reporta** lo que encontrÃ³. Nunca
 postea un pago: eso lo confirma el operador en el POS.
 
-    en_cola → ejecutando → (esperando_otp) → resuelto | sin_coincidencia |
+    en_cola â†’ ejecutando â†’ (esperando_otp) â†’ resuelto | sin_coincidencia |
                                               ambiguo | fallido
 
-Todo es **offline**: la sesión del portal es el doble `PortalFalso` de
+Todo es **offline**: la sesiÃ³n del portal es el doble `PortalFalso` de
 `tests/bank_fakes.py` y el vault es un doble (nada de red ni navegador).
 """
 
@@ -62,7 +62,7 @@ class _VaultFalso:
 
 
 def _config(tmp_path: Path, *, tenant: str = "masvital") -> NodeConfig:
-    """Configuración de un nodo con el perfil fuera del repo."""
+    """ConfiguraciÃ³n de un nodo con el perfil fuera del repo."""
     env = {
         "BANK_SCRAPER_ENABLED": "true",
         "BANK_TENANT": tenant,
@@ -77,7 +77,7 @@ def _config(tmp_path: Path, *, tenant: str = "masvital") -> NodeConfig:
 
 
 def _sesion(**extra) -> PortalFalso:
-    """Portal falso con las dos páginas de movimientos de los fixtures."""
+    """Portal falso con las dos pÃ¡ginas de movimientos de los fixtures."""
     return PortalFalso(
         cuentas_html=leer_fixture("cuentas.html"),
         paginas_html=[
@@ -89,7 +89,7 @@ def _sesion(**extra) -> PortalFalso:
 
 
 def _movimiento(valor: Decimal, *, id_externo: str) -> ScrapedMovement:
-    """Movimiento del portal (un ingreso) para las pruebas de clasificación."""
+    """Movimiento del portal (un ingreso) para las pruebas de clasificaciÃ³n."""
     return ScrapedMovement(
         id_externo=id_externo,
         fecha=datetime.date(2026, 10, 21),
@@ -142,8 +142,9 @@ def _worker(
     pedir_codigo=None,
     reloj=None,
     esperar=None,
+    facturas=None,
 ) -> BankVerificationWorker:
-    """Worker con el scraper real (doble de sesión) o con un scraper preparado."""
+    """Worker con el scraper real (doble de sesiÃ³n) o con un scraper preparado."""
     return BankVerificationWorker(
         jobs=jobs,
         config=_config(tmp_path),
@@ -154,12 +155,13 @@ def _worker(
         pedir_codigo=pedir_codigo,
         reloj=reloj,
         esperar=esperar,
+        facturas=facturas or (lambda _fid: None),
         nodo="pc-masvital",
     )
 
 
 def test_worker_marca_el_job_ejecutando_y_luego_resuelto_con_la_ventana(tmp_path: Path) -> None:
-    """El job pasa por `ejecutando` y termina `resuelto` con la ventana leída."""
+    """El job pasa por `ejecutando` y termina `resuelto` con la ventana leÃ­da."""
     jobs = FakeVerificationJobStore()
     store = FakeBankStore()
     config = _config(tmp_path)
@@ -167,7 +169,7 @@ def test_worker_marca_el_job_ejecutando_y_luego_resuelto_con_la_ventana(tmp_path
     estados: list[EstadoJob] = []
 
     def factory(_cfg: NodeConfig) -> PortalFalso:
-        # En el momento de abrir la sesión, el job ya está `ejecutando`.
+        # En el momento de abrir la sesiÃ³n, el job ya estÃ¡ `ejecutando`.
         actual = jobs.get_job(config.tenant, job.job_id)
         assert actual is not None
         estados.append(actual.estado)
@@ -179,6 +181,7 @@ def test_worker_marca_el_job_ejecutando_y_luego_resuelto_con_la_ventana(tmp_path
         store=store,
         session_factory=factory,
         vault=_VaultFalso(),
+        facturas=lambda _fid: None,
         nodo="pc-masvital",
     )
 
@@ -199,14 +202,14 @@ def test_worker_marca_el_job_ejecutando_y_luego_resuelto_con_la_ventana(tmp_path
     assert guardado.resultado["ingesta_at"]
     # El movimiento del importe buscado es el candidato del job.
     assert guardado.resultado["candidatos"] == 1
-    # El worker sólo LEE: el movimiento queda pendiente de conciliación.
+    # El worker sÃ³lo LEE: el movimiento queda pendiente de conciliaciÃ³n.
     movimientos = store.list_movements(config.tenant)
     assert len(movimientos) > 0
     assert {movimiento.estado for movimiento in movimientos} == {EstadoMovimiento.PENDIENTE}
 
 
 def test_worker_marca_esperando_otp_ante_de_pedir_el_codigo(tmp_path: Path) -> None:
-    """El job pasa por `esperando_otp` ANTES de pedir el código en la consola."""
+    """El job pasa por `esperando_otp` ANTES de pedir el cÃ³digo en la consola."""
     jobs = FakeVerificationJobStore()
     store = FakeBankStore()
     config = _config(tmp_path)
@@ -236,7 +239,7 @@ def test_worker_marca_esperando_otp_ante_de_pedir_el_codigo(tmp_path: Path) -> N
 
 
 def test_worker_marca_fallido_con_el_codigo_de_error_del_portal(tmp_path: Path) -> None:
-    """Un fallo del portal deja el job en `fallido` con el código estable."""
+    """Un fallo del portal deja el job en `fallido` con el cÃ³digo estable."""
     jobs = FakeVerificationJobStore()
     store = FakeBankStore()
     config = _config(tmp_path)
@@ -256,11 +259,11 @@ def test_worker_marca_fallido_con_el_codigo_de_error_del_portal(tmp_path: Path) 
     assert guardado.estado == EstadoJob.FALLIDO
     assert guardado.error_codigo == "sesion_expirada"
     # El mensaje crudo (que puede traer datos del portal) no se persiste.
-    assert "sesión" not in str(guardado.error_codigo)
+    assert "sesiÃ³n" not in str(guardado.error_codigo)
 
 
 def test_worker_no_deja_movimientos_parciales_ante_un_error(tmp_path: Path) -> None:
-    """Un antibot en la página 2 deja cero movimientos ingeridos."""
+    """Un antibot en la pÃ¡gina 2 deja cero movimientos ingeridos."""
     jobs = FakeVerificationJobStore()
     store = FakeBankStore()
     config = _config(tmp_path)
@@ -285,8 +288,8 @@ def test_worker_no_deja_movimientos_parciales_ante_un_error(tmp_path: Path) -> N
 def test_hilo_que_pierde_el_claim_no_corrompe_al_ganador(tmp_path: Path) -> None:
     """Doble despacho del mismo job: el segundo `run_once` muere sin tocar nada.
 
-    El despachador levanta un hilo por petición; en el doble clic los dos
-    hilos corren `run_once` con el mismo job. El claim atómico decide: el
+    El despachador levanta un hilo por peticiÃ³n; en el doble clic los dos
+    hilos corren `run_once` con el mismo job. El claim atÃ³mico decide: el
     ganador raspa y clasifica; el perdedor muere **antes de raspear** y sin
     escribir `fallido` (que enmascaraba el resultado del ganador).
     """
@@ -300,7 +303,7 @@ def test_hilo_que_pierde_el_claim_no_corrompe_al_ganador(tmp_path: Path) -> None
     )
     job = jobs.create_job("masvital", FACTURA, VALOR)
 
-    # Otro hilo ya reclamó el job (el ganador del doble despacho).
+    # Otro hilo ya reclamÃ³ el job (el ganador del doble despacho).
     assert jobs.reclamar_ejecucion("masvital", job.job_id, nodo="pc-masvital")
     antes = jobs.get_job("masvital", job.job_id)
 
@@ -314,7 +317,7 @@ def test_hilo_que_pierde_el_claim_no_corrompe_al_ganador(tmp_path: Path) -> None
 
 
 def test_worker_rechaza_un_segundo_job_simultaneo(tmp_path: Path) -> None:
-    """Con el turno de sesión tomado, el segundo job no entra al portal."""
+    """Con el turno de sesiÃ³n tomado, el segundo job no entra al portal."""
     jobs = FakeVerificationJobStore()
     store = FakeBankStore()
     config = _config(tmp_path)
@@ -332,7 +335,7 @@ def test_worker_rechaza_un_segundo_job_simultaneo(tmp_path: Path) -> None:
 
 
 def test_worker_respeta_el_intervalo_minimo_entre_corridas(tmp_path: Path) -> None:
-    """Dos corridas seguidas violan el intervalo mínimo de 30 s del nodo."""
+    """Dos corridas seguidas violan el intervalo mÃ­nimo de 30 s del nodo."""
     jobs = FakeVerificationJobStore()
     store = FakeBankStore()
     config = _config(tmp_path)
@@ -353,7 +356,7 @@ def test_worker_respeta_el_intervalo_minimo_entre_corridas(tmp_path: Path) -> No
     assert segundo_guardado.error_codigo == "intervalo_minimo"
 
 
-# --- Triangulación de la clasificación ---
+# --- TriangulaciÃ³n de la clasificaciÃ³n ---
 
 
 def test_sin_coincidencia_cuando_ningun_movimiento_tiene_el_importe(tmp_path: Path) -> None:
@@ -586,3 +589,58 @@ def test_worker_no_reintenta_si_el_job_ya_vencio(tmp_path: Path) -> None:
     assert scraper.llamadas == 1
     assert esperas == []
     assert guardado.estado == EstadoJob.FALLIDO
+
+def test_worker_suma_nitter_y_cliente_nombre_de_la_factura(tmp_path: Path) -> None:
+    """El candidato lleva el NIT y el cliente de la FACTURA, no del banco."""
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    config = _config(tmp_path)
+    job = jobs.create_job(config.tenant, FACTURA, VALOR)
+    pedidas: list[str] = []
+
+    def facturas(factura_id: str) -> dict[str, str]:
+        pedidas.append(factura_id)
+        return {"nitter": "222222222", "cliente_nombre": "CONSUMIDOR"}
+
+    worker = _worker(tmp_path, jobs=jobs, store=store, sesion=_sesion(), facturas=facturas)
+    worker.run_once(job)
+
+    guardado = jobs.get_job(config.tenant, job.job_id)
+    assert guardado is not None and guardado.resultado is not None
+    candidato = guardado.resultado["candidato"]
+    assert candidato["nitter"] == "222222222"
+    assert candidato["cliente_nombre"] == "CONSUMIDOR"
+    # Los datos del banco siguen intactos.
+    assert "pagador_nombre" in candidato
+    assert "referencia" in candidato
+    assert candidato["id"]
+    assert pedidas == [FACTURA]
+
+
+def test_worker_no_se_cae_si_el_erp_no_devuelve_la_factura(tmp_path: Path) -> None:
+    """Sin factura, el job resuelve igual: el NIT es un extra, no un requisito."""
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    config = _config(tmp_path)
+    job = jobs.create_job(config.tenant, FACTURA, VALOR)
+
+    def facturas(_factura_id: str) -> dict[str, str]:
+        raise RuntimeError("ERP caido")
+
+    worker = _worker(tmp_path, jobs=jobs, store=store, sesion=_sesion(), facturas=facturas)
+    worker.run_once(job)
+
+    guardado = jobs.get_job(config.tenant, job.job_id)
+    assert guardado is not None and guardado.estado == EstadoJob.RESUELTO
+    assert guardado.resultado is not None
+    candidato = guardado.resultado["candidato"]
+    assert "nitter" not in candidato
+    assert "cliente_nombre" not in candidato
+
+
+def test_variantes_numfven_quita_el_prefijo_del_pos() -> None:
+    """El POS manda `FVP-3600` y el catalogo guarda `3600`."""
+    from motoshop_api.erp.bankreconciliation.worker import _variantes_numfven
+
+    assert _variantes_numfven("FVP-3600") == ["FVP-3600", "3600"]
+    assert _variantes_numfven("3600") == ["3600"]

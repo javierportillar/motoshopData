@@ -23,7 +23,7 @@ import logging
 import os
 import time
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from motoshop_api.erp.bankreconciliation.jobs import (
@@ -108,6 +108,58 @@ def _candidato_json(candidato: Candidato) -> dict[str, str]:
     }
 
 
+def _variantes_numfven(factura_id: str) -> list[str]:
+    """Formas en que la factura puede estar escrita en `facventas.numfven`.
+
+    El POS manda `FVP-3600` y el catalogo legacy guarda `3600`: se prueba tal
+    cual y sin el prefijo alfabetico. Nunca se inventa un numero.
+    """
+    limpio = factura_id.strip()
+    solo_digitos = "".join(ch for ch in limpio if ch.isdigit())
+    variantes = [limpio]
+    if solo_digitos and solo_digitos != limpio:
+        variantes.append(solo_digitos)
+    return variantes
+
+
+def _factura_erp(factura_id: str) -> dict[str, str] | None:
+    """NIT y nombre del cliente de la factura, desde el ERP.
+
+    El NIT **no** viene del banco: en los pagos por QR la referencia es el
+    mismo convenio para todos los movimientos, asi que derivarlo de ahi daria
+    un NIT falso.
+
+    Lee `facventas` y su `terceros`: es una lectura, no escribe nada. El SQL va
+    sin prefijo de base a proposito: las tablas viven en la base del tenant
+    (`MYSQL_DATABASE`) y `db/tables.py` fija el esquema de MotoShop.
+    """
+    from sqlalchemy import text
+
+    from motoshop_api.db.engine import get_engine
+
+    consulta = text(
+        "SELECT f.nitter AS nitter, t.nomter AS nomter, "
+        "t.razsoc AS razsoc, t.nomcom AS nomcom "
+        "FROM facventas f LEFT JOIN terceros t ON f.nitter = t.nitter "
+        "WHERE f.numfven = :numfven LIMIT 1"
+    )
+    with get_engine().connect() as conexion:
+        for numfven in _variantes_numfven(factura_id):
+            fila = conexion.execute(consulta, {"numfven": numfven}).mappings().first()
+            if fila:
+                break
+        else:
+            return None
+    nitter = "".join((fila["nitter"] or "").split())
+    # El catalogo legacy tiene espacios dobles ("CONSUMIDOR  FINAL"): se colapsan.
+    nombre = ""
+    for columna in ("razsoc", "nomcom", "nomter"):
+        nombre = " ".join((fila[columna] or "").split())
+        if nombre:
+            break
+    return {"nitter": nitter, "cliente_nombre": nombre}
+
+
 def _a_ingesta(movimiento: ScrapedMovement) -> BankMovementIn:
     """Movimiento del portal → fila de entrada de la ingesta.
 
@@ -160,6 +212,7 @@ class BankVerificationWorker:
         pedir_codigo: Callable[[str], str] | None = None,
         reloj: Callable[[], datetime.datetime] | None = None,
         esperar: Callable[[float], None] | None = None,
+        facturas: Callable[[str], Mapping[str, str] | None] | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._jobs = jobs
@@ -169,6 +222,7 @@ class BankVerificationWorker:
         self._vault = vault
         self._reloj = reloj or (lambda: datetime.datetime.now())
         self._esperar = esperar or time.sleep
+        self._facturas = facturas or _factura_erp
         self._log = logger or logging.getLogger(__name__)
         self._nodo = nodo or os.environ.get(ENV_NODO) or config.tenant
         self._pedir_codigo = pedir_codigo or _pedir_codigo_en_consola
@@ -231,7 +285,7 @@ class BankVerificationWorker:
         self._actualizar(
             job,
             _estado_del_job(coincidencia),
-            resultado=self._resultado_json(resultado, coincidencia),
+            resultado=self._resultado_json(job, resultado, coincidencia),
         )
 
     # --- implementación ---
@@ -314,12 +368,25 @@ class BankVerificationWorker:
 
     def _resultado_json(
         self,
+        job: VerificationJob,
         resultado: ScrapeResult,
         coincidencia: ValueMatch,
     ) -> dict[str, Any]:
-        """Lo que se persiste en `resultado_json`: ventana, nodo e ingesta."""
+        """Lo que se persiste en `resultado_json`: ventana, nodo e ingesta.
+
+        Al candidato se le suman `nitter` y `cliente_nombre` de la factura: la
+        web los muestra al lado del pagador, y el NIT no existe del lado del
+        banco (la referencia de un QR es el convenio, igual para todos).
+        """
         inicio, fin = resultado.ventana
         candidato = coincidencia.seleccionado
+        candidato_json = _candidato_json(candidato) if candidato is not None else None
+        if candidato_json is not None:
+            datos_factura = self._datos_factura(job.factura_id)
+            if datos_factura.get("nitter"):
+                candidato_json["nitter"] = datos_factura["nitter"]
+            if datos_factura.get("cliente_nombre"):
+                candidato_json["cliente_nombre"] = datos_factura["cliente_nombre"]
         return {
             "ventana": {"desde": inicio.isoformat(), "hasta": fin.isoformat()},
             "nodo": self._nodo,
@@ -328,5 +395,14 @@ class BankVerificationWorker:
             "paginas": resultado.paginas,
             "movimientos": len(resultado.movimientos),
             "candidatos": len(coincidencia.candidatos),
-            "candidato": _candidato_json(candidato) if candidato is not None else None,
+            "candidato": candidato_json,
         }
+
+    def _datos_factura(self, factura_id: str) -> dict[str, str]:
+        """Datos del cliente de la factura; si el ERP falla, el job no se cae."""
+        try:
+            return dict(self._facturas(factura_id) or {})
+        except Exception:  # noqa: BLE001 - el resultado del banco vale por si solo
+            self._log.warning("No pude leer la factura %s para el resultado del job", factura_id)
+            return {}
+
