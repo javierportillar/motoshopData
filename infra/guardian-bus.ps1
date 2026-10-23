@@ -12,6 +12,11 @@
 
   No hace: force-push, rebase de commits pusheados, apply de conciliaciones, cambios de
   cuenta/tarea/autologon, ni levanta un segundo agente.
+
+  Ojo (PowerShell 5.1): NO envolver llamadas a git en una funcion que devuelva valor.
+  `& git ...` capturado dentro de una funcion cuelga el proceso sin salida (probado dos
+  veces: pull y status). Por eso todo git va suelto y con `git -C`, y $LASTEXITCODE se
+  lee en la linea siguiente.
 #>
 param(
   [string]$Nodo     = "masvital",
@@ -28,15 +33,10 @@ param(
 
 $ErrorActionPreference = "Continue"
 $log = Join-Path $env:TEMP "guardian-banco.log"
+
 function Log([string]$m) {
   $linea = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $m
   Add-Content -Path $log -Value $linea -Encoding utf8
-}
-
-function Git([string]$dir, [string[]]$args) {
-  Push-Location $dir
-  try { $out = & git @args 2>&1; return @{ code = $LASTEXITCODE; out = ($out -join "`n") } }
-  finally { Pop-Location }
 }
 
 function Estado-Api {
@@ -48,12 +48,11 @@ function Estado-Api {
 
 function Asegurar-Bus {
   if (-not (Test-Path $BusWt)) {
-    Git $Repo @("fetch", $Remoto, "--quiet") | Out-Null
-    & git -C $Repo worktree add $BusWt -B bus-wt "$Remoto/$BramaBus" 2>&1 | Out-Null
+    & git -C $Repo worktree add $BusWt -B bus-wt "$Remoto/$BramaBus" | Out-Null
   }
-  Git $BusWt @("fetch", $Remoto, "--quiet") | Out-Null
-  $pull = Git $BusWt @("pull", "--rebase", "--quiet", $Remoto, $BramaBus)
-  return ($pull.code -eq 0)
+  & git -C $BusWt fetch $Remoto --quiet | Out-Null
+  & git -C $BusWt pull --rebase --quiet $Remoto $BramaBus | Out-Null
+  return ($LASTEXITCODE -eq 0)
 }
 
 function Siguiente-Seq {
@@ -82,15 +81,8 @@ Log "guardian arriba: nodo=$Nodo repo=$Repo cada ${IntervaloSeg}s"
 while ($true) {
   $sha = ""; $limpio = $true; $api = $false; $suite = ""; $conflicto = $false
 
-  $pull = Git $Repo @("pull", "--rebase", "--quiet", $Remoto, $Brama)
-  if ($pull.code -ne 0) {
-    Git $Repo @("rebase", "--abort") | Out-Null
-    $conflicto = $true
-    Log "pull con conflicto: $($pull.out)"
-  }
-
-  $status = Git $Repo @("status", "--porcelain")
-  if ($status.out.Trim().Length -gt 0) {
+  $status = (& git -C $Repo status --porcelain) -join "`n"
+  if ($status.Trim().Length -gt 0) {
     $limpio = $false
     Push-Location (Join-Path $Repo "motoshop-app\api")
     $out = & ".\.venv\Scripts\python.exe" -m pytest tests/ -q -k bank 2>&1
@@ -98,26 +90,35 @@ while ($true) {
     Pop-Location
     $suite = ($out | Select-Object -Last 1)
     if ($codigo -eq 0) {
-      Git $Repo @("add", "-A") | Out-Null
-      Git $Repo @("commit", "-m", "wip(banco): rescate de cambios sin commitear (guardian)") | Out-Null
-      $push = Git $Repo @("push", $Remoto, $Brama)
-      Log "cambios sin commitear: suite verde, commit wip y push (code=$($push.code))"
+      & git -C $Repo add -A | Out-Null
+      & git -C $Repo commit -q -m "wip(banco): rescate de cambios sin commitear (guardian)" | Out-Null
+      & git -C $Repo push -q $Remoto $Brama | Out-Null
+      Log "cambios sin commitear: suite verde, commit wip y push (code=$LASTEXITCODE)"
       $limpio = $true
     } else {
       Log "cambios sin commitear con suite en ROJO: no commiteo"
     }
   }
 
+  # El pull va DESPUES del rescate: con el arbol sucio `pull --rebase` se niega (128).
+  & git -C $Repo pull --rebase --quiet $Remoto $Brama | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    $enRebase = (Test-Path (Join-Path $Repo ".git\rebase-merge")) -or (Test-Path (Join-Path $Repo ".git\rebase-apply"))
+    if ($enRebase) { & git -C $Repo rebase --abort | Out-Null }
+    $conflicto = $true
+    Log "pull fallo (code=$LASTEXITCODE, rebase en curso=$enRebase): no toco nada"
+  }
+
   $api = Estado-Api
   if (-not $api) {
     Log "API caida: arrancando la tarea $TareaApi"
-    & schtasks /Run /TN $TareaApi 2>&1 | Out-Null
+    & schtasks /Run /TN $TareaApi | Out-Null
     Start-Sleep -Seconds 25
     $api = Estado-Api
   }
 
-  $sha = (Git $Repo @("rev-parse", "--short", "HEAD")).out.Trim()
-  $ultimo = (Git $Repo @("log", "-1", "--format=%h %s")).out.Trim()
+  $sha = (& git -C $Repo rev-parse --short HEAD).Trim()
+  $ultimo = (& git -C $Repo log -1 --format="%h %s").Trim()
   $silencio = Minutos-Sin-Dev
 
   if (Asegurar-Bus) {
@@ -142,10 +143,10 @@ while ($true) {
     )
     $destino = Join-Path $BusWt ("bus\$Nodo\outbox\{0:D4}-guardian-{1}.md" -f $seq, $sello)
     Set-Content -Path $destino -Value ($cuerpo -join "`n") -Encoding utf8
-    Git $BusWt @("add", "bus") | Out-Null
-    Git $BusWt @("commit", "-q", "-m", ("bus(guardian): {0:D4} latido" -f $seq)) | Out-Null
-    $p = Git $BusWt @("push", "-q", $Remoto, "HEAD:refs/heads/$BramaBus")
-    Log "latido SEQ $seq enviado (push code=$($p.code)), silencio dev=${silencio}m"
+    & git -C $BusWt add bus | Out-Null
+    & git -C $BusWt commit -q -m ("bus(guardian): {0:D4} latido" -f $seq) | Out-Null
+    & git -C $BusWt push -q $Remoto "HEAD:refs/heads/$BramaBus" | Out-Null
+    Log "latido SEQ $seq enviado (push code=$LASTEXITCODE), silencio dev=${silencio}m"
   } else {
     Log "no pude sincronizar el worktree del bus: latido no enviado"
   }
