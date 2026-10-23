@@ -128,6 +128,11 @@ function Minutos-Sin-Dev {
 
 Log "guardian arriba: repo=$Repo cada ${IntervaloSeg}s"
 
+# Post-autologon: dar tiempo a que la sesion y la tarea de API arranquen antes del primer ciclo
+$limiteArranque = (Get-Date).AddSeconds(180)
+while ((Get-Date) -lt $limiteArranque -and -not (Estado-Api)) { Start-Sleep -Seconds 10 }
+Log "arranque: api=$(Estado-Api)"
+
 while ($true) {
   Log "TRACE_A ciclo";
   $sha = ""; $limpio = $true; $api = $false; $suite = ""; $conflicto = $false
