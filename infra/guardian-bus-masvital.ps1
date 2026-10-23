@@ -111,6 +111,25 @@ while ($true) {
 
   $api = Estado-Api
   if (-not $api) {
+    # Si la tarea figura "Running" pero el puerto no escucha, el arranque quedo colgado
+    # (tipico justo despues de un reinicio: la red no esta lista y una descarga se cuelga).
+    # `schtasks /Run` no hace nada en ese caso (IgnoreNew), asi que hay que matar y volver a entrar.
+    $tarea = Get-ScheduledTask -TaskName $TareaApi -ErrorAction SilentlyContinue
+    if ($tarea -and $tarea.State -eq "Running") {
+      $info = Get-ScheduledTaskInfo -TaskName $TareaApi -ErrorAction SilentlyContinue
+      $minutos = if ($info -and $info.LastRunTime) { [int]((Get-Date) - $info.LastRunTime).TotalMinutes } else { 0 }
+      if ($minutos -gt 6) {
+        $colgados = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -match 'run_api\.py' }
+        foreach ($p in $colgados) {
+          Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.ProcessId)" -ErrorAction SilentlyContinue |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+          Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+        Log "API sin puerto hace ${minutos}m con la tarea Running: mate $($colgados.Count) proceso(s) y reinicio"
+        Start-Sleep -Seconds 3
+        & schtasks /End /TN $TareaApi | Out-Null
+      }
+    }
     Log "API caida: arrancando la tarea $TareaApi"
     & schtasks /Run /TN $TareaApi | Out-Null
     Start-Sleep -Seconds 25
