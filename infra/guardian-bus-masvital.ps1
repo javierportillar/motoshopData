@@ -120,7 +120,15 @@ while ($true) {
       $info = Get-ScheduledTaskInfo -TaskName $TareaApi -ErrorAction SilentlyContinue
       $minutos = if ($info -and $info.LastRunTime) { [int]((Get-Date) - $info.LastRunTime).TotalMinutes } else { 0 }
       if ($minutos -gt $MinutosColgado) {
-        $colgados = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -match 'run_api' }
+        # La API corre con pythonw.exe bien callado, asi que hay que buscarla por
+        # la linea de comandos, no por el nombre del proceso: el lanzador viejo
+        # (run_api) y el actual (uvicorn) usan interpretes distintos.
+        $colgados = Get-CimInstance Win32_Process |
+          Where-Object {
+            $_.CommandLine -and
+            $_.Name -match '^pythonw?\.exe$' -and
+            $_.CommandLine -match 'run_api|uvicorn|motoshop_api'
+          }
         foreach ($p in $colgados) {
           Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.ProcessId)" -ErrorAction SilentlyContinue |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
