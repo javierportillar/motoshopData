@@ -325,11 +325,34 @@ la API, no la de la consola del operador. DPAPI y `%APPDATA%` son **por usuario*
   al arrancar Windows. Si la PC reinicia y nadie entra, no hay API: cae el ERP entero, no sólo el
   botón. Quien opera el local tiene que saberlo y entrar como el usuario de la tarea.
 
-### R2 — Arranque autónomo tras reinicio: **BLOQUEADO** (requiere al operador)
+### R2 — Arranque autónomo tras reinicio: **VERIFICADO EN PRODESK, PENDIENTE EN ESTE NODO**
 
-Estado al 2026-10-22: el botón funciona de punta a punta con la sesión del usuario `MotoShop`
-abierta. Falta que la API arranque **sin que nadie inicie sesión**, y eso pide la contraseña de
-Windows: no la tiene ningún agente (y no debe viajar por chat ni por el bus).
+**Actualización 2026-10-23 (nodo masvital / ProDesk, mensaje 0034 del bus):**
+- Allá el autologon **ya funciona**: reinicio a las 22:17 y la sesión entró sin tocar teclado.
+- Apareció una falla más sutil: la tarea de API quedó `Running` desde 22:17:17 con el puerto 8000
+  **sin escuchar**. Proceso vivo COLGADO (descargas S3 en vuelo cuando la red aún no estaba lista);
+  `schtasks /Run` no hace nada por `IgnoreNew`. `RestartCount` no cubre este caso: la política de
+  reinicio sólo aplica si el proceso **termina**.
+- Fix de masvital (commit `10c34c1`, sólo `infra/guardian-bus-masvital.ps1`): watchdog de arranque
+  en `run_api.py` (150 s sin escuchar → exit 1) + guardián que mata el proceso si la tarea lleva
+  >6 min `Running` con `/health` caído. Evidencia: API arriba en 10 s, job resuelto en 145 s.
+- **Divergencia a resolver por masvital:** `run_api.py` NO existe en este repo (ni en historial git).
+  Es un lanzador local de ProDesk, así que su capa anti‑colgado no es reproducible desde el repo.
+  Pedido en el bus: commitearlo o reemplazarlo por algo versionado.
+
+**Estado en ESTE nodo (verificado 2026-10-23, sólo lectura):**
+- `net user MotoShop` → `Contraseña requerida: No` (cuenta sin contraseña).
+- `HKLM\...\Winlogon` → `AutoAdminLogon = 0`, `DefaultUserName = MotoShop`.
+  **Sin contraseña no implica autologon**: la sesión no se inicia sola por no tener clave.
+  R2 sigue pendiente acá (comandos de abajo; con cuenta sin clave puede omitirse `DefaultPassword`
+  o usar Sysinternals Autologon.exe).
+- Tarea API: `python.exe -m uvicorn motoshop_api.main:app --port 8000` directo (no hay `run_api.py`),
+  `IgnoreNew`, `RestartCount=5 / PT1M`.
+- Alineación aplicada (commit `b31ec8e` en `infra/guardian-bus.ps1`): antes de recuperar, registra
+  evidencia (`estado=listener_sin_health | COLGADA_proceso_vivo | caida_sin_proceso`, estado de la
+  tarea, PIDs, dueño del puerto); si `start_api.ps1` no devuelve health en 25 s, mata **sólo los PIDs
+  exactos** de `uvicorn|motoshop_api` y reintenta una vez. `start_api.ps1` ya mataba por cmdline y por
+  dueño del puerto, así que el caso ProDesk (vivo sin escuchar) queda cubierto acá.
 
 **Camino elegido (A): autologon + tarea «sólo cuando el usuario inició sesión».**
 La tarea `MotoShopBackendSvc` ya corre como `SERVER\MotoShop` (`Solo interactivo`) con
