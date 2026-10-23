@@ -325,7 +325,7 @@ la API, no la de la consola del operador. DPAPI y `%APPDATA%` son **por usuario*
   al arrancar Windows. Si la PC reinicia y nadie entra, no hay API: cae el ERP entero, no sólo el
   botón. Quien opera el local tiene que saberlo y entrar como el usuario de la tarea.
 
-### R2 — Arranque autónomo tras reinicio: **VERIFICADO EN PRODESK, PENDIENTE EN ESTE NODO**
+### R2 — Arranque autónomo tras reinicio: **PRODESK OK; ACÁ CONFIGURADO, PENDIENTE PRUEBA DE REINICIO**
 
 **Actualización 2026-10-23 (nodo masvital / ProDesk, mensaje 0034 del bus):**
 - Allá el autologon **ya funciona**: reinicio a las 22:17 y la sesión entró sin tocar teclado.
@@ -340,12 +340,29 @@ la API, no la de la consola del operador. DPAPI y `%APPDATA%` son **por usuario*
   Es un lanzador local de ProDesk, así que su capa anti‑colgado no es reproducible desde el repo.
   Pedido en el bus: commitearlo o reemplazarlo por algo versionado.
 
-**Estado en ESTE nodo (verificado 2026-10-23, sólo lectura):**
-- `net user MotoShop` → `Contraseña requerida: No` (cuenta sin contraseña).
-- `HKLM\...\Winlogon` → `AutoAdminLogon = 0`, `DefaultUserName = MotoShop`.
-  **Sin contraseña no implica autologon**: la sesión no se inicia sola por no tener clave.
-  R2 sigue pendiente acá (comandos de abajo; con cuenta sin clave puede omitirse `DefaultPassword`
-  o usar Sysinternals Autologon.exe).
+**Estado en ESTE nodo — AUTOLOGON CONFIGURADO 2026-10-23 04:00Z (pendiente prueba de reinicio):**
+- `net user MotoShop` → `Contraseña requerida: No` (cuenta sin contraseña). **No se tocó la clave**
+  de la cuenta: cambiarla rompería DPAPI/vault.
+- Aplicado en `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon`:
+  `AutoAdminLogon=1`, `DefaultUserName=MotoShop`, `DefaultDomainName=SERVER`, `DefaultPassword=""`
+  (vacío porque la cuenta no tiene clave). Valores previos respaldados en
+  `%TEMP%\opencode\winlogon_backup_20261023.txt`. Con clave real, usar Sysinternals Autologon.exe
+  para que quede cifrada en LSA en vez de texto plano.
+- Tarea API: `python.exe -m uvicorn motoshop_api.main:app --port 8000` directo (no hay `run_api.py`),
+  `IgnoreNew`, `RestartCount=5 / PT1M`; arranca por `LogonTrigger` al entrar la sesión autologon
+  (`BootTrigger` no aplica a tareas «solo cuando el usuario inició sesión»).
+- Guardián: espera hasta 180 s a que la API responda antes del primer ciclo (commit `b60af37`) para
+  no pelear con el arranque de la tarea de API.
+- Alineación aplicada (commit `b31ec8e` en `infra/guardian-bus.ps1`): antes de recuperar, registra
+  evidencia (`estado=listener_sin_health | COLGADA_proceso_vivo | caida_sin_proceso`, estado de la
+  tarea, PIDs, dueño del puerto); si `start_api.ps1` no devuelve health en 25 s, mata **sólo los PIDs
+  exactos** de `uvicorn|motoshop_api` y reintenta una vez. `start_api.ps1` ya mataba por cmdline y por
+  dueño del puerto, así que el caso ProDesk (vivo sin escuchar) queda cubierto acá.
+- Verificación del botón tras estos cambios (sin reiniciar): job `110d35ee` → `sin_coincidencia` en
+  36 s, 3 movimientos, sin campo `error`.
+- **Pendiente único**: reiniciar y confirmar sin tocar teclado: sesión inicia sola, `/health` 200,
+  evidencia en `%TEMP%\guardian-banco.log` (`arranque: api=True`), latido del bus y un POST real.
+  Rollback: restaurar `winlogon_backup_20261023.txt` (`AutoAdminLogon=0`).
 - Tarea API: `python.exe -m uvicorn motoshop_api.main:app --port 8000` directo (no hay `run_api.py`),
   `IgnoreNew`, `RestartCount=5 / PT1M`.
 - Alineación aplicada (commit `b31ec8e` en `infra/guardian-bus.ps1`): antes de recuperar, registra
