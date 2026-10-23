@@ -129,9 +129,10 @@ if (-not $env:MYSQL_USER) { $env:MYSQL_USER = "api_read" }
 if (-not $env:CORS_ORIGINS) {
     $env:CORS_ORIGINS = "http://localhost:3000,https://api.fragloesja.uk,https://motoshop-web-tau.vercel.app,https://app.fragloesja.uk,http://localhost:8000"
 }
-if (-not $env:DUCKDB_PATH) {
-    $env:DUCKDB_PATH = "$ProjectRoot\out\motoshop_gold.duckdb"
-}
+# DUCKDB_PATH a proposito NO se define aca: config.py resuelve la base por
+# tenant y un duckdb_path no vacio rompe el multi-tenant. La tarea
+# MotoShopBackendSvc nunca lo definio; setearlo solo en este camino hacia que
+# el mismo nodo sirviera una base distinta segun quien lo arrancara.
 if (-not $env:OPENCODE_API_KEY -and $env:SUPABASE_URL -and $env:SUPABASE_SERVICE_KEY) {
     try {
         $headers = @{
@@ -169,19 +170,27 @@ $proc = Start-Process -FilePath $pythonExe `
     -ArgumentList $launcher `
     -WindowStyle Hidden -PassThru -WorkingDirectory $ApiDir
 
-Start-Sleep -Seconds 5
+Start-Sleep -Seconds 3
 
-# 5. Verificar que responde
-try {
-    $resp = Invoke-WebRequest -Uri "http://localhost:$Port/health" -TimeoutSec 5 -UseBasicParsing
-    if ($resp.StatusCode -eq 200) {
-        Write-Log "API: OK (http://localhost:$Port/health → $($resp.StatusCode))"
-        Write-Log "=== FIN ==="
-        exit 0
-    }
-} catch {
-    Write-Log "ERROR: API no responde en /health después de 5s"
-    Write-Log "Causa: uvicorn puede haber fallado al iniciar"
-    Write-Log "Solución: Revisar logs de uvicorn o ejecutar manualmente: cd $ApiDir && python -m uvicorn motoshop_api.main:app --port $Port"
+# 5. Verificar que responde (sondeo, no una foto a los 5 s: el import de la app
+#    + sync de usuarios tarda ~12 s en frio y hasta ~27 s con Supabase lento).
+$limite = (Get-Date).AddSeconds(60)
+$ok = $false
+while ((Get-Date) -lt $limite) {
+    try {
+        $resp = Invoke-WebRequest -Uri "http://localhost:$Port/health" -TimeoutSec 5 -UseBasicParsing
+        if ($resp.StatusCode -eq 200) {
+            Write-Log "API: OK (http://localhost:$Port/health → $($resp.StatusCode))"
+            Write-Log "=== FIN ==="
+            $ok = $true
+            break
+        }
+    } catch { }
+    Start-Sleep -Seconds 2
+}
+if (-not $ok) {
+    Write-Log "ERROR: API no responde en /health tras 60s"
+    Write-Log "Causa: uvicorn puede haber fallado al iniciar (ver logs\api_uvicorn.log)"
+    Write-Log "Solución: revisar logs\api_uvicorn.log o correr a mano: cd $ApiDir && .venv\Scripts\python.exe ..\..\infra\api_launcher.py"
     exit 1
 }

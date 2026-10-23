@@ -32,10 +32,18 @@ class _AlArchivo:
     def __init__(self, logger: logging.Logger, nivel: int) -> None:
         self._logger = logger
         self._nivel = nivel
+        self._escribiendo = False
 
     def write(self, texto: str) -> int:
-        if texto and texto.strip():
+        # Reentrante: si el handler falla, logging escribe en sys.stderr, que
+        # somos nosotros mismos. Sin esta guarda se recursa hasta el infinito.
+        if self._escribiendo or not texto or not texto.strip():
+            return len(texto)
+        self._escribiendo = True
+        try:
             self._logger.log(self._nivel, texto.rstrip())
+        finally:
+            self._escribiendo = False
         return len(texto)
 
     def flush(self) -> None:
@@ -56,26 +64,34 @@ def _configurar_logs() -> logging.Logger:
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(logging.INFO)
+    # httpx loguea cada request con la URL completa (query strings de Supabase):
+    # no tiene redaccion de PII y ademas hace rotar el archivo sin aportar nada.
+    for ruidoso in ("httpx", "httpcore", "urllib3"):
+        logging.getLogger(ruidoso).setLevel(logging.WARNING)
     return logging.getLogger("api_launcher")
 
 
 def main() -> int:
     log = _configurar_logs()
-    os.chdir(API_DIR)
-    origen = str(API_DIR / "src")
-    if origen not in sys.path:
-        sys.path.insert(0, origen)
-    sys.stdout = _AlArchivo(log, logging.INFO)
-    sys.stderr = _AlArchivo(log, logging.ERROR)
-
-    log.info("arrancando API puerto=%s cwd=%s python=%s", PUERTO, API_DIR, sys.executable)
     try:
+        os.chdir(API_DIR)
+        origen = str(API_DIR / "src")
+        if origen not in sys.path:
+            sys.path.insert(0, origen)
+        sys.stdout = _AlArchivo(log, logging.INFO)
+        sys.stderr = _AlArchivo(log, logging.ERROR)
+
+        log.info(
+            "arrancando API puerto=%s cwd=%s python=%s", PUERTO, API_DIR, sys.executable
+        )
         import uvicorn
 
         # log_config=None: sin dictConfig, los loggers de uvicorn propagan al
         # logger raiz que ya escribe al archivo.
         uvicorn.run("motoshop_api.main:app", port=PUERTO, log_config=None)
     except BaseException:
+        # pythonw no tiene stderr: sin este except la falla de arranque se
+        # perderia en silencio.
         log.exception("la API termino con excepcion")
         return 1
     log.info("la API termino normalmente")

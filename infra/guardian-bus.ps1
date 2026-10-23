@@ -1,4 +1,4 @@
-<#
+﻿<#
   guardian.ps1 -- perro guardian del nodo MotoShop.
   Corre cada 5 minutos para siempre. No decide nada de negocio: mantiene el nodo vivo
   y reporta por el bus aunque el agente de desarrollo este muerto.
@@ -42,7 +42,7 @@ $script:GitExe = (Get-Command git.exe -ErrorAction SilentlyContinue).Source
 if (-not $script:GitExe) { $script:GitExe = "git.exe" }
 
 function _Citar-Arg([string]$a) {
-  # Start-Process pasa una sola lÃ­nea de comandos: los argumentos con espacios
+  # Start-Process pasa una sola lÃƒÂ­nea de comandos: los argumentos con espacios
   # o metacaracteres tienen que ir entre comillas.
   if ($a -match '[\s"()&|<>^]') { return '"' + ($a -replace '"', '\"') + '"' }
   return $a
@@ -50,7 +50,7 @@ function _Citar-Arg([string]$a) {
 
 function Git([string]$dir, [string[]]$gitArgs, [int]$TimeoutSeg = 120) {
   # Timeout duro por llamada: un pull colgado no puede frenar el latido (el
-  # guardiÃ¡n promete liveness). 124 = timeout, 127 = no se pudo lanzar.
+  # guardiÃƒÂ¡n promete liveness). 124 = timeout, 127 = no se pudo lanzar.
   $salida = Join-Path $env:TEMP ("guardian-git-" + [guid]::NewGuid().ToString("N") + ".out")
   $errores = "$salida.err"
   $lineaArgs = ($gitArgs | ForEach-Object { _Citar-Arg $_ }) -join " "
@@ -173,28 +173,46 @@ while ($true) {
   Log "TRACE_D api=$api"
   if (-not $api) {
     Log "API sin health: $(Evidencia-Api)"
-    $arranque = Join-Path $Repo "infra\start_api.ps1"
-    # Via VBS (Run ..., 0, True): ni una consola visible ni un parpadeo.
     $arranqueVbs = Join-Path $Repo "infra\start_api.vbs"
-    if ((Test-Path $arranque) -and (Test-Path $arranqueVbs)) {
-      Log "API caida: ejecutando infra\start_api.ps1 (via start_api.vbs)"
-      Start-Process wscript.exe -ArgumentList "//B","//Nologo",$arranqueVbs -WindowStyle Hidden
-      Start-Sleep -Seconds 25
-      $api = Estado-Api
-      if (-not $api) {
-        # colgado que start_api no pudo matar: matar SOLO PIDs exactos y reintentar
-        $colgados = @(Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue |
-          Where-Object { $_.CommandLine -match 'uvicorn|motoshop_api|api_launcher' } |
-          ForEach-Object { $_.ProcessId })
-        foreach ($pidColgado in $colgados) { Stop-Process -Id $pidColgado -Force -ErrorAction SilentlyContinue }
-        Log "API sigue sin health: mate pids=$($colgados -join ',') y reintento start_api"
-        Start-Process wscript.exe -ArgumentList "//B","//Nologo",$arranqueVbs -WindowStyle Hidden
-        Start-Sleep -Seconds 25
-        $api = Estado-Api
-        Log "API reintento resultado=$api ($(Evidencia-Api))"
+    $tareaApi = "MotoShopBackendSvc"
+    # Un solo dueno: la TAREA. Lanzar un uvicorn propio pelea por el puerto con
+    # el que el Programador relanza por RestartOnFailure, y quema el presupuesto
+    # de reintentos. Aca se reinicia la tarea, no el proceso.
+    for ($intento = 1; $intento -le 2; $intento++) {
+      $estadoTarea = try { (Get-ScheduledTask -TaskName $tareaApi -ErrorAction Stop).State } catch { "?" }
+      if ($estadoTarea -eq "Running") {
+        # Tarea viva pero sin health = colgada (caso ProDesk: IgnoreNew no la
+        # reinicia porque el proceso nunca termina). End la mata con su arbol.
+        Log "API tarea=$estadoTarea sin health (intento $intento): End + Run"
+        schtasks /End /TN $tareaApi | Out-Null
+        Start-Sleep -Seconds 3
       }
-    } else {
-      Log "API caida y no existe infra\start_api.ps1 (o start_api.vbs)"
+      Log "API caida: arrancando tarea $tareaApi (intento $intento)"
+      schtasks /Run /TN $tareaApi | Out-Null
+      # Deadline real: en arranque en frio el import + sync de usuarios tarda
+      # ~12 s (medido en logs/api_uvicorn.log) y hasta ~27 s si Supabase esta
+      # lento. Matar antes de eso es matar la API que acabamos de arrancar.
+      $limite = (Get-Date).AddSeconds(90)
+      while ((Get-Date) -lt $limite) {
+        Start-Sleep -Seconds 5
+        if (Estado-Api) { $api = $true; break }
+      }
+      Log "API tras intento ${intento}: api=$api ($(Evidencia-Api))"
+      if ($api) { break }
+    }
+    if (-not $api) {
+      # Ultimo recurso: matar SOLO PIDs del launcher y arrancar por VBS.
+      $colgados = @(Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -match 'api_launcher' } |
+        ForEach-Object { $_.ProcessId })
+      foreach ($pidColgado in $colgados) { Stop-Process -Id $pidColgado -Force -ErrorAction SilentlyContinue }
+      Log "API sin health tras 2 intentos: mate pids=$($colgados -join ',') y arranco por VBS"
+      if (Test-Path $arranqueVbs) {
+        Start-Process wscript.exe -ArgumentList "//B","//Nologo",$arranqueVbs -WindowStyle Hidden
+        Start-Sleep -Seconds 30
+        $api = Estado-Api
+        Log "API ultimo recurso resultado=$api ($(Evidencia-Api))"
+      }
     }
   }
 

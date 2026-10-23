@@ -8,16 +8,35 @@
 ' asi la tarea queda "Running" mientras el guardian vive y el Programador puede
 ' reiniciarla si muere.
 '
+' -NonInteractive: si algo pide confirmacion, que falle en vez de colgarse
+' invisible para siempre (la tarea tiene ExecutionTimeLimit P3650D).
+'
+' La ruta del .ps1 sale de WScript.ScriptFullName: mover el repo no deja la
+' tarea apuntando a una ruta vieja en silencio.
+'
 ' Uso (accion de la tarea MotoShopBusGuardian):
 '     wscript.exe //B //Nologo <repo>\infra\guardian-bus.vbs
 
 Option Explicit
 
-Dim sh, cmd, rc
+Dim sh, fso, dir, ps1, cmd, rc
 Set sh = CreateObject("WScript.Shell")
+Set fso = CreateObject("Scripting.FileSystemObject")
 
-cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File " & _
-      """C:\Users\MotoShop\Documents\javidevmoto\motoshopData\infra\guardian-bus.ps1"""
+dir = fso.GetParentFolderName(WScript.ScriptFullName)
+ps1 = dir & "\guardian-bus.ps1"
+
+If Not fso.FileExists(ps1) Then
+  On Error Resume Next
+  Dim log, f
+  log = sh.ExpandEnvironmentStrings("%TEMP%") & "\guardian-banco.log"
+  Set f = fso.OpenTextFile(log, 8, True)
+  f.WriteLine "[" & Now & "] ERROR: no existe " & ps1 & " (shim guardian-bus.vbs)"
+  f.Close
+  WScript.Quit 3
+End If
+
+cmd = "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File """ & ps1 & """"
 
 rc = sh.Run(cmd, 0, True)
 WScript.Quit rc

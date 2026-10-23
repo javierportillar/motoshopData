@@ -1048,12 +1048,14 @@ def _abrir_contexto(gestor: Any, config: NodeConfig) -> Any:
         headless=_headless(),
         locale=os.environ.get(ENV_LOCALE, "es-CO"),
         timezone_id=os.environ.get(ENV_TIMEZONE, "America/Bogota"),
+        # 1280x900: mismo tamano que la ventana off-screen. Probado con filas
+        # reales (2 scrapes, 3 movimientos): el parser exige 4 celdas despues de
+        # la fecha y un ancho menor puede ocultar columnas.
         viewport={"width": 1280, "height": 900},
         ignore_default_args=["--enable-automation"],
         # Cero ventanas visibles: el portal rebota headless (portal_no_disponible),
         # asi que el navegador corre *headed* pero con la ventana fuera del
-        # escritorio. El viewport se mantiene igual al tamano de ventana para que
-        # el layout no se deforme.
+        # escritorio.
         args=[
             "--disable-blink-features=AutomationControlled",
             "--window-position=-32000,-32000",
