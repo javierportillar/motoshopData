@@ -23,6 +23,7 @@ escribe el estado que le pidan.
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -153,10 +154,18 @@ class FakeVerificationJobStore:
         self.jobs: dict[str, VerificationJob] = {}
         self._reloj = reloj or _ahora
         self._ttl = ttl_segundos
+        # El claim real es atómico en InnoDB (`_SQL_RECLAMAR`); el doble lo
+        # reproduce con un lock para que dos hilos no ganen la misma fila.
+        self._lock = threading.Lock()
 
     def create_job(self, tenant: str, factura_id: str, valor: Decimal) -> VerificationJob:
         importe = _valor_normalizado(valor)
         id_dominio = id_dominio_job(tenant, factura_id, importe)
+        ahora = self._reloj()
+        # Espejo del store real: primero el barrido de vencidos, después el
+        # revival. Un `en_cola` vencido queda `expirado` y abajo se revive con
+        # `job_id` nuevo (antes quedaba empantanado: nadie lo reclamaba).
+        self.expire_stale_jobs(ahora)
         existente = self.jobs.get(id_dominio)
         # La idempotencia protege la verificación EN CURSO (no se raspa dos
         # veces lo mismo). Un job terminado no bloquea el reintento: si el
@@ -164,7 +173,6 @@ class FakeVerificationJobStore:
         # nuevo para la misma factura y el mismo importe.
         if existente is not None and existente.estado not in ESTADOS_TERMINALES:
             return existente
-        ahora = self._reloj()
         job = VerificationJob(
             id=id_dominio,
             job_id=str(uuid.uuid4()),
@@ -219,17 +227,18 @@ class FakeVerificationJobStore:
         entra acá, no reclama y muere **sin tocar estados** (un `fallido`
         espurio del segundo hilo enmascaraba el resultado del primero).
         """
-        job = self._buscar(tenant, job_id)
-        if job is None or job.estado is not EstadoJob.EN_COLA:
-            return False
-        cambios: dict[str, Any] = {
-            "estado": EstadoJob.EJECUTANDO,
-            "actualizado_en": self._reloj(),
-        }
-        if nodo is not None:
-            cambios["nodo"] = nodo
-        self.jobs[job.id] = replace(job, **cambios)
-        return True
+        with self._lock:
+            job = self._buscar(tenant, job_id)
+            if job is None or job.estado is not EstadoJob.EN_COLA:
+                return False
+            cambios: dict[str, Any] = {
+                "estado": EstadoJob.EJECUTANDO,
+                "actualizado_en": self._reloj(),
+            }
+            if nodo is not None:
+                cambios["nodo"] = nodo
+            self.jobs[job.id] = replace(job, **cambios)
+            return True
 
     def expire_stale_jobs(self, now: datetime) -> int:
         """Pasa a `expirado` los jobs vencidos que siguen en curso."""
@@ -276,6 +285,11 @@ ON DUPLICATE KEY UPDATE id = VALUES(id)
 #: Revive el job de dominio cuando el anterior ya terminó: es el reintento del
 #: operador (portal caído, OTP caducado), no una verificación nueva en paralelo.
 #: El `job_id` público cambia: quien sondee el intento viejo ve el estado viejo.
+#:
+#: También revive el `en_cola` **vencido**: `_SQL_RECLAMAR` exige
+#: `expira_en > :now`, así que sin esta rama un job que vence antes del claim
+#: quedaba empantanado para siempre — ningún hilo lo tomaba y ningún reintento
+#: lo sacaba (quedaba `en_cola` con `job_id` viejo y la UI sondeando en vano).
 _SQL_REVIVIR = """
 UPDATE app_bank_verification_jobs
 SET job_id = :job_id,
@@ -288,7 +302,10 @@ SET job_id = :job_id,
     expira_en = :expira_en
 WHERE tenant = :tenant
   AND id = :id
-  AND estado IN ('resuelto', 'sin_coincidencia', 'ambiguo', 'fallido', 'expirado')
+  AND (
+        estado IN ('resuelto', 'sin_coincidencia', 'ambiguo', 'fallido', 'expirado')
+        OR (estado = 'en_cola' AND expira_en <= :now)
+      )
 """
 
 _SQL_EXPIRAR = """UPDATE app_bank_verification_jobs
@@ -340,7 +357,12 @@ class RealVerificationJobStore:
             "creado_en": ahora,
             "actualizado_en": ahora,
             "expira_en": ahora + timedelta(seconds=TTL_SEGUNDOS),
+            "now": ahora,
         }
+        # El barrido de vencidos va primero: un job que murió sin cerrarse
+        # (`ejecutando` colgado, `esperando_otp` sin consola) pasa a `expirado`
+        # y el reintento de abajo lo revive con un `job_id` nuevo.
+        self.expire_stale_jobs(ahora)
         with self._motor().connect() as conn:
             # La idempotencia es de la tabla y protege el job EN CURSO: si ya
             # existe (otra corrida, otra petición), la fila gana y se devuelve

@@ -13,6 +13,7 @@ Los estados son exactamente los del contrato: `en_cola`, `ejecutando`,
 from __future__ import annotations
 
 import datetime
+import threading
 import uuid
 from decimal import Decimal
 
@@ -272,3 +273,86 @@ def test_reclamar_ejecucion_no_resucita_un_job_terminado() -> None:
 
     assert store.reclamar_ejecucion(TENANT, job.job_id) is False
     assert store.get_job(TENANT, job.job_id).estado is EstadoJob.SIN_COINCIDENCIA
+
+
+# --- Job empantanado: vencido antes del claim (fix de 154ddf3) ---
+
+
+def test_un_job_en_cola_vencido_se_revive_con_job_id_nuevo() -> None:
+    """Un `en_cola` que vence antes del claim no queda empantanado.
+
+    `reclamar_ejecucion` exige `expira_en > now`: si el job vence antes de que
+    el worker lo tome, ningún hilo lo reclama y ningún reintento lo sacaba
+    (quedaba `en_cola` para siempre, con el `job_id` viejo y la UI sondeando
+    en vano). El reintento tiene que devolver un job **nuevo** y ejecutable.
+    """
+    ahora = [datetime.datetime(2026, 10, 22, 8, 0, 0)]
+    store = FakeVerificationJobStore(reloj=lambda: ahora[0], ttl_segundos=30)
+    primero = store.create_job(TENANT, FACTURA, VALOR)
+
+    # Nadie lo reclama y vence: el claim que ahora fallaría, no debe dejarlo clavado.
+    ahora[0] += datetime.timedelta(seconds=31)
+    segundo = store.create_job(TENANT, FACTURA, VALOR)
+
+    assert segundo.id == primero.id
+    assert segundo.job_id != primero.job_id
+    assert segundo.estado is EstadoJob.EN_COLA
+    assert segundo.expira_en == ahora[0] + datetime.timedelta(seconds=30)
+    assert store.reclamar_ejecucion(TENANT, segundo.job_id) is True
+
+
+def test_un_job_en_curso_vigente_no_se_revive() -> None:
+    """La idempotencia no toca un job en curso que sigue dentro del TTL."""
+    ahora = [datetime.datetime(2026, 10, 22, 8, 0, 0)]
+    store = FakeVerificationJobStore(reloj=lambda: ahora[0], ttl_segundos=300)
+    primero = store.create_job(TENANT, FACTURA, VALOR)
+
+    ahora[0] += datetime.timedelta(seconds=120)  # sigue vigente
+    segundo = store.create_job(TENANT, FACTURA, VALOR)
+    assert segundo.job_id == primero.job_id
+    assert segundo.estado is EstadoJob.EN_COLA
+    assert segundo.expira_en == primero.expira_en
+
+    # Y también protege el scrape en vuelo (`ejecutando` vigente).
+    assert store.reclamar_ejecucion(TENANT, primero.job_id) is True
+    ahora[0] += datetime.timedelta(seconds=60)
+    tercero = store.create_job(TENANT, FACTURA, VALOR)
+    assert tercero.job_id == primero.job_id
+    assert tercero.estado is EstadoJob.EJECUTANDO
+
+
+def test_un_job_ejecutando_vencido_se_recupera_con_job_id_nuevo() -> None:
+    """Si el worker muere sin cerrar (`ejecutando` vencido), el reintento revive."""
+    ahora = [datetime.datetime(2026, 10, 22, 8, 0, 0)]
+    store = FakeVerificationJobStore(reloj=lambda: ahora[0], ttl_segundos=30)
+    primero = store.create_job(TENANT, FACTURA, VALOR)
+    assert store.reclamar_ejecucion(TENANT, primero.job_id) is True
+
+    ahora[0] += datetime.timedelta(seconds=31)
+    segundo = store.create_job(TENANT, FACTURA, VALOR)
+
+    assert segundo.job_id != primero.job_id
+    assert segundo.estado is EstadoJob.EN_COLA
+    assert store.reclamar_ejecucion(TENANT, segundo.job_id) is True
+
+
+def test_el_claim_es_unico_con_dos_hilos() -> None:
+    """Dos hilos reclamando el mismo job a la vez: exactamente uno gana."""
+    store = FakeVerificationJobStore()
+    job = store.create_job(TENANT, FACTURA, VALOR)
+
+    resultados: list[bool] = []
+    barrera = threading.Barrier(2)
+
+    def reclamar() -> None:
+        barrera.wait()
+        resultados.append(store.reclamar_ejecucion(TENANT, job.job_id))
+
+    hilos = [threading.Thread(target=reclamar) for _ in range(2)]
+    for hilo in hilos:
+        hilo.start()
+    for hilo in hilos:
+        hilo.join()
+
+    assert sorted(resultados) == [False, True]
+    assert store.get_job(TENANT, job.job_id).estado is EstadoJob.EJECUTANDO
