@@ -187,6 +187,10 @@ class BankVerificationWorker:
             # Sólo el código estable: el mensaje del portal puede traer datos
             # de la sesión y no puede viajar al job.
             self._log.warning("Job de verificación fallido: %s", exc.codigo)
+            if os.environ.get("BANK_LOG_CAUSA", "").strip() == "1":
+                # Diagnostico local (apagado por defecto): el detalle queda solo
+                # en el log del nodo, nunca en el job ni en la API.
+                self._log.warning("Causa del fallo %s: %s", job.job_id, exc)
             self._actualizar(job, EstadoJob.FALLIDO, error_codigo=exc.codigo)
             return
         except SessionSlotError as exc:
