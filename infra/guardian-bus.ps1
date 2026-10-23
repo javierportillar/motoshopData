@@ -26,6 +26,9 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
+$env:GIT_TERMINAL_ASKPASS = "0"
+$env:GIT_ASKPASS = "";
+$env:GCM_INTERACTIVE = "never"
 $log = Join-Path $env:TEMP "guardian-banco.log"
 function Log([string]$m) {
   $linea = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $m
@@ -79,6 +82,7 @@ function Minutos-Sin-Dev {
 Log "guardian arriba: repo=$Repo cada ${IntervaloSeg}s"
 
 while ($true) {
+  Log "TRACE_A ciclo";
   $sha = ""; $limpio = $true; $api = $false; $suite = ""; $conflicto = $false
 
   $pull = Git $Repo @("pull", "--rebase", "--quiet", $Remoto, $Brama)
@@ -88,6 +92,7 @@ while ($true) {
     Log "pull con conflicto: $($pull.out)"
   }
 
+  Log "TRACE_B pull code=$($pull.code)";
   $status = Git $Repo @("status", "--porcelain")
   if ($status.out.Trim().Length -gt 0) {
     $limpio = $false
@@ -107,24 +112,31 @@ while ($true) {
     }
   }
 
-  $api = Estado-Api
+  Log "TRACE_C api start";
+  $api = Estado-Api;
+  Log "TRACE_D api=$api"
   if (-not $api) {
     $arranque = Join-Path $Repo "infra\start_api.ps1"
     if (Test-Path $arranque) {
       Log "API caida: ejecutando infra\start_api.ps1"
       Start-Process powershell -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-File",$arranque -WindowStyle Hidden
       Start-Sleep -Seconds 25
-      $api = Estado-Api
+      Log "TRACE_C api start";
+  $api = Estado-Api;
+  Log "TRACE_D api=$api"
     } else {
       Log "API caida y no existe infra\start_api.ps1"
     }
   }
 
+  Log "TRACE_E presha";
   $sha = (Git $Repo @("rev-parse", "--short", "HEAD")).out.Trim()
   $ultimo = (Git $Repo @("log", "-1", "--format=%h %s")).out.Trim()
   $silencio = Minutos-Sin-Dev
 
+  Log "TRACE_F prebus";
   if (Asegurar-Bus) {
+    Log "TRACE_G busok";
     $seq = Siguiente-Seq
     $sello = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmZ")
     $cuerpo = @(
@@ -133,7 +145,7 @@ while ($true) {
       "SEQ: {0:D4}" -f $seq,
       "TIPO: avance",
       "REQUIERE_RESPUESTA: no",
-      "REFS: $sha Â· guardian",
+      "REFS: $sha Ãƒâ€šÃ‚Â· guardian",
       "",
       "Latido del guardian (el agente de desarrollo puede estar muerto: este mensaje sale igual).",
       "",
