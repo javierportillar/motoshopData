@@ -14,6 +14,7 @@ Todo es **offline**: la sesión del portal es el doble `PortalFalso` de
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -26,13 +27,17 @@ from motoshop_api.erp.bankreconciliation.node_config import NodeConfig, load_nod
 from motoshop_api.erp.bankreconciliation.parser import MovementDirection
 from motoshop_api.erp.bankreconciliation.schemas import EstadoMovimiento
 from motoshop_api.erp.bankreconciliation.scraper import (
+    BankScrapeError,
     ScrapedMovement,
     ScrapeResult,
     acquire_session_slot,
 )
 from motoshop_api.erp.bankreconciliation.store import FakeBankStore
 from motoshop_api.erp.bankreconciliation.vault import Entry, VaultNotFound
-from motoshop_api.erp.bankreconciliation.worker import BankVerificationWorker
+from motoshop_api.erp.bankreconciliation.worker import (
+    ESPERA_REINTENTO_SEG,
+    BankVerificationWorker,
+)
 from tests.bank_fakes import PortalFalso, leer_fixture
 
 ETIQUETA_TENANT = "MasVital"
@@ -136,6 +141,7 @@ def _worker(
     scraper_factory=None,
     pedir_codigo=None,
     reloj=None,
+    esperar=None,
 ) -> BankVerificationWorker:
     """Worker con el scraper real (doble de sesión) o con un scraper preparado."""
     return BankVerificationWorker(
@@ -147,6 +153,7 @@ def _worker(
         vault=_VaultFalso(),
         pedir_codigo=pedir_codigo,
         reloj=reloj,
+        esperar=esperar,
         nodo="pc-masvital",
     )
 
@@ -435,3 +442,147 @@ def test_un_egreso_no_es_candidato_del_job(tmp_path: Path) -> None:
     guardado = jobs.get_job(config.tenant, job.job_id)
     assert guardado is not None
     assert guardado.estado == EstadoJob.SIN_COINCIDENCIA
+
+class _ScraperIntermitente:
+    """Scraper que falla las primeras N veces y despues entrega el resultado."""
+
+    def __init__(
+        self,
+        resultado: ScrapeResult,
+        *,
+        fallos: int,
+        codigo: str = "portal_no_disponible",
+    ) -> None:
+        self._resultado = resultado
+        self._fallos = fallos
+        self._codigo = codigo
+        self.llamadas = 0
+
+    def scrape(self, config: NodeConfig) -> ScrapeResult:
+        self.llamadas += 1
+        if self.llamadas <= self._fallos:
+            raise BankScrapeError(self._codigo, "el portal no respondio: timeout")
+        return self._resultado
+
+
+def _worker_con_scraper(
+    tmp_path: Path,
+    *,
+    jobs: FakeVerificationJobStore,
+    store: FakeBankStore,
+    scraper: _ScraperIntermitente,
+    esperar=None,
+    reloj=None,
+) -> BankVerificationWorker:
+    return _worker(
+        tmp_path,
+        jobs=jobs,
+        store=store,
+        scraper_factory=lambda _pedir: scraper,
+        esperar=esperar,
+        reloj=reloj,
+    )
+
+
+def test_worker_reintenta_una_vez_cuando_el_portal_no_responde(tmp_path: Path) -> None:
+    """Un timeout del portal se reintenta una sola vez y el job termina bien."""
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    config = _config(tmp_path)
+    job = jobs.create_job(config.tenant, FACTURA, VALOR)
+    scraper = _ScraperIntermitente(_resultado(), fallos=1)
+    esperas: list[float] = []
+
+    worker = _worker_con_scraper(
+        tmp_path,
+        jobs=jobs,
+        store=store,
+        scraper=scraper,
+        esperar=esperas.append,
+    )
+    worker.run_once(job)
+
+    guardado = jobs.get_job(config.tenant, job.job_id)
+    assert guardado is not None
+    assert scraper.llamadas == 2
+    assert esperas == [ESPERA_REINTENTO_SEG]
+    assert guardado.estado != EstadoJob.FALLIDO
+
+
+def test_worker_no_reintenta_mas_de_una_vez(tmp_path: Path) -> None:
+    """Si el segundo intento tambien falla, el job queda fallido."""
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    config = _config(tmp_path)
+    job = jobs.create_job(config.tenant, FACTURA, VALOR)
+    scraper = _ScraperIntermitente(_resultado(), fallos=2)
+    esperas: list[float] = []
+
+    worker = _worker_con_scraper(
+        tmp_path,
+        jobs=jobs,
+        store=store,
+        scraper=scraper,
+        esperar=esperas.append,
+    )
+    worker.run_once(job)
+
+    guardado = jobs.get_job(config.tenant, job.job_id)
+    assert guardado is not None
+    assert scraper.llamadas == 2
+    assert len(esperas) == 1
+    assert guardado.estado == EstadoJob.FALLIDO
+    assert guardado.error_codigo == "portal_no_disponible"
+
+
+def test_worker_no_reintenta_codigos_que_no_son_del_portal(tmp_path: Path) -> None:
+    """Una sesion expirada no se reintenta: no es un timeout de red."""
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    config = _config(tmp_path)
+    job = jobs.create_job(config.tenant, FACTURA, VALOR)
+    scraper = _ScraperIntermitente(_resultado(), fallos=1, codigo="sesion_expirada")
+    esperas: list[float] = []
+
+    worker = _worker_con_scraper(
+        tmp_path,
+        jobs=jobs,
+        store=store,
+        scraper=scraper,
+        esperar=esperas.append,
+    )
+    worker.run_once(job)
+
+    guardado = jobs.get_job(config.tenant, job.job_id)
+    assert guardado is not None
+    assert scraper.llamadas == 1
+    assert esperas == []
+    assert guardado.error_codigo == "sesion_expirada"
+
+
+def test_worker_no_reintenta_si_el_job_ya_vencio(tmp_path: Path) -> None:
+    """Sin tiempo antes del vencimiento, no se duerme: el job falla ya."""
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    config = _config(tmp_path)
+    job = jobs.create_job(config.tenant, FACTURA, VALOR)
+    vencido = dataclasses.replace(
+        job, expira_en=datetime.datetime.now() - datetime.timedelta(seconds=1)
+    )
+    scraper = _ScraperIntermitente(_resultado(), fallos=1)
+    esperas: list[float] = []
+
+    worker = _worker_con_scraper(
+        tmp_path,
+        jobs=jobs,
+        store=store,
+        scraper=scraper,
+        esperar=esperas.append,
+    )
+    worker.run_once(vencido)
+
+    guardado = jobs.get_job(config.tenant, job.job_id)
+    assert guardado is not None
+    assert scraper.llamadas == 1
+    assert esperas == []
+    assert guardado.estado == EstadoJob.FALLIDO

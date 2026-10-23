@@ -21,6 +21,7 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+import time
 import traceback
 from collections.abc import Callable
 from typing import Any
@@ -30,7 +31,10 @@ from motoshop_api.erp.bankreconciliation.jobs import (
     VerificationJob,
     VerificationJobStore,
 )
-from motoshop_api.erp.bankreconciliation.node_config import NodeConfig
+from motoshop_api.erp.bankreconciliation.node_config import (
+    CODIGO_PORTAL_NO_DISPONIBLE,
+    NodeConfig,
+)
 from motoshop_api.erp.bankreconciliation.schemas import BankMovementIn
 from motoshop_api.erp.bankreconciliation.scraper import (
     BankScrapeError,
@@ -57,6 +61,12 @@ LIMITE_DESCRIPCION = 255
 LIMITE_REFERENCIA = 64
 LIMITE_PAGADOR = 128
 LIMITE_CUENTA = 64
+
+#: Un solo reintento cuando el portal no responde: el segundo intento casi
+#: siempre entra (medido en produccion) y el operador no tiene que volver a
+#: apretar el boton. El reintento espera el turno de sesion del nodo.
+REINTENTOS_PORTAL = 1
+ESPERA_REINTENTO_SEG = 35.0
 
 
 def _pedir_codigo_en_consola(prompt: str) -> str:
@@ -149,6 +159,7 @@ class BankVerificationWorker:
         nodo: str | None = None,
         pedir_codigo: Callable[[str], str] | None = None,
         reloj: Callable[[], datetime.datetime] | None = None,
+        esperar: Callable[[float], None] | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._jobs = jobs
@@ -157,6 +168,7 @@ class BankVerificationWorker:
         self._session_factory = session_factory
         self._vault = vault
         self._reloj = reloj or (lambda: datetime.datetime.now())
+        self._esperar = esperar or time.sleep
         self._log = logger or logging.getLogger(__name__)
         self._nodo = nodo or os.environ.get(ENV_NODO) or config.tenant
         self._pedir_codigo = pedir_codigo or _pedir_codigo_en_consola
@@ -183,7 +195,7 @@ class BankVerificationWorker:
         if not self._jobs.reclamar_ejecucion(job.tenant, job.job_id, nodo=self._nodo):
             return
         try:
-            resultado = self._scraper.scrape(self._config)
+            resultado = self._raspar(job)
         except BankScrapeError as exc:
             # Sólo el código estable: el mensaje del portal puede traer datos
             # de la sesión y no puede viajar al job.
@@ -224,6 +236,42 @@ class BankVerificationWorker:
 
     # --- implementación ---
 
+    def _raspar(self, job: VerificationJob) -> ScrapeResult:
+        """Raspa con un solo reintento si el portal no responde.
+
+        El portal detras de Imperva corta un click con timeout de 30 s cada
+        tanto (medido: 3 de 11 corridas en el nodo). El segundo intento entra,
+        asi que se reintenta una vez: el operador no tiene que volver a
+        apretar el boton. El reintento respeta el turno de sesion del nodo.
+        """
+        intento = 0
+        while True:
+            intento += 1
+            try:
+                return self._scraper.scrape(self._config)
+            except BankScrapeError as exc:
+                reintentable = (
+                    exc.codigo == CODIGO_PORTAL_NO_DISPONIBLE
+                    and intento <= REINTENTOS_PORTAL
+                    and self._hay_tiempo_para_reintentar(job)
+                )
+                if not reintentable:
+                    raise
+                self._log.warning(
+                    "El portal no respondio (job %s); reintento %d/%d en %.0f s",
+                    job.job_id,
+                    intento,
+                    REINTENTOS_PORTAL,
+                    ESPERA_REINTENTO_SEG,
+                )
+                self._esperar(ESPERA_REINTENTO_SEG)
+
+    def _hay_tiempo_para_reintentar(self, job: VerificationJob) -> bool:
+        """True si el job sigue vivo despues de esperar el turno de sesion."""
+        expira = getattr(job, "expira_en", None)
+        if expira is None:
+            return True
+        return self._reloj() + datetime.timedelta(seconds=ESPERA_REINTENTO_SEG) < expira
     def _scraper_por_defecto(self, pedir_codigo: Callable[[str], str]) -> Any:
         """Scraper de producción (Playwright) con la pregunta del OTP marcada."""
         return BankScraper(
