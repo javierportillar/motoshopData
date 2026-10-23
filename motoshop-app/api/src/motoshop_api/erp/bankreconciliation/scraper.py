@@ -1048,12 +1048,11 @@ def _abrir_contexto(gestor: Any, config: NodeConfig) -> Any:
         headless=_headless(),
         locale=os.environ.get(ENV_LOCALE, "es-CO"),
         timezone_id=os.environ.get(ENV_TIMEZONE, "America/Bogota"),
-        # 1280x900: mismo tamano que la ventana off-screen. Probado con filas
-        # reales (2 scrapes, 3 movimientos): el parser exige 4 celdas despues de
-        # la fecha y un ancho menor puede ocultar columnas. No se usa
-        # viewport=None aunque evitaria la emulacion de metricas: no se puede
-        # validar el parseo con filas hasta que el banco publique movimientos.
-        viewport={"width": 1280, "height": 900},
+        # 1440x960: el tamano con el que el nodo venia operando en produccion.
+        # A 1280 el portal devolvio 6 filas en vez de 3, con nombres truncados
+        # (la tabla responsive duplica/muta columnas) y la verificacion paso a
+        # "ambiguo" con 2 candidatos para el mismo valor.
+        viewport={"width": 1440, "height": 960},
         ignore_default_args=["--enable-automation"],
         # Cero ventanas visibles: el portal rebota headless (portal_no_disponible),
         # asi que el navegador corre *headed* pero con la ventana fuera del
