@@ -78,6 +78,8 @@ __all__ = [
     "BankScrapeError",
     "BankScraper",
     "CODIGO_CREDENCIAL_INVALIDA",
+    "CODIGO_SESION_CERRADA",
+    "MARCAS_SESION_ABIERTA",
     "MOTIVO_CONCURRENTE",
     "MOTIVO_INTERVALO",
     "MOTIVO_PERFIL_DENTRO_DEL_REPO",
@@ -96,6 +98,12 @@ __all__ = [
 
 #: El portal rechazó la credencial o el código de un solo uso.
 CODIGO_CREDENCIAL_INVALIDA = "credencial_invalida"
+
+#: La misma cuenta entró desde otro dispositivo y el banco cerró esta sesión.
+#: No es un fallo del nodo: el job vuelve a la cola y lo retoma otro nodo (o
+#: el mismo, más tarde). Si se tratara como fallo, el operador vería un error
+#: de redondeo cuando en realidad la cuenta está siendo usada en otra PC.
+CODIGO_SESION_CERRADA = "sesion_cerrada_por_otro_dispositivo"
 
 #: Motivos por los que no se puede tomar el turno de sesión del nodo.
 MOTIVO_CONCURRENTE = "ejecucion_concurrente"
@@ -152,6 +160,17 @@ MARCAS_SESION_EXPIRADA = (
     "inicie sesión nuevamente",
     "vuelva a iniciar sesión",
 )
+#: Texto con el que el banco avisa que la cuenta se abrió en otro
+#: dispositivo. Verificado con el operador el 23 oct 2026 ("Tienes otra sesión
+#: abierta"). Es el caso de las dos cuentas del negocio: dos usuarios distintos
+#: sí pueden estar abiertos, la *misma* cuenta no.
+MARCAS_SESION_ABIERTA = (
+    "tienes otra sesi\u00f3n abierta",
+    "otra sesion abierta",
+    "otra sesi\u00f3n abierta",
+    "sesi\u00f3n abierta en otro dispositivo",
+)
+
 MARCAS_ANTIBOT = (
     "no eres un robot",
     "verificación de seguridad",
@@ -697,6 +716,11 @@ class BankScraper:
                 return True
             if session.hay_codigo_otp():
                 return True
+            if self._texto_indica(session, MARCAS_SESION_ABIERTA):
+                raise BankScrapeError(
+                    CODIGO_SESION_CERRADA,
+                    "el banco cerró esta sesión: la cuenta se abrió en otro dispositivo",
+                )
             if self._texto_indica(session, MARCAS_CREDENCIAL_INVALIDA):
                 return False
             time.sleep(1.0)

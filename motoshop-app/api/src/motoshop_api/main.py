@@ -30,6 +30,13 @@ from motoshop_api.config import settings
 from motoshop_api.data_catalog.router import catalog_router
 from motoshop_api.erp.annulment.router import router as erp_annulment_router
 from motoshop_api.erp.bankreconciliation.router import router as erp_bank_router
+from motoshop_api.erp.bankreconciliation.node_router import (
+    configurar_modo_despacho as configurar_modo_despacho_banco,
+)
+from motoshop_api.erp.bankreconciliation.node_router import (
+    router as bank_node_router,
+)
+from motoshop_api.erp.bankreconciliation.node_router import start_sweeper as start_bank_sweeper
 from motoshop_api.erp.cash.router import router as erp_cash_router
 from motoshop_api.erp.dian.router import router as dian_router
 from motoshop_api.erp.engine import ErpSaveFailed
@@ -294,6 +301,17 @@ app.include_router(erp_annulment_router, prefix="/api", dependencies=module_acce
 app.include_router(erp_bank_router, prefix="/api", dependencies=module_access)
 app.include_router(erp_pos_router, dependencies=module_access)
 app.include_router(dian_router, prefix="/api/erp/dian")
+
+# Plano de control del nodo de verificacion bancaria (F0/F1). No lleva
+# `module_access` a proposito: el agente se autentica con su token de nodo
+# (`X-Node-Token`), no con el JWT del usuario.
+app.include_router(bank_node_router, prefix="/api/erp/bank/node")
+
+# `BANK_DISPATCH_MODE=queue` cambia solo el despacho del POST de
+# verificaciones (enqueue en vez de hilo en la API). El default `local` no
+# toca nada. El barrido rescata jobs `ejecutando` vencidos en los dos modos.
+configurar_modo_despacho_banco(app)
+start_bank_sweeper()
 
 
 class HealthResponse(BaseModel):

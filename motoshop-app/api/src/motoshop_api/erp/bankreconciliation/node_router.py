@@ -140,15 +140,21 @@ ON DUPLICATE KEY UPDATE
   latida_en = VALUES(latida_en)
 """
 
-#: Adquisición atómica del candado. El `IF` se evalúa contra la fila actual y
-#: `node_id` se actualiza al final para que las condiciones vean el valor viejo.
+#: Adquisición atómica del candado. En MySQL las asignaciones de un
+#: `ON DUPLICATE KEY UPDATE` se evalúan **en orden**, así que `node_id` va
+#: primero: decide con el `vence_en` viejo y deja la fila marcada con el dueño
+#: nuevo (o con el de siempre si perdió). Las dos fechas se actualizan sólo si
+#: la fila quedó a mi nombre; si no, se conservan intactas.
+#:
+#: Ordenar al revés era un bug real: al renovar `vence_en` antes de leerlo, la
+#: condición `vence_en < now` daba falso y el candado vencido no se heredaba.
 _SQL_LOCK = """
 INSERT INTO app_bank_account_locks (tenant, node_id, latida_en, vence_en)
 VALUES (:tenant, :node_id, :now, :vence)
 ON DUPLICATE KEY UPDATE
-  latida_en = IF(vence_en < :now OR node_id = :node_id, VALUES(latida_en), latida_en),
-  vence_en  = IF(vence_en < :now OR node_id = :node_id, VALUES(vence_en), vence_en),
-  node_id   = IF(vence_en < :now OR node_id = :node_id, VALUES(node_id), node_id)
+  node_id   = IF(vence_en < :now OR node_id = :node_id, VALUES(node_id), node_id),
+  latida_en = IF(node_id = :node_id, VALUES(latida_en), latida_en),
+  vence_en  = IF(node_id = :node_id, VALUES(vence_en), vence_en)
 """
 
 _SQL_LOCK_LEER = """
@@ -399,8 +405,9 @@ class NodoStore:
                 return None
             vuelta = conn.execute(
                 text(
-                    "SELECT job_id, tenant, factura_id, valor, estado, creado_en, "
-                    "expira_en, nodo, intentos FROM app_bank_verification_jobs "
+                    "SELECT id, job_id, tenant, factura_id, valor, estado, creado_en, "
+                    "actualizado_en, expira_en, nodo, intentos, solicitud_json "
+                    "FROM app_bank_verification_jobs "
                     "WHERE tenant = :tenant AND job_id = :job_id"
                 ),
                 {"tenant": tenant, "job_id": job_id},
@@ -408,15 +415,18 @@ class NodoStore:
         if vuelta is None:
             return None
         return {
+            "id": vuelta["id"],
             "job_id": vuelta["job_id"],
             "tenant": vuelta["tenant"],
             "factura_id": vuelta["factura_id"],
             "valor": str(vuelta["valor"]),
             "estado": vuelta["estado"],
             "creado_en": vuelta["creado_en"],
+            "actualizado_en": vuelta["actualizado_en"],
             "expira_en": vuelta["expira_en"],
             "nodo": vuelta["nodo"],
             "intentos": int(vuelta.get("intentos") or 0),
+            "solicitud": _leer_json(vuelta.get("solicitud_json")),
             "lock_segundos": LOCK_TTL_SEGUNDOS,
         }
 
@@ -501,6 +511,21 @@ def _json(datos: dict[str, Any]) -> str:
     import json
 
     return json.dumps(datos, default=str)
+
+
+def _leer_json(crudo: Any) -> dict[str, Any] | None:
+    """Texto JSON de la base → dict (None si viene vacío o roto)."""
+    import json
+
+    if not crudo:
+        return None
+    if isinstance(crudo, dict):
+        return crudo
+    try:
+        datos = json.loads(str(crudo))
+    except (TypeError, ValueError):
+        return None
+    return datos if isinstance(datos, dict) else None
 
 
 # --- API del plano de control ----------------------------------------------
