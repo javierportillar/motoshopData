@@ -753,3 +753,47 @@ def test_modo_pago_sin_movimientos_es_sin_coincidencia(tmp_path: Path) -> None:
     assert guardado is not None
     assert guardado.estado == EstadoJob.SIN_COINCIDENCIA
     assert (guardado.resultado or {})["candidato"] is None
+
+
+def test_el_nit_comodin_no_se_muestra_en_el_candidato(tmp_path: Path) -> None:
+    """222222222 es consumidor final: el chulo no debe mostrar ese NIT."""
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    job = jobs.create_job("masvital", FACTURA, VALOR)
+    scraper = _ScraperFalso(_resultado(_movimiento(VALOR, id_externo="a")))
+    worker = _worker(
+        tmp_path,
+        jobs=jobs,
+        store=store,
+        scraper_factory=lambda _pedir: scraper,
+        facturas=lambda _fid: {"nitter": "222222222", "cliente_nombre": "CONSUMIDOR FINAL"},
+    )
+
+    worker.run_once(job)
+
+    guardado = jobs.get_job("masvital", job.job_id)
+    assert guardado is not None
+    candidato = (guardado.resultado or {})["candidato"]
+    assert "nitter" not in candidato
+    assert candidato["cliente_nombre"] == "CONSUMIDOR FINAL"
+
+
+def test_el_nit_real_si_se_muestra(tmp_path: Path) -> None:
+    """Un NIT que identifica al cliente viaja al resultado (modo factura)."""
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    job = jobs.create_job("masvital", FACTURA, VALOR)
+    scraper = _ScraperFalso(_resultado(_movimiento(VALOR, id_externo="a")))
+    worker = _worker(
+        tmp_path,
+        jobs=jobs,
+        store=store,
+        scraper_factory=lambda _pedir: scraper,
+        facturas=lambda _fid: {"nitter": "901234567", "cliente_nombre": "VALERIA CASTRILLON"},
+    )
+
+    worker.run_once(job)
+
+    guardado = jobs.get_job("masvital", job.job_id)
+    assert guardado is not None
+    assert (guardado.resultado or {})["candidato"]["nitter"] == "901234567"
