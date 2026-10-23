@@ -1,4 +1,4 @@
-﻿<#
+<#
   guardian.ps1 -- perro guardian del nodo MotoShop.
   Corre cada 5 minutos para siempre. No decide nada de negocio: mantiene el nodo vivo
   y reporta por el bus aunque el agente de desarrollo este muerto.
@@ -199,7 +199,7 @@ while ($true) {
     # y reintento (nunca force-push).
     $p = $null
     foreach ($intento in 1..3) {
-      $p = Git $BusWt @("push", "-q", $Remoto, $BramaBus)
+      $p = Git $BusWt @("push", "-q", $Remoto, "HEAD:$BramaBus")
       if ($p.code -eq 0) { break }
       Git $BusWt @("pull", "--rebase", "--quiet", $Remoto, $BramaBus) | Out-Null
       Start-Sleep -Seconds 5
