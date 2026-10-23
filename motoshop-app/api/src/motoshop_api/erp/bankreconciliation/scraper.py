@@ -1056,11 +1056,14 @@ def _abrir_contexto(gestor: Any, config: NodeConfig) -> Any:
         ignore_default_args=["--enable-automation"],
         # Cero ventanas visibles: el portal rebota headless (portal_no_disponible),
         # asi que el navegador corre *headed* pero con la ventana fuera del
-        # escritorio.
+        # escritorio. El ancho de la VENTANA (no el viewport emulado) es el que
+        # decide el breakpoint del portal: a 1280 el portal renderiza ademas la
+        # variante mobile, con nombres truncados, y la tabla devuelve 6 filas en
+        # vez de 3 => la verificacion pasa a "ambiguo". Por eso 1920 de ancho.
         args=[
             "--disable-blink-features=AutomationControlled",
             "--window-position=-32000,-32000",
-            "--window-size=1280,900",
+            "--window-size=1920,1080",
         ],
     )
     canal = os.environ.get(ENV_CANAL, "").strip() or "chrome"

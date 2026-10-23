@@ -13,9 +13,13 @@ en vez de perderse.
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
+import socket
+import subprocess
 import sys
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -71,6 +75,73 @@ def _configurar_logs() -> logging.Logger:
     return logging.getLogger("api_launcher")
 
 
+def _alguien_escucha() -> bool:
+    """True si algo ya acepta conexiones en el puerto de la API."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", PUERTO)) == 0
+
+
+def _pids_del_lanzador() -> list[int]:
+    """PIDs de procesos python/pythonw que corren este mismo lanzador."""
+    consulta = (
+        "Get-CimInstance Win32_Process "
+        "-Filter \"Name='python.exe' OR Name='pythonw.exe'\" "
+        "| Where-Object { $_.CommandLine -like '*api_launcher*' } "
+        "| ForEach-Object { $_.ProcessId }"
+    )
+    try:
+        salida = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", consulta],
+            capture_output=True,
+            text=True,
+            timeout=25,
+            creationflags=0x08000000,  # CREATE_NO_WINDOW: nada visible
+        ).stdout
+    except Exception:
+        return []
+    return [int(t) for t in salida.split() if t.strip().isdigit()]
+
+
+def _terminar(pid: int) -> None:
+    PROCESS_TERMINATE = 0x0001
+    manejar = ctypes.windll.kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
+    if not manejar:
+        return
+    try:
+        ctypes.windll.kernel32.TerminateProcess(manejar, 1)
+    finally:
+        ctypes.windll.kernel32.CloseHandle(manejar)
+
+
+def _liberar_puerto(log: logging.Logger) -> None:
+    """Mata lanzadores huerfanos que quedaron con el puerto tomado.
+
+    Por que: ``Stop-ScheduledTask`` termina el proceso de la accion pero no
+    siempre al nieto (el interprete base que crea el shim del venv), asi que un
+    reinicio de la tarea dejaba el :8000 ocupado y el arranque nuevo moria con
+    ``Errno 10048``. El guardian reinicia la tarea, o sea que sin esto el
+    reinicio "exitoso" dejaba la API vieja corriendo y la nueva muerta.
+    """
+    if not _alguien_escucha():
+        return
+    propios = {os.getpid(), os.getppid()}
+    huerfanos = [p for p in _pids_del_lanzador() if p not in propios]
+    if not huerfanos:
+        log.warning("puerto %s ocupado por un proceso ajeno al lanzador", PUERTO)
+        return
+    log.warning("puerto %s ocupado; terminando lanzadores huerfanos %s", PUERTO, huerfanos)
+    for pid in huerfanos:
+        _terminar(pid)
+    limite = time.monotonic() + 20
+    while time.monotonic() < limite:
+        if not _alguien_escucha():
+            log.info("puerto %s liberado", PUERTO)
+            return
+        time.sleep(0.5)
+    log.error("el puerto %s sigue ocupado tras 20 s", PUERTO)
+
+
 def main() -> int:
     log = _configurar_logs()
     try:
@@ -84,6 +155,7 @@ def main() -> int:
         log.info(
             "arrancando API puerto=%s cwd=%s python=%s", PUERTO, API_DIR, sys.executable
         )
+        _liberar_puerto(log)
         import uvicorn
 
         # log_config=None: sin dictConfig, los loggers de uvicorn propagan al
