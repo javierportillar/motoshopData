@@ -324,3 +324,34 @@ la API, no la de la consola del operador. DPAPI y `%APPDATA%` son **por usuario*
 - Con la tarea «sólo cuando el usuario inició sesión», el autostart ocurre **al iniciar sesión**, no
   al arrancar Windows. Si la PC reinicia y nadie entra, no hay API: cae el ERP entero, no sólo el
   botón. Quien opera el local tiene que saberlo y entrar como el usuario de la tarea.
+
+### R2 — Arranque autónomo tras reinicio: **BLOQUEADO** (requiere al operador)
+
+Estado al 2026-10-22: el botón funciona de punta a punta con la sesión del usuario `MotoShop`
+abierta. Falta que la API arranque **sin que nadie inicie sesión**, y eso pide la contraseña de
+Windows: no la tiene ningún agente (y no debe viajar por chat ni por el bus).
+
+**Camino elegido (A): autologon + tarea «sólo cuando el usuario inició sesión».**
+La tarea `MotoShopBackendSvc` ya corre como `SERVER\MotoShop` (`Solo interactivo`) con
+`BootTrigger` + `LogonTrigger`, así que con el autologon el arranque queda cubierto. Comandos
+(ejecutar como administrador, reemplazando `<CLAVE>`):
+
+```powershell
+reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v AutoAdminLogon /t REG_SZ /d 1 /f
+reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v DefaultUserName /t REG_SZ /d "MotoShop" /f
+reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v DefaultPassword /t REG_SZ /d "<CLAVE>" /f
+```
+
+Advertencia: `DefaultPassword` queda **en claro** en el registro (es el costo del autologon en
+Windows local; una PC de local con acceso físico controlado es el único escenario aceptable).
+Verificación posterior: reiniciar, esperar ~2 min, `curl http://127.0.0.1:8000/health` → 200 y un
+POST de verificación de prueba.
+
+**Camino B (descartado con evidencia): navegador headless.** `BANK_BROWSER_HEADLESS=true` →
+`BankScrapeError portal_no_disponible` (timeout de 30 s esperando `input#username`): el portal de
+Bancolombia no entrega el login sin ventana en este nodo. No insistir sin probar contra el portal
+primero.
+
+**Camino C (descartado): tarea «aunque el usuario no haya iniciado sesión» (S4U).** Rompe el
+vault: DPAPI y `%APPDATA%` son por usuario y sin sesión interactiva no hay perfil → `credencial_ausente`
+(ver sección anterior). No re-crear el vault bajo `SYSTEM`.
