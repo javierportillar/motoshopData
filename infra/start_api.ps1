@@ -54,16 +54,12 @@ try {
     }
 } catch {}
 
-$apiProcs = Get-Process python -ErrorAction SilentlyContinue | Where-Object {
-    try {
-        $cmdLine = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)").CommandLine
-        $cmdLine -match "uvicorn|motoshop_api"
-    } catch { $false }
-}
-if ($apiProcs) {
+$apiProcs = @(Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -match "uvicorn|motoshop_api|api_launcher" })
+if ($apiProcs.Count -gt 0) {
     $apiProcs | ForEach-Object {
-        Write-Log "Deteniendo uvicorn PID $($_.Id)"
-        Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+        Write-Log "Deteniendo API PID $($_.ProcessId) ($($_.Name))"
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
     }
     Start-Sleep -Seconds 3
     Write-Log "Proceso anterior detenido."
@@ -162,13 +158,15 @@ if (-not $env:HF_API_TOKEN -and $env:OPENCODE_API_KEY_FALLBACK) {
     $env:HF_API_TOKEN = $env:OPENCODE_API_KEY_FALLBACK
 }
 
-$pythonExe = "$ApiDir\.venv\Scripts\python.exe"
+# pythonw.exe: sin consola. Los logs van a logs\api_uvicorn.log via api_launcher.py
+$pythonExe = "$ApiDir\.venv\Scripts\pythonw.exe"
 if (-not (Test-Path $pythonExe)) {
-    $pythonExe = "python.exe"
+    $pythonExe = "$ApiDir\.venv\Scripts\python.exe"
 }
+$launcher = "$ProjectRoot\infra\api_launcher.py"
 
 $proc = Start-Process -FilePath $pythonExe `
-    -ArgumentList "-m","uvicorn","motoshop_api.main:app","--port","$Port" `
+    -ArgumentList $launcher `
     -WindowStyle Hidden -PassThru -WorkingDirectory $ApiDir
 
 Start-Sleep -Seconds 5

@@ -84,8 +84,8 @@ function Estado-Api {
 function Evidencia-Api {
   $tarea = "?"
   try { $tarea = (Get-ScheduledTask -TaskName "MotoShopBackendSvc" -ErrorAction Stop).State } catch { }
-  $pids = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -match 'uvicorn|motoshop_api' } |
+  $pids = @(Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -match 'uvicorn|motoshop_api|api_launcher' } |
     ForEach-Object { $_.ProcessId })
   $dueno = @(Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue |
     Select-Object -ExpandProperty OwningProcess -Unique)
@@ -174,25 +174,27 @@ while ($true) {
   if (-not $api) {
     Log "API sin health: $(Evidencia-Api)"
     $arranque = Join-Path $Repo "infra\start_api.ps1"
-    if (Test-Path $arranque) {
-      Log "API caida: ejecutando infra\start_api.ps1"
-      Start-Process powershell -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-File",$arranque -WindowStyle Hidden
+    # Via VBS (Run ..., 0, True): ni una consola visible ni un parpadeo.
+    $arranqueVbs = Join-Path $Repo "infra\start_api.vbs"
+    if ((Test-Path $arranque) -and (Test-Path $arranqueVbs)) {
+      Log "API caida: ejecutando infra\start_api.ps1 (via start_api.vbs)"
+      Start-Process wscript.exe -ArgumentList "//B","//Nologo",$arranqueVbs -WindowStyle Hidden
       Start-Sleep -Seconds 25
       $api = Estado-Api
       if (-not $api) {
         # colgado que start_api no pudo matar: matar SOLO PIDs exactos y reintentar
-        $colgados = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
-          Where-Object { $_.CommandLine -match 'uvicorn|motoshop_api' } |
+        $colgados = @(Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue |
+          Where-Object { $_.CommandLine -match 'uvicorn|motoshop_api|api_launcher' } |
           ForEach-Object { $_.ProcessId })
         foreach ($pidColgado in $colgados) { Stop-Process -Id $pidColgado -Force -ErrorAction SilentlyContinue }
         Log "API sigue sin health: mate pids=$($colgados -join ',') y reintento start_api"
-        Start-Process powershell -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-File",$arranque -WindowStyle Hidden
+        Start-Process wscript.exe -ArgumentList "//B","//Nologo",$arranqueVbs -WindowStyle Hidden
         Start-Sleep -Seconds 25
         $api = Estado-Api
         Log "API reintento resultado=$api ($(Evidencia-Api))"
       }
     } else {
-      Log "API caida y no existe infra\start_api.ps1"
+      Log "API caida y no existe infra\start_api.ps1 (o start_api.vbs)"
     }
   }
 

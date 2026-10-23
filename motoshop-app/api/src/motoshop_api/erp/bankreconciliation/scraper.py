@@ -1048,9 +1048,17 @@ def _abrir_contexto(gestor: Any, config: NodeConfig) -> Any:
         headless=_headless(),
         locale=os.environ.get(ENV_LOCALE, "es-CO"),
         timezone_id=os.environ.get(ENV_TIMEZONE, "America/Bogota"),
-        viewport={"width": 1440, "height": 960},
+        viewport={"width": 1280, "height": 900},
         ignore_default_args=["--enable-automation"],
-        args=["--disable-blink-features=AutomationControlled"],
+        # Cero ventanas visibles: el portal rebota headless (portal_no_disponible),
+        # asi que el navegador corre *headed* pero con la ventana fuera del
+        # escritorio. El viewport se mantiene igual al tamano de ventana para que
+        # el layout no se deforme.
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--window-position=-32000,-32000",
+            "--window-size=1280,900",
+        ],
     )
     canal = os.environ.get(ENV_CANAL, "").strip() or "chrome"
     try:
