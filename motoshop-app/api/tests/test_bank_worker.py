@@ -600,7 +600,10 @@ def test_worker_suma_nitter_y_cliente_nombre_de_la_factura(tmp_path: Path) -> No
 
     def facturas(factura_id: str) -> dict[str, str]:
         pedidas.append(factura_id)
-        return {"nitter": "222222222", "cliente_nombre": "CONSUMIDOR"}
+        # NIT real, no el comodin 222222222: el comodin (consumidor final) se
+        # quita a proposito del candidato (ver `_candidato_con_senales`), asi
+        # que usarlo aca probaria la regla contraria a la que este test cubre.
+        return {"nitter": "900123456", "cliente_nombre": "CONSUMIDOR"}
 
     worker = _worker(tmp_path, jobs=jobs, store=store, sesion=_sesion(), facturas=facturas)
     worker.run_once(job)
@@ -608,7 +611,7 @@ def test_worker_suma_nitter_y_cliente_nombre_de_la_factura(tmp_path: Path) -> No
     guardado = jobs.get_job(config.tenant, job.job_id)
     assert guardado is not None and guardado.resultado is not None
     candidato = guardado.resultado["candidato"]
-    assert candidato["nitter"] == "222222222"
+    assert candidato["nitter"] == "900123456"
     assert candidato["cliente_nombre"] == "CONSUMIDOR"
     # Los datos del banco siguen intactos.
     assert "pagador_nombre" in candidato
