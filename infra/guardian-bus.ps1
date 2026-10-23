@@ -1,4 +1,4 @@
-<#
+﻿<#
   guardian.ps1 -- perro guardian del nodo MotoShop.
   Corre cada 5 minutos para siempre. No decide nada de negocio: mantiene el nodo vivo
   y reporta por el bus aunque el agente de desarrollo este muerto.
@@ -42,7 +42,7 @@ $script:GitExe = (Get-Command git.exe -ErrorAction SilentlyContinue).Source
 if (-not $script:GitExe) { $script:GitExe = "git.exe" }
 
 function _Citar-Arg([string]$a) {
-  # Start-Process pasa una sola línea de comandos: los argumentos con espacios
+  # Start-Process pasa una sola lÃ­nea de comandos: los argumentos con espacios
   # o metacaracteres tienen que ir entre comillas.
   if ($a -match '[\s"()&|<>^]') { return '"' + ($a -replace '"', '\"') + '"' }
   return $a
@@ -50,7 +50,7 @@ function _Citar-Arg([string]$a) {
 
 function Git([string]$dir, [string[]]$gitArgs, [int]$TimeoutSeg = 120) {
   # Timeout duro por llamada: un pull colgado no puede frenar el latido (el
-  # guardián promete liveness). 124 = timeout, 127 = no se pudo lanzar.
+  # guardiÃ¡n promete liveness). 124 = timeout, 127 = no se pudo lanzar.
   $salida = Join-Path $env:TEMP ("guardian-git-" + [guid]::NewGuid().ToString("N") + ".out")
   $errores = "$salida.err"
   $lineaArgs = ($gitArgs | ForEach-Object { _Citar-Arg $_ }) -join " "
@@ -138,6 +138,10 @@ while ($true) {
       Git $Repo @("add", "-A") | Out-Null
       Git $Repo @("commit", "-m", "wip(banco): rescate de cambios sin commitear (guardian)") | Out-Null
       $push = Git $Repo @("push", $Remoto, $Brama)
+      if ($push.code -ne 0) {
+        Git $Repo @("pull", "--rebase", "--quiet", $Remoto, $Brama) | Out-Null
+        $push = Git $Repo @("push", $Remoto, $Brama)
+      }
       Log "cambios sin commitear: suite verde, commit wip y push (code=$($push.code))"
       $limpio = $true
     } else {
@@ -154,9 +158,7 @@ while ($true) {
       Log "API caida: ejecutando infra\start_api.ps1"
       Start-Process powershell -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-File",$arranque -WindowStyle Hidden
       Start-Sleep -Seconds 25
-      Log "TRACE_C api start";
-  $api = Estado-Api;
-  Log "TRACE_D api=$api"
+      $api = Estado-Api
     } else {
       Log "API caida y no existe infra\start_api.ps1"
     }
@@ -178,7 +180,7 @@ while ($true) {
       "SEQ: {0:D4}" -f $seq,
       "TIPO: avance",
       "REQUIERE_RESPUESTA: no",
-      "REFS: $sha ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· guardian",
+      "REFS: $sha - guardian",
       "",
       "Latido del guardian (el agente de desarrollo puede estar muerto: este mensaje sale igual).",
       "",
@@ -193,7 +195,15 @@ while ($true) {
     Set-Content -Path $destino -Value ($cuerpo -join "`n") -Encoding utf8
     Git $BusWt @("add", "bus") | Out-Null
     Git $BusWt @("commit", "-q", "-m", ("bus(guardian): {0:D4} latido" -f $seq)) | Out-Null
-    $p = Git $BusWt @("push", "-q", $Remoto, $BramaBus)
+    # El bus es compartido con auditor y otros nodos: si el push choca, rebase
+    # y reintento (nunca force-push).
+    $p = $null
+    foreach ($intento in 1..3) {
+      $p = Git $BusWt @("push", "-q", $Remoto, $BramaBus)
+      if ($p.code -eq 0) { break }
+      Git $BusWt @("pull", "--rebase", "--quiet", $Remoto, $BramaBus) | Out-Null
+      Start-Sleep -Seconds 5
+    }
     Log "latido SEQ $seq enviado (push code=$($p.code)), silencio dev=${silencio}m"
   } else {
     Log "no pude sincronizar el worktree del bus: latido no enviado"
