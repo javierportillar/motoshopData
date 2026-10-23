@@ -98,6 +98,10 @@ def _estado_del_job(coincidencia: ValueMatch) -> EstadoJob:
     return EstadoJob.RESUELTO
 
 
+#: NIT comodin de "consumidor final": no identifica a ningun cliente.
+NIT_COMODIN = "222222222"
+
+
 def _candidato_con_senales(
     candidato: Candidato,
     modo: str,
@@ -116,6 +120,14 @@ def _candidato_con_senales(
             datos["nitter"] = datos_factura["nitter"]
         if datos_factura.get("cliente_nombre"):
             datos["cliente_nombre"] = datos_factura["cliente_nombre"]
+    # El NIT comodin del consumidor final no identifica a nadie: mostrarlo en
+    # el chulo del POS es peor que no mostrarlo (el operador lo lee como si
+    # fuera el NIT del cliente).
+    nit = str(datos.get("nitter") or "").strip()
+    if nit == NIT_COMODIN or normalizar_nombre(str(datos.get("cliente_nombre") or "")) == (
+        "CONSUMIDOR FINAL"
+    ):
+        datos.pop("nitter", None)
     esperado = solicitud.get("nombre_esperado")
     if esperado:
         # Senal, no decision: con dos importes iguales el job sigue ambiguo.
