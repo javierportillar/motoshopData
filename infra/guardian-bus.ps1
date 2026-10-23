@@ -26,8 +26,11 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
+# Sin TTY ni UI de credenciales: si git necesita autenticarse, que falle en vez
+# de colgarse esperando un prompt invisible (medido: pull de >7 min).
+$env:GIT_TERMINAL_PROMPT = "0"
 $env:GIT_TERMINAL_ASKPASS = "0"
-$env:GIT_ASKPASS = "";
+$env:GIT_ASKPASS = ""
 $env:GCM_INTERACTIVE = "never"
 $log = Join-Path $env:TEMP "guardian-banco.log"
 function Log([string]$m) {
@@ -35,10 +38,40 @@ function Log([string]$m) {
   Add-Content -Path $log -Value $linea -Encoding utf8
 }
 
-function Git([string]$dir, [string[]]$gitArgs) {
-  Push-Location $dir
-  try { $out = & git @gitArgs 2>&1; return @{ code = $LASTEXITCODE; out = ($out -join "`n") } }
-  finally { Pop-Location }
+$script:GitExe = (Get-Command git.exe -ErrorAction SilentlyContinue).Source
+if (-not $script:GitExe) { $script:GitExe = "git.exe" }
+
+function _Citar-Arg([string]$a) {
+  # Start-Process pasa una sola línea de comandos: los argumentos con espacios
+  # o metacaracteres tienen que ir entre comillas.
+  if ($a -match '[\s"()&|<>^]') { return '"' + ($a -replace '"', '\"') + '"' }
+  return $a
+}
+
+function Git([string]$dir, [string[]]$gitArgs, [int]$TimeoutSeg = 120) {
+  # Timeout duro por llamada: un pull colgado no puede frenar el latido (el
+  # guardián promete liveness). 124 = timeout, 127 = no se pudo lanzar.
+  $salida = Join-Path $env:TEMP ("guardian-git-" + [guid]::NewGuid().ToString("N") + ".out")
+  $errores = "$salida.err"
+  $lineaArgs = ($gitArgs | ForEach-Object { _Citar-Arg $_ }) -join " "
+  try {
+    $p = Start-Process -FilePath $script:GitExe -ArgumentList $lineaArgs `
+          -WorkingDirectory $dir -WindowStyle Hidden -PassThru `
+          -RedirectStandardOutput $salida -RedirectStandardError $errores
+  } catch {
+    return @{ code = 127; out = "no pude lanzar git: $($_.Exception.Message)" }
+  }
+  $p | Wait-Process -Timeout $TimeoutSeg -ErrorAction SilentlyContinue
+  if (-not $p.HasExited) {
+    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+    Remove-Item $salida, $errores -Force -ErrorAction SilentlyContinue
+    return @{ code = 124; out = "timeout ${TimeoutSeg}s: git $lineaArgs" }
+  }
+  $texto = ""
+  if (Test-Path $salida) { $texto += (Get-Content $salida -Raw -ErrorAction SilentlyContinue) }
+  if (Test-Path $errores) { $texto += (Get-Content $errores -Raw -ErrorAction SilentlyContinue) }
+  Remove-Item $salida, $errores -Force -ErrorAction SilentlyContinue
+  return @{ code = $p.ExitCode; out = $texto }
 }
 
 function Estado-Api {
@@ -51,7 +84,7 @@ function Estado-Api {
 function Asegurar-Bus {
   if (-not (Test-Path $BusWt)) {
     Git $Repo @("fetch", $Remoto, "--quiet") | Out-Null
-    & git -C $Repo worktree add $BusWt -B bus-wt "$Remoto/$BramaBus" 2>&1 | Out-Null
+    Git $Repo @("worktree", "add", $BusWt, "-B", "bus-wt", "$Remoto/$BramaBus") | Out-Null
   }
   Git $BusWt @("fetch", $Remoto, "--quiet") | Out-Null
   $pull = Git $BusWt @("pull", "--rebase", "--quiet", $Remoto, $BramaBus)
