@@ -362,6 +362,9 @@ la API, no la de la consola del operador. DPAPI y `%APPDATA%` son **por usuario*
   36 s, 3 movimientos, sin campo `error`.
 - **Pendiente único**: reiniciar y confirmar sin tocar teclado: sesión inicia sola, `/health` 200,
   evidencia en `%TEMP%\guardian-banco.log` (`arranque: api=True`), latido del bus y un POST real.
+  Prueba automática: tarea `MotoShopPostBootProof` (logon + 3 min) ejecuta
+  `infra/postboot_proof.py` → `%TEMP%\postboot-proof.log` (health + POST RC-5/100000.00) y se
+  **auto-desregistra** al terminar.
   Rollback: restaurar `winlogon_backup_20261023.txt` (`AutoAdminLogon=0`).
 - Tarea API: `python.exe -m uvicorn motoshop_api.main:app --port 8000` directo (no hay `run_api.py`),
   `IgnoreNew`, `RestartCount=5 / PT1M`.
