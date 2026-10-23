@@ -101,3 +101,9 @@ reponova-out
 
 # Esquema de referencia del legacy sgHermes (solo DDL, sin datos) - si se versiona
 !docs/hermes/evidence/schema_2024.sql
+
+# Respaldo de .env con credenciales - NUNCA versionar (leak guardián)
+.env_backups/
+
+# Worktree del bus (repo embebido, tiene su propio git)
+bus-wt/
