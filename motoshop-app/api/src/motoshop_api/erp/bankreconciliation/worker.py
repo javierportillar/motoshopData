@@ -21,6 +21,7 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+import traceback
 from collections.abc import Callable
 from typing import Any
 
@@ -191,6 +192,9 @@ class BankVerificationWorker:
                 # Diagnostico local (apagado por defecto): el detalle queda solo
                 # en el log del nodo, nunca en el job ni en la API.
                 self._log.warning("Causa del fallo %s: %s", job.job_id, exc)
+                self._log.warning(
+                    "Traza del fallo %s:\n%s", job.job_id, traceback.format_exc()
+                )
             self._actualizar(job, EstadoJob.FALLIDO, error_codigo=exc.codigo)
             return
         except SessionSlotError as exc:
