@@ -91,10 +91,6 @@ while ($true) {
   $status = Git $Repo @("status", "--porcelain")
   if ($status.out.Trim().Length -gt 0) {
     $limpio = $false
-    $api.dir | Out-Null
-    $pytest = Git (Join-Path $Repo "motoshop-app\api") @("run_pytest_placeholder")
-    $pytest = Push-Location (Join-Path $Repo "motoshop-app\api"); $null
-    Pop-Location
     Push-Location (Join-Path $Repo "motoshop-app\api")
     $out = & uv run pytest tests/ -q -k bank 2>&1
     $codigo = $LASTEXITCODE
