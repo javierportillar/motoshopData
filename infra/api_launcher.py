@@ -17,7 +17,6 @@ import ctypes
 import logging
 import os
 import socket
-import subprocess
 import sys
 import time
 from logging.handlers import RotatingFileHandler
@@ -82,25 +81,84 @@ def _alguien_escucha() -> bool:
         return s.connect_ex(("127.0.0.1", PUERTO)) == 0
 
 
-def _pids_del_lanzador() -> list[int]:
-    """PIDs de procesos python/pythonw que corren este mismo lanzador."""
-    consulta = (
-        "Get-CimInstance Win32_Process "
-        "-Filter \"Name='python.exe' OR Name='pythonw.exe'\" "
-        "| Where-Object { $_.CommandLine -like '*api_launcher*' } "
-        "| ForEach-Object { $_.ProcessId }"
+def _pid_escuchando(puerto: int) -> int | None:
+    """PID dueno del socket LISTEN en 127.0.0.1:puerto (ctypes, sin PowerShell).
+
+    Se consulta la tabla de sockets con `GetExtendedTcpTable` porque desde la
+    tarea programada `powershell.exe` puede no estar en el PATH: la version
+    anterior del lanzador lanzaba PowerShell y, al fallar, no encontraba a
+    nadie y el puerto quedaba tomado por la instancia vieja.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class Fila(ctypes.Structure):
+        _fields_ = [
+            ("estado", wintypes.DWORD),
+            ("ip_local", wintypes.DWORD),
+            ("puerto_local", wintypes.DWORD),
+            ("ip_remota", wintypes.DWORD),
+            ("puerto_remoto", wintypes.DWORD),
+            ("pid", wintypes.DWORD),
+        ]
+
+    AF_INET = 2
+    TABLA_LISTEN = 3
+    iphlpapi = ctypes.windll.iphlpapi
+    tamano = wintypes.DWORD(0)
+    iphlpapi.GetExtendedTcpTable(
+        None, ctypes.byref(tamano), False, AF_INET, TABLA_LISTEN, 0
     )
+    if tamano.value == 0:
+        return None
+    buffer = ctypes.create_string_buffer(tamano.value)
+    resultado = iphlpapi.GetExtendedTcpTable(
+        buffer, ctypes.byref(tamano), False, AF_INET, TABLA_LISTEN, 0
+    )
+    if resultado != 0:
+        return None
+    cantidad = ctypes.cast(buffer, ctypes.POINTER(wintypes.DWORD)).contents.value
+    filas = ctypes.cast(
+        ctypes.addressof(buffer) + ctypes.sizeof(wintypes.DWORD),
+        ctypes.POINTER(Fila),
+    )
+    for indice in range(cantidad):
+        fila = filas[indice]
+        # dwLocalPort viene en orden de red en los 16 bits bajos.
+        numero = ((fila.puerto_local & 0xFF) << 8) | ((fila.puerto_local >> 8) & 0xFF)
+        if numero == puerto:
+            return int(fila.pid)
+    return None
+
+
+def _es_nuestro_python(pid: int) -> bool:
+    """True si el PID es un python/pythonw de este proyecto o de uv.
+
+    Evita matar un servidor ajeno que por casualidad escuche en el mismo
+    puerto: solo se toca un interprete de Python que corre desde el repo o
+    desde el Python administrado por uv.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    kernel32 = ctypes.windll.kernel32
+    manejador = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not manejador:
+        return False
     try:
-        salida = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", consulta],
-            capture_output=True,
-            text=True,
-            timeout=25,
-            creationflags=0x08000000,  # CREATE_NO_WINDOW: nada visible
-        ).stdout
-    except Exception:
-        return []
-    return [int(t) for t in salida.split() if t.strip().isdigit()]
+        largo = wintypes.DWORD(32768)
+        buffer = ctypes.create_unicode_buffer(largo.value)
+        if not kernel32.QueryFullProcessImageNameW(
+            manejador, 0, buffer, ctypes.byref(largo)
+        ):
+            return False
+        ruta = buffer.value.lower()
+    finally:
+        kernel32.CloseHandle(manejador)
+    if not ruta.endswith(("python.exe", "pythonw.exe")):
+        return False
+    return "motoshopdata" in ruta or "\\uv\\python" in ruta
 
 
 def _terminar(pid: int) -> None:
@@ -125,14 +183,17 @@ def _liberar_puerto(log: logging.Logger) -> None:
     """
     if not _alguien_escucha():
         return
-    propios = {os.getpid(), os.getppid()}
-    huerfanos = [p for p in _pids_del_lanzador() if p not in propios]
-    if not huerfanos:
-        log.warning("puerto %s ocupado por un proceso ajeno al lanzador", PUERTO)
+    pid = _pid_escuchando(PUERTO)
+    if pid is None:
+        log.warning("el puerto %s responde pero no pude leer su dueno", PUERTO)
         return
-    log.warning("puerto %s ocupado; terminando lanzadores huerfanos %s", PUERTO, huerfanos)
-    for pid in huerfanos:
-        _terminar(pid)
+    if pid in {os.getpid(), os.getppid()}:
+        return
+    if not _es_nuestro_python(pid):
+        log.warning("puerto %s ocupado por un proceso ajeno (pid %s)", PUERTO, pid)
+        return
+    log.warning("puerto %s ocupado por la instancia anterior (pid %s); la termino", PUERTO, pid)
+    _terminar(pid)
     limite = time.monotonic() + 20
     while time.monotonic() < limite:
         if not _alguien_escucha():
