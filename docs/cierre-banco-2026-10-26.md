@@ -1,63 +1,57 @@
-# Cierre a producción — verificación bancaria en dos modos
+# Cierre definitivo — verificación bancaria en dos modos
 
-Fecha: 2026-10-26. Nodo: SERVER (`MotoShopBackendSvc`, `:8000`, modo `local`).
+Fecha: 2026-10-26. Nodo: SERVER (`MotoShopBackendSvc`, `:8000`, `BANK_DISPATCH_MODE=local`).
 
-## 1. Checklist con evidencia
+## Checklist
 
-| # | Ítem | Estado | Evidencia |
-|---|------|--------|-----------|
-| 1 | Contrato en dos modos (`factura` / `pago`) | OK | `POST /api/erp/bank/verificaciones` → 202; OpenAPI con `modo/factura_id/valor/nitter/nombre_esperado`, `required=["valor"]`, `additionalProperties=false` |
-| 2 | `modo=pago` exige `valor` y prohíbe `factura_id` | OK | Job `2e3c7132-76e4-4c7b-9e9a-2aa600921b66`: 202 → `resuelto` en 28.1 s |
-| 3 | NIT comodín no viaja y se etiqueta consumidor final | OK | Mismo job: `nitter_presente=false`, `cliente="CONSUMIDOR FINAL"`; test `test_worker_etiqueta_consumidor_final_sin_nit` |
-| 4 | La verificación nunca aplica nada | OK | Movimiento `7171000c` (ref `0092405445`) sigue `PENDIENTE`; total del día sin cambios por la verificación |
-| 5 | Front en `main` con el modo pago | OK | `frontfambus` `main` = `a300201` (origin); ya no manda `facturaId: POS-<timestamp>` |
-| 6 | Front: tests, typecheck y lint | OK | 63 archivos / 399 tests verdes; `tsc --noEmit` sin salida; eslint sólo warnings previos |
-| 7 | Backend mergeado a `main` | OK | `motoshopData` `main` = `b997113` (origin). El `--no-ff` `90dccec` lo aplanó el guardián con un `pull --rebase`; el árbol es idéntico |
-| 8 | Suite bancaria sobre `main` | OK | `281 passed, 19 skipped, 986 deselected` (`uv run --with pytest --with pytest-cov python -m pytest tests/ -q -k bank`) |
-| 9 | Pruebas de producción a–e | OK | Corrida completa 14:56 (`prod_tests_out.json`) + caso (a) re-confirmado sobre `main` a las 15:33 |
-| 10 | Cero ventanas visibles | OK | Sólo el Chrome del operador (WhatsApp Business); 2 procesos `python` sin ventana |
-| 11 | Migraciones aplicadas | OK (esta PC) | F9-007 y F10-004 en `motoshop2024`; el barrido dejó de fallar (último error 15:04:54) |
-| 12 | Runbook con cola y firewall | OK | `docs/runbook-banco.md` sección 8 |
-| 13 | Firewall exportado antes de tocar | OK | `infra/firewall/firewall-20261026-1515.wfw` + perfiles; ninguna regla modificada |
-| 14 | MySQL: usuario de aplicación | OK | `admin@localhost` y `admin@%`, `ALL` sobre `motoshop2024`/`motoshop`/`capacitacion` |
-| 15 | ERP apuntando a `admin@127.0.0.1` | OK (falta reiniciar) | `servidor.txt` reescrito; ODBC 32-bit: `facturas=7347`, `terceros=166` |
-| 16 | MySQL: bind local + limpieza de `root` | BLOQUEADO | `CU19881` (`26.216.80.104`) sigue conectado como `root@%` a `motoshop2024` |
-| 17 | Aviso y firma del contrato en el bus | OK / sin respuesta | `0423-motoshop-20261026T2015Z.md`; sin respuesta a las 20:27Z, se siguió igual |
+| # | Ítem | Evidencia |
+|---|------|-----------|
+| 1 | `mysql.user` sin `admin@%` | Quedan `admin@localhost` y `admin@127.0.0.1`; `root@%`, `root@127.0.0.1`, `root@localhost`, `root@production` intactos; `analytics`, `api_read`, `app_writer`, `javier` en `localhost` |
+| 2 | ERP: ODBC ok, reinicio pendiente | Cadena literal de `servidor.txt` por ODBC 32-bit: `current_user=admin@localhost`, `facturas=7348`, `terceros=166`; SgHermes sigue abierto con la sesión de KAROL (arrancó 08:14, antes del cambio) y conectado como `root@SERVER` |
+| 3 | Sitio sirve el front nuevo | Chunk desplegado `6597-…js` con `nombre_esperado`, `nitter`, `"pago"` y sin `POS-`; POST real por `https://app.fragloesja.uk/api/erp/bank/verificaciones` → 202 |
+| 4 | API que sirve producción | El primario `api.fragloesja.uk` (Render) da **503**; el tráfico cae al fallback `motoshop-local.fragloesja.uk` → esta PC. `/openapi.json` por el túnel: `required=["valor"]`, props `modo,factura_id,valor,nitter,nombre_esperado`, `additionalProperties=false` |
+| 5 | a–e con arnés corregido (35 s entre casos) | Ver tabla |
+| 6 | Punto de entrada publicado en el bus | `0443-motoshop-20261026T2130Z.md` |
+| 7 | Guardián restringido + arnés con pausa | `infra/guardian-bus.ps1`: rebase sólo en `bus/banco-handoff`, `merge --ff-only` en main/rama, sin force-push; `infra/pruebas_produccion.py` con `time.sleep(35)` entre casos |
+| 8 | Runbook con failover | `docs/runbook-banco.md` sección 9 |
 
-## 2. Pruebas a–e (corrida completa, 2026-10-26 14:56)
+## Pruebas a–e (2026-10-26 16:31, código de `main`)
 
-| Caso | Qué prueba | Resultado |
-|------|-----------|-----------|
-| a | Modo factura, camino feliz | `resuelto` 28.1 s, `VALERIA CASTR`, `115000.00`, ref `0092405445`, 4 movimientos, 1 candidato |
-| b | Dos POST seguidos, misma verificación | Mismo `job_id` en las dos respuestas, `resuelto` 28.1 s |
-| c | POST nuevo sobre un job terminado | `job_id` nuevo, `resuelto` 28.1 s |
-| d | No se aplica nada | Movimiento `7171000c` en `PENDIENTE`, cero `APLICADO` |
-| e | Sin coincidencia | `sin_coincidencia` limpio en 28.5 s |
+| Caso | Qué prueba | job_id | Estado | Duración |
+|------|-----------|--------|--------|----------|
+| a | Modo factura, camino feliz | `3384c3df-4dc1-4e98-880d-465e89e44f29` | `resuelto` | 34.2 s |
+| b | Doble clic → misma verificación | `ff0e180a-e541-4598-8355-d7dc6e73d49a` (los dos POST) | `resuelto` | 36.1 s |
+| c | Reintento → job nuevo | `282f19a3-07fb-4ece-bf24-572b3878426d` | `resuelto` | 28.1 s |
+| d | Nada aplicado | movimiento `7171000c` | `PENDIENTE`, 0 `APLICADO`, total 197011.28 | — |
+| e | Modo pago sin match | `d4c612c3-9e43-49a4-a8bb-59f3cb201cc7` | `sin_coincidencia` | 28.1 s |
 
-Re-confirmación sobre `main` (15:33): caso (a) → `2e3c7132-76e4-4c7b-9e9a-2aa600921b66`, `resuelto` 28.1 s,
-`CONSUMIDOR FINAL`, sin `nitter`.
+Caso (a): pagador `VALERIA CASTR`, valor `115000.00`, ref `0092405445`, 4 movimientos, 1 candidato,
+`cliente_nombre=CONSUMIDOR FINAL`, sin `nitter`. `qr_duplicado`: ninguno. `errores`: ninguno.
 
-Nota de arnés: la corrida de las 15:30 sobre `main` hizo caer el caso (c) con `intervalo_minimo` porque
-`prod_tests.py` no espera los 30 s entre casos. Es ritmo del arnés, no del contrato: el POST devuelve
-202 y el job termina en `fallido` con ese código.
+## Punto de entrada (para el failover)
 
-## 3. Estado operativo
+```
+navegador → app.fragloesja.uk (Vercel) → /api/[...path] (route handler)
+          → PRIMARY  api.fragloesja.uk → CNAME motoshop-cloud-api.onrender.com (Render, hoy 503)
+          → FALLBACK motoshop-local.fragloesja.uk (túnel cloudflared de esta PC → :8000)
+                     masvital-local.fragloesja.uk (túnel de MasVital, /health 200, sin la cuenta de motoshop)
+                     local-api.fragloesja.uk (no resuelve)
+```
 
-- `BANK_DISPATCH_MODE=local` (el hilo corre dentro de la API).
-- `.env` sin `BANK_WINDOW_START/END`: la ventana es el día en curso.
-- Intervalo mínimo entre barridos: 30 s. Lock por cuenta en `app_bank_account_locks`.
-- API reiniciada desde `main` a las 15:34:48, `/health` 200.
+Prueba de punta a punta: job `8142871b-3aed-417e-9059-e6ad78ba8d97` creado por el proxy de Vercel
+(IP 54.221.182.4) y resuelto en 28.9 s en el nodo `motoshop`. Producción corre por el fallback.
 
-## 4. Pendiente y bloqueado
+## Pendiente
 
-1. **MySQL bind y limpieza de `root`**: `CU19881` entra como `root@%`. Antes hay que migrarlo a
-   `admin` (ya existe) y verificar el corte desde otra PC. Comandos y rollback en el runbook, 8.3.
-2. **Reiniciar SgHermes** para que tome el `servidor.txt` nuevo (paso del operador, no hay GUI acá).
-3. **Otra PC (ProDesk/MasVital)**: `pull` de `main`, aplicar F9-007/F10-004, reiniciar y re-correr a–e.
-4. **Firma del contrato**: MasVital no respondió al 0423.
+1. **Reiniciar SgHermes** (sesión de KAROL abierta): después del reinicio tiene que entrar como
+   `admin@localhost` en lugar de `root`.
+2. **Primario Render en 503**: mientras siga así, el POS depende del túnel de esta PC.
+3. **Cuenta de motoshop enrollada en la PC de MasVital**: sin eso, si esta PC se apaga no hay
+   verificación.
+4. **Firma del contrato de MasVital**: no respondió al 0423.
 
-## 5. SHAs
+## SHAs
 
-- Backend `main`: `b997113` (merge `--no-ff` `90dccec` aplanado por el guardián; mismo árbol).
+- Backend `main`: `7d47150` (+ el commit de este cierre).
 - Front `main`: `a300201`.
-- Runbook: `e9c7bfe`. Firewall: `b997113`.
+- Runbook sección 9: `docs/runbook-banco.md`. Guardián: `infra/guardian-bus.ps1`.

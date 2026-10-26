@@ -486,3 +486,69 @@ Set-NetFirewallRule -DisplayName "HERMES" -Enabled False
 #    SET PASSWORD FOR 'root'@'localhost' = PASSWORD('<clave nueva>');
 schtasks /Delete /TN "RollbackFirewall3306" /F   # sólo tras confirmar el acceso
 ```
+
+---
+
+## 9. Failover
+
+### 9.1 Cómo llega hoy el front de producción a la API
+
+```
+navegador → app.fragloesja.uk (Vercel)
+          → /api/[...path]  (route handler en Vercel, server-side)
+          → PRIMARY:  https://api.fragloesja.uk
+                      CNAME → motoshop-cloud-api.onrender.com (Render, us-west)
+          → FALLBACK: motoshop-local.fragloesja.uk  (túnel cloudflared de esta PC → :8000)
+                      masvital-local.fragloesja.uk  (túnel de la PC de MasVital)
+                      local-api.fragloesja.uk       (no resuelve: candidato muerto)
+```
+
+- El navegador nunca habla con la API directamente: pega en el mismo origen y el route handler
+  `app/api/[...path]/route.ts` proxya con `fetchWithFailover` (`lib/api/backendFailover.ts`).
+- Orden por tenant: `motoshop` → motoshop-local, masvital-local, local-api; `masvital` →
+  masvital-local, motoshop-local, local-api. `FALLBACK_API_URLS` (coma) pisa el orden.
+- Timeouts: 8 s al primario y 5 s a cada fallback (LLM: 60 s / 50 s). Se pasa al fallback con
+  error de red o con 502/503/504.
+- **Estado 2026-10-26**: `api.fragloesja.uk` devuelve **503** (Render caído/suspendido). La
+  producción está corriendo por el fallback `motoshop-local.fragloesja.uk` → esta PC. Verificado
+  con un POST real por `https://app.fragloesja.uk/api/erp/bank/verificaciones`: 202 y job
+  `8142871b-3aed-417e-9059-e6ad78ba8d97` resuelto en 28.9 s en el nodo `motoshop`; en el log de la
+  API la petición entra desde la IP de Vercel (54.221.182.4).
+
+### 9.2 Failover manual (5 minutos)
+
+Ya es automático por request. Para forzarlo o sacar el primario del medio:
+
+1. Vercel → proyecto → Settings → Environment Variables.
+2. `NEXT_PUBLIC_API_URL` = `https://motoshop-local.fragloesja.uk` (o el nodo que corresponda).
+3. Redeploy (el route handler lee la variable en runtime; sin redeploy no toma).
+4. Verificar: `POST https://app.fragloesja.uk/api/erp/bank/verificaciones` devuelve 202 y el job
+   aparece en el nodo elegido.
+
+Reversa: volver a poner `https://api.fragloesja.uk` y redeploy. Es el único cambio: no se toca DNS
+ni el túnel.
+
+Si el primario vuelve, no hace falta tocar nada: el failover deja de usarse solo.
+
+### 9.3 Lo que falta para que el failover sea de verdad
+
+1. **Punto de entrada siempre encendido.** Hoy el primario es un Render que responde 503; el
+   sistema vive del túnel de una PC encendida. Sin primario estable, el failover es el camino
+   normal, no la excepción.
+2. **Cuenta bancaria de motoshop enrolada en la PC de MasVital.** Un fallback sólo sirve si ese
+   nodo tiene la sesión y el vault del tenant: hoy MasVital responde `/health`, pero no tiene la
+   cuenta de motoshop, así que si esta PC se apaga el POS queda sin verificación.
+3. **Lock por cuenta.** Ya está (`app_bank_account_locks`): dos nodos no barren la misma cuenta a
+   la vez. Es la pieza que evita el duplicado cuando hay más de un nodo con la misma sesión.
+
+### 9.4 MySQL 3306 abierto: es a propósito
+
+La regla de firewall `HERMES` deja el 3306 de entrada abierto a propósito: los devs de Hermes
+entran en remoto al ERP y a `motoshop2024` desde sus máquinas (hoy `root@CU19881`, 26.216.80.104).
+Decisión del operador del 2026-10-26: **no** se hace bind a 127.0.0.1, **no** se tocan las reglas,
+**no** se tocan los grants de `root`. Lo único que se sacó fue `admin@%`, que habíamos creado
+nosotros; quedan `admin@localhost` y `admin@127.0.0.1` con `ALL` sobre `motoshop2024`, `motoshop` y
+`capacitacion`. Si un dev necesita `admin` desde su IP, se crea `admin@<su IP>`: nunca `%`.
+
+Consecuencia asumida: el puerto queda expuesto. El riesgo se mitiga con cuentas por IP y con el
+hecho de que `root` remoto es de los devs de Hermes, no del portal.
