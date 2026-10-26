@@ -27,6 +27,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from motoshop_api.erp.bankreconciliation import node_router
+from motoshop_api.erp.bankreconciliation.jobs import RealVerificationJobStore
 from motoshop_api.erp.bankreconciliation.node_router import (
     CODIGO_SESION_CERRADA,
     CODIGO_SIN_NODO,
@@ -37,7 +38,6 @@ from motoshop_api.erp.bankreconciliation.node_router import (
     configurar_modo_despacho,
     modo_despacho,
 )
-from motoshop_api.erp.bankreconciliation.jobs import RealVerificationJobStore
 
 # --- fixtures --------------------------------------------------------------
 

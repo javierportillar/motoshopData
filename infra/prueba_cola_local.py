@@ -213,6 +213,28 @@ def limpiar_locks_de_prueba() -> bool:
     return proc.returncode == 0
 
 
+def limpiar_nodos_de_prueba() -> bool:
+    """El nodo falso tambien se borra: si queda latiendo, `en_linea` lo ve.
+
+    Un `PRUEBA-*` viejo con `latida_en` reciente aparece como nodo de
+    `masvital` y rompe los tests de SQL que comparan el mapa de nodos.
+    """
+    mysql = MYSQL_EXE
+    proc = subprocess.run(
+        [
+            mysql,
+            "--user=root",
+            "--password=",
+            "masvital",
+            "-e",
+            "DELETE FROM app_bank_nodes WHERE node_id LIKE 'PRUEBA%';",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return proc.returncode == 0
+
+
 IDS: list[str] = []
 
 
@@ -222,9 +244,11 @@ def main() -> int:
     finally:
         ok_jobs = borrar_jobs(IDS)
         ok_locks = limpiar_locks_de_prueba()
+        ok_nodos = limpiar_nodos_de_prueba()
         print(
             f"\nLIMPIEZA: jobs={'ok' if ok_jobs else 'FALLO'} "
-            f"locks={'ok' if ok_locks else 'FALLO'} - borrados {len(IDS)} jobs de prueba"
+            f"locks={'ok' if ok_locks else 'FALLO'} nodos={'ok' if ok_nodos else 'FALLO'} "
+            f"- borrados {len(IDS)} jobs de prueba"
         )
         for i in IDS:
             print(f"  - {i}")
@@ -233,6 +257,7 @@ def main() -> int:
 def cuerpo_de_main() -> int:
     print("== 0. arranque limpio (el agente toma el mas viejo: FIFO) ==")
     limpiar_locks_de_prueba()
+    limpiar_nodos_de_prueba()
     chequear(jobs_en_cola() == 0, f"jobs en_cola al empezar: {jobs_en_cola()}")
     chequear(locks_actuales() == [], f"candados al empezar: {locks_actuales()}")
 
