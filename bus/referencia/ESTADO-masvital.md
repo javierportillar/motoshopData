@@ -202,3 +202,31 @@ Bus: worktree propio, push con `HEAD:refs/heads/bus/banco-handoff`.
   operador.
 - No se toco firewall, ni `bind-address`, ni el acceso remoto del root. La cuenta nueva es solo
   localhost: no reemplaza el trabajo de cierre remoto, lo prepara.
+
+## Correccion del 26/10 (noche): el repunte del ERP se revirtio y se encontro la causa
+
+Este bloque **reemplaza** el parrafo anterior sobre el repunte y el reinicio pendiente: el repunte
+no se aplico, la cuenta dedicada se elimino y la ERP quedo como estaba (una sola sesion desde las
+12:05, sin interrupcion).
+
+- **Hallazgo 1 - VirtualStore.** El ERP se ejecuta **no elevado**, asi que Windows le virtualiza
+  `Program Files`: lee y **reescribe** su configuracion en
+  `%LOCALAPPDATA%\VirtualStore\Program Files (x86)\Julio Chaves\SgHermes\servidor.txt`. Cualquier
+  edicion en la ruta nominal de `Program Files` es decorativa: el ERP la ignora. El archivo real lo
+  reescribe el propio ERP al arrancar (por eso su fecha cambia sin que nadie lo toque).
+- **Hallazgo 2 - linea de contrasena.** En `servidor.txt` la contrasena vacia se serializa como la
+  linea `;`. Una linea **en blanco** hace que el ERP la salte y **desplace todos los campos**: el
+  puerto aparece como contrasena, la base como puerto y el driver como base de datos. Formato real:
+  6 lineas CRLF con `;` final = IP / usuario / contrasena / puerto / base / driver ODBC.
+- **Estado final del ERP**: `root` sin contrasena, base `masvital`, puerto 3306, driver ODBC 5.1,
+  conexion por `localhost` (el ERP corre en el mismo equipo que el MySQL). `mysql.user` volvio a sus
+  cinco filas de `root`; `servidor.txt` restaurado byte a byte; `CHECK TABLE` sobre las 186 tablas
+  sin errores y sin ninguna reparacion ejecutada. Deuda de seguridad (`root` sin contrasena
+  expuesto) aceptada por el operador.
+- **Un job por verificacion**: la tabla mantiene **una fila por (tenant, factura, valor)** con id
+  determinista y `ON DUPLICATE KEY`. Un reintento revive esa fila: cambia el `job_id` publico y se
+  reinicia `creado_en`. Los `job_id` viejos de una misma verificacion no son filas distintas.
+- **Mapa de la IP del nodo**: `26.84.60.116` es la IP de Radmin de este equipo y la consume el
+  SgHermes de la otra PC para llegar a `masvital`. Este MySQL solo tiene la base `masvital` (no
+  existe `motoshop2024`, que vive en el MySQL del equipo de MotoShop). Cada nodo sirve **su** base:
+  el tenant `motoshop` declarado aca es solo heartbeat/enrolamiento, no fuente de datos.
