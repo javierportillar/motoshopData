@@ -125,6 +125,37 @@ Bus: worktree propio, push con `HEAD:refs/heads/bus/banco-handoff`.
 - **Comportamiento a tener presente**: si un agente muere con el candado tomado, ese tenant queda
   bloqueado hasta **60 s** (TTL del candado). Es por diseño; el sweeper rescata jobs, no el candado.
 
+## TTL de cola: 900 s y motivo `sin_nodo` (26/10)
+
+- El job nace con `TTL_COLA_SEGUNDOS = 900` y lo manda `BANK_JOB_QUEUE_TTL` (`ttl_cola_segundos()`;
+  valor invalido o <= 0 cae al default). Antes eran 300 s: un job esperando el turno de sesion de
+  otra cuenta moria antes de que un agente lo viera.
+- Un `en_cola` vencido queda `expirado` con `error_codigo='sin_nodo'`, nunca `fallido`. El `SET` del
+  barrido escribe `error_codigo` **antes** de `estado` porque MySQL 5.0 evalua las asignaciones de
+  izquierda a derecha; al reves el motivo se pierde en silencio. Hay un test de SQL real que prueba
+  ese orden, no un doble en memoria.
+- `ejecutando` vencido: el barrido lo cierra sin motivo; el rescate con motivo es del plano de
+  control (reloj de 180 s + `intentos`, ya probado).
+- Pruebas: 301 s sigue en cola, 901 s vence con `sin_nodo`, la variable mueve el reloj y un valor
+  basura no rompe. 43 tests en los dos archivos (9 de SQL real sobre MySQL 5.0.45). Suite bancaria
+  completa sobre la cabeza de la rama: **290 passed, 10 skipped (POSIX/pty), 0 failed**.
+- El cambio viajo en el commit de rescate del guardian (mitad de trabajo); la correccion del arnes
+  de prueba es el commit siguiente.
+
+## ERP: login verificado y dos hallazgos (26/10)
+
+- El login del ERP con el usuario administrador funciona: hay sesiones vivas de hoy desde cuatro
+  equipos del local, una abierta mientras se escribe esto. El usuario es de nivel 1.
+- El usuario anterior era el de caja (nivel 2), que trabajo hasta el mediodia.
+- **La clave almacenada del administrador no es la que se nos indico**: tiene 4 caracteres y la
+  comparacion contra el valor recibido da falso. No se cambio: rotar la clave del administrador en
+  horario de venta puede dejar a todo el negocio afuera.
+- **La base tiene una sola empresa** (`E01 PRINCIPAL`). "Ambas empresas" no es verificable en este
+  ERP.
+- Cartera y posteo: el posteo es la escritura del modulo y **no se ejecuto** (prohibido aplicar
+  conciliaciones). Lo verificado es el contrato cubierto por la suite y el modo de despacho en
+  `local`.
+
 ## Decisiones de entrega
 
 - **El modo cola no se enciende en producción**: sin plano de control central no agrega nada y suma
