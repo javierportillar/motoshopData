@@ -620,6 +620,29 @@ def test_worker_suma_nitter_y_cliente_nombre_de_la_factura(tmp_path: Path) -> No
     assert pedidas == [FACTURA]
 
 
+def test_worker_etiqueta_consumidor_final_sin_nit(tmp_path: Path) -> None:
+    """El comodin 222222222 no se muestra: el chulo dice CONSUMIDOR FINAL."""
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    config = _config(tmp_path)
+    job = jobs.create_job(config.tenant, FACTURA, VALOR)
+
+    worker = _worker(
+        tmp_path,
+        jobs=jobs,
+        store=store,
+        sesion=_sesion(),
+        facturas=lambda _fid: {"nitter": "222222222", "cliente_nombre": "CONSUMIDOR"},
+    )
+    worker.run_once(job)
+
+    guardado = jobs.get_job(config.tenant, job.job_id)
+    assert guardado is not None and guardado.resultado is not None
+    candidato = guardado.resultado["candidato"]
+    assert "nitter" not in candidato
+    assert candidato["cliente_nombre"] == "CONSUMIDOR FINAL"
+
+
 def test_worker_no_se_cae_si_el_erp_no_devuelve_la_factura(tmp_path: Path) -> None:
     """Sin factura, el job resuelve igual: el NIT es un extra, no un requisito."""
     jobs = FakeVerificationJobStore()

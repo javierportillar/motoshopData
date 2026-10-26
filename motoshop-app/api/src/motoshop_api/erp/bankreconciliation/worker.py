@@ -128,6 +128,9 @@ def _candidato_con_senales(
         "CONSUMIDOR FINAL"
     ):
         datos.pop("nitter", None)
+        # Etiqueta estable para el chulo: el operador lee "Cliente: CONSUMIDOR
+        # FINAL" en vez de un nombre recortado del catalogo legacy.
+        datos["cliente_nombre"] = "CONSUMIDOR FINAL"
     esperado = solicitud.get("nombre_esperado")
     if esperado:
         # Senal, no decision: con dos importes iguales el job sigue ambiguo.
