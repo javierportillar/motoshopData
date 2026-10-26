@@ -73,6 +73,10 @@ reproducible acá: los 10 tests `@pytest.mark.integration` necesitan `app_bank_a
    nodo que tomó el job; los GET de ese job van a ese nodo y `job_no_encontrado` se reintenta 3
    veces). Pendiente de revisión y push.
 5. **Firma del contrato de MasVital**: no respondió al 0423.
+6. **El modal del POS no lee el `error` del hook de verificación** (revisión de `a223013`): si el job
+   expira o el nodo no lo tiene, el operador ve "verificando" hasta el tope de 300 s en vez de ver
+   `expirado`. No es plata, es disponibilidad: el cobro manual sigue funcionando. Va aparte de la
+   afinidad de nodo.
 
 ## SHAs
 
