@@ -61,6 +61,18 @@ reproducible acá: los 10 tests `@pytest.mark.integration` necesitan `app_bank_a
 `app_bank_nodes`, que **no existen** en `motoshop2024` ni en `masvital`; con `BANK_TEST_MYSQL=1` dan
 9 errores, no skips.
 
+## Hecho en el front (desplegado)
+
+- `a223013` — afinidad de nodo: el 202 devuelve el nodo que tomó el job, los GET de ese job van a ese
+  nodo y `job_no_encontrado` se reintenta 3 veces.
+- `e501bb7` — recuperación del poll: nodo caído (5xx o error de red) → un solo intento por un nodo
+  **distinto** (`X-Bank-Skip-Node`, allowlist cerrada); discriminación por `detail.error_codigo` y no
+  por texto; el `Map` de afinidad se limpia al llegar a estado final.
+- `b0531a3` — el modal lee el `error` del hook y muestra el motivo por `error_codigo` estable
+  (`job_no_encontrado`, `scraper_no_habilitado`, `tenant_no_servido`, `expirado`, `sin_nodo`,
+  `fallido`), también cuando el job termina en `expirado`/`fallido`.
+- 431 tests, `tsc` limpio, eslint sin errores (3 warnings preexistentes).
+
 ## Pendiente
 
 1. **Primario Render en 503**: mientras siga así, el POS depende del túnel de esta PC.
@@ -69,18 +81,14 @@ reproducible acá: los 10 tests `@pytest.mark.integration` necesitan `app_bank_a
    sesión del banco; **antes** de darle la cuenta a MasVital hay que crear esas tablas.
 3. **Cuenta de motoshop enrolada en la PC de MasVital**: sin eso, si esta PC se apaga no hay
    verificación.
-4. **Afinidad de nodo en el front**: commit `a223013` en `frontfambus` (el 202 una vez más devuelve el
-   nodo que tomó el job; los GET de ese job van a ese nodo y `job_no_encontrado` se reintenta 3
-   veces). Pendiente de revisión y push.
-5. **Firma del contrato de MasVital**: no respondió al 0423.
-6. **El modal del POS no lee el `error` del hook de verificación** (revisión de `a223013`): si el job
-   expira o el nodo no lo tiene, el operador ve "verificando" hasta el tope de 300 s en vez de ver
-   `expirado`. No es plata, es disponibilidad: el cobro manual sigue funcionando. Va aparte de la
-   afinidad de nodo.
+4. **Firma del contrato de MasVital**: no respondió al 0423.
+5. **Failover automático**: imposible con dos MySQL independientes (el job vive en la base de su nodo);
+   requiere plano de control.
 
 ## SHAs
 
-- Backend `main`: `12c5060` (`8d9d30a` + docs del cierre de credenciales).
-- Front `main`: `a300201` publicado; `a223013` local, sin push.
-- Bus: `0464-motoshop-20261026T2228Z.md` (corrección del lock por cuenta).
-- Runbook: 8.3 cancelado, 8.4 `servidor.txt`, 9.3 lock corregido. Guardián: `infra/guardian-bus.ps1`.
+- Backend `main`: `f22bd2c` (`8d9d30a` + docs del cierre de credenciales).
+- Front `main`: `b0531a3` (`a300201` → `a223013` → `e501bb7` → `b0531a3`), desplegado en Vercel;
+  verificado en producción por los headers `x-backend-source` / `x-bank-node`.
+- Bus: `0464` (corrección del lock) y `0478` (cierre con los tres SHA).
+- Runbook: 8.3 cancelado, 8.4 `servidor.txt` (Radmin, no IP pública), 9.3 lock corregido, 9.4.
