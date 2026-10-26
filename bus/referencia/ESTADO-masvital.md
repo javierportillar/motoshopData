@@ -165,3 +165,40 @@ Bus: worktree propio, push con `HEAD:refs/heads/bus/banco-handoff`.
 - **Candado por cuenta**, no por máquina, con TTL de 60 s y renovación cada 20 s.
 - **Sin preempción y sin warm-up**: dos cuentas pueden raspar en paralelo; la sesión del banco no se
   abre para "calentar".
+
+## Cierre del 26/10 (tarde): suite, migraciones, pruebas a-e y failover preparado
+
+- **Suite sobre `main` (7d47150)**: 290 passed, 10 skipped (POSIX/pty), 986 deselected, 0 failed,
+  con la bateria de SQL real habilitada. Sin diferencias del modulo banco contra el commit anterior.
+- **Migraciones confirmadas en la base de este nodo**: el ledger registra F9-007 ademas de
+  F10-001..004, y las columnas que el barrido necesita (`solicitud_json`, `intentos`) existen.
+  La API arrancada sobre `main` lleva mas de un minuto barriendo sin errores.
+- **Pruebas a-e, contra la API local y con la sesion real del portal**:
+  - factura con importe que coincide con un movimiento del dia -> `resuelto`;
+  - doble clic durante la corrida -> **mismo** `job_id` (la idempotencia protege la verificacion
+    en curso);
+  - reintento despues del cierre -> `job_id` **nuevo**;
+  - leido justo despues del POST -> `ejecutando` (la pantalla lo muestra como pendiente);
+  - modo pago sin coincidencia -> `sin_coincidencia`.
+  Los cinco `job_id` quedaron publicados en el bus.
+- **Semantica del barrido**: en modo local la cola **no** se expira (`expirar_cola()` solo corre con
+  despacho en cola); lo que corre siempre es el rescate de `ejecutando` vencidos. El TTL de 900 s se
+  ejerce cuando el nodo se enciende en cola.
+- **Failover preparado, sin encender**: el nodo declara los dos tenants en el heartbeat, el perfil
+  del segundo negocio existe vacio, y pedir ese tenant devuelve 503 `tenant_no_servido` (nunca 500).
+  El despacho sigue en `local`. Falta solo el enrolamiento de la cuenta del banco por el operador.
+- **Afinamiento**: la API sirve un tenant por proceso. El failover es levantar el nodo con el tenant
+  del otro negocio, no servir las dos cuentas desde el mismo proceso.
+## MySQL: cuenta dedicada del ERP en localhost (26/10, tarde)
+
+- Se creo una **cuenta dedicada en `localhost`** para el ERP, con clave propia de 28 caracteres
+  generada en el equipo. No viajo por ningun canal y no se publica.
+- `servidor.txt` del ERP quedo repuntado a esa cuenta, con respaldo del original tomado antes de
+  escribir.
+- La **cadena literal** se probo en un proceso de 32 bits con el mismo driver ODBC que usa el ERP:
+  conexion OK y consulta de conteo contra la base del negocio.
+- El **reinicio del ERP quedo pendiente**: en este equipo estaba abierta la pantalla de facturacion
+  de venta y reiniciar podia cortar una venta en curso. No se reinicio; se pide decision del
+  operador.
+- No se toco firewall, ni `bind-address`, ni el acceso remoto del root. La cuenta nueva es solo
+  localhost: no reemplaza el trabajo de cierre remoto, lo prepara.
