@@ -398,3 +398,91 @@ primero.
 **Camino C (descartado): tarea «aunque el usuario no haya iniciado sesión» (S4U).** Rompe el
 vault: DPAPI y `%APPDATA%` son por usuario y sin sesión interactiva no hay perfil → `credencial_ausente`
 (ver sección anterior). No re-crear el vault bajo `SYSTEM`.
+
+---
+
+## 8. Plano de control (cola) y firewall de MySQL
+
+### 8.1 Encender la cola el día que vuelva el plano de control
+
+Verificado en el código (`node_router.py`): el modo se elige con `BANK_DISPATCH_MODE` y el nodo se
+autentica con `BANK_NODE_TOKEN`. **No existen** `BANK_NODE_TENANTS` ni `BANK_NODE_CONCURRENCY`: los
+tenants y los slots los declara el nodo en su latido (`tenants`, `slots_libres`, `slots_ocupados`) y
+quedan registrados en `app_bank_nodes`.
+
+Antes de encender:
+
+1. Aplicar las migraciones que el modo cola necesita (todas aditivas):
+   - `infra/migrations/F10-004-app_bank_verification_jobs_intentos.sql` (columna `intentos`). Sin
+     ella el barrido del plano de control falla cada 15 s con
+     `Unknown column 'intentos' in 'field list'` (visto en SERVER el 2026-10-26; se aplicó y el
+     error paró).
+   - las de F0/F1 (`app_bank_nodes`, `app_bank_account_locks`).
+2. Poner en el entorno del proceso de la API:
+   - `BANK_DISPATCH_MODE=queue`
+   - `BANK_NODE_TOKEN=<secreto del plano de control>` (nunca en el repo)
+   - `BANK_NODE_ID=<nombre del nodo>` (por defecto, el tenant)
+3. Reiniciar `MotoShopBackendSvc` y confirmar en `logs/api_uvicorn.log`:
+   `bank dispatch mode=queue`.
+
+Verificación: `POST /api/erp/bank/verificaciones` sigue devolviendo **202**; el job lo toma el nodo
+que declara el tenant; `app_bank_nodes` muestra el latido con `slots_libres` / `slots_ocupados`.
+
+### 8.2 Volver a local (reversa)
+
+1. `BANK_DISPATCH_MODE=local` (o quitar la variable: `local` es el default).
+2. Reiniciar la tarea. En el log debe quedar
+   `bank dispatch mode=local (sin cola: el hilo corre en la API)`.
+3. No hay datos que deshacer: los jobs viven en `app_bank_verification_jobs` y el barrido deja de
+   tomar trabajo remoto. Las tablas del plano de control pueden quedar (no molestan).
+
+### 8.3 Firewall de MySQL (esta PC se maneja en remoto)
+
+Antes de tocar nada:
+
+```powershell
+netsh advfirewall export "C:\...\infra\firewall\firewall-<fecha>.wfw"
+Get-NetFirewallProfile | Format-Table Name,Enabled,DefaultInboundAction
+Get-NetFirewallPortFilter -Protocol TCP | Where-Object { $_.LocalPort -in 3389,3306,5900 } |
+  ForEach-Object { $_ | Get-NetFirewallRule }
+```
+
+Estado del 2026-10-26 (export en `infra/firewall/firewall-20261026-1515.wfw`):
+
+- `3389` (Escritorio remoto, TCP de entrada): **deshabilitada**.
+- `HERMES` (TCP 3306 de entrada): **habilitada, Allow, todos los perfiles**. Es la regla que abre
+  MySQL.
+- Radmin VPN: reglas por servicio/ICMP, no por puerto.
+- MySQL escucha en `0.0.0.0:3306`.
+- Cliente remoto vivo: `CU19881` (`26.216.80.104`, Radmin) conectado como `root` a `motoshop2024`.
+
+Reglas duras: no tocar 3389/RDP, Radmin/VNC ni el túnel; sólo agregar o quitar reglas de 3306; nunca
+block-all; nunca apagar un perfil. Programar una tarea que en 10 min restaure el export y cancelarla
+recién cuando se confirme que se sigue entrando.
+
+**Pendiente y bloqueado (no ejecutado a propósito):**
+
+- `bind-address=127.0.0.1` + cerrar o limitar la regla `HERMES`.
+- `DROP USER 'root'@'%'`, `DROP USER 'root'@'production'` y clave a `root@localhost`.
+
+Bloqueante: `CU19881` sigue entrando como `root@%`; cortarlo sin migrarlo primero rompe su ERP. El
+usuario `admin` ya existe (`admin@localhost` y `admin@%`, `ALL` sobre `motoshop2024`, `motoshop` y
+`capacitacion`), así que CU19881 sólo tiene que cambiar su `servidor.txt` a `admin`. Además, la
+verificación "desde otra PC" no se puede hacer desde esta máquina: sin ella no se toca el firewall ni
+el bind.
+
+Comandos para cuando CU19881 esté migrado:
+
+```powershell
+# 1) rollback armado (10 min)
+schtasks /Create /TN "RollbackFirewall3306" /SC ONCE /ST <HH:MM+10> `
+  /TR "netsh advfirewall import <ruta.wfw>" /F
+# 2) cerrar 3306 sin tocar RDP ni Radmin
+Set-NetFirewallRule -DisplayName "HERMES" -Enabled False
+# 3) my.ini: bind-address=127.0.0.1 (sólo MySQL) y reiniciar el servicio MySQL
+# 4) desde otra PC: 3306 no responde y RDP/Radmin siguen entrando
+# 5) recién ahí
+#    DROP USER 'root'@'%'; DROP USER 'root'@'production';
+#    SET PASSWORD FOR 'root'@'localhost' = PASSWORD('<clave nueva>');
+schtasks /Delete /TN "RollbackFirewall3306" /F   # sólo tras confirmar el acceso
+```
