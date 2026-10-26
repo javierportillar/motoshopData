@@ -460,18 +460,18 @@ Reglas duras: no tocar 3389/RDP, Radmin/VNC ni el túnel; sólo agregar o quitar
 block-all; nunca apagar un perfil. Programar una tarea que en 10 min restaure el export y cancelarla
 recién cuando se confirme que se sigue entrando.
 
-**Pendiente y bloqueado (no ejecutado a propósito):**
+**CANCELADO por decisión del operador (2026-10-26). No ejecutar:**
 
 - `bind-address=127.0.0.1` + cerrar o limitar la regla `HERMES`.
 - `DROP USER 'root'@'%'`, `DROP USER 'root'@'production'` y clave a `root@localhost`.
 
-Bloqueante: `CU19881` sigue entrando como `root@%`; cortarlo sin migrarlo primero rompe su ERP. El
-usuario `admin` ya existe (`admin@localhost` y `admin@%`, `ALL` sobre `motoshop2024`, `motoshop` y
-`capacitacion`), así que CU19881 sólo tiene que cambiar su `servidor.txt` a `admin`. Además, la
-verificación "desde otra PC" no se puede hacer desde esta máquina: sin ella no se toca el firewall ni
-el bind.
+Motivo: el 3306 abierto y `root` remoto son el canal de trabajo de los devs de Hermes
+(`root@CU19881`, `26.216.80.104`). Cerrarlo los deja sin ERP. Decisión: no se hace bind, no se tocan
+las reglas de firewall ni los grants de `root` (ver 9.4). Se deja el procedimiento escrito sólo por
+si alguna vez se decide lo contrario; antes hay que migrar a CU19881 y probar el acceso desde otra
+PC, cosa que desde esta máquina no se puede.
 
-Comandos para cuando CU19881 esté migrado:
+Comandos del procedimiento cancelado (referencia histórica):
 
 ```powershell
 # 1) rollback armado (10 min)
@@ -486,6 +486,38 @@ Set-NetFirewallRule -DisplayName "HERMES" -Enabled False
 #    SET PASSWORD FOR 'root'@'localhost' = PASSWORD('<clave nueva>');
 schtasks /Delete /TN "RollbackFirewall3306" /F   # sólo tras confirmar el acceso
 ```
+
+Nota de compatibilidad: este servidor es **MySQL 5.0.45** y **no** acepta `DROP USER IF EXISTS`
+(error 1064). Los `DROP USER` van a secas y fallan si el usuario no existe; por eso los scripts
+consultan `mysql.user` antes de dropear.
+
+### 8.4 `servidor.txt` del ERP: cuál se lee y cómo quedó
+
+SgHermes es 32-bit y **no** corre elevado, así que Windows le redirige los archivos de
+`C:\Program Files (x86)\Julio Chaves\SgHermes\` a
+`C:\Users\MotoShop\AppData\Local\VirtualStore\Program Files (x86)\Julio Chaves\SgHermes\`.
+**El que usa el ERP es el de VirtualStore**; el de Program Files (65 bytes, base `bdempresa`) es el
+original de la instalación y no se toca.
+
+Estado 2026-10-26: se probó un usuario `admin` propio y se **revirtió**. El archivo quedó
+byte-idéntico al original (71 bytes, SHA-256 `816b727a7ca160bf…`, copia en
+`%TEMP%\opencode\servidor.txt.bak-20261026`):
+
+```
+26.47.101.42;
+root;
+;
+3306;
+motoshop2024;
+MySQL ODBC 5.1 Driver;
+```
+
+- El campo 1 es la IP **pública** del enlace, no `localhost`: así vino de fábrica (entra por NAT
+  loopback). La IP pública de esta PC hoy es `179.1.137.130`; si el ERP deja de conectar y el archivo
+  dice `26.47.101.42`, ese es el primer sospechoso.
+- El campo 3 vacío es la clave de `root`. Una línea en blanco en ese lugar desplaza todos los campos.
+- No se reinició SgHermes (orden del operador). Si el ERP toma la conexión en el arranque, el archivo
+  aplica en el próximo inicio; el proceso en curso sigue con lo que tenga en memoria.
 
 ---
 
@@ -546,9 +578,10 @@ Si el primario vuelve, no hace falta tocar nada: el failover deja de usarse solo
 La regla de firewall `HERMES` deja el 3306 de entrada abierto a propósito: los devs de Hermes
 entran en remoto al ERP y a `motoshop2024` desde sus máquinas (hoy `root@CU19881`, 26.216.80.104).
 Decisión del operador del 2026-10-26: **no** se hace bind a 127.0.0.1, **no** se tocan las reglas,
-**no** se tocan los grants de `root`. Lo único que se sacó fue `admin@%`, que habíamos creado
-nosotros; quedan `admin@localhost` y `admin@127.0.0.1` con `ALL` sobre `motoshop2024`, `motoshop` y
-`capacitacion`. Si un dev necesita `admin` desde su IP, se crea `admin@<su IP>`: nunca `%`.
+**no** se tocan los grants de `root`. El usuario `admin` que habíamos creado para probar se eliminó
+por completo: se dropearon `admin@%`, `admin@localhost` y `admin@127.0.0.1` (ninguno se usaba; el ERP
+entra como `root` y la API con `app_writer`). Si algún día hace falta, se crea `admin@<IP>`: nunca
+`%`. Ver 8.4 para el `servidor.txt` del ERP, que también quedó como estaba.
 
 Consecuencia asumida: el puerto queda expuesto. El riesgo se mitiga con cuentas por IP y con el
 hecho de que `root` remoto es de los devs de Hermes, no del portal.
