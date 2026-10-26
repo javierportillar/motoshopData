@@ -17,12 +17,16 @@ import threading
 import uuid
 from decimal import Decimal
 
+import pytest
+
 from motoshop_api.erp.bankreconciliation.jobs import (
+    CODIGO_SIN_NODO,
     ESTADOS_DEL_JOB,
     ESTADOS_TERMINALES,
     EstadoJob,
     FakeVerificationJobStore,
     id_dominio_job,
+    ttl_cola_segundos,
 )
 from motoshop_api.erp.bankreconciliation.store import NAMESPACE_DOMINIO
 
@@ -356,3 +360,74 @@ def test_el_claim_es_unico_con_dos_hilos() -> None:
 
     assert sorted(resultados) == [False, True]
     assert store.get_job(TENANT, job.job_id).estado is EstadoJob.EJECUTANDO
+
+
+# --- TTL de cola: 900 s esperando nodo, `sin_nodo` al vencer -----------------
+
+
+def test_la_cola_espera_900_segundos_por_defecto() -> None:
+    """El job nace con el reloj de cola (900 s), no con los 300 s del scrape."""
+    instante = datetime.datetime(2026, 10, 26, 12, 0, 0)
+    store = FakeVerificationJobStore(reloj=lambda: instante)
+
+    job = store.create_job(TENANT, FACTURA, VALOR)
+
+    assert ttl_cola_segundos() == 900
+    assert job.expira_en == instante + datetime.timedelta(seconds=900)
+
+
+def test_la_cola_vive_a_los_301_segundos_y_vence_con_sin_nodo_a_los_901() -> None:
+    """301 s sigue en cola; 901 s es `expirado`/`sin_nodo`, nunca `fallido`."""
+    instante = datetime.datetime(2026, 10, 26, 12, 0, 0)
+    store = FakeVerificationJobStore(reloj=lambda: instante)
+    job = store.create_job(TENANT, FACTURA, VALOR)
+
+    assert store.expire_stale_jobs(instante + datetime.timedelta(seconds=301)) == 0
+    viva = store.get_job(TENANT, job.job_id)
+    assert viva is not None
+    assert viva.estado is EstadoJob.EN_COLA
+
+    assert store.expire_stale_jobs(instante + datetime.timedelta(seconds=901)) == 1
+    vencida = store.get_job(TENANT, job.job_id)
+    assert vencida is not None
+    assert vencida.estado is EstadoJob.EXPIRADO
+    assert vencida.error_codigo == CODIGO_SIN_NODO
+
+
+def test_el_reloj_de_cola_sale_del_entorno(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`BANK_JOB_QUEUE_TTL` mueve el reloj; un valor invalido no rompe nada."""
+    monkeypatch.setenv("BANK_JOB_QUEUE_TTL", "1200")
+    instante = datetime.datetime(2026, 10, 26, 12, 0, 0)
+    store = FakeVerificationJobStore(reloj=lambda: instante)
+
+    assert ttl_cola_segundos() == 1200
+    assert store.create_job(TENANT, FACTURA, VALOR).expira_en == (
+        instante + datetime.timedelta(seconds=1200)
+    )
+
+    for invalido in ("", "abc", "0", "-5"):
+        monkeypatch.setenv("BANK_JOB_QUEUE_TTL", invalido)
+        assert ttl_cola_segundos() == 900
+
+
+def test_un_ejecutando_vencido_no_inventa_motivo() -> None:
+    """El barrido cierra el `ejecutando` colgado; el rescate con motivo es del router."""
+    instante = datetime.datetime(2026, 10, 26, 12, 0, 0)
+    store = FakeVerificationJobStore(reloj=lambda: instante)
+    job = store.create_job(TENANT, FACTURA, VALOR)
+    assert store.reclamar_ejecucion(TENANT, job.job_id) is True
+
+    assert store.expire_stale_jobs(instante + datetime.timedelta(seconds=901)) == 1
+    colgado = store.get_job(TENANT, job.job_id)
+    assert colgado is not None
+    assert colgado.estado is EstadoJob.EXPIRADO
+    assert colgado.error_codigo is None
+
+
+def test_el_motivo_sin_nodo_es_el_mismo_del_plano_de_control() -> None:
+    """Un solo motivo para la misma situacion: no puede derivar entre modulos."""
+    from motoshop_api.erp.bankreconciliation.node_router import (
+        CODIGO_SIN_NODO as DEL_PLANO_DE_CONTROL,
+    )
+
+    assert CODIGO_SIN_NODO == DEL_PLANO_DE_CONTROL == "sin_nodo"

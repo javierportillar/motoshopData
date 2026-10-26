@@ -18,11 +18,17 @@ Los estados son los del contrato: `en_cola`, `ejecutando`, `esperando_otp`,
 `resuelto`, `sin_coincidencia`, `ambiguo`, `fallido`, `expirado`. Las
 transiciones las gobierna el worker (`worker.py`), no el store: el store sólo
 escribe el estado que le pidan.
+
+Dos relojes, como en el plano de control: `expira_en` es la **espera en cola**
+(`BANK_JOB_QUEUE_TTL`, 900 s) y vencer ahí es `expirado` con motivo `sin_nodo`,
+nunca `fallido`; el reloj de ejecución lo lleva `node_router` sobre
+`actualizado_en`. Un job no espera nodo los mismos 300 s que tarda un scrape.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import threading
 import uuid
 from collections.abc import Callable
@@ -34,12 +40,28 @@ from typing import Any, Protocol
 
 from motoshop_api.erp.bankreconciliation.store import NAMESPACE_DOMINIO
 
-#: Vida máxima del job (segundos). El diseño D2 da 120 s de scrape y 300 s
-#: esperando el código de un solo uso: 300 s es el techo.
-TTL_SEGUNDOS = 300
+#: Espera máxima en cola (segundos): el reloj con el que nace el job. Es el
+#: mismo valor que usa el plano de control (`node_router.QUEUE_TTL_SEGUNDOS`)
+#: para expirar la cola, y se puede mover por entorno (`BANK_JOB_QUEUE_TTL`).
+TTL_COLA_SEGUNDOS = 900
+
+#: Variable de entorno del reloj de cola (compartida con `node_router`).
+ENV_TTL_COLA = "BANK_JOB_QUEUE_TTL"
+
+#: Código estable del job que murió esperando nodo (nunca `fallido`).
+CODIGO_SIN_NODO = "sin_nodo"
 
 #: Dos decimales exactos (`DECIMAL(18,2)`).
 _PRECISION_VALOR = Decimal("0.01")
+
+
+def ttl_cola_segundos() -> int:
+    """Reloj de cola efectivo; si el entorno viene mal, el default (no rompe)."""
+    try:
+        valor = int(os.environ.get(ENV_TTL_COLA, "").strip() or TTL_COLA_SEGUNDOS)
+    except ValueError:
+        return TTL_COLA_SEGUNDOS
+    return valor if valor > 0 else TTL_COLA_SEGUNDOS
 
 
 class EstadoJob(StrEnum):
@@ -160,11 +182,13 @@ class FakeVerificationJobStore:
         self,
         *,
         reloj: Callable[[], datetime] | None = None,
-        ttl_segundos: int = TTL_SEGUNDOS,
+        ttl_segundos: int | None = None,
     ) -> None:
         self.jobs: dict[str, VerificationJob] = {}
         self._reloj = reloj or _ahora
-        self._ttl = ttl_segundos
+        # `None` lee el entorno al construir (no al importar): un cambio de
+        # `BANK_JOB_QUEUE_TTL` aplica al siguiente store, como en producción.
+        self._ttl = ttl_segundos if ttl_segundos is not None else ttl_cola_segundos()
         # El claim real es atómico en InnoDB (`_SQL_RECLAMAR`); el doble lo
         # reproduce con un lock para que dos hilos no ganen la misma fila.
         self._lock = threading.Lock()
@@ -260,14 +284,22 @@ class FakeVerificationJobStore:
             return True
 
     def expire_stale_jobs(self, now: datetime) -> int:
-        """Pasa a `expirado` los jobs vencidos que siguen en curso."""
+        """Pasa a `expirado` los jobs vencidos que siguen en curso.
+
+        Un `en_cola` vencido esperó nodo y nunca lo tuvo: el motivo estable es
+        `sin_nodo`. (`ejecutando` vencido lo rescata `node_router`; acá sólo se
+        cierra si nadie lo tocó, sin inventarle un motivo.)
+        """
         expirados = 0
         for id_dominio, job in list(self.jobs.items()):
             if job.estado in ESTADOS_TERMINALES:
                 continue
             if job.expira_en > now:
                 continue
-            self.jobs[id_dominio] = replace(job, estado=EstadoJob.EXPIRADO, actualizado_en=now)
+            motivo = CODIGO_SIN_NODO if job.estado is EstadoJob.EN_COLA else job.error_codigo
+            self.jobs[id_dominio] = replace(
+                job, estado=EstadoJob.EXPIRADO, actualizado_en=now, error_codigo=motivo
+            )
             expirados += 1
         return expirados
 
@@ -328,8 +360,14 @@ WHERE tenant = :tenant
       )
 """
 
+#: Barrido de vencidos. El **orden** del `SET` no es cosmético: MySQL evalúa
+#: las asignaciones de izquierda a derecha, así que `error_codigo` va primero y
+#: decide con el `estado` viejo. Al revés, cuando llega al `CASE` el estado ya
+#: es `expirado` y el motivo `sin_nodo` nunca se escribiría.
 _SQL_EXPIRAR = """UPDATE app_bank_verification_jobs
-SET estado = 'expirado', actualizado_en = :now
+SET error_codigo = CASE WHEN estado = 'en_cola' THEN 'sin_nodo' ELSE error_codigo END,
+    estado = 'expirado',
+    actualizado_en = :now
 WHERE estado NOT IN ('resuelto', 'sin_coincidencia', 'ambiguo', 'fallido', 'expirado')
   AND expira_en <= :now
 """
@@ -386,7 +424,7 @@ class RealVerificationJobStore:
             "error_codigo": None,
             "creado_en": ahora,
             "actualizado_en": ahora,
-            "expira_en": ahora + timedelta(seconds=TTL_SEGUNDOS),
+            "expira_en": ahora + timedelta(seconds=ttl_cola_segundos()),
             "now": ahora,
         }
         # El barrido de vencidos va primero: un job que murió sin cerrarse

@@ -37,6 +37,7 @@ from motoshop_api.erp.bankreconciliation.node_router import (
     configurar_modo_despacho,
     modo_despacho,
 )
+from motoshop_api.erp.bankreconciliation.jobs import RealVerificationJobStore
 
 # --- fixtures --------------------------------------------------------------
 
@@ -427,6 +428,38 @@ def test_sql_cola_vencida_es_expirado_sin_nodo(mysql) -> None:
     assert store.expirar_cola(ahora=ahora) == 1
     fila = _estado(mysql, job_id)
     assert fila["estado"] == "expirado" and fila["error_codigo"] == CODIGO_SIN_NODO
+
+
+@pytest.mark.integration
+def test_sql_el_barrido_de_jobs_escribe_sin_nodo_sobre_la_cola_vencida(mysql) -> None:
+    """El `SET` va ordenado: `error_codigo` tiene que ver el `estado` viejo.
+
+    MySQL 5.0 evalua las asignaciones del `UPDATE` de izquierda a derecha. Con
+    `estado = 'expirado'` primero, el `CASE` ve `expirado` y el motivo se
+    pierde en silencio (la fila queda expirada sin decir por que).
+    """
+    store = RealVerificationJobStore(mysql)
+    ahora = datetime(2026, 10, 23, 12, 0, 0)
+    vencido = _crear_job(
+        mysql,
+        "t-queue-a",
+        estado="en_cola",
+        creado=ahora - timedelta(seconds=901),
+        expira=ahora - timedelta(seconds=1),
+    )
+    viva = _crear_job(
+        mysql,
+        "t-queue-a",
+        estado="en_cola",
+        creado=ahora,
+        expira=ahora + timedelta(seconds=900),
+    )
+
+    assert store.expire_stale_jobs(ahora) >= 1
+
+    assert _estado(mysql, vencido)["estado"] == "expirado"
+    assert _estado(mysql, vencido)["error_codigo"] == CODIGO_SIN_NODO
+    assert _estado(mysql, viva)["estado"] == "en_cola"
 
 
 @pytest.mark.integration
