@@ -570,8 +570,12 @@ Si el primario vuelve, no hace falta tocar nada: el failover deja de usarse solo
 2. **Cuenta bancaria de motoshop enrolada en la PC de MasVital.** Un fallback sólo sirve si ese
    nodo tiene la sesión y el vault del tenant: hoy MasVital responde `/health`, pero no tiene la
    cuenta de motoshop, así que si esta PC se apaga el POS queda sin verificación.
-3. **Lock por cuenta.** Ya está (`app_bank_account_locks`): dos nodos no barren la misma cuenta a
-   la vez. Es la pieza que evita el duplicado cuando hay más de un nodo con la misma sesión.
+3. **Lock por cuenta.** El código está (`node_router.py` usa `app_bank_account_locks`, PK `tenant`),
+   pero la tabla **no existe hoy** en `motoshop2024`: lo verifiqué el 2026-10-26 y el esquema sólo
+   tiene `app_bank_movements` y `app_bank_verification_jobs`. El DDL del plano de control nunca se
+   aplicó porque la cola está apagada. Hoy no hay riesgo porque un solo nodo tiene la sesión del
+   banco de motoshop; **antes** de darle la cuenta al nodo de MasVital hay que crear
+   `app_bank_account_locks` y `app_bank_nodes`, o los dos nodos van a barrer la misma cuenta.
 
 ### 9.4 MySQL 3306 abierto: es a propósito
 
