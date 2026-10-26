@@ -512,9 +512,16 @@ motoshop2024;
 MySQL ODBC 5.1 Driver;
 ```
 
-- El campo 1 es la IP **pública** del enlace, no `localhost`: así vino de fábrica (entra por NAT
-  loopback). La IP pública de esta PC hoy es `179.1.137.130`; si el ERP deja de conectar y el archivo
-  dice `26.47.101.42`, ese es el primer sospechoso.
+- El campo 1 (`26.47.101.42`) **no es la IP pública**: es la dirección de la placa **Radmin VPN** de
+  esta misma PC (`Get-NetIPAddress` → `InterfaceAlias "Radmin VPN"`, `PrefixOrigin Manual`). El ERP se
+  conecta a sí mismo por esa placa: `SHOW PROCESSLIST` lo muestra como `root@SERVER` y `tracert`
+  resuelve en **un salto**. La IP pública real (salida a internet) es `179.1.137.130` y no tiene el
+  3306 publicado: no participa.
+- Por eso el ERP **depende de `root@%`**: no existe `root@26.47.101.42`, así que la conexión matchea
+  el comodín. Dropear `root@%` no rompe sólo a los devs: rompe el ERP en el próximo arranque. Es la
+  razón de fondo por la que la etapa de bind + `DROP root@%` está cancelada (8.3).
+- Verificado el 2026-10-26: `Test-NetConnection 26.47.101.42 -Port 3306` → `TcpTestSucceeded =
+  True`; `Test-NetConnection 179.1.137.130 -Port 3306` → `False`.
 - El campo 3 vacío es la clave de `root`. Una línea en blanco en ese lugar desplaza todos los campos.
 - No se reinició SgHermes (orden del operador). Si el ERP toma la conexión en el arranque, el archivo
   aplica en el próximo inicio; el proceso en curso sigue con lo que tenga en memoria.
@@ -588,4 +595,5 @@ entra como `root` y la API con `app_writer`). Si algún día hace falta, se crea
 `%`. Ver 8.4 para el `servidor.txt` del ERP, que también quedó como estaba.
 
 Consecuencia asumida: el puerto queda expuesto. El riesgo se mitiga con cuentas por IP y con el
-hecho de que `root` remoto es de los devs de Hermes, no del portal.
+hecho de que `root` remoto no es sólo de los devs: el ERP de esta PC también entra como `root@%`, por
+su propia placa Radmin (8.4). El portal, en cambio, nunca usa `root`: usa `app_writer`.
