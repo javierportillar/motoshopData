@@ -4,7 +4,9 @@
   y reporta por el bus aunque el agente de desarrollo este muerto.
 
   Que hace en cada vuelta:
-    1. git pull --rebase de la rama de trabajo (aborta y reporta si hay conflicto).
+    1. git fetch y merge --ff-only de la rama actual. Si divergen, reporta y no toca nada.
+       Rebase SOLO en el worktree del bus (bus/banco-handoff); nunca en main ni en la
+       rama de trabajo, nunca force-push.
     2. Si hay cambios sin commitear: corre la suite bancaria. Verde -> commit wip + push.
        Rojo -> NO commitea, deja el arbol como esta y lo reporta.
     3. /health de la API. Si no responde, la levanta con infra\start_api.ps1.
@@ -137,11 +139,21 @@ while ($true) {
   Log "TRACE_A ciclo";
   $sha = ""; $limpio = $true; $api = $false; $suite = ""; $conflicto = $false
 
-  $pull = Git $Repo @("pull", "--rebase", "--quiet", $Remoto, $Brama)
+  # Sincronizar SIN reescribir historia. El rebase automatico aplano un merge
+  # --no-ff (2026-10-26). Sobre main y sobre la rama de trabajo solo se acepta
+  # fast-forward: si divergen, se reporta y no se toca nada. El rebase queda
+  # exclusivamente para el worktree del bus, que es de un solo sentido.
+  $ramaActual = (Git $Repo @("rev-parse", "--abbrev-ref", "HEAD")).out.Trim()
+  if ([string]::IsNullOrWhiteSpace($ramaActual) -or $ramaActual -eq "HEAD") { $ramaActual = $Brama }
+  Git $Repo @("fetch", $Remoto, "--quiet") | Out-Null
+  if ($ramaActual -eq $BramaBus) {
+    $pull = Git $Repo @("pull", "--rebase", "--quiet", $Remoto, $ramaActual)
+  } else {
+    $pull = Git $Repo @("merge", "--ff-only", "--quiet", "$Remoto/$ramaActual")
+  }
   if ($pull.code -ne 0) {
-    Git $Repo @("rebase", "--abort") | Out-Null
     $conflicto = $true
-    Log "pull con conflicto: $($pull.out)"
+    Log "sin fast-forward en ${ramaActual}: no se rebasea ni se fuerza ($($pull.out))"
   }
 
   Log "TRACE_B pull code=$($pull.code)";
@@ -156,10 +168,9 @@ while ($true) {
     if ($codigo -eq 0) {
       Git $Repo @("add", "-A") | Out-Null
       Git $Repo @("commit", "-m", "wip(banco): rescate de cambios sin commitear (guardian)") | Out-Null
-      $push = Git $Repo @("push", $Remoto, $Brama)
+      $push = Git $Repo @("push", $Remoto, $ramaActual)
       if ($push.code -ne 0) {
-        Git $Repo @("pull", "--rebase", "--quiet", $Remoto, $Brama) | Out-Null
-        $push = Git $Repo @("push", $Remoto, $Brama)
+        Log "push rechazado en ${ramaActual}: sin rebase ni force, el commit queda local"
       }
       Log "cambios sin commitear: suite verde, commit wip y push (code=$($push.code))"
       $limpio = $true
