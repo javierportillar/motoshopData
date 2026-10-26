@@ -1,0 +1,9 @@
+﻿
+Name    Enabled DefaultInboundAction DefaultOutboundAction
+----    ------- -------------------- ---------------------
+Domain     True        NotConfigured         NotConfigured
+Private   False        NotConfigured         NotConfigured
+Public    False        NotConfigured         NotConfigured
+
+
+
