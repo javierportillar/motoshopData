@@ -184,9 +184,15 @@ Bus: worktree propio, push con `HEAD:refs/heads/bus/banco-handoff`.
 - **Semantica del barrido**: en modo local la cola **no** se expira (`expirar_cola()` solo corre con
   despacho en cola); lo que corre siempre es el rescate de `ejecutando` vencidos. El TTL de 900 s se
   ejerce cuando el nodo se enciende en cola.
-- **Failover preparado, sin encender**: el nodo declara los dos tenants en el heartbeat, el perfil
-  del segundo negocio existe vacio, y pedir ese tenant devuelve 503 `tenant_no_servido` (nunca 500).
-  El despacho sigue en `local`. Falta solo el enrolamiento de la cuenta del banco por el operador.
+- **Failover preparado, sin encender**: el nodo declaraba los dos tenants en el heartbeat; despues
+  se corrigio a **solo `masvital`** (ver "BANK_NODE_TENANTS" mas abajo), porque este equipo no tiene
+  la base del otro negocio. El perfil del segundo negocio existe vacio, y pedir ese tenant devuelve
+  503 `tenant_no_servido` (nunca 500). El despacho sigue en `local`.
+- **BANK_NODE_TENANTS=masvital** (26/10, cierre): sacar `motoshop` no es cosmetico. El MySQL local
+  solo tiene la base `masvital`; `motoshop2024` vive en el MySQL del equipo de MotoShop. Declarar
+  motoshop aca anunciaba una capacidad que no se puede honrar: el worker habria leido `masvital` y
+  cruzado negocios. El 503 `tenant_no_servido` se mantiene y esta verificado tras el cambio.
+  `root` sin contrasena queda como deuda de seguridad aceptada por el operador.
 - **Afinamiento**: la API sirve un tenant por proceso. El failover es levantar el nodo con el tenant
   del otro negocio, no servir las dos cuentas desde el mismo proceso.
 ## MySQL: cuenta dedicada del ERP en localhost (26/10, tarde)
