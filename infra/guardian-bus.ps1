@@ -227,6 +227,52 @@ while ($true) {
     }
   }
 
+  $tareaDeploy = "MotoShopBackendSvc"
+
+  # Deploy automatico: si el merge trajo un commit nuevo y la API esta sana, se
+  # reinicia para que el proceso corra el codigo que hay en disco (MotoShop
+  # tenia AutoPull deshabilitada y el guardian solo reiniciaba si la API estaba
+  # caida: el codigo podia quedar en disco sin correr).
+  try {
+    if ($pull.code -eq 0 -and -not $conflicto -and $api) {
+      $shaAhora = (Git $Repo @("rev-parse", "--short", "HEAD")).out.Trim()
+      $dirSha = Join-Path $Repo "infra\logs"
+      if (-not (Test-Path $dirSha)) { New-Item -ItemType Directory -Path $dirSha -Force | Out-Null }
+      $archivoSha = Join-Path $dirSha "deployed_sha.txt"
+      $shaDesplegado = ""
+      if (Test-Path $archivoSha) {
+        $shaDesplegado = Get-Content $archivoSha -Raw
+        if ($null -eq $shaDesplegado) { $shaDesplegado = "" } else { $shaDesplegado = $shaDesplegado.Trim() }
+      }
+      if ($shaAhora -and $shaAhora -ne $shaDesplegado) {
+        if ([string]::IsNullOrWhiteSpace($shaDesplegado)) {
+          Set-Content -Path $archivoSha -Value $shaAhora -NoNewline
+          Log "deploy: linea base $shaAhora (sin reinicio)"
+        } else {
+          Log "deploy: HEAD $shaDesplegado -> $shaAhora, reiniciando la API"
+          schtasks /End /TN $tareaDeploy | Out-Null
+          Start-Sleep -Seconds 3
+          schtasks /Run /TN $tareaDeploy | Out-Null
+          $limiteDeploy = (Get-Date).AddSeconds(150)
+          $volvio = $false
+          while ((Get-Date) -lt $limiteDeploy) {
+            Start-Sleep -Seconds 5
+            if (Estado-Api) { $volvio = $true; break }
+          }
+          if ($volvio) {
+            Set-Content -Path $archivoSha -Value $shaAhora -NoNewline
+            Log "deploy: API arriba con $shaAhora"
+          } else {
+            Log "deploy: la API no volvio tras reiniciar a $shaAhora (se reintenta)"
+          }
+          $api = $volvio
+        }
+      }
+    }
+  } catch {
+    Log "deploy: error al reiniciar ($($_.Exception.Message))"
+  }
+
   Log "TRACE_E presha";
   $sha = (Git $Repo @("rev-parse", "--short", "HEAD")).out.Trim()
   $ultimo = (Git $Repo @("log", "-1", "--format=%h %s")).out.Trim()

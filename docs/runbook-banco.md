@@ -597,3 +597,27 @@ entra como `root` y la API con `app_writer`). Si algún día hace falta, se crea
 Consecuencia asumida: el puerto queda expuesto. El riesgo se mitiga con cuentas por IP y con el
 hecho de que `root` remoto no es sólo de los devs: el ERP de esta PC también entra como `root@%`, por
 su propia placa Radmin (8.4). El portal, en cambio, nunca usa `root`: usa `app_writer`.
+
+### 9.5 Deploy automático de la API (2026-10-27)
+
+Los dos guardianes (`infra/guardian-bus.ps1` en MotoShop, `infra/guardian-bus-masvital.ps1` en
+MasVital) hacen `pull` de la rama cada 5 minutos, pero **no reiniciaban la API**: el código nuevo
+quedaba en disco y el proceso seguía con el commit viejo (pasó el 27/10: 25 minutos con `ed6a4c6`
+en disco y un uvicorn de las 08:27 corriendo). `MotoShop_AutoPull`, que sí reiniciaba, está
+deshabilitada.
+
+Ahora, después del pull, el guardián compara el `HEAD` con `infra/logs/deployed_sha.txt`
+(gitignoreado) y, si cambió **y la API responde `/health`**, reinicia la tarea del backend, espera
+hasta 150 s a que vuelva y recién entonces escribe el sha. Si no vuelve, no lo escribe: el ciclo
+siguiente reintenta. Todo el bloque va en `try/catch` para que un fallo del reinicio no mate al
+guardián.
+
+Consecuencias operativas:
+
+- **Primera corrida**: escribe la línea base sin reiniciar. El primer deploy real es el siguiente
+  commit que llegue a la rama.
+- **Reiniciar el guardián una vez** después de este cambio: es un proceso de larga vida y no recarga
+  su propio script. `Get-ScheduledTask | Where-Object { $_.TaskName -like "*guardian*" }`.
+- Un deploy corta la API ~20 s y **mata el job de verificación que esté corriendo** (el operador ve
+  `fallido` y puede reintentar). Los commits que tocan el banco conviene pushearlos fuera del
+  horario de caja.

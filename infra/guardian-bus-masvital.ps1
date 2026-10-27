@@ -145,6 +145,54 @@ while ($true) {
     $api = Estado-Api
   }
 
+
+  # Deploy automatico: si el pull trajo un commit nuevo y la API esta sana, se
+  # reinicia para que el proceso corra el codigo que hay en disco. Antes el
+  # guardian bajaba el codigo y la API seguia con el commit viejo hasta el
+  # proximo reinicio (paso el 27/10: 25 min con ed6a4c6 en disco y el proceso
+  # de las 08:27).
+  try {
+    if (-not $conflicto -and $api) {
+      $shaAhora = (& git -C $Repo rev-parse --short HEAD).Trim()
+      $dirSha = Join-Path $Repo "infra\logs"
+      if (-not (Test-Path $dirSha)) { New-Item -ItemType Directory -Path $dirSha -Force | Out-Null }
+      $archivoSha = Join-Path $dirSha "deployed_sha.txt"
+      $shaDesplegado = ""
+      if (Test-Path $archivoSha) {
+        $shaDesplegado = Get-Content $archivoSha -Raw
+        if ($null -eq $shaDesplegado) { $shaDesplegado = "" } else { $shaDesplegado = $shaDesplegado.Trim() }
+      }
+      if ($shaAhora -and $shaAhora -ne $shaDesplegado) {
+        if ([string]::IsNullOrWhiteSpace($shaDesplegado)) {
+          # Primera corrida con este control: linea base, sin reiniciar.
+          Set-Content -Path $archivoSha -Value $shaAhora -NoNewline
+          Log "deploy: linea base $shaAhora (sin reinicio)"
+        } else {
+          Log "deploy: HEAD $shaDesplegado -> $shaAhora, reiniciando la API"
+          & schtasks /End /TN $TareaApi | Out-Null
+          Start-Sleep -Seconds 3
+          & schtasks /Run /TN $TareaApi | Out-Null
+          $limiteDeploy = (Get-Date).AddSeconds(150)
+          $volvio = $false
+          while ((Get-Date) -lt $limiteDeploy) {
+            Start-Sleep -Seconds 5
+            if (Estado-Api) { $volvio = $true; break }
+          }
+          if ($volvio) {
+            Set-Content -Path $archivoSha -Value $shaAhora -NoNewline
+            Log "deploy: API arriba con $shaAhora"
+          } else {
+            # No se escribe el sha: el proximo ciclo vuelve a intentar.
+            Log "deploy: la API no volvio tras reiniciar a $shaAhora (se reintenta)"
+          }
+          $api = $volvio
+        }
+      }
+    }
+  } catch {
+    Log "deploy: error al reiniciar ($($_.Exception.Message))"
+  }
+
   $sha = (& git -C $Repo rev-parse --short HEAD).Trim()
   $ultimo = (& git -C $Repo log -1 --format="%h %s").Trim()
   $silencio = Minutos-Sin-Dev
