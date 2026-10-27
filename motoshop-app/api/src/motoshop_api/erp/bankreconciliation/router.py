@@ -143,6 +143,24 @@ class VerificacionCreate(BaseModel):
         return datos or None
 
 
+class VerificacionVentaCreate(BaseModel):
+    """Resultado de una verificación para estamparlo sobre una venta.
+
+    El front manda lo que el job ya devolvió (no vuelve a consultar el banco).
+    ``estado`` es el del job: `verificado` sólo cuando hay candidato único.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    fecha_venta: datetime.date
+    valor: BankMoney
+    estado: Literal["verificado", "sin_coincidencia", "ambiguo"]
+    job_id: str | None = Field(default=None, max_length=64)
+    pagador: str | None = Field(default=None, max_length=160)
+    referencia: str | None = Field(default=None, max_length=64)
+    fecha_movimiento: datetime.date | None = None
+
+
 def get_node_config() -> NodeConfig | None:
     """Configuración del nodo (del entorno). `None` si no se puede leer.
 
@@ -557,3 +575,78 @@ def aplicar_movimiento(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"error_codigo": exc.codigo, "message": str(exc)},
         ) from exc
+
+
+# ── Verificaciones de venta en Supabase ───────────────────────────────────
+
+
+@router.get("/bank/ventas-verificadas")
+def listar_ventas_verificadas(
+    fecha: datetime.date = Query(...),
+    tenant: Tenant = Depends(require_erp_tenant),
+) -> dict:
+    """Verificaciones ya estampadas de ese día (una consulta por pantalla).
+
+    Vive en Supabase, no en el MySQL del nodo: el dato se comparte entre
+    dispositivos. Si este proceso no tiene credenciales de Supabase, responde
+    **200 con la lista vacía** (`supabase: false`): la pantalla de ventas no se
+    rompe por una función de sólo lectura.
+    """
+    from motoshop_api.erp.bankreconciliation import verificaciones_venta as repo
+
+    if not repo.configurado():
+        return {"fecha": fecha.isoformat(), "supabase": False, "items": []}
+    try:
+        items = repo.listar(tenant.id, fecha.isoformat())
+    except repo.VerificacionVentaError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_codigo": "supabase_no_disponible",
+                "message": "No se pudieron leer las verificaciones guardadas.",
+            },
+        ) from None
+    return {"fecha": fecha.isoformat(), "supabase": True, "items": items}
+
+
+@router.post("/bank/ventas/{cod_clase}/{num_documento}/verificacion")
+def guardar_verificacion_venta(
+    cod_clase: str,
+    num_documento: str,
+    body: VerificacionVentaCreate,
+    tenant: Tenant = Depends(require_erp_tenant),
+    user: User = Depends(require_erp_collections_write),
+) -> dict:
+    """Estampa el resultado de un job sobre una venta (upsert por documento).
+
+    Es el único dato de esta feature que no vive en el nodo. Sin Supabase
+    configurado responde **200 con `guardado: false`**: el operador no tiene que
+    ver un error por algo que sólo agrega comodidad.
+    """
+    from motoshop_api.erp.bankreconciliation import verificaciones_venta as repo
+
+    try:
+        guardado = repo.guardar(
+            tenant=tenant.id,
+            cod_clase=cod_clase,
+            num_documento=num_documento,
+            fecha_venta=body.fecha_venta.isoformat(),
+            valor=body.valor,
+            estado=body.estado,
+            verificado_por=user.username,
+            job_id=body.job_id,
+            pagador=body.pagador,
+            referencia=body.referencia,
+            fecha_movimiento=body.fecha_movimiento.isoformat()
+            if body.fecha_movimiento
+            else None,
+        )
+    except repo.VerificacionVentaError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_codigo": "supabase_no_disponible",
+                "message": "No se pudo guardar la verificación.",
+            },
+        ) from None
+    return {"guardado": guardado}
