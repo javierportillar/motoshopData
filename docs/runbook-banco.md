@@ -616,6 +616,10 @@ Consecuencias operativas:
 
 - **Primera corrida**: escribe la línea base sin reiniciar. El primer deploy real es el siguiente
   commit que llegue a la rama.
+- **Dónde queda el rastro**: el estado en `infra/logs/deployed_sha.txt`, y el log del guardián en
+  `%TEMP%\guardian-banco.log` (MotoShop) — no en `infra/logs/`, como decía este runbook antes del
+  2026-10-27. El comando que dispara el lazo es `wscript.exe //B //Nologo infra\guardian-bus.vbs`
+  con workdir `infra\`.
 - **Reiniciar el guardián una vez** después de este cambio: es un proceso de larga vida y no recarga
   su propio script. `Get-ScheduledTask | Where-Object { $_.TaskName -like "*guardian*" }`.
 - Un deploy corta la API ~20 s y **mata el job de verificación que esté corriendo** (el operador ve
