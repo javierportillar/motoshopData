@@ -33,7 +33,7 @@ import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 from typing import Any, Protocol
@@ -130,6 +130,7 @@ class VerificationJobStore(Protocol):
         valor: Decimal,
         *,
         solicitud: dict[str, Any] | None = None,
+        fecha: date | None = None,
     ) -> VerificationJob: ...
 
     def get_job(self, tenant: str, job_id: str) -> VerificationJob | None: ...
@@ -151,13 +152,26 @@ class VerificationJobStore(Protocol):
     ) -> bool: ...
 
 
-def id_dominio_job(tenant: str, factura_id: str, valor: Decimal) -> str:
+def id_dominio_job(
+    tenant: str,
+    factura_id: str,
+    valor: Decimal,
+    fecha: date | None = None,
+) -> str:
     """Identificador de dominio del job: `uuid5` de `tenant:factura_id:valor`.
 
     Es estable entre procesos y distinto entre tenants: el mismo job se
     reconoce sin guardar nada más.
+
+    `fecha` entra en la semilla **sólo cuando viene**: verificar el mismo
+    importe para el día de hoy y para el día de ayer son dos jobs distintos
+    (dos ventanas distintas), y no pueden colisionar por idempotencia. Sin
+    `fecha` la semilla es la histórica, así que los ids ya emitidos no cambian.
     """
-    return str(uuid.uuid5(NAMESPACE_DOMINIO, f"{tenant}:{factura_id}:{valor}"))
+    semilla = f"{tenant}:{factura_id}:{valor}"
+    if fecha is not None:
+        semilla = f"{semilla}:{fecha.isoformat()}"
+    return str(uuid.uuid5(NAMESPACE_DOMINIO, semilla))
 
 
 def _valor_normalizado(valor: Decimal) -> Decimal:
@@ -200,9 +214,10 @@ class FakeVerificationJobStore:
         valor: Decimal,
         *,
         solicitud: dict[str, Any] | None = None,
+        fecha: date | None = None,
     ) -> VerificationJob:
         importe = _valor_normalizado(valor)
-        id_dominio = id_dominio_job(tenant, factura_id, importe)
+        id_dominio = id_dominio_job(tenant, factura_id, importe, fecha)
         ahora = self._reloj()
         # Espejo del store real: primero el barrido de vencidos, después el
         # revival. Un `en_cola` vencido queda `expirado` y abajo se revive con
@@ -403,11 +418,12 @@ class RealVerificationJobStore:
         valor: Decimal,
         *,
         solicitud: dict[str, Any] | None = None,
+        fecha: date | None = None,
     ) -> VerificationJob:
         from sqlalchemy import text
 
         importe = _valor_normalizado(valor)
-        id_dominio = id_dominio_job(tenant, factura_id, importe)
+        id_dominio = id_dominio_job(tenant, factura_id, importe, fecha)
         ahora = _ahora()
         params = {
             "id": id_dominio,

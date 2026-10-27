@@ -39,7 +39,7 @@ from decimal import Decimal
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from motoshop_api.auth.users import User
 from motoshop_api.erp.bankreconciliation.jobs import (
@@ -83,6 +83,12 @@ class VerificacionCreate(BaseModel):
       (el modal de cobro se abre ANTES de crear la venta). Manda el importe y,
       si los tiene, el NIT y el nombre del cliente.
 
+    ``fecha`` (opcional, ``AAAA-MM-DD``) mueve la ventana de un solo job: sin
+    ella se consulta el día en curso (comportamiento histórico). Sirve para
+    verificar un pago que entró ayer cuando la venta se está cerrando hoy. El
+    portal del banco publica pocos días hacia atrás: una fecha que el portal ya
+    no muestra vuelve ``sin_coincidencia``, no un error.
+
     ``extra="forbid"``: un campo desconocido es un error del cliente, no algo
     que se ignore en silencio.
     """
@@ -94,6 +100,15 @@ class VerificacionCreate(BaseModel):
     valor: BankMoney
     nitter: str | None = Field(default=None, min_length=1, max_length=32)
     nombre_esperado: str | None = Field(default=None, min_length=2, max_length=120)
+    fecha: datetime.date | None = None
+
+    @field_validator("fecha")
+    @classmethod
+    def _fecha_no_futura(cls, valor: datetime.date | None) -> datetime.date | None:
+        """Una fecha futura no tiene movimientos: es un error del cliente."""
+        if valor is not None and valor > datetime.date.today():
+            raise ValueError("'fecha' no puede ser futura")
+        return valor
 
     @model_validator(mode="after")
     def _normalizar_modo(self) -> VerificacionCreate:
@@ -115,15 +130,17 @@ class VerificacionCreate(BaseModel):
 
     @property
     def solicitud(self) -> dict[str, str] | None:
-        """Lo que el worker necesita para armar el resultado (modo pago)."""
-        if self.modo != "pago":
-            return None
-        datos = {"modo": "pago"}
-        if self.nitter:
-            datos["nitter"] = self.nitter.strip()
-        if self.nombre_esperado:
-            datos["nombre_esperado"] = self.nombre_esperado.strip()
-        return datos
+        """Lo que el worker necesita para armar el resultado y la ventana."""
+        datos: dict[str, str] = {}
+        if self.modo == "pago":
+            datos["modo"] = "pago"
+            if self.nitter:
+                datos["nitter"] = self.nitter.strip()
+            if self.nombre_esperado:
+                datos["nombre_esperado"] = self.nombre_esperado.strip()
+        if self.fecha is not None:
+            datos["fecha"] = self.fecha.isoformat()
+        return datos or None
 
 
 def get_node_config() -> NodeConfig | None:
@@ -218,6 +235,7 @@ def crear_verificacion(
         body.factura_id or "",
         body.valor,
         solicitud=body.solicitud,
+        fecha=body.fecha,
     )
     despachar(job)
     return {

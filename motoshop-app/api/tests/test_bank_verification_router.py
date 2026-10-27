@@ -17,6 +17,7 @@ rol de cobranzas); sólo el store de jobs y el nodo son dobles.
 
 from __future__ import annotations
 
+import datetime
 import uuid
 from decimal import Decimal
 from pathlib import Path
@@ -416,3 +417,93 @@ def test_post_rechaza_combinaciones_incoherentes(tmp_path: Path, cuerpo: dict) -
 
     assert response.status_code == 422, response.text
     assert jobs.jobs == {}
+
+
+# ── Ventana por job: verificar el pago de ayer ────────────────────────────
+#
+# El portal del banco publica los movimientos de varios días, pero la ventana
+# del nodo es el día en curso. `fecha` mueve la ventana de UN job para poder
+# cerrar hoy una venta de ayer.
+
+
+def test_post_verificaciones_con_fecha_de_ayer_la_guarda_en_la_solicitud(
+    tmp_path: Path,
+) -> None:
+    """`fecha` viaja al job: es lo que el worker usa para mover la ventana."""
+    jobs = FakeVerificationJobStore()
+    client = _cliente(tmp_path, jobs=jobs, config=_config_nodo(tmp_path))
+    ayer = datetime.date.today() - datetime.timedelta(days=1)
+
+    response = client.post(
+        "/api/erp/bank/verificaciones",
+        json={"modo": "pago", "valor": "30000.00", "fecha": ayer.isoformat()},
+        headers=_headers("ger10", "gerente", ("erp-cash",)),
+    )
+
+    assert response.status_code == 202, response.text
+    guardado = jobs.get_job(TENANT_ID, response.json()["job_id"])
+    assert guardado is not None
+    assert guardado.solicitud == {"modo": "pago", "fecha": ayer.isoformat()}
+
+
+def test_post_verificaciones_sin_fecha_no_cambia_el_contrato(tmp_path: Path) -> None:
+    """Sin `fecha` la solicitud es la histórica: el día en curso sigue igual."""
+    jobs = FakeVerificationJobStore()
+    client = _cliente(tmp_path, jobs=jobs, config=_config_nodo(tmp_path))
+
+    response = client.post(
+        "/api/erp/bank/verificaciones",
+        json={"modo": "pago", "valor": "30000.00"},
+        headers=_headers("ger11", "gerente", ("erp-cash",)),
+    )
+
+    assert response.status_code == 202, response.text
+    guardado = jobs.get_job(TENANT_ID, response.json()["job_id"])
+    assert guardado is not None
+    assert guardado.solicitud == {"modo": "pago"}
+
+
+def test_post_verificaciones_rechaza_fecha_futura(tmp_path: Path) -> None:
+    """Una fecha futura no tiene movimientos: 422 y ningún job creado."""
+    jobs = FakeVerificationJobStore()
+    client = _cliente(tmp_path, jobs=jobs, config=_config_nodo(tmp_path))
+    manana = datetime.date.today() + datetime.timedelta(days=1)
+
+    response = client.post(
+        "/api/erp/bank/verificaciones",
+        json={"modo": "pago", "valor": "30000.00", "fecha": manana.isoformat()},
+        headers=_headers("ger12", "gerente", ("erp-cash",)),
+    )
+
+    assert response.status_code == 422, response.text
+    assert jobs.jobs == {}
+
+
+def test_post_verificaciones_mismo_valor_en_dos_dias_son_dos_jobs(
+    tmp_path: Path,
+) -> None:
+    """La idempotencia es por importe Y día: el de ayer no tapa al de hoy."""
+    jobs = FakeVerificationJobStore()
+    despachados: list = []
+    client = _cliente(
+        tmp_path, jobs=jobs, config=_config_nodo(tmp_path), despachados=despachados
+    )
+    ayer = datetime.date.today() - datetime.timedelta(days=1)
+    headers = _headers("ger13", "gerente", ("erp-cash",))
+
+    hoy_job = client.post(
+        "/api/erp/bank/verificaciones",
+        json={"modo": "pago", "valor": "30000.00"},
+        headers=headers,
+    )
+    ayer_job = client.post(
+        "/api/erp/bank/verificaciones",
+        json={"modo": "pago", "valor": "30000.00", "fecha": ayer.isoformat()},
+        headers=headers,
+    )
+
+    assert hoy_job.status_code == 202, hoy_job.text
+    assert ayer_job.status_code == 202, ayer_job.text
+    assert hoy_job.json()["job_id"] != ayer_job.json()["job_id"]
+    assert len(jobs.jobs) == 2
+    assert len(despachados) == 2

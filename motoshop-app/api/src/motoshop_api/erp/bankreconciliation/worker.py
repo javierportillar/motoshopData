@@ -18,6 +18,7 @@ el código estable del fallo, nunca el mensaje crudo del portal).
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import logging
 import os
@@ -34,6 +35,8 @@ from motoshop_api.erp.bankreconciliation.jobs import (
 from motoshop_api.erp.bankreconciliation.matching import normalizar_nombre
 from motoshop_api.erp.bankreconciliation.node_config import (
     CODIGO_PORTAL_NO_DISPONIBLE,
+    FIN_DEL_DIA,
+    INICIO_DEL_DIA,
     NodeConfig,
 )
 from motoshop_api.erp.bankreconciliation.schemas import BankMovementIn
@@ -341,11 +344,12 @@ class BankVerificationWorker:
         asi que se reintenta una vez: el operador no tiene que volver a
         apretar el boton. El reintento respeta el turno de sesion del nodo.
         """
+        config = self._config_de(job)
         intento = 0
         while True:
             intento += 1
             try:
-                return self._scraper.scrape(self._config)
+                return self._scraper.scrape(config)
             except BankScrapeError as exc:
                 reintentable = (
                     exc.codigo == CODIGO_PORTAL_NO_DISPONIBLE
@@ -362,6 +366,34 @@ class BankVerificationWorker:
                     ESPERA_REINTENTO_SEG,
                 )
                 self._esperar(ESPERA_REINTENTO_SEG)
+
+    def _config_de(self, job: VerificationJob) -> NodeConfig:
+        """Configuración del nodo con la ventana del job, si el job pide una.
+
+        Sin `fecha` en la solicitud se usa la ventana del nodo (el día en
+        curso): el comportamiento histórico no cambia. Con `fecha` la ventana
+        pasa a ser ese día completo **para este job**, sin tocar la config del
+        proceso ni la de los demás jobs: dos verificaciones simultáneas de días
+        distintos no se pisan.
+
+        Una `fecha` ilegible no tumba el job: se cae a la ventana del nodo, que
+        es lo que el operador hubiera obtenido sin pedir nada.
+        """
+        bruto = (job.solicitud or {}).get("fecha")
+        if not bruto:
+            return self._config
+        try:
+            dia = datetime.date.fromisoformat(str(bruto))
+        except ValueError:
+            self._log.warning(
+                "Fecha de ventana ilegible en el job %s: se usa la del nodo", job.job_id
+            )
+            return self._config
+        return dataclasses.replace(
+            self._config,
+            window_start=datetime.datetime.combine(dia, INICIO_DEL_DIA),
+            window_end=datetime.datetime.combine(dia, FIN_DEL_DIA),
+        )
 
     def _hay_tiempo_para_reintentar(self, job: VerificationJob) -> bool:
         """True si el job sigue vivo despues de esperar el turno de sesion."""

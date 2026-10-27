@@ -823,3 +823,140 @@ def test_el_nit_real_si_se_muestra(tmp_path: Path) -> None:
     guardado = jobs.get_job("masvital", job.job_id)
     assert guardado is not None
     assert (guardado.resultado or {})["candidato"]["nitter"] == "901234567"
+
+
+# ── Ventana por job: verificar el pago de ayer ────────────────────────────
+
+
+class _ScraperQueRegistra:
+    """Scraper que anota la configuración recibida y devuelve su ventana.
+
+    Reproduce lo que hace el scraper real: la ventana del `ScrapeResult` es la
+    de la configuración con la que se raspó, no otra.
+    """
+
+    def __init__(self, movimiento: ScrapedMovement) -> None:
+        self.configs: list[NodeConfig] = []
+        self._movimiento = movimiento
+
+    def scrape(self, config: NodeConfig) -> ScrapeResult:
+        self.configs.append(config)
+        return ScrapeResult(
+            tenant=config.tenant,
+            cuenta=ETIQUETA_TENANT,
+            ventana=(config.window_start, config.window_end),
+            paginas=1,
+            movimientos=(self._movimiento,),
+            leido_en=datetime.datetime(2026, 10, 22, 9, 0, 0),
+        )
+
+
+def test_worker_usa_la_ventana_del_dia_pedido_y_no_la_del_nodo(tmp_path: Path) -> None:
+    """Un job con `fecha` raspa ESE día completo; los demás siguen en el nodo."""
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    config = _config(tmp_path)
+    dia = datetime.date(2026, 10, 20)
+    scraper = _ScraperQueRegistra(
+        ScrapedMovement(
+            id_externo="mov-ayer",
+            fecha=dia,
+            descripcion="PAGO QR TEST",
+            referencia="0092055984",
+            referencia_utilizable=True,
+            pagador_nombre="TEST",
+            valor=VALOR,
+            direccion=MovementDirection.INGRESO,
+            es_candidato_pago=True,
+            pagina=1,
+            cuenta_origen=ETIQUETA_TENANT,
+        )
+    )
+    job = jobs.create_job(
+        config.tenant,
+        "",
+        VALOR,
+        solicitud={"modo": "pago", "fecha": dia.isoformat()},
+        fecha=dia,
+    )
+    worker = BankVerificationWorker(
+        jobs=jobs,
+        config=config,
+        store=store,
+        scraper_factory=lambda _cfg: scraper,
+        vault=_VaultFalso(),
+        facturas=lambda _fid: None,
+        nodo="pc-masvital",
+    )
+
+    worker.run_once(job)
+
+    assert len(scraper.configs) == 1
+    enviada = scraper.configs[0]
+    assert enviada.window_start.date() == dia
+    assert enviada.window_start.time() == datetime.time(0, 0, 0)
+    assert enviada.window_end.date() == dia
+    assert enviada.window_end.time() == datetime.time(23, 59, 59)
+    # La config del proceso no se tocó: los otros jobs siguen en su ventana.
+    assert worker._config is config
+    assert config.window_start.year == 2026 and config.window_start.month == 1
+
+    guardado = jobs.get_job(config.tenant, job.job_id)
+    assert guardado is not None
+    assert guardado.estado == EstadoJob.RESUELTO
+    assert guardado.resultado is not None
+    assert guardado.resultado["ventana"] == {
+        "desde": "2026-10-20T00:00:00",
+        "hasta": "2026-10-20T23:59:59",
+    }
+
+
+def test_worker_sin_fecha_usa_la_ventana_del_nodo(tmp_path: Path) -> None:
+    """Sin `fecha` en la solicitud se raspa la ventana configurada (histórico)."""
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    config = _config(tmp_path)
+    scraper = _ScraperQueRegistra(_movimiento(VALOR, id_externo="mov-hoy"))
+    job = jobs.create_job(config.tenant, "", VALOR, solicitud={"modo": "pago"})
+    worker = BankVerificationWorker(
+        jobs=jobs,
+        config=config,
+        store=store,
+        scraper_factory=lambda _cfg: scraper,
+        vault=_VaultFalso(),
+        facturas=lambda _fid: None,
+        nodo="pc-masvital",
+    )
+
+    worker.run_once(job)
+
+    assert len(scraper.configs) == 1
+    assert scraper.configs[0].window_start == config.window_start
+    assert scraper.configs[0].window_end == config.window_end
+
+
+def test_worker_fecha_ilegible_cae_a_la_ventana_del_nodo(tmp_path: Path) -> None:
+    """Una solicitud corrupta no tumba el job: se usa la ventana del nodo."""
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    config = _config(tmp_path)
+    scraper = _ScraperQueRegistra(_movimiento(VALOR, id_externo="mov-x"))
+    job = jobs.create_job(
+        config.tenant, "", VALOR, solicitud={"modo": "pago", "fecha": "no-es-fecha"}
+    )
+    worker = BankVerificationWorker(
+        jobs=jobs,
+        config=config,
+        store=store,
+        scraper_factory=lambda _cfg: scraper,
+        vault=_VaultFalso(),
+        facturas=lambda _fid: None,
+        nodo="pc-masvital",
+    )
+
+    worker.run_once(job)
+
+    assert scraper.configs[0].window_start == config.window_start
+    guardado = jobs.get_job(config.tenant, job.job_id)
+    assert guardado is not None
+    assert guardado.estado in {EstadoJob.RESUELTO, EstadoJob.AMBIGUO, EstadoJob.SIN_COINCIDENCIA}
