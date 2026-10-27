@@ -590,11 +590,18 @@ class BankScraper:
 
     # --- API pública ---
 
-    def scrape(self, config: NodeConfig) -> ScrapeResult:
+    def scrape(
+        self,
+        config: NodeConfig,
+        on_progress: Callable[[str, int], None] | None = None,
+    ) -> ScrapeResult:
         """Raspa la cuenta del tenant dentro de la ventana configurada.
 
         Args:
             config: configuración del nodo.
+            on_progress: callback opcional `(paso, porcentaje)` para que el
+                operador vea por dónde va. Es **observabilidad**: si el callback
+                falla, el scrape no se cae (se ignora).
 
         Returns:
             El resultado de la corrida (movimientos dentro de la ventana).
@@ -605,23 +612,40 @@ class BankScraper:
                 estable y **no** deja movimientos parciales.
         """
         with acquire_session_slot(config, reloj=self._reloj) as slot:
-            return self._raspar(config, slot)
+            return self._raspar(config, slot, on_progress)
 
     # --- implementación ---
 
-    def _raspar(self, config: NodeConfig, slot: SessionSlot) -> ScrapeResult:
+    def _raspar(
+        self,
+        config: NodeConfig,
+        slot: SessionSlot,
+        on_progress: Callable[[str, int], None] | None = None,
+    ) -> ScrapeResult:
+        def avisar(paso: str, pct: int) -> None:
+            """El progreso es cosmético: nunca puede romper el scrape."""
+            if on_progress is None:
+                return
+            with contextlib.suppress(Exception):
+                on_progress(paso, pct)
+
         entrada = self._credencial(config)
+        avisar("credencial_lista", 10)
         session = self._session_factory(config)
         try:
+            avisar("navegador_abierto", 20)
             self._autenticar(session, entrada)
+            avisar("sesion_iniciada", 35)
             self._ir_a_home(session)
             # Orden real del portal (verificado en vivo): desde el home se abre
             # la cuenta por su etiqueta y DESPUÉS se pulsa la pestaña
             # "Movimientos". Navegar por URL a una ruta profunda reinicia la SPA
             # y rompe la sesión.
             cuenta = self._abrir_cuenta(session, config)
+            avisar("cuenta_abierta", 55)
             session.ir_a_movimientos()
             movimientos, paginas = self._leer_movimientos(session, config, cuenta)
+            avisar("movimientos_leidos", 80)
         finally:
             with contextlib.suppress(Exception):
                 session.cerrar()

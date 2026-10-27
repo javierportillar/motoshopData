@@ -320,6 +320,12 @@ class BankVerificationWorker:
         # La ingesta ocurre DESPUÉS del scrape completo: un fallo del portal
         # deja cero movimientos (nada de filas parciales).
         self._ingerir(resultado)
+        self._jobs.update_job(
+            job.tenant,
+            job.job_id,
+            EstadoJob.EJECUTANDO,
+            resultado={"progreso": {"paso": "buscando_el_pago", "pct": 90}},
+        )
         coincidencia = match_by_value(
             job.valor,
             [
@@ -345,11 +351,21 @@ class BankVerificationWorker:
         apretar el boton. El reintento respeta el turno de sesion del nodo.
         """
         config = self._config_de(job)
+
+        def progreso(paso: str, pct: int) -> None:
+            """Escribe la etapa en `resultado_json` para que el front la muestre."""
+            self._jobs.update_job(
+                job.tenant,
+                job.job_id,
+                EstadoJob.EJECUTANDO,
+                resultado={"progreso": {"paso": paso, "pct": pct}},
+            )
+
         intento = 0
         while True:
             intento += 1
             try:
-                return self._scraper.scrape(config)
+                return self._scraper.scrape(config, on_progress=progreso)
             except BankScrapeError as exc:
                 reintentable = (
                     exc.codigo == CODIGO_PORTAL_NO_DISPONIBLE
@@ -477,6 +493,7 @@ class BankVerificationWorker:
 
         candidato_json = detalle[0] if len(detalle) == 1 else None
         payload: dict[str, Any] = {
+            "progreso": {"paso": "listo", "pct": 100},
             "ventana": {"desde": inicio.isoformat(), "hasta": fin.isoformat()},
             "nodo": self._nodo,
             "ingesta_at": resultado.leido_en.isoformat(),

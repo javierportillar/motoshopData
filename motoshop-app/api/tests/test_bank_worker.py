@@ -127,7 +127,7 @@ class _ScraperFalso:
         self._resultado = resultado
         self.llamadas = 0
 
-    def scrape(self, config: NodeConfig) -> ScrapeResult:
+    def scrape(self, config: NodeConfig, on_progress=None) -> ScrapeResult:
         self.llamadas += 1
         return self._resultado
 
@@ -461,7 +461,7 @@ class _ScraperIntermitente:
         self._codigo = codigo
         self.llamadas = 0
 
-    def scrape(self, config: NodeConfig) -> ScrapeResult:
+    def scrape(self, config: NodeConfig, on_progress=None) -> ScrapeResult:
         self.llamadas += 1
         if self.llamadas <= self._fallos:
             raise BankScrapeError(self._codigo, "el portal no respondio: timeout")
@@ -839,7 +839,7 @@ class _ScraperQueRegistra:
         self.configs: list[NodeConfig] = []
         self._movimiento = movimiento
 
-    def scrape(self, config: NodeConfig) -> ScrapeResult:
+    def scrape(self, config: NodeConfig, on_progress=None) -> ScrapeResult:
         self.configs.append(config)
         return ScrapeResult(
             tenant=config.tenant,
@@ -960,3 +960,48 @@ def test_worker_fecha_ilegible_cae_a_la_ventana_del_nodo(tmp_path: Path) -> None
     guardado = jobs.get_job(config.tenant, job.job_id)
     assert guardado is not None
     assert guardado.estado in {EstadoJob.RESUELTO, EstadoJob.AMBIGUO, EstadoJob.SIN_COINCIDENCIA}
+
+# ── Progreso por etapas (lo que ve el operador mientras espera) ───────────
+
+
+class _ScraperConProgreso:
+    """Scraper que reporta una etapa y, en el medio, mira lo que quedó escrito."""
+
+    def __init__(self, jobs: FakeVerificationJobStore, job_id: str) -> None:
+        self._jobs = jobs
+        self._job_id = job_id
+        self.visto: dict | None = None
+
+    def scrape(self, config: NodeConfig, on_progress=None) -> ScrapeResult:
+        assert on_progress is not None, "el worker tiene que pasar el callback"
+        on_progress("cuenta_abierta", 55)
+        actual = self._jobs.get_job(config.tenant, self._job_id)
+        self.visto = (actual.resultado or {}) if actual else None
+        return _resultado(_movimiento(VALOR, id_externo="mov-progreso"))
+
+
+def test_worker_escribe_la_etapa_en_el_job_mientras_raspa(tmp_path: Path) -> None:
+    """El front sondea el job: la etapa tiene que estar en `resultado.progreso`."""
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    config = _config(tmp_path)
+    job = jobs.create_job(config.tenant, "", VALOR, solicitud={"modo": "pago"})
+    scraper = _ScraperConProgreso(jobs, job.job_id)
+    worker = BankVerificationWorker(
+        jobs=jobs,
+        config=config,
+        store=store,
+        scraper_factory=lambda _cfg: scraper,
+        vault=_VaultFalso(),
+        facturas=lambda _fid: None,
+        nodo="pc-masvital",
+    )
+
+    worker.run_once(job)
+
+    assert scraper.visto == {"progreso": {"paso": "cuenta_abierta", "pct": 55}}
+    guardado = jobs.get_job(config.tenant, job.job_id)
+    assert guardado is not None
+    assert guardado.resultado is not None
+    # El resultado final deja el progreso cerrado en 100.
+    assert guardado.resultado["progreso"] == {"paso": "listo", "pct": 100}
