@@ -22,7 +22,9 @@ param(
   [string]$Nodo     = "masvital",
   [string]$Repo     = "C:\Users\ProDesk\Documents\javdevmasv\motoshopData",
   [string]$BusWt    = "C:\Users\ProDesk\Documents\javdevmasv\bus-wt",
-  [string]$Brama    = "feat/banco-transfer-25-tenant-config",
+  # Rama vieja de una feature: ya NO se usa para sincronizar. Se conserva el
+  # parametro por compatibilidad; el guardián trabaja sobre la rama actual.
+  [string]$Brama    = "main",
   [string]$BramaBus = "bus/banco-handoff",
   [string]$Remoto   = "origin",
   [string]$TareaApi = "MasVitalBackendService",
@@ -81,6 +83,8 @@ Log "guardian arriba: nodo=$Nodo repo=$Repo cada ${IntervaloSeg}s"
 
 while ($true) {
   $sha = ""; $limpio = $true; $api = $false; $suite = ""; $conflicto = $false
+  $ramaActual = (& git -C $Repo rev-parse --abbrev-ref HEAD).Trim()
+  if ([string]::IsNullOrWhiteSpace($ramaActual) -or $ramaActual -eq "HEAD") { $ramaActual = $Brama }
 
   $status = (& git -C $Repo status --porcelain) -join "`n"
   if ($status.Trim().Length -gt 0) {
@@ -93,7 +97,7 @@ while ($true) {
     if ($codigo -eq 0) {
       & git -C $Repo add -A | Out-Null
       & git -C $Repo commit -q -m "wip(banco): rescate de cambios sin commitear (guardian)" | Out-Null
-      & git -C $Repo push -q $Remoto $Brama | Out-Null
+      & git -C $Repo push -q $Remoto $ramaActual | Out-Null
       Log "cambios sin commitear: suite verde, commit wip y push (code=$LASTEXITCODE)"
       $limpio = $true
     } else {
@@ -102,12 +106,18 @@ while ($true) {
   }
 
   # El pull va DESPUES del rescate: con el arbol sucio `pull --rebase` se niega (128).
-  & git -C $Repo pull --rebase --quiet $Remoto $Brama | Out-Null
+  #
+  # La sincronizacion es sobre la RAMA ACTUAL, no sobre un parametro fijo. El
+  # guardián apuntaba a `feat/banco-transfer-25-tenant-config`, una rama que dejó
+  # de moverse: `main` avanzaba y el nodo quedaba clavado (verificado el
+  # 2026-10-27: HEAD b78fc63 con origin/main en f76fb79).
+  & git -C $Repo fetch $Remoto --quiet | Out-Null
+  & git -C $Repo merge --ff-only --quiet "$Remoto/$ramaActual" | Out-Null
   if ($LASTEXITCODE -ne 0) {
-    $enRebase = (Test-Path (Join-Path $Repo ".git\rebase-merge")) -or (Test-Path (Join-Path $Repo ".git\rebase-apply"))
-    if ($enRebase) { & git -C $Repo rebase --abort | Out-Null }
     $conflicto = $true
-    Log "pull fallo (code=$LASTEXITCODE, rebase en curso=$enRebase): no toco nada"
+    Log "sin fast-forward en ${ramaActual}: no se rebasea ni se fuerza (code=$LASTEXITCODE)"
+  } else {
+    Log "sync: ${ramaActual} al dia con $Remoto/${ramaActual}"
   }
 
   $api = Estado-Api
