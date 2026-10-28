@@ -386,7 +386,19 @@ class _Candado:
         self._fd: int | None = None
 
     def adquirir(self) -> None:
-        """Toma el candado o lanza `SessionSlotError` (`ejecucion_concurrente`)."""
+        """Toma el candado o lanza `SessionSlotError` (`ejecucion_concurrente`).
+
+        En Windows el candado es un archivo que existe mientras hay una corrida.
+        Si el proceso muere sin liberarlo (un reinicio de la API a mitad de un
+        scrape), el archivo queda huérfano y **bloquea todas las corridas
+        siguientes**: pasó el 2026-10-27 y dejó el nodo inutilizable hasta que
+        alguien lo borró a mano.
+
+        Por eso, antes de rendirse, se intenta descartar el archivo: si el dueño
+        está vivo lo tiene **abierto**, y Windows no permite borrarlo
+        (`PermissionError`). Si el borrado funciona, no había nadie: era basura
+        de un proceso muerto.
+        """
         if fcntl is not None:
             self._fd = os.open(self._ruta, os.O_CREAT | os.O_RDWR, 0o600)
             try:
@@ -399,13 +411,31 @@ class _Candado:
                     "ya hay una corrida en curso en este nodo",
                 ) from exc
             return
+        for intento in (1, 2):
+            try:
+                self._fd = os.open(self._ruta, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+                return
+            except FileExistsError as exc:
+                if intento == 2 or not self._descartar_huerfano():
+                    raise SessionSlotError(
+                        MOTIVO_CONCURRENTE,
+                        "ya hay una corrida en curso en este nodo",
+                    ) from exc
+
+    def _descartar_huerfano(self) -> bool:
+        """Borra un candado sin dueño vivo. `False` si alguien lo tiene abierto."""
         try:
-            self._fd = os.open(self._ruta, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
-        except FileExistsError as exc:
-            raise SessionSlotError(
-                MOTIVO_CONCURRENTE,
-                "ya hay una corrida en curso en este nodo",
-            ) from exc
+            self._ruta.unlink()
+        except FileNotFoundError:
+            return True
+        except OSError:
+            # `PermissionError` en Windows: el dueño lo tiene abierto, está vivo.
+            return False
+        logging.getLogger(__name__).warning(
+            "candado huérfano eliminado (el proceso anterior murió sin liberarlo): %s",
+            self._ruta,
+        )
+        return True
 
     def liberar(self) -> None:
         """Devuelve el candado (idempotente).
