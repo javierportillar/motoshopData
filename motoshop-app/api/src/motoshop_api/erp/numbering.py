@@ -402,3 +402,17 @@ class RealContadoresRepo:
         if raw is None or not str(raw[0] or "").strip():
             raise LookupError(f"contadores row not found: codcon={codcon}")
         return str(raw[0]).strip()
+
+
+def get_contadores_repo() -> ContadoresRepo:
+    """FastAPI dependency: contadores reales contra MySQL (fake solo en tests).
+
+    El motor de facturacion y los comprobantes de caja importan este nombre
+    desde `b90126c`; sin el, la dependencia revienta con ImportError y toda
+    escritura real responde 500 antes de tocar la base.
+    """
+    from motoshop_api.config import settings
+
+    if settings.env == "test":
+        return FakeContadoresRepo()
+    return RealContadoresRepo()
