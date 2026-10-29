@@ -51,6 +51,9 @@ if (Test-Path $envFile) {
   Log "AVISO: no encontre .env en $Raiz (la API usa sus defaults)"
 }
 $env:PYTHONPATH = Join-Path $Api "src"
+# pythonw no tiene consola y bufferiza stdout/stderr: sin esto los logs quedan en
+# 0 bytes y un error del guardado es invisible. No cambia el comportamiento.
+$env:PYTHONUNBUFFERED = "1"
 
 $pythonw = Join-Path $Api ".venv\Scripts\pythonw.exe"
 if (-not (Test-Path $pythonw)) {
