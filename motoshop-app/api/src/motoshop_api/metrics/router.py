@@ -89,6 +89,17 @@ def _rate_limit_key(request: Request) -> str:
 limiter = Limiter(key_func=_rate_limit_key)
 
 _CACHE_TTL = 300  # 5 minutos
+
+#: Techo de entradas del cache de métricas.
+#:
+#: La clave incluye la **generación del snapshot** (`get_snapshot_generation`),
+#: así que cada refresco del gold desde R2 estrena generación y las entradas
+#: viejas quedan inalcanzables pero **nunca se borraban**: el dict crecía con
+#: cada deploy/refresco guardando payloads completos de métricas. En el plan
+#: free de Render (512 MB) eso termina en "exceeded its memory limit" y el
+#: reinicio automático (visto el 2026-11-03).
+_CACHE_MAX_ENTRIES = 256
+
 _cache: dict[tuple[int, str], tuple[float, object]] = {}
 _workspace_client = None  # lazy singleton
 _workspace_created_at: float = 0.0
@@ -124,6 +135,23 @@ def _get_real_metrics_repo() -> RealMetricsRepo:
     return RealMetricsRepo(w, wh_id)
 
 
+def _podar_cache(ahora: float, ttl: int) -> None:
+    """Descarta lo vencido y, si igual sobra, lo más viejo.
+
+    Sin esto el cache sólo crecía: las entradas de generaciones anteriores del
+    snapshot ya no se leían nunca pero seguían ocupando memoria.
+    """
+    vencidas = [clave for clave, (ts, _) in _cache.items() if ahora - ts >= ttl]
+    for clave in vencidas:
+        _cache.pop(clave, None)
+    if len(_cache) <= _CACHE_MAX_ENTRIES:
+        return
+    # Más viejas primero hasta volver al techo.
+    ordenadas = sorted(_cache.items(), key=lambda item: item[1][0])
+    for clave, _ in ordenadas[: len(_cache) - _CACHE_MAX_ENTRIES]:
+        _cache.pop(clave, None)
+
+
 def _cached_or_fetch(key: str, fetch_fn, ttl: int = _CACHE_TTL):
     tenant = key.partition(":")[0]
     versioned_key = (get_snapshot_generation(tenant), key)
@@ -136,6 +164,7 @@ def _cached_or_fetch(key: str, fetch_fn, ttl: int = _CACHE_TTL):
     # Store under the generation captured before the fetch. A concurrent R2
     # replacement advances the generation, making this value unreachable.
     _cache[versioned_key] = (now, val)
+    _podar_cache(now, ttl)
     return val
 
 
