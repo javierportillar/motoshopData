@@ -94,15 +94,13 @@ while ($true) {
     $codigo = $LASTEXITCODE
     Pop-Location
     $suite = ($out | Select-Object -Last 1)
-    if ($codigo -eq 0) {
-      & git -C $Repo add -A | Out-Null
-      & git -C $Repo commit -q -m "wip(banco): rescate de cambios sin commitear (guardian)" | Out-Null
-      & git -C $Repo push -q $Remoto $ramaActual | Out-Null
-      Log "cambios sin commitear: suite verde, commit wip y push (code=$LASTEXITCODE)"
-      $limpio = $true
-    } else {
-      Log "cambios sin commitear con suite en ROJO: no commiteo"
-    }
+    # El guardián YA NO commitea. Antes hacía `git add -A` + commit "wip(banco)"
+    # cuando la suite de banco pasaba, y eso metió en main dos commits con
+    # mensaje falso que en realidad contenían el fix del ImportError (27/10).
+    # Ahora sólo avisa: un cambio sin commitear es del humano, no del vigilante.
+    $archivos = ($status -split "`n" | Where-Object { $_.Trim() } | Select-Object -First 5) -join "; "
+    Log "cambios sin commitear (suite: $suite): NO se commitea, revisar a mano: $archivos"
+    $limpio = $false
   }
 
   # El pull va DESPUES del rescate: con el arbol sucio `pull --rebase` se niega (128).
@@ -115,7 +113,8 @@ while ($true) {
   & git -C $Repo merge --ff-only --quiet "$Remoto/$ramaActual" | Out-Null
   if ($LASTEXITCODE -ne 0) {
     $conflicto = $true
-    Log "sin fast-forward en ${ramaActual}: no se rebasea ni se fuerza (code=$LASTEXITCODE)"
+    $pista = if (-not $limpio) { " (árbol sucio: commiteá a mano, el deploy está bloqueado)" } else { "" }
+    Log "sin fast-forward en ${ramaActual}: no se rebasea ni se fuerza (code=$LASTEXITCODE)$pista"
   } else {
     Log "sync: ${ramaActual} al dia con $Remoto/${ramaActual}"
   }

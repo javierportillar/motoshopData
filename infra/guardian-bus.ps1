@@ -153,7 +153,8 @@ while ($true) {
   }
   if ($pull.code -ne 0) {
     $conflicto = $true
-    Log "sin fast-forward en ${ramaActual}: no se rebasea ni se fuerza ($($pull.out))"
+    $pista = if (-not $limpio) { " (árbol sucio: commiteá a mano, el deploy está bloqueado)" } else { "" }
+    Log "sin fast-forward en ${ramaActual}: no se rebasea ni se fuerza ($($pull.out))$pista"
   }
 
   Log "TRACE_B pull code=$($pull.code)";
@@ -165,18 +166,12 @@ while ($true) {
     $codigo = $LASTEXITCODE
     Pop-Location
     $suite = ($out | Select-Object -Last 1)
-    if ($codigo -eq 0) {
-      Git $Repo @("add", "-A") | Out-Null
-      Git $Repo @("commit", "-m", "wip(banco): rescate de cambios sin commitear (guardian)") | Out-Null
-      $push = Git $Repo @("push", $Remoto, $ramaActual)
-      if ($push.code -ne 0) {
-        Log "push rechazado en ${ramaActual}: sin rebase ni force, el commit queda local"
-      }
-      Log "cambios sin commitear: suite verde, commit wip y push (code=$($push.code))"
-      $limpio = $true
-    } else {
-      Log "cambios sin commitear con suite en ROJO: no commiteo"
-    }
+    # El guardián YA NO commitea: un cambio sin commitear es del humano. Antes
+    # hacía add -A + commit "wip(banco)" y eso terminó metiendo en main dos
+    # commits con mensaje falso que contenían el fix del ImportError (27/10).
+    $archivos = (($status.out -split "`n") | Where-Object { $_.Trim() } | Select-Object -First 5) -join "; "
+    Log "cambios sin commitear (suite: $suite): NO se commitea, revisar a mano: $archivos"
+    $limpio = $false
   }
 
   Log "TRACE_C api start";
