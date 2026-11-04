@@ -12,7 +12,7 @@ from pathlib import Path
 
 import duckdb
 
-from motoshop_api.metrics.artefacto import TABLAS_ARTEFACTO
+from motoshop_api.metrics.artefacto import TABLAS_ARTEFACTO, VENTANA_POR_TABLA
 
 SRC = Path(__file__).resolve().parent.parent / "src" / "motoshop_api"
 
@@ -46,7 +46,13 @@ def test_construir_deja_solo_las_tablas_del_manifiesto(tmp_path: Path) -> None:
     origen = tmp_path / "gold.duckdb"
     con = duckdb.connect(str(origen))
     for tabla in TABLAS_ARTEFACTO:
-        con.execute(f"CREATE TABLE {tabla} (id INTEGER)")
+        if tabla in VENTANA_POR_TABLA:
+            con.execute(f"CREATE TABLE {tabla} (id INTEGER, business_date DATE)")
+            con.execute(
+                f"INSERT INTO {tabla} VALUES (1, DATE '2026-01-01'), (2, DATE '2026-01-02')"
+            )
+        else:
+            con.execute(f"CREATE TABLE {tabla} (id INTEGER)")
     con.execute("CREATE TABLE tabla_que_nadie_usa (id INTEGER)")
     con.close()
 

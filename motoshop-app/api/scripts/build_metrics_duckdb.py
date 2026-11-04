@@ -15,7 +15,7 @@ from pathlib import Path
 
 import duckdb
 
-from motoshop_api.metrics.artefacto import TABLAS_ARTEFACTO
+from motoshop_api.metrics.artefacto import TABLAS_ARTEFACTO, VENTANA_POR_TABLA
 
 
 def construir(origen: Path, destino: Path) -> dict[str, int]:
@@ -40,7 +40,24 @@ def construir(origen: Path, destino: Path) -> dict[str, int]:
             )
         tamanos: dict[str, int] = {}
         for tabla in TABLAS_ARTEFACTO:
-            con.execute(f"CREATE TABLE {tabla} AS SELECT * FROM origen.{tabla}")
+            fechas = VENTANA_POR_TABLA.get(tabla)
+            if fechas:
+                # Historial largo que el backend no usa entero: se copian las
+                # últimas N fechas de snapshot (la consulta de estado actual
+                # pide la última, y no hace falta más en el respaldo).
+                con.execute(
+                    f"""
+                    CREATE TABLE {tabla} AS
+                    WITH ult AS (
+                        SELECT DISTINCT business_date FROM origen.{tabla}
+                        ORDER BY business_date DESC LIMIT {fechas}
+                    )
+                    SELECT s.* FROM origen.{tabla} s
+                    JOIN ult USING (business_date)
+                    """
+                )
+            else:
+                con.execute(f"CREATE TABLE {tabla} AS SELECT * FROM origen.{tabla}")
             # VACUUM/ANALYZE compactan el archivo y dejan estadísticas para el planner.
             tamanos[tabla] = con.execute(f"SELECT COUNT(*) FROM {tabla}").fetchone()[0]
         con.execute("CHECKPOINT")
