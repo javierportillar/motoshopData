@@ -626,11 +626,14 @@ class ERPRepository:
         # 3. DuckDB query (fast analytical snapshot for Cloud/Render and offline servers)
         try:
             import duckdb
+
+            from motoshop_api.db.duckdb_limits import aplicar_limites
             from motoshop_api.metrics.repo_duckdb import _make_db_path
 
             db_path = _make_db_path(tenant_id)
             if db_path.exists():
                 con = duckdb.connect(str(db_path), read_only=True)
+                aplicar_limites(con)
                 like_param = f"%{clean_q}%"
                 rows = con.execute(
                     """

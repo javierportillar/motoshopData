@@ -12,6 +12,7 @@ from typing import Any
 
 import duckdb
 
+from motoshop_api.db.duckdb_limits import aplicar_limites
 from motoshop_api.purchase_assessments.analyzer import (
     ANALYZER_REVISION,
     PurchaseInvoice,
@@ -158,6 +159,7 @@ def refresh_purchase_assessments(
     discovered = 0
     try:
         connection = duckdb.connect(str(db_path), read_only=True)
+        aplicar_limites(connection)
     except Exception as exc:
         logger.warning(
             "Purchase assessment snapshot unavailable tenant=%s error_type=%s",

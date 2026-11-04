@@ -34,9 +34,9 @@ services:
       # DuckDB se come la RAM que le dejen: en 512 MB hay que ponerle techo y
       # bajar los hilos, o una consulta grande tumba el proceso.
       - key: DUCKDB_MEMORY_LIMIT
-        value: 256MB
+        value: 128MB
       - key: DUCKDB_THREADS
-        value: "2"
+        value: "1"
       # DUCKDB_PATH removido (2026-06-15): el override fijo a motoshop_gold.duckdb
       # rompia el multi-tenant — con la env var seteada, _make_db_path() ignoraba
       # el tenant y siempre devolvia el path de MotoShop, asi masvital terminaba

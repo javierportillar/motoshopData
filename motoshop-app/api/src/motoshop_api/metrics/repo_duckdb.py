@@ -28,6 +28,8 @@ from zoneinfo import ZoneInfo
 
 import duckdb
 
+from motoshop_api.db.duckdb_limits import aplicar_limites
+
 from motoshop_api.metrics.repo import MetricsRepoProtocol
 from motoshop_api.metrics.schemas import (
     AbcBucket,
@@ -585,28 +587,10 @@ class DuckDBNotReadyError(Exception):
     """
 
 
-def _aplicar_limites(conn: duckdb.DuckDBPyConnection) -> None:
-    """Pone techo de memoria y hilos si el entorno lo pide.
-
-    En el plan free de Render (512 MB) DuckDB compite por RAM con el propio
-    proceso: sin techo, una consulta grande lo tumba. En las PCs no se activa
-    porque las variables no están puestas. Nunca rompe la lectura: si el
-    ``SET`` falla, sigue con los valores por defecto.
-    """
-    limite = os.environ.get("DUCKDB_MEMORY_LIMIT", "").strip()
-    hilos = os.environ.get("DUCKDB_THREADS", "").strip()
-    if limite:
-        with contextlib.suppress(Exception):
-            conn.execute(f"SET memory_limit='{limite}'")
-    if hilos.isdigit():
-        with contextlib.suppress(Exception):
-            conn.execute(f"SET threads={int(hilos)}")
-
-
 def _open_connection(physical_path: Path, logical_key: str) -> duckdb.DuckDBPyConnection:
     try:
         conn = duckdb.connect(str(physical_path), read_only=True)
-        _aplicar_limites(conn)
+        aplicar_limites(conn)
         return conn
     except duckdb.IOException as exc:
         raise DuckDBNotReadyError(
