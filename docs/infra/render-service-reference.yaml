@@ -1,3 +1,18 @@
+# REFERENCIA — NO configura nada.
+#
+# El servicio `motoshop-cloud-api` se creó a mano en el dashboard y NO está
+# gestionado por un blueprint (Render: `blueprintId: None`, `blueprints: []`).
+# Render IGNORA este archivo: los cambios acá no tienen efecto.
+#
+# La configuración real vive en el dashboard y se aplicó por API:
+#   DUCKDB_MEMORY_LIMIT=128MB · DUCKDB_THREADS=1
+#   DUCKDB_R2_AUTO_REFRESH=1 · DUCKDB_R2_REFRESH_TTL=1800
+#   R2_METRICS_ARTIFACT=1
+#   startCommand: uvicorn motoshop_api.main:app --host 0.0.0.0 --port $PORT --limit-max-requests 1000
+#
+# Se conserva como inventario de variables por si hay que recrear el servicio.
+# Si algún día se adopta blueprint, este archivo vuelve a `motoshop-app/api/render.yaml`.
+
 services:
   - type: web
     name: motoshop-cloud-api

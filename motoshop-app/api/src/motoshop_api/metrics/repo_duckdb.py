@@ -901,6 +901,21 @@ def _objeto_a_descargar(tenant: str) -> str:
     return f"{tenant}_gold.duckdb"
 
 
+def _ttl_refresco() -> int:
+    """Cada cuántos segundos, como mínimo, se vuelve a bajar el gold.
+
+    Junto con ``DUCKDB_R2_AUTO_REFRESH``, es lo que hace barato el polling: el
+    refresco sólo ocurre cuando hay una lectura y además pasó el TTL. Con el
+    artefacto chico (16 MB en vez de 113) y un TTL alineado al pipeline (~30
+    min), una instancia inactiva no gasta nada y una activa baja un archivo
+    chico por ventana.
+    """
+    bruto = os.environ.get("DUCKDB_R2_REFRESH_TTL", "").strip()
+    if not bruto.isdigit():
+        return 1800
+    return int(bruto)
+
+
 def _auto_refresh_habilitado() -> bool:
     """¿Se re-descarga el gold cuando R2 tiene una versión más nueva?
 
@@ -960,6 +975,13 @@ def _bootstrap_duckdb_from_r2_unlocked(
     # HEAD ni de re-descargas por snapshot nuevo.
     if not must_download and not _auto_refresh_habilitado():
         return False
+
+    # TTL: aunque R2 tenga algo nuevo, no se re-baja antes de tiempo.
+    if not must_download:
+        ttl = _ttl_refresco()
+        ultima = _R2_DOWNLOADED_MTIME.get(tenant, 0)
+        if ttl > 0 and ultima and (time() - ultima) < ttl:
+            return False
     if not must_download:
         last = _R2_LAST_CHECK.get(tenant, 0)
         now = time()

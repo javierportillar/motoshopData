@@ -59,3 +59,16 @@ def test_auto_refresh_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setenv("DUCKDB_R2_AUTO_REFRESH", "1")
     assert _auto_refresh_habilitado() is True
+
+
+def test_ttl_de_refresco_desde_entorno(monkeypatch: pytest.MonkeyPatch) -> None:
+    from motoshop_api.metrics.repo_duckdb import _ttl_refresco
+
+    monkeypatch.delenv("DUCKDB_R2_REFRESH_TTL", raising=False)
+    assert _ttl_refresco() == 1800
+
+    monkeypatch.setenv("DUCKDB_R2_REFRESH_TTL", "600")
+    assert _ttl_refresco() == 600
+
+    monkeypatch.setenv("DUCKDB_R2_REFRESH_TTL", "no-es-numero")
+    assert _ttl_refresco() == 1800
