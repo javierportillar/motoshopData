@@ -883,6 +883,24 @@ def _get_r2_bootstrap_lock(db_path: Path) -> threading.Lock:
         return lock
 
 
+def _usar_artefacto_chico() -> bool:
+    """¿Se baja el artefacto con sólo las tablas que el backend lee?
+
+    En Render (disco efímero, 512 MB) bajar el gold completo son ~50 MB y el
+    swap pide el doble de memoria. Con ``R2_METRICS_ARTIFACT=1`` se intenta
+    primero ``{tenant}_metrics.duckdb`` y, si no existe, se cae al gold.
+    """
+    valor = os.environ.get("R2_METRICS_ARTIFACT", "0").strip().lower()
+    return valor in ("1", "true", "yes", "on")
+
+
+def _objeto_a_descargar(tenant: str) -> str:
+    """Clave del objeto en R2: el artefacto chico si está habilitado."""
+    if _usar_artefacto_chico():
+        return f"{tenant}_metrics.duckdb"
+    return f"{tenant}_gold.duckdb"
+
+
 def _auto_refresh_habilitado() -> bool:
     """¿Se re-descarga el gold cuando R2 tiene una versión más nueva?
 
@@ -926,7 +944,7 @@ def _bootstrap_duckdb_from_r2_unlocked(
     r2_key = os.environ.get("R2_ACCESS_KEY_ID")
     r2_secret = os.environ.get("R2_SECRET_ACCESS_KEY")
     r2_bucket = os.environ.get("R2_BUCKET", "motoshop-gold")
-    r2_object_key = os.environ.get("R2_OBJECT_KEY", f"{tenant}_gold.duckdb")
+    r2_object_key = os.environ.get("R2_OBJECT_KEY") or _objeto_a_descargar(tenant)
 
     if not all([r2_endpoint, r2_key, r2_secret]):
         if not db_path.exists():
@@ -989,7 +1007,20 @@ def _bootstrap_duckdb_from_r2_unlocked(
             tmp_path = db_path.with_name(f".{db_path.name}.{uuid4().hex}.downloading")
             started = monotonic()
             try:
-                s3.download_file(r2_bucket, r2_object_key, str(tmp_path))
+                try:
+                    s3.download_file(r2_bucket, r2_object_key, str(tmp_path))
+                except Exception:
+                    # El artefacto chico puede no existir todavía (el pipeline
+                    # aún no lo publica): mejor el gold completo que un 503.
+                    if r2_object_key.endswith("_metrics.duckdb"):
+                        logger.warning(
+                            "artefacto chico no disponible en R2 (%s); se usa el gold completo",
+                            r2_object_key,
+                        )
+                        r2_object_key = f"{tenant}_gold.duckdb"
+                        s3.download_file(r2_bucket, r2_object_key, str(tmp_path))
+                    else:
+                        raise
                 downloaded_size = tmp_path.stat().st_size
                 if downloaded_size <= 0:
                     raise OSError("R2 download produced an empty DuckDB file")
