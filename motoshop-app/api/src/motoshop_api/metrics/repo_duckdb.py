@@ -883,6 +883,16 @@ def _get_r2_bootstrap_lock(db_path: Path) -> threading.Lock:
         return lock
 
 
+def _auto_refresh_habilitado() -> bool:
+    """¿Se re-descarga el gold cuando R2 tiene una versión más nueva?
+
+    Por defecto sí (las PCs tienen memoria y disco de sobra). En Render se apaga
+    con ``DUCKDB_R2_AUTO_REFRESH=0``.
+    """
+    valor = os.environ.get("DUCKDB_R2_AUTO_REFRESH", "1").strip().lower()
+    return valor not in ("0", "false", "no", "off")
+
+
 def _bootstrap_duckdb_from_r2(
     db_path: Path, tenant: str = "motoshop", *, force: bool = False
 ) -> bool:
@@ -903,7 +913,15 @@ def _bootstrap_duckdb_from_r2_unlocked(
     el archivo del arranque hasta el siguiente deploy.
 
     Hay throttle: solo se hace HEAD a R2 maximo 1 vez por minuto por
-    tenant para no agregar latencia a cada request."""
+    tenant para no agregar latencia a cada request.
+
+    ``DUCKDB_R2_AUTO_REFRESH=0`` apaga el refresco periódico: se baja el gold
+    sólo si no existe localmente. Es lo que corresponde en instancias con disco
+    efímero y poca memoria (Render): el pipeline sube un snapshot nuevo cada
+    ~30 min y cada refresco re-descarga ~50 MB y abre el archivo nuevo mientras
+    el viejo sigue vivo, duplicando la memoria justo en el pico. Medido el
+    2026-11-03: 3,05 GB de salida en el mes, 100% generados por el servicio.
+    """
     r2_endpoint = os.environ.get("R2_ENDPOINT")
     r2_key = os.environ.get("R2_ACCESS_KEY_ID")
     r2_secret = os.environ.get("R2_SECRET_ACCESS_KEY")
@@ -919,6 +937,11 @@ def _bootstrap_duckdb_from_r2_unlocked(
     # 1) no existe local -> SIEMPRE descargar
     # 2) existe pero ya paso el throttle -> chequear R2 mtime
     must_download = force or not db_path.exists()
+
+    # Con el refresco automático apagado sólo se baja lo que falta: nada de
+    # HEAD ni de re-descargas por snapshot nuevo.
+    if not must_download and not _auto_refresh_habilitado():
+        return False
     if not must_download:
         last = _R2_LAST_CHECK.get(tenant, 0)
         now = time()

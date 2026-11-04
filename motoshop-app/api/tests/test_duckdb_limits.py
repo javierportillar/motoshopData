@@ -45,3 +45,17 @@ def test_un_set_que_falla_no_propaga(monkeypatch: pytest.MonkeyPatch) -> None:
     aplicar_limites(conn)  # no debe lanzar
 
     assert conn.sentencias == []
+
+
+def test_auto_refresh_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
+    from motoshop_api.metrics.repo_duckdb import _auto_refresh_habilitado
+
+    monkeypatch.delenv("DUCKDB_R2_AUTO_REFRESH", raising=False)
+    assert _auto_refresh_habilitado() is True
+
+    for apagado in ("0", "false", "no", "off", "OFF"):
+        monkeypatch.setenv("DUCKDB_R2_AUTO_REFRESH", apagado)
+        assert _auto_refresh_habilitado() is False
+
+    monkeypatch.setenv("DUCKDB_R2_AUTO_REFRESH", "1")
+    assert _auto_refresh_habilitado() is True
