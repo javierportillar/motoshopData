@@ -31,6 +31,11 @@ $ErrorActionPreference = "Continue"
 # Sin TTY ni UI de credenciales: si git necesita autenticarse, que falle en vez
 # de colgarse esperando un prompt invisible (medido: pull de >7 min).
 $env:GIT_TERMINAL_PROMPT = "0"
+# Ningún git puede quedarse colgado: si no mueve datos en 30 s, aborta. Un push
+# sin límite en el primer ciclo después del boot congeló el bucle en el otro
+# nodo (2026-11-05).
+$env:GIT_HTTP_LOW_SPEED_LIMIT = "1000"
+$env:GIT_HTTP_LOW_SPEED_TIME = "30"
 $env:GIT_TERMINAL_ASKPASS = "0"
 $env:GIT_ASKPASS = ""
 $env:GCM_INTERACTIVE = "never"
@@ -134,6 +139,16 @@ Log "guardian arriba: repo=$Repo cada ${IntervaloSeg}s"
 $limiteArranque = (Get-Date).AddSeconds(180)
 while ((Get-Date) -lt $limiteArranque -and -not (Estado-Api)) { Start-Sleep -Seconds 10 }
 Log "arranque: api=$(Estado-Api)"
+
+# Esperar a que GitHub sea alcanzable antes del primer ciclo (misma razón que en
+# el guardián de MasVital: el primer git tras el boot no puede colgarse).
+$limiteRed = (Get-Date).AddMinutes(3)
+while ((Get-Date) -lt $limiteRed) {
+  $sonda = Git $Repo @("ls-remote", "--heads", $Remoto, $Brama)
+  if ($sonda.code -eq 0) { Log "red OK: $Remoto/$Brama alcanzable"; break }
+  Log "red no lista para git ($Remoto): reintento en 30 s"
+  Start-Sleep -Seconds 30
+}
 
 while ($true) {
   Log "TRACE_A ciclo";

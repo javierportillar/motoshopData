@@ -37,6 +37,17 @@ param(
 $ErrorActionPreference = "Continue"
 $log = Join-Path $env:TEMP "guardian-banco.log"
 
+# ── Red: ningún git puede quedarse colgado ────────────────────────────────
+# Un `git push` sin límite, lanzado en el primer ciclo después del boot (cuando
+# la red todavía no está lista), se quedó 5 h esperando y congeló el bucle: como
+# el ciclo es secuencial, no volvió a sincronizar ni desplegó (MasVital,
+# 2026-11-05; misma firma el 4/11). Estas variables hacen que git aborte cuando
+# no mueve datos durante 30 s.
+$env:GIT_TERMINAL_PROMPT = "0"
+$env:GIT_HTTP_LOW_SPEED_LIMIT = "1000"
+$env:GIT_HTTP_LOW_SPEED_TIME = "30"
+
+
 function Log([string]$m) {
   $linea = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $m
   Add-Content -Path $log -Value $linea -Encoding utf8
@@ -80,6 +91,16 @@ function Minutos-Sin-Dev {
 }
 
 Log "guardian arriba: nodo=$Nodo repo=$Repo cada ${IntervaloSeg}s"
+
+# Esperar a que GitHub sea alcanzable antes del primer ciclo. Sin esto, el
+# primer push/pull tras el arranque se lanza con la red a medio levantar.
+$limiteRed = (Get-Date).AddMinutes(3)
+while ((Get-Date) -lt $limiteRed) {
+  & git -C $Repo ls-remote --heads $Remoto $Brama *> $null
+  if ($LASTEXITCODE -eq 0) { Log "red OK: $Remoto/$Brama alcanzable"; break }
+  Log "red no lista para git ($Remoto); reintento en 30 s"
+  Start-Sleep -Seconds 30
+}
 
 while ($true) {
   $sha = ""; $limpio = $true; $api = $false; $suite = ""; $conflicto = $false
