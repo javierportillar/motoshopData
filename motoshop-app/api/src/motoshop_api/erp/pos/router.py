@@ -26,6 +26,7 @@ Payment mapping (legacy ``formapago``):
 
 from __future__ import annotations
 
+import datetime
 import logging
 import re
 from decimal import Decimal
@@ -33,13 +34,12 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import bindparam
 
 from motoshop_api.auth.deps import get_current_user
 from motoshop_api.auth.users import User
 from motoshop_api.erp.engine import ErpSaveFailed
 from motoshop_api.erp.guards import PeriodLockedError, require_erp_tenant
-from motoshop_api.erp.models import ProductSearchResult
-from motoshop_api.erp.repo import ERPRepository, get_erp_repo
 from motoshop_api.erp.invoicing.repo import (
     FakeInvoicesRepo,
     RealInvoicesRepo,
@@ -54,6 +54,8 @@ from motoshop_api.erp.masters.validators import (
     InactiveMasterError,
     LegacyValidationError,
 )
+from motoshop_api.erp.models import ProductSearchResult
+from motoshop_api.erp.repo import ERPRepository, get_erp_repo
 from motoshop_api.tenants import Tenant
 
 logger = logging.getLogger(__name__)
@@ -283,6 +285,125 @@ def create_pos_sale(
         "totals": response["totals"],
         "documentNumber": f"{response['prefven']}{response['numfven']}",
     }
+
+
+@router.get("/sales")
+def list_pos_sales(
+    fecha: datetime.date = Query(...),
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    tenant: Tenant = Depends(require_erp_tenant),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Ventas creadas **por la web/POS** en ese día, con su detalle.
+
+    Se identifican por el journal de escritura (`app_doc_journal`): el motor de
+    facturación anota cada documento que crea, y SgHermes no escribe ahí. Es la
+    única forma de distinguir lo que se vendió por el POS de lo que se facturó a
+    mano en el escritorio.
+
+    Los importes viajan como **texto** (nunca `float`), igual que el resto de la
+    API del ERP.
+    """
+    from sqlalchemy import text
+
+    from motoshop_api.db.engine import get_engine
+
+    sql_docs = text(
+        """
+        SELECT f.numfven, f.codclas, f.prefven, f.fecfven, f.nitter, f.clifven,
+               f.nitvend, f.codcaj, f.codpag, f.totfven, f.estfven,
+               j.actor, j.status, j.idempotency_key
+        FROM app_doc_journal j
+        JOIN facventas f
+          ON f.codclas = j.codclas AND f.numfven = CAST(j.docnum AS CHAR)
+        WHERE j.tenant = :tenant
+          AND j.status IN ('COMMITTED', 'ANNULLED')
+          AND DATE(f.fecfven) = :fecha
+        ORDER BY f.fecfven DESC, f.numfven DESC
+        LIMIT :limite
+        """
+    )
+    with get_engine().connect() as conn:
+        docs = [dict(r._mapping) for r in conn.execute(sql_docs, {
+            "tenant": tenant.id, "fecha": fecha.isoformat(), "limite": limit,
+        })]
+
+    if not docs:
+        return {"fecha": fecha.isoformat(), "ventas": []}
+
+    numeros = [str(d["numfven"]) for d in docs]
+    classes = sorted({d["codclas"] for d in docs})
+    sql_lineas = text(
+        """
+        SELECT numfven, codclas, numite, codprod, nomdet, candet, valuni, totdet,
+               codbod, codmed
+        FROM detfventas
+        WHERE codclas IN :clases AND numfven IN :numeros
+        ORDER BY numfven, numite
+        """
+    ).bindparams(bindparam("clases", expanding=True), bindparam("numeros", expanding=True))
+    sql_pagos = text(
+        """
+        SELECT numnum, codclas, codpag, valpag, estado
+        FROM detapago
+        WHERE codclas IN :clases AND numnum IN :numeros
+        """
+    ).bindparams(bindparam("clases", expanding=True), bindparam("numeros", expanding=True))
+
+    with get_engine().connect() as conn:
+        lineas = [
+            dict(r._mapping)
+            for r in conn.execute(sql_lineas, {"clases": classes, "numeros": numeros})
+        ]
+        pagos = [
+            dict(r._mapping)
+            for r in conn.execute(sql_pagos, {"clases": classes, "numeros": numeros})
+        ]
+
+    por_doc_lineas: dict[str, list[dict]] = {}
+    for fila in lineas:
+        por_doc_lineas.setdefault(str(fila["numfven"]), []).append({
+            "numite": fila["numite"],
+            "codprod": fila["codprod"],
+            "nomdet": fila["nomdet"],
+            "candet": str(fila["candet"]),
+            "valuni": str(fila["valuni"]),
+            "totdet": str(fila["totdet"]),
+            "codbod": fila["codbod"],
+            "codmed": fila["codmed"],
+        })
+    por_doc_pagos: dict[str, list[dict]] = {}
+    for fila in pagos:
+        por_doc_pagos.setdefault(str(fila["numnum"]), []).append({
+            "codpag": fila["codpag"],
+            "valpag": str(fila["valpag"]),
+            "estado": fila["estado"],
+        })
+
+    ventas = []
+    for doc in docs:
+        numero = str(doc["numfven"])
+        fec = doc["fecfven"]
+        ventas.append({
+            "numfven": numero,
+            "codclase": doc["codclas"],
+            "prefijo": doc["prefven"],
+            "documento": f"{doc['prefven']}{numero}",
+            "fecha": fec.date().isoformat() if hasattr(fec, "date") else str(fec)[:10],
+            "hora": fec.strftime("%H:%M") if hasattr(fec, "strftime") else "",
+            "cliente": doc["clifven"],
+            "nitter": doc["nitter"],
+            "vendedor": doc["nitvend"],
+            "caja": doc["codcaj"],
+            "formapago": doc["codpag"],
+            "total": str(doc["totfven"]),
+            "estado": doc["estfven"],
+            "cajero": doc["actor"],
+            "anulada": str(doc["status"]) == "ANNULLED",
+            "lineas": por_doc_lineas.get(numero, []),
+            "pagos": por_doc_pagos.get(numero, []),
+        })
+    return {"fecha": fecha.isoformat(), "ventas": ventas}
 
 
 @router.get("/products", response_model=list[ProductSearchResult])
