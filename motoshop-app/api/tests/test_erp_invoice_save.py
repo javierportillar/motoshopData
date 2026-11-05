@@ -348,3 +348,23 @@ def test_replay_returns_stored_response_without_second_number():
     assert first == second
     assert len(repo.store.facventas) == 1
     assert repo.store.numbering.read("S15", "FVP").conres == BASE_CONRES + 1
+
+# ─── bodega y medida: salen del maestro, como en SgHermes ──────
+
+
+def test_la_bodega_y_la_medida_salen_del_producto():
+    """SgHermes toma `productos.codbod/codmed`; el POS forzaba una constante."""
+    repo = _repo()
+    _create(repo, _body())
+    linea = repo.store.detfventas[0]
+    assert linea["codbod"] == "B001"
+    assert linea["codmed"] == "003"
+
+
+def test_una_linea_sin_bodega_en_el_maestro_cae_al_default_del_negocio():
+    store = FakeInvoiceStore()
+    del store.productos["PROD1"]["codbod"]
+    repo = _repo(store)
+    _create(repo, _body())
+    assert repo.store.detfventas[0]["codbod"] == "BD01"
+

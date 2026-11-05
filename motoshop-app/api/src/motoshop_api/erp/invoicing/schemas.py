@@ -43,8 +43,12 @@ class InvoiceLineIn(BaseModel):
     dctpor: ErpQty = Field(default=Decimal("0"))
     ivapor: ErpQty = Field(default=Decimal("0"))
     ipopor: ErpQty = Field(default=Decimal("0"))
-    codbod: LegacyText = Field(default="01", min_length=1, max_length=2)
-    codmed: LegacyText = Field(default="UND", min_length=1, max_length=3)
+    # Sin default: "no especificado" no es lo mismo que "01". El motor resuelve
+    # la bodega del maestro (`productos.codbod`) y sólo cae a un default del
+    # negocio si falta. `detfventas.codbod` es varchar(4): B001/BD01 entran,
+    # el límite anterior de 2 las rechazaba.
+    codbod: LegacyText | None = Field(default=None, min_length=1, max_length=4)
+    codmed: LegacyText | None = Field(default=None, min_length=1, max_length=3)
     facumed: ErpQty = Field(default=Decimal("1"))
 
 

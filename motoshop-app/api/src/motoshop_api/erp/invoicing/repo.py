@@ -159,6 +159,9 @@ class FakeInvoiceStore:
                 "nomprod": "BUJA NGK",
                 "actprod": "A",
                 "exiprod": Decimal("120"),
+                # bodega/medida del maestro legacy (SgHermes las toma de acá)
+                "codbod": "B001",
+                "codmed": "003",
             },
             "PROD2": {
                 "codprod": "PROD2",
@@ -553,6 +556,18 @@ class _BaseInvoicesRepo:
             line_costs.append(
                 ((line.candet * unit_cost).quantize(Decimal("0.01")), (line.nomdet or "")[:150])
             )
+            # Bodega: SgHermes toma `productos.codbod` (la bodega del producto),
+            # no una constante: por eso sus facturas dicen B001/BD01 y las del
+            # POS quedaban con '01'. Prioridad: lo que manda el cliente, la
+            # bodega del producto, y recién ahí el default del negocio.
+            bodega_payload = str(line.codbod or "").strip()
+            if bodega_payload in ("", "01"):
+                bodega_payload = ""  # placeholder del payload viejo
+            bodega = (
+                bodega_payload
+                or str(product.get("codbod") or "").strip()
+                or LEGACY_WAREHOUSE
+            )
             line_row = {
                 "numfven": number,
                 "codclas": doc_class,
@@ -567,7 +582,7 @@ class _BaseInvoicesRepo:
                 "dctpor": line.dctpor,
                 "ivapor": line.ivapor,
                 "ipopor": line.ipopor,
-                "codbod": (line.codbod or LEGACY_WAREHOUSE)[:4],
+                "codbod": bodega[:4],
                 "codmed": unit[:3],
                 "facumed": line.facumed or Decimal("1"),
                 "cosprod": unit_cost,

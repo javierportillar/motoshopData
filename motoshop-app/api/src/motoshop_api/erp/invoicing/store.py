@@ -106,7 +106,8 @@ class RealInvoiceStore:
         with self._read_engine().connect() as conn:
             row = conn.execute(
                 text(
-                    "SELECT codprod, nomprod, actprod, exiprod, codmed, cosulc FROM productos "
+                    "SELECT codprod, nomprod, actprod, exiprod, codmed, codbod, cosulc "
+                    "FROM productos "
                     "WHERE codprod = :c LIMIT 1"
                 ),
                 {"c": str(codprod)},
