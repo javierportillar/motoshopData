@@ -86,3 +86,11 @@ def test_worker_de_assessments_se_puede_apagar(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setenv("PA_WORKER_ENABLED", "1")
     assert worker_habilitado() is True
+
+
+def test_bodega_por_defecto_es_bd01() -> None:
+    """El POS escribía codbod '01', que no existe en el catálogo de bodegas."""
+    from motoshop_api.erp.invoicing.repo import LEGACY_WAREHOUSE
+
+    assert LEGACY_WAREHOUSE == "BD01"
+    assert len(LEGACY_WAREHOUSE) <= 4  # detfventas.codbod es varchar(4)

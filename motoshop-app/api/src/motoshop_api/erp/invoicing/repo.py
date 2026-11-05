@@ -74,6 +74,12 @@ INVOICE_NUM_FIELD = "numfven"
 LEGACY_OPERATOR_NIT = "59312669"
 #: The cash register of the legacy POS (`facventas.codcaj` = C1, never 01).
 LEGACY_CASH_REGISTER = "C1"
+
+#: Bodega del POS cuando la línea no especifica una (`detfventas.codbod`).
+#: Legacy: el negocio tiene una sola — "BD01" / BODEGA PRINCIPAL. Antes se
+#: escribía "01", que no existe en el catálogo de bodegas: la factura quedaba
+#: con un código huérfano y no cuadraba con las demás (2026-11-05).
+LEGACY_WAREHOUSE = "BD01"
 #: PUC accounts observed in the legacy `detcuentas` causación.
 LEGACY_ACCOUNT_CASH = "11050501"     # Caja general / efectivo
 LEGACY_ACCOUNT_BANK = "11100501"     # Bancos
@@ -561,7 +567,7 @@ class _BaseInvoicesRepo:
                 "dctpor": line.dctpor,
                 "ivapor": line.ivapor,
                 "ipopor": line.ipopor,
-                "codbod": (line.codbod or "01")[:4],
+                "codbod": (line.codbod or LEGACY_WAREHOUSE)[:4],
                 "codmed": unit[:3],
                 "facumed": line.facumed or Decimal("1"),
                 "cosprod": unit_cost,
