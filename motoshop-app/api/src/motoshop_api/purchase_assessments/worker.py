@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from threading import Event, Thread
@@ -100,10 +101,23 @@ class PeriodicPurchaseAssessmentWorker:
             self._stop_event.wait(self._interval_seconds)
 
 
+def worker_habilitado() -> bool:
+    """``PA_WORKER_ENABLED=0`` apaga el barrido periódico.
+
+    El barrido abre el DuckDB de **todos** los tenants cada 60 s y calcula
+    evaluaciones con consultas pesadas. En el respaldo de la nube (512 MB) eso
+    es lo que tumbaba la instancia: no hace falta correr allí, porque el
+    trabajo real ocurre en los nodos.
+    """
+    valor = os.environ.get("PA_WORKER_ENABLED", "1").strip().lower()
+    return valor not in ("0", "false", "no", "off")
+
+
 def start_purchase_assessment_worker() -> PeriodicPurchaseAssessmentWorker | None:
     """Start background recovery only where the service-role store is configured."""
     if (
-        settings.env.casefold() == "test"
+        not worker_habilitado()
+        or settings.env.casefold() == "test"
         or not settings.supabase_url
         or not settings.supabase_service_key
     ):

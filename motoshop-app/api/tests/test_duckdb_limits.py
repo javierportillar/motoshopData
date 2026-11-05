@@ -72,3 +72,17 @@ def test_ttl_de_refresco_desde_entorno(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setenv("DUCKDB_R2_REFRESH_TTL", "no-es-numero")
     assert _ttl_refresco() == 1800
+
+
+def test_worker_de_assessments_se_puede_apagar(monkeypatch: pytest.MonkeyPatch) -> None:
+    from motoshop_api.purchase_assessments.worker import worker_habilitado
+
+    monkeypatch.delenv("PA_WORKER_ENABLED", raising=False)
+    assert worker_habilitado() is True
+
+    for apagado in ("0", "false", "off", "NO"):
+        monkeypatch.setenv("PA_WORKER_ENABLED", apagado)
+        assert worker_habilitado() is False
+
+    monkeypatch.setenv("PA_WORKER_ENABLED", "1")
+    assert worker_habilitado() is True
