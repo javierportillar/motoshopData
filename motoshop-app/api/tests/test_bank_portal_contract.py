@@ -687,3 +687,30 @@ def test_el_mismo_texto_repetido_no_se_toca(tmp_path: Path) -> None:
     conservados = scraper._colapsar_duplicados([fila, fila])
 
     assert conservados == (fila, fila)
+
+
+def test_reutiliza_la_sesion_del_perfil_y_evita_el_login(tmp_path: Path) -> None:
+    """Con la sesión viva, no se vuelve a autenticar.
+
+    El perfil persistente conserva la sesión del portal. Autenticarse otra vez
+    es el paso más caro del scrape (Imperva + redirects + SPA): si el home ya
+    muestra la cuenta del tenant, se saltea el login.
+    """
+    sesion = _sesion(sesion_iniciada=True)
+    config = _config(tmp_path)
+
+    resultado = _scraper(sesion).scrape(config)
+
+    assert "escribir_credenciales" not in sesion.acciones
+    assert "ir_a_autenticacion" not in sesion.acciones
+    assert resultado.movimientos, "tiene que leer los movimientos igual"
+
+
+def test_sin_sesion_viva_vuelve_a_autenticarse(tmp_path: Path) -> None:
+    """Si el home rebota al login, se autentica como siempre."""
+    sesion = _sesion()
+    config = _config(tmp_path)
+
+    _scraper(sesion).scrape(config)
+
+    assert "escribir_credenciales" in sesion.acciones

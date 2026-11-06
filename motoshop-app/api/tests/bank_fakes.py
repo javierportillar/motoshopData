@@ -103,6 +103,7 @@ class PortalFalso:
         otp_html: str | None = None,
         credencial_valida: bool = True,
         sesion_expirada: bool = False,
+        sesion_iniciada: bool = False,
         antibot_en_pagina: int | None = None,
         cuenta_esperada: str | None = None,
     ) -> None:
@@ -111,6 +112,8 @@ class PortalFalso:
         self.otp_html = otp_html
         self.credencial_valida = credencial_valida
         self.sesion_expirada = sesion_expirada
+        # Como el portal real: sin sesión, el home no muestra las cuentas.
+        self._autenticado = sesion_iniciada
         self.antibot_en_pagina = antibot_en_pagina
         self.cuenta_esperada = cuenta_esperada
 
@@ -144,6 +147,7 @@ class PortalFalso:
             self.texto = "Ingresa el código de verificación"
             self.url = "/autenticacion"
             return
+        self._autenticado = True
         self.texto = ""
         self.url = "/home"
 
@@ -156,6 +160,11 @@ class PortalFalso:
 
     def ir_a_home(self) -> None:
         self.acciones.append("ir_a_home")
+        if not self._autenticado and not self.sesion_expirada:
+            # Sin sesión el portal rebota al login: no hay tarjetas que esperar.
+            self.texto = "Autenticación"
+            self.url = "/autenticacion"
+            return
         if self.sesion_expirada:
             self.texto = "Su sesión expiró. Inicie sesión nuevamente."
             self.url = "/autenticacion"
@@ -177,6 +186,8 @@ class PortalFalso:
     # --- cuentas ---
 
     def tarjetas_de_cuenta(self) -> list[str]:
+        if not self._autenticado:
+            return []
         return etiquetas_de_cuentas(self.cuentas_html)
 
     def abrir_cuenta(self, etiqueta: str) -> None:
