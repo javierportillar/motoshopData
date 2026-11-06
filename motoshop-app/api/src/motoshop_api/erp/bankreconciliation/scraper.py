@@ -574,16 +574,6 @@ def acquire_session_slot(
 # --- El scraper ---
 
 
-def _reusar_sesion() -> bool:
-    """¿Se puede evitar el login si el perfil ya tiene sesión válida?
-
-    ``BANK_REUSE_SESSION=0`` lo desactiva (por si el portal cambia y conviene
-    autenticarse siempre).
-    """
-    valor = os.environ.get("BANK_REUSE_SESSION", "1").strip().lower()
-    return valor not in ("0", "false", "no", "off")
-
-
 def _pedir_codigo_en_consola(prompt: str) -> str:
     """Pide el código de un solo uso **en la consola del nodo**.
 
@@ -674,30 +664,9 @@ class BankScraper:
         session = self._session_factory(config)
         try:
             avisar("navegador_abierto", 20)
-            # El perfil persistente conserva la sesión del portal. Si sigue
-            # viva, autenticarse de nuevo es el paso más caro (Imperva +
-            # redirects + SPA) y no hace falta: se comprueba el home primero.
-            reutilizada = False
-            if _reusar_sesion():
-                # `session.ir_a_home()` y no `self._ir_a_home()`: el método del
-                # scraper considera "sesión expirada" que el portal te deje en
-                # el login, y justamente eso es lo que queremos averiguar acá.
-                session.ir_a_home()
-                en_login = session.url_actual().rstrip("/").endswith(
-                    self._spec("path_auth")
-                )
-                etiquetas = (
-                    [] if en_login else self._esperar_cuentas(session, config, timeout=3.0)
-                )
-                reutilizada = (
-                    self._buscar_etiqueta(etiquetas, config.account_label) is not None
-                )
-                if reutilizada:
-                    avisar("sesion_reutilizada", 35)
-            if not reutilizada:
-                self._autenticar(session, entrada)
-                avisar("sesion_iniciada", 35)
-                self._ir_a_home(session)
+            self._autenticar(session, entrada)
+            avisar("sesion_iniciada", 35)
+            self._ir_a_home(session)
             # Orden real del portal (verificado en vivo): desde el home se abre
             # la cuenta por su etiqueta y DESPUÉS se pulsa la pestaña
             # "Movimientos". Navegar por URL a una ruta profunda reinicia la SPA
