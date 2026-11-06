@@ -39,7 +39,17 @@ from motoshop_api.erp.bankreconciliation.scraper import (
 )
 from motoshop_api.erp.bankreconciliation.store import FakeBankStore
 from motoshop_api.erp.bankreconciliation.vault import Entry, VaultNotFound
+from motoshop_api.erp.bankreconciliation.worker import olvidar_cache_scrape
 from tests.bank_fakes import PortalFalso, leer_fixture
+
+
+@pytest.fixture(autouse=True)
+def _cache_scrape_limpio():
+    """Cada test arranca sin la lectura cacheada de otro."""
+    olvidar_cache_scrape()
+    yield
+    olvidar_cache_scrape()
+
 
 ETIQUETA_TENANT = "MasVital"
 ETIQUETA_OTRO_TENANT = "Distribuidora del Norte S.A."

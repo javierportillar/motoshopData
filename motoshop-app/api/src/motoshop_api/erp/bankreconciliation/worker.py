@@ -22,6 +22,7 @@ import dataclasses
 import datetime
 import logging
 import os
+import threading
 import time
 import traceback
 from collections.abc import Callable, Mapping
@@ -224,6 +225,20 @@ def _a_ingesta(movimiento: ScrapedMovement) -> BankMovementIn:
     )
 
 
+#: Última lectura del portal por tenant, **a nivel de proceso**.
+#:
+#: El despachador crea un worker nuevo por job (`router.get_despachador`), así
+#: que un cache de instancia nacía vacío en cada verificación y nunca acertaba.
+_CACHE_SCRAPE: dict[str, tuple[datetime.datetime, ScrapeResult]] = {}
+_CACHE_LOCK = threading.Lock()
+
+
+def olvidar_cache_scrape() -> None:
+    """Vacía el cache de lecturas del proceso (tests y diagnóstico)."""
+    with _CACHE_LOCK:
+        _CACHE_SCRAPE.clear()
+
+
 def _ttl_cache_scrape() -> int:
     """Segundos que se reutiliza la última lectura del portal (0 = nunca).
 
@@ -285,8 +300,6 @@ class BankVerificationWorker:
         self._nodo = nodo or os.environ.get(ENV_NODO) or config.tenant
         self._pedir_codigo = pedir_codigo or _pedir_codigo_en_consola
         self._job_actual: VerificationJob | None = None
-        # Última lectura del portal por tenant (verificaciones seguidas).
-        self._cache_scrape: dict[str, tuple[datetime.datetime, ScrapeResult]] = {}
         fabrica = scraper_factory or self._scraper_por_defecto
         self._scraper = fabrica(self._preguntar_otp)
 
@@ -410,7 +423,8 @@ class BankVerificationWorker:
         ttl = _ttl_cache_scrape()
         if ttl <= 0:
             return None
-        guardado = self._cache_scrape.get(job.tenant)
+        with _CACHE_LOCK:
+            guardado = _CACHE_SCRAPE.get(job.tenant)
         if guardado is None:
             return None
         leido_en, resultado = guardado
@@ -431,7 +445,8 @@ class BankVerificationWorker:
         return resultado
 
     def _recordar_scrape(self, tenant: str, resultado: ScrapeResult) -> None:
-        self._cache_scrape[tenant] = (self._reloj(), resultado)
+        with _CACHE_LOCK:
+            _CACHE_SCRAPE[tenant] = (self._reloj(), resultado)
 
     def _config_de(self, job: VerificationJob) -> NodeConfig:
         """Configuración del nodo con la ventana del job, si el job pide una.

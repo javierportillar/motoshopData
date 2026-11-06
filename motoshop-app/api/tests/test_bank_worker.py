@@ -19,6 +19,8 @@ import datetime
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from motoshop_api.erp.bankreconciliation.jobs import (
     EstadoJob,
     FakeVerificationJobStore,
@@ -37,12 +39,22 @@ from motoshop_api.erp.bankreconciliation.vault import Entry, VaultNotFound
 from motoshop_api.erp.bankreconciliation.worker import (
     ESPERA_REINTENTO_SEG,
     BankVerificationWorker,
+    olvidar_cache_scrape,
 )
 from tests.bank_fakes import PortalFalso, leer_fixture
 
 ETIQUETA_TENANT = "MasVital"
 VALOR = Decimal("458200.00")
 FACTURA = "FVP-100"
+
+
+
+@pytest.fixture(autouse=True)
+def _cache_scrape_limpio():
+    """Cada test arranca sin la lectura cacheada por otro."""
+    olvidar_cache_scrape()
+    yield
+    olvidar_cache_scrape()
 
 
 class _VaultFalso:
@@ -1049,7 +1061,18 @@ def test_worker_reutiliza_la_lectura_reciente_en_vez_de_raspar(tmp_path: Path) -
     )
 
     worker.run_once(primero)
-    worker.run_once(segundo)
+    # El despachador real crea un worker nuevo por job: el cache es de proceso.
+    segundo_worker = BankVerificationWorker(
+        jobs=jobs,
+        config=config,
+        store=store,
+        scraper_factory=lambda _cfg: scraper,
+        vault=_VaultFalso(),
+        facturas=lambda _fid: None,
+        reloj=lambda: instante,
+        nodo="pc-masvital",
+    )
+    segundo_worker.run_once(segundo)
 
     assert scraper.llamadas == 1
     guardado = jobs.get_job(config.tenant, segundo.job_id)
