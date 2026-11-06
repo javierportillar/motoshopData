@@ -114,6 +114,10 @@ MOTIVO_PERFIL_DENTRO_DEL_REPO = "perfil_dentro_del_repo"
 #: (dos tenants sobre el mismo perfil NO pueden raspar a la vez).
 NOMBRE_LOCK = ".banco-sesion.lock"
 
+#: Granularidad de los sondeos del portal. Antes era 1 s: en una espera de 6 s
+#: se perdían hasta 6 s sólo por el muestreo.
+SONDEO_S = 0.3
+
 #: Prefijo de la marca de la corrida anterior. La marca es **por tenant**:
 #: el intervalo mínimo acota las corridas *de un nodo* (un tenant), no las de
 #: dos tenants distintos que compartieran el mismo directorio de perfil.
@@ -777,7 +781,7 @@ class BankScraper:
                 )
             if self._texto_indica(session, MARCAS_CREDENCIAL_INVALIDA):
                 return False
-            time.sleep(1.0)
+            time.sleep(SONDEO_S)
         return False
 
     def _esperar_ingreso(self, session: PortalSession, timeout: float = 45.0) -> bool:
@@ -832,7 +836,7 @@ class BankScraper:
             if etiquetas:
                 # Hay cuentas pero no la del tenant: no se espera más.
                 return etiquetas
-            time.sleep(1.0)
+            time.sleep(SONDEO_S)
         return etiquetas
 
     @staticmethod
@@ -934,7 +938,7 @@ class BankScraper:
         while time.monotonic() < limite and not filas:
             self._responder_inactividad(session)
             self._verificar_antibot(session)
-            time.sleep(1.0)
+            time.sleep(SONDEO_S)
             filas = session.filas_de_movimientos()
         return filas
 
@@ -1445,7 +1449,7 @@ class PlaywrightPortalSession:
             except Exception:
                 # La pestaña puede no existir en el DOM real: la tabla manda.
                 pass
-            time.sleep(1.0)
+            time.sleep(SONDEO_S)
 
     def _etiqueta_de(self, tarjeta: Any) -> str:
         """Etiqueta (nombre visible) de una tarjeta de cuenta."""

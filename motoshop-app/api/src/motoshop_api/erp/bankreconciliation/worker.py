@@ -224,6 +224,18 @@ def _a_ingesta(movimiento: ScrapedMovement) -> BankMovementIn:
     )
 
 
+def _ttl_cache_scrape() -> int:
+    """Segundos que se reutiliza la última lectura del portal (0 = nunca).
+
+    ``BANK_SCRAPE_CACHE_TTL`` (por defecto 90). Verificar varias ventas seguidas
+    no necesita volver a bajar los movimientos del día.
+    """
+    bruto = os.environ.get("BANK_SCRAPE_CACHE_TTL", "").strip()
+    if not bruto.isdigit():
+        return 90
+    return int(bruto)
+
+
 class BankVerificationWorker:
     """Corre un job de verificación en el nodo local.
 
@@ -273,6 +285,8 @@ class BankVerificationWorker:
         self._nodo = nodo or os.environ.get(ENV_NODO) or config.tenant
         self._pedir_codigo = pedir_codigo or _pedir_codigo_en_consola
         self._job_actual: VerificationJob | None = None
+        # Última lectura del portal por tenant (verificaciones seguidas).
+        self._cache_scrape: dict[str, tuple[datetime.datetime, ScrapeResult]] = {}
         fabrica = scraper_factory or self._scraper_por_defecto
         self._scraper = fabrica(self._preguntar_otp)
 
@@ -295,7 +309,7 @@ class BankVerificationWorker:
         if not self._jobs.reclamar_ejecucion(job.tenant, job.job_id, nodo=self._nodo):
             return
         try:
-            resultado = self._raspar(job)
+            resultado = self._resultado_en_cache(job) or self._raspar(job)
         except BankScrapeError as exc:
             # Sólo el código estable: el mensaje del portal puede traer datos
             # de la sesión y no puede viajar al job.
@@ -316,6 +330,9 @@ class BankVerificationWorker:
             return
         finally:
             self._job_actual = None
+
+        # Se recuerda el scrape completo para las verificaciones inmediatas.
+        self._recordar_scrape(job.tenant, resultado)
 
         # La ingesta ocurre DESPUÉS del scrape completo: un fallo del portal
         # deja cero movimientos (nada de filas parciales).
@@ -382,6 +399,39 @@ class BankVerificationWorker:
                     ESPERA_REINTENTO_SEG,
                 )
                 self._esperar(ESPERA_REINTENTO_SEG)
+
+    def _resultado_en_cache(self, job: VerificationJob) -> ScrapeResult | None:
+        """Reutiliza la última lectura si es reciente y de la misma ventana.
+
+        Verificar varias ventas seguidas repite el mismo scrape: los
+        movimientos del día no cambian en 90 segundos. Sin esto, cada venta
+        paga el portal completo (login + navegación + tabla).
+        """
+        ttl = _ttl_cache_scrape()
+        if ttl <= 0:
+            return None
+        guardado = self._cache_scrape.get(job.tenant)
+        if guardado is None:
+            return None
+        leido_en, resultado = guardado
+        if (self._reloj() - leido_en).total_seconds() > ttl:
+            return None
+        config = self._config_de(job)
+        if (resultado.ventana[0], resultado.ventana[1]) != (
+            config.window_start,
+            config.window_end,
+        ):
+            return None
+        self._jobs.update_job(
+            job.tenant,
+            job.job_id,
+            EstadoJob.EJECUTANDO,
+            resultado={"progreso": {"paso": "movimientos_recientes", "pct": 90}},
+        )
+        return resultado
+
+    def _recordar_scrape(self, tenant: str, resultado: ScrapeResult) -> None:
+        self._cache_scrape[tenant] = (self._reloj(), resultado)
 
     def _config_de(self, job: VerificationJob) -> NodeConfig:
         """Configuración del nodo con la ventana del job, si el job pide una.

@@ -334,8 +334,11 @@ def test_worker_rechaza_un_segundo_job_simultaneo(tmp_path: Path) -> None:
     assert store.list_movements(config.tenant) == []
 
 
-def test_worker_respeta_el_intervalo_minimo_entre_corridas(tmp_path: Path) -> None:
-    """Dos corridas seguidas violan el intervalo mÃ­nimo de 30 s del nodo."""
+def test_worker_respeta_el_intervalo_minimo_entre_corridas(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Sin cache de lectura, dos corridas seguidas violan el intervalo de 30 s."""
+    monkeypatch.setenv("BANK_SCRAPE_CACHE_TTL", "0")
     jobs = FakeVerificationJobStore()
     store = FakeBankStore()
     config = _config(tmp_path)
@@ -1005,3 +1008,51 @@ def test_worker_escribe_la_etapa_en_el_job_mientras_raspa(tmp_path: Path) -> Non
     assert guardado.resultado is not None
     # El resultado final deja el progreso cerrado en 100.
     assert guardado.resultado["progreso"] == {"paso": "listo", "pct": 100}
+
+
+def test_worker_reutiliza_la_lectura_reciente_en_vez_de_raspar(tmp_path: Path) -> None:
+    """Dos verificaciones seguidas no pagan el portal dos veces.
+
+    Los movimientos del día no cambian en 90 segundos: la segunda usa la
+    lectura anterior (misma ventana) y responde sin abrir el navegador.
+    """
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    config = _config(tmp_path)
+    instante = datetime.datetime(2026, 10, 21, 8, 0, 0)
+    primero = jobs.create_job(config.tenant, "", VALOR, solicitud={"modo": "pago"})
+    segundo = jobs.create_job(
+        config.tenant, "FVP-200", VALOR, solicitud={"modo": "pago"}
+    )
+
+    class _ScraperContador:
+        def __init__(self) -> None:
+            self.llamadas = 0
+
+        def scrape(self, config, on_progress=None):
+            self.llamadas += 1
+            return dataclasses.replace(
+                _resultado(_movimiento(VALOR, id_externo="mov-cache")),
+                ventana=(config.window_start, config.window_end),
+            )
+
+    scraper = _ScraperContador()
+    worker = BankVerificationWorker(
+        jobs=jobs,
+        config=config,
+        store=store,
+        scraper_factory=lambda _cfg: scraper,
+        vault=_VaultFalso(),
+        facturas=lambda _fid: None,
+        reloj=lambda: instante,
+        nodo="pc-masvital",
+    )
+
+    worker.run_once(primero)
+    worker.run_once(segundo)
+
+    assert scraper.llamadas == 1
+    guardado = jobs.get_job(config.tenant, segundo.job_id)
+    assert guardado is not None
+    assert guardado.estado == EstadoJob.RESUELTO
+
