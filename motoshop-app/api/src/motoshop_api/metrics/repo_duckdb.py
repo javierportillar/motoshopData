@@ -1000,19 +1000,53 @@ def _bootstrap_duckdb_from_r2_unlocked(
         )
 
         r2_mtime = None
+        # V1.13: Si se solicita el artefacto chico (_metrics.duckdb), verificar si
+        # el _gold.duckdb en R2 es más nuevo que el _metrics.duckdb (o si el metrics no existe).
+        # Esto previene que una instancia en la nube quede atrapada en un _metrics.duckdb
+        # antiguo si el pipeline solo ha subido _gold.duckdb.
+        if _usar_artefacto_chico() and not os.environ.get("R2_OBJECT_KEY"):
+            k_metrics = f"{tenant}_metrics.duckdb"
+            k_gold = f"{tenant}_gold.duckdb"
+            mtime_metrics = None
+            mtime_gold = None
+            try:
+                head_m = s3.head_object(Bucket=r2_bucket, Key=k_metrics)
+                mtime_metrics = head_m["LastModified"].timestamp()
+            except Exception:
+                mtime_metrics = None
+
+            try:
+                head_g = s3.head_object(Bucket=r2_bucket, Key=k_gold)
+                mtime_gold = head_g["LastModified"].timestamp()
+            except Exception:
+                mtime_gold = None
+
+            if mtime_gold is not None and (mtime_metrics is None or mtime_gold > (mtime_metrics + 60)):
+                # Gold existe y es más reciente que metrics
+                r2_object_key = k_gold
+                r2_mtime = mtime_gold
+            elif mtime_metrics is not None:
+                r2_object_key = k_metrics
+                r2_mtime = mtime_metrics
+            elif mtime_gold is not None:
+                r2_object_key = k_gold
+                r2_mtime = mtime_gold
+
         if not must_download:
             # V1.12: comparar LastModified de R2 contra el r2_mtime de la
             # ULTIMA bajada (no contra el mtime local, que se actualiza con
             # cada replace y rompia la deteccion de uploads cercanos).
             try:
-                head = s3.head_object(Bucket=r2_bucket, Key=r2_object_key)
-                r2_mtime = head['LastModified'].timestamp()
+                if r2_mtime is None:
+                    head = s3.head_object(Bucket=r2_bucket, Key=r2_object_key)
+                    r2_mtime = head['LastModified'].timestamp()
                 last_downloaded = _R2_DOWNLOADED_MTIME.get(tenant, 0)
                 if r2_mtime > last_downloaded:
                     must_download = True
                     logger.info(
-                        "R2 has newer file for %s (R2=%.0fs ago, last_dl=%.0fs ago) — refreshing",
+                        "R2 has newer file for %s (key=%s, R2=%.0fs ago, last_dl=%.0fs ago) — refreshing",
                         tenant,
+                        r2_object_key,
                         (time() - r2_mtime),
                         (time() - last_downloaded) if last_downloaded else -1,
                     )

@@ -1297,10 +1297,10 @@ class PlaywrightPortalSession:
         """
         campo_usuario = self._localizar(self._spec("login_usuario"))
         self._llamar(campo_usuario.click)
-        self._llamar(campo_usuario.press_sequentially, usuario, delay=80)
+        self._llamar(campo_usuario.press_sequentially, usuario, delay=40)
         campo_clave = self._localizar(self._spec("login_clave"))
         self._llamar(campo_clave.click)
-        self._llamar(campo_clave.press_sequentially, clave, delay=150)
+        self._llamar(campo_clave.press_sequentially, clave, delay=50)
 
     def enviar_formulario(self) -> None:
         """Envía el formulario que esté en pantalla (login o código)."""
@@ -1332,12 +1332,23 @@ class PlaywrightPortalSession:
         En el home real cada producto es una tarjeta y su etiqueta es el `<p>`
         con la clase `text-ellipsis` (ver `account_card_label` del contrato).
         """
-        etiquetas: list[str] = []
-        for elemento in self._llamar(self._localizar(self._spec("account_card_label")).all):
+        loc = self._localizar(self._spec("account_card_label"))
+        try:
+            etiquetas = self._llamar(
+                loc.evaluate_all,
+                "elements => elements.map(el => (el.innerText || '').trim()).filter(Boolean)",
+            )
+            if isinstance(etiquetas, list):
+                return etiquetas
+        except Exception:
+            pass
+
+        etiquetas_fallback: list[str] = []
+        for elemento in self._llamar(loc.all):
             texto = str(self._llamar(elemento.inner_text) or "").strip()
             if texto:
-                etiquetas.append(texto)
-        return etiquetas
+                etiquetas_fallback.append(texto)
+        return etiquetas_fallback
 
     def abrir_cuenta(self, etiqueta: str) -> None:
         """Abre la cuenta con esa etiqueta (nunca por posición)."""
@@ -1365,15 +1376,37 @@ class PlaywrightPortalSession:
         *sticky* que duplica la fecha la resuelve el parser.
         """
         tabla = self._localizar(self._spec("movements_table"))
-        filas: list[list[str]] = []
+        try:
+            filas = self._llamar(
+                tabla.evaluate,
+                """table => {
+                    const results = [];
+                    for (const tr of table.querySelectorAll('tr')) {
+                        const celdas = [];
+                        for (const td of tr.querySelectorAll('td')) {
+                            celdas.push((td.innerText || '').trim());
+                        }
+                        if (celdas.length > 0) {
+                            results.push(celdas);
+                        }
+                    }
+                    return results;
+                }""",
+            )
+            if isinstance(filas, list):
+                return filas
+        except Exception:
+            pass
+
+        filas_fallback: list[list[str]] = []
         for fila in self._llamar(tabla.locator("tr").all):
             celdas = [
                 str(self._llamar(celda.inner_text) or "").strip()
                 for celda in self._llamar(fila.locator("td").all)
             ]
             if celdas:
-                filas.append(celdas)
-        return filas
+                filas_fallback.append(celdas)
+        return filas_fallback
 
     def hay_pagina_siguiente(self) -> bool:
         """¿Hay una página siguiente disponible?

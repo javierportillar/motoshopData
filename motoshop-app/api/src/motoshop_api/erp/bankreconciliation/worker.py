@@ -322,7 +322,25 @@ class BankVerificationWorker:
         if not self._jobs.reclamar_ejecucion(job.tenant, job.job_id, nodo=self._nodo):
             return
         try:
-            resultado = self._resultado_en_cache(job) or self._raspar(job)
+            resultado = None
+            cached = self._resultado_en_cache(job)
+            if cached is not None:
+                # Comprobar primero en caché: si el movimiento ya fue capturado en
+                # los últimos segundos, resolvemos instantáneamente sin esperar al portal.
+                coincidencia_cache = match_by_value(
+                    job.valor,
+                    [
+                        desde_movimiento_raspado(movimiento, cached.tenant)
+                        for movimiento in cached.movimientos
+                    ],
+                    cached.ventana,
+                )
+                if coincidencia_cache.candidatos:
+                    resultado = cached
+
+            if resultado is None:
+                resultado = self._raspar(job)
+                self._recordar_scrape(job.tenant, resultado)
         except BankScrapeError as exc:
             # Sólo el código estable: el mensaje del portal puede traer datos
             # de la sesión y no puede viajar al job.
@@ -343,9 +361,6 @@ class BankVerificationWorker:
             return
         finally:
             self._job_actual = None
-
-        # Se recuerda el scrape completo para las verificaciones inmediatas.
-        self._recordar_scrape(job.tenant, resultado)
 
         # La ingesta ocurre DESPUÉS del scrape completo: un fallo del portal
         # deja cero movimientos (nada de filas parciales).

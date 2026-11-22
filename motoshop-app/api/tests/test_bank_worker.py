@@ -1079,3 +1079,63 @@ def test_worker_reutiliza_la_lectura_reciente_en_vez_de_raspar(tmp_path: Path) -
     assert guardado is not None
     assert guardado.estado == EstadoJob.RESUELTO
 
+
+def test_segunda_verificacion_raspa_si_valor_no_esta_en_cache(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Si la verificación inmediata busca un valor que NO estaba en el cache, debe raspar el banco."""
+    monkeypatch.setenv("BANK_SCRAPE_CACHE_TTL", "90")
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    config = _config(tmp_path)
+    instante = datetime.datetime(2026, 10, 21, 8, 0, 0)
+    otro_valor = Decimal("123000.00")
+
+    primero = jobs.create_job(config.tenant, "", VALOR, solicitud={"modo": "pago"})
+    segundo = jobs.create_job(config.tenant, "", otro_valor, solicitud={"modo": "pago"})
+
+    class _ScraperContador:
+        def __init__(self) -> None:
+            self.llamadas = 0
+
+        def scrape(self, config, on_progress=None):
+            self.llamadas += 1
+            # Primera llamada solo devuelve VALOR, segunda devuelve otro_valor
+            valor_a_devolver = VALOR if self.llamadas == 1 else otro_valor
+            return dataclasses.replace(
+                _resultado(_movimiento(valor_a_devolver, id_externo=f"mov-{self.llamadas}")),
+                ventana=(config.window_start, config.window_end),
+            )
+
+    scraper = _ScraperContador()
+    worker1 = BankVerificationWorker(
+        jobs=jobs,
+        config=config,
+        store=store,
+        scraper_factory=lambda _cfg: scraper,
+        vault=_VaultFalso(),
+        facturas=lambda _fid: None,
+        reloj=lambda: instante,
+        nodo="pc-masvital",
+    )
+    worker1.run_once(primero)
+    assert scraper.llamadas == 1
+
+    worker2 = BankVerificationWorker(
+        jobs=jobs,
+        config=config,
+        store=store,
+        scraper_factory=lambda _cfg: scraper,
+        vault=_VaultFalso(),
+        facturas=lambda _fid: None,
+        reloj=lambda: instante,
+        nodo="pc-masvital",
+    )
+    worker2.run_once(segundo)
+
+    # Debe haber raspado de nuevo porque otro_valor no estaba en cache
+    assert scraper.llamadas == 2
+    guardado = jobs.get_job(config.tenant, segundo.job_id)
+    assert guardado is not None
+    assert guardado.estado == EstadoJob.RESUELTO
+
