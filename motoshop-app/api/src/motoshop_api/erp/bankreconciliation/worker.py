@@ -380,7 +380,7 @@ class BankVerificationWorker:
             job.tenant,
             job.job_id,
             EstadoJob.EJECUTANDO,
-            resultado={"progreso": {"paso": "buscando_el_pago", "pct": 90}},
+            resultado={"progreso": {"paso": "buscando_el_pago", "pct": 95}},
         )
         coincidencia = match_by_value(
             job.valor,

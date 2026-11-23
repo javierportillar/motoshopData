@@ -680,18 +680,20 @@ class BankScraper:
         session = self._session_factory(config)
         try:
             avisar("navegador_abierto", 20)
-            self._autenticar(session, entrada)
-            avisar("sesion_iniciada", 35)
+            self._autenticar(session, entrada, on_progress=avisar)
+            avisar("sesion_iniciada", 45)
             self._ir_a_home(session)
+            avisar("buscando_cuenta", 55)
             # Orden real del portal (verificado en vivo): desde el home se abre
             # la cuenta por su etiqueta y DESPUÉS se pulsa la pestaña
             # "Movimientos". Navegar por URL a una ruta profunda reinicia la SPA
             # y rompe la sesión.
             cuenta = self._abrir_cuenta(session, config)
-            avisar("cuenta_abierta", 55)
+            avisar("cuenta_abierta", 65)
             session.ir_a_movimientos()
+            avisar("cargando_movimientos", 75)
             movimientos, paginas = self._leer_movimientos(session, config, cuenta)
-            avisar("movimientos_leidos", 80)
+            avisar("movimientos_leidos", 85)
         finally:
             with contextlib.suppress(Exception):
                 session.cerrar()
@@ -737,10 +739,22 @@ class BankScraper:
                 f"no hay credencial para el tenant '{config.tenant}'",
             ) from exc
 
-    def _autenticar(self, session: PortalSession, entrada: Entry) -> None:
+    def _autenticar(
+        self,
+        session: PortalSession,
+        entrada: Entry,
+        on_progress: Callable[[str, int], None] | None = None,
+    ) -> None:
         """Entra al portal y resuelve el código de un solo uso si lo pide."""
+        def avisar(paso: str, pct: int) -> None:
+            if on_progress is not None:
+                with contextlib.suppress(Exception):
+                    on_progress(paso, pct)
+
         session.ir_a_autenticacion()
+        avisar("escribiendo_credenciales", 25)
         session.escribir_credenciales(entrada.username, entrada.password)
+        avisar("validando_acceso", 35)
         session.enviar_formulario()
 
         if not self._esperar_ingreso_o_otp(session):
