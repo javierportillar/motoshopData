@@ -213,5 +213,9 @@ class PortalFalso:
         self.acciones.append("responder_inactividad")
         return False
 
+    def resolver_conflicto_sesion(self) -> bool:
+        self.acciones.append("resolver_conflicto_sesion")
+        return False
+
     def cerrar(self) -> None:
         self.acciones.append("cerrar")

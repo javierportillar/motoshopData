@@ -169,10 +169,20 @@ MARCAS_SESION_EXPIRADA = (
 #: abierta"). Es el caso de las dos cuentas del negocio: dos usuarios distintos
 #: sí pueden estar abiertos, la *misma* cuenta no.
 MARCAS_SESION_ABIERTA = (
-    "tienes otra sesi\u00f3n abierta",
+    "tienes otra sesión abierta",
+    "tienes otra sesion abierta",
     "otra sesion abierta",
-    "otra sesi\u00f3n abierta",
-    "sesi\u00f3n abierta en otro dispositivo",
+    "otra sesión abierta",
+    "sesión abierta en otro dispositivo",
+    "sesion abierta en otro dispositivo",
+    "tienes una sesión activa",
+    "tienes una sesion activa",
+    "sesión activa",
+    "sesion activa",
+    "otra sesión activa",
+    "otra sesion activa",
+    "ya tienes una sesión",
+    "ya tienes una sesion",
 )
 
 MARCAS_ANTIBOT = (
@@ -262,6 +272,8 @@ class PortalSession(Protocol):
     def ir_a_pagina_siguiente(self) -> None: ...
 
     def responder_inactividad(self) -> bool: ...
+
+    def resolver_conflicto_sesion(self) -> bool: ...
 
     def cerrar(self) -> None: ...
 
@@ -775,6 +787,9 @@ class BankScraper:
             if session.hay_codigo_otp():
                 return True
             if self._texto_indica(session, MARCAS_SESION_ABIERTA):
+                if hasattr(session, "resolver_conflicto_sesion") and session.resolver_conflicto_sesion():
+                    time.sleep(1.0)
+                    continue
                 raise BankScrapeError(
                     CODIGO_SESION_CERRADA,
                     "el banco cerró esta sesión: la cuenta se abrió en otro dispositivo",
@@ -1451,12 +1466,51 @@ class PlaywrightPortalSession:
             pass
         return False
 
+    def resolver_conflicto_sesion(self) -> bool:
+        """Si el banco muestra el diálogo 'Tienes otra sesión activa', acepta continuar."""
+        try:
+            for selector in (
+                "button:has-text('Continuar')",
+                "button:has-text('Aceptar')",
+                "button:has-text('Cerrar sesión anterior')",
+                "button:has-text('Cerrar sesion anterior')",
+                "button[data-test='confirm-session']",
+            ):
+                boton = self._pagina.locator(selector)
+                if boton.count() > 0 and boton.first.is_visible():
+                    self._llamar(boton.first.click)
+                    return True
+        except Exception:
+            pass
+        return False
+
     def cerrar(self) -> None:
         """Cierra el navegador y su perfil."""
+        with contextlib.suppress(Exception):
+            self._intentar_cerrar_sesion_banco()
         with contextlib.suppress(Exception):
             self._contexto.close()
         with contextlib.suppress(Exception):
             self._gestor.stop()
+
+    def _intentar_cerrar_sesion_banco(self) -> None:
+        """Intenta hacer clic en Salir/Cerrar sesión en el portal para evitar sesión zombi."""
+        try:
+            for selector in (
+                "a:has-text('Salir')",
+                "button:has-text('Salir')",
+                "a:has-text('Cerrar sesión')",
+                "button:has-text('Cerrar sesión')",
+                "a:has-text('Cerrar sesion')",
+                "button:has-text('Cerrar sesion')",
+            ):
+                btn = self._pagina.locator(selector)
+                if btn.count() > 0 and btn.first.is_visible():
+                    btn.first.click(timeout=1500)
+                    time.sleep(0.5)
+                    return
+        except Exception:
+            pass
 
     # --- internos ---
 

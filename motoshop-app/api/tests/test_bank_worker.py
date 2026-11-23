@@ -1121,7 +1121,54 @@ def test_segunda_verificacion_raspa_si_valor_no_esta_en_cache(
     worker1.run_once(primero)
     assert scraper.llamadas == 1
 
+    instante_despues = instante + datetime.timedelta(seconds=35)
     worker2 = BankVerificationWorker(
+        jobs=jobs,
+        config=config,
+        store=store,
+        scraper_factory=lambda _cfg: scraper,
+        vault=_VaultFalso(),
+        facturas=lambda _fid: None,
+        reloj=lambda: instante_despues,
+        nodo="pc-masvital",
+    )
+    worker2.run_once(segundo)
+
+    # Debe haber raspado de nuevo porque otro_valor no estaba en cache y ya pasó el intervalo
+    assert scraper.llamadas == 2
+    guardado = jobs.get_job(config.tenant, segundo.job_id)
+    assert guardado is not None
+    assert guardado.estado == EstadoJob.RESUELTO
+
+
+def test_segunda_verificacion_inmediata_dentro_del_intervalo_usa_cache_y_no_colisiona(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Si la segunda verificación ocurre segundos después y no encuentra valor,
+    usa el cache reciente en vez de chocar contra el intervalo mínimo del banco."""
+    monkeypatch.setenv("BANK_SCRAPE_CACHE_TTL", "90")
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    config = _config(tmp_path)
+    instante = datetime.datetime(2026, 10, 21, 8, 0, 0)
+    otro_valor = Decimal("123000.00")
+
+    primero = jobs.create_job(config.tenant, "", VALOR, solicitud={"modo": "pago"})
+    segundo = jobs.create_job(config.tenant, "", otro_valor, solicitud={"modo": "pago"})
+
+    class _ScraperContador:
+        def __init__(self) -> None:
+            self.llamadas = 0
+
+        def scrape(self, config, on_progress=None):
+            self.llamadas += 1
+            return dataclasses.replace(
+                _resultado(_movimiento(VALOR, id_externo=f"mov-{self.llamadas}")),
+                ventana=(config.window_start, config.window_end),
+            )
+
+    scraper = _ScraperContador()
+    worker1 = BankVerificationWorker(
         jobs=jobs,
         config=config,
         store=store,
@@ -1131,11 +1178,26 @@ def test_segunda_verificacion_raspa_si_valor_no_esta_en_cache(
         reloj=lambda: instante,
         nodo="pc-masvital",
     )
+    worker1.run_once(primero)
+    assert scraper.llamadas == 1
+
+    # Segunda verificación apenas 5 segundos después (dentro de los 30 s de intervalo)
+    instante_inmediato = instante + datetime.timedelta(seconds=5)
+    worker2 = BankVerificationWorker(
+        jobs=jobs,
+        config=config,
+        store=store,
+        scraper_factory=lambda _cfg: scraper,
+        vault=_VaultFalso(),
+        facturas=lambda _fid: None,
+        reloj=lambda: instante_inmediato,
+        nodo="pc-masvital",
+    )
     worker2.run_once(segundo)
 
-    # Debe haber raspado de nuevo porque otro_valor no estaba en cache
-    assert scraper.llamadas == 2
+    # No raspa una 2da vez porque violaría el intervalo de 30 s: usa el cache reciente
+    assert scraper.llamadas == 1
     guardado = jobs.get_job(config.tenant, segundo.job_id)
     assert guardado is not None
-    assert guardado.estado == EstadoJob.RESUELTO
+    assert guardado.estado == EstadoJob.SIN_COINCIDENCIA
 

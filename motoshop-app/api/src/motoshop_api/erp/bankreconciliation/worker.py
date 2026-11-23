@@ -323,8 +323,9 @@ class BankVerificationWorker:
             return
         try:
             resultado = None
-            cached = self._resultado_en_cache(job)
-            if cached is not None:
+            cached_item = self._resultado_en_cache(job)
+            if cached_item is not None:
+                leido_en, cached = cached_item
                 # Comprobar primero en caché: si el movimiento ya fue capturado en
                 # los últimos segundos, resolvemos instantáneamente sin esperar al portal.
                 coincidencia_cache = match_by_value(
@@ -337,6 +338,16 @@ class BankVerificationWorker:
                 )
                 if coincidencia_cache.candidatos:
                     resultado = cached
+                else:
+                    # El valor no está en la lectura previa. ¿Podemos raspar el portal ahora?
+                    # Si el scrape anterior fue hace menos del intervalo mínimo de seguridad (30 s),
+                    # abrir el navegador de inmediato provocaría SessionSlotError o colisión de
+                    # sesión activa en Bancolombia. En ese caso, la lectura recién capturada
+                    # hace segundos es la foto fiel del banco y evitamos trabar la pantalla.
+                    segundos_desde_scrape = (self._reloj() - leido_en).total_seconds()
+                    config = self._config_de(job)
+                    if 0 <= segundos_desde_scrape < config.min_interval_seconds:
+                        resultado = cached
 
             if resultado is None:
                 resultado = self._raspar(job)
@@ -428,7 +439,7 @@ class BankVerificationWorker:
                 )
                 self._esperar(ESPERA_REINTENTO_SEG)
 
-    def _resultado_en_cache(self, job: VerificationJob) -> ScrapeResult | None:
+    def _resultado_en_cache(self, job: VerificationJob) -> tuple[datetime.datetime, ScrapeResult] | None:
         """Reutiliza la última lectura si es reciente y de la misma ventana.
 
         Verificar varias ventas seguidas repite el mismo scrape: los
@@ -457,7 +468,7 @@ class BankVerificationWorker:
             EstadoJob.EJECUTANDO,
             resultado={"progreso": {"paso": "movimientos_recientes", "pct": 90}},
         )
-        return resultado
+        return leido_en, resultado
 
     def _recordar_scrape(self, tenant: str, resultado: ScrapeResult) -> None:
         with _CACHE_LOCK:
