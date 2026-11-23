@@ -94,6 +94,30 @@ def _fetch_new_details(mysql_cur, headers: list[dict]) -> list[dict]:
     return rows
 
 
+def _fetch_new_payments(mysql_cur, headers: list[dict]) -> list[dict]:
+    """Lee detapago para las facturas nuevas."""
+    if not headers:
+        return []
+    pairs = [(h["numfven"], h["codclas"]) for h in headers]
+    placeholders = ", ".join([f"(%s,%s)" for _ in pairs])
+    flat = [v for p in pairs for v in p]
+    try:
+        rows = _fetchall_dict(mysql_cur, f"""
+            SELECT
+                d.numnum, d.codclas, d.predoc,
+                d.numite, d.fecdoc, d.valpag,
+                d.valefe, d.despag, d.numpag,
+                d.codpag, d.estado
+            FROM detapago d
+            WHERE (d.numnum, d.codclas) IN ({placeholders})
+            ORDER BY d.numnum, d.numite
+        """, flat)
+        return rows
+    except Exception as e:
+        logger.warning("No se pudo leer detapago de MySQL: %s", e)
+        return []
+
+
 # ── Paso 2: insertar en silver ──────────────────────────────────────────────
 
 def _insert_headers(con: duckdb.DuckDBPyConnection, rows: list[dict]) -> int:
@@ -211,6 +235,61 @@ def _insert_details(con: duckdb.DuckDBPyConnection, rows: list[dict], headers_da
     return total
 
 
+def _insert_payments(con: duckdb.DuckDBPyConnection, rows: list[dict], headers_date_map: dict) -> int:
+    """Inserta nuevos pagos en silver_fact_ventas_pagos."""
+    if not rows:
+        return 0
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS silver_fact_ventas_pagos (
+            num_documento VARCHAR,
+            cod_clase VARCHAR,
+            prefijo VARCHAR,
+            num_item INTEGER,
+            fecha_documento_ts TIMESTAMP,
+            business_date DATE,
+            cod_formapago VARCHAR,
+            valor DOUBLE,
+            valor_efectivo DOUBLE,
+            referencia VARCHAR,
+            descripcion VARCHAR,
+            estado VARCHAR
+        )
+    """)
+    batch = []
+    for p in rows:
+        try:
+            num = str(p.get("numnum", "")).strip()
+            clas = str(p.get("codclas", "")).strip()
+            ts = p.get("fecdoc")
+            if hasattr(ts, "strftime"):
+                ts_str = ts.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                ts_str = str(ts) if ts else None
+            b_date = headers_date_map.get((num, clas)) or (ts_str[:10] if ts_str else None)
+            batch.append((
+                num, clas, str(p.get("predoc", "")).strip(),
+                int(p.get("numite", 1) or 1),
+                ts_str, b_date,
+                str(p.get("codpag", "")).strip(),
+                float(p.get("valpag", 0) or 0),
+                float(p.get("valefe", 0) or 0),
+                str(p.get("numpag", "") or "").strip(),
+                str(p.get("despag", "") or "").strip(),
+                str(p.get("estado", "B")).strip(),
+            ))
+        except (ValueError, TypeError):
+            continue
+    if batch:
+        con.executemany("""
+            INSERT INTO silver_fact_ventas_pagos
+                (num_documento, cod_clase, prefijo, num_item,
+                 fecha_documento_ts, business_date, cod_formapago,
+                 valor, valor_efectivo, referencia, descripcion, estado)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        """, batch)
+    return len(batch)
+
+
 # ── Paso 3: Rebuild gold ───────────────────────────────────────────────────
 
 def _rebuild_gold(con: duckdb.DuckDBPyConnection) -> None:
@@ -323,6 +402,7 @@ def main() -> int:
                 else:
                     headers: list[dict] = []
                     details: list[dict] = []
+                    payments: list[dict] = []
 
                     try:
                         cur = mysql_conn.cursor()
@@ -336,9 +416,12 @@ def main() -> int:
                         else:
                             logger.info("Nuevas facturas encontradas: %d", len(headers))
 
-                            # ── 4. Leer detalle ───────────────────────────
+                            # ── 4. Leer detalle y pagos ───────────────────
                             details = _fetch_new_details(cur, headers)
                             logger.info("Nuevos detalles encontrados: %d", len(details))
+
+                            payments = _fetch_new_payments(cur, headers)
+                            logger.info("Nuevos pagos encontrados en detapago: %d", len(payments))
 
                     finally:
                         mysql_conn.close()
@@ -361,6 +444,9 @@ def main() -> int:
 
                         d_count = _insert_details(con, details, header_date_map)
                         logger.info("Insertados %d detalles en silver_fact_ventas_detalle", d_count)
+
+                        p_count = _insert_payments(con, payments, header_date_map)
+                        logger.info("Insertados %d pagos en silver_fact_ventas_pagos", p_count)
 
                         # ── 6. Rebuild gold ───────────────────────────────
                         _rebuild_gold(con)

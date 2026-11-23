@@ -3563,27 +3563,91 @@ class DuckDBMetricsRepo:
             })
 
         # 6. Forma de pago breakdown
-        formas_rows = self._query(
-            """
-            SELECT
-                COALESCE(NULLIF(TRIM(cod_formapago), ''), 'SIN_COD') AS cod_formapago,
-                ROUND(SUM(total_factura), 2) AS total_ventas,
-                COUNT(*) AS num_facturas
-            FROM silver_fact_ventas
-            WHERE business_date = ?
-              AND estado_documento != 'A'
-            GROUP BY cod_formapago
-            ORDER BY total_ventas DESC
-            """,
-            [date],
-        )
+        # V1.35: Si existen pagos desglosados en detapago (sgHermes) o silver_fact_ventas_pagos,
+        # desglosar por el valor REAL de cada forma de pago para reflejar pagos mixtos (efectivo + transferencia).
+        formas_desglosadas = False
+        formas_rows: list[dict[str, Any]] = []
+
+        try:
+            pagos_db = self._query(
+                """
+                SELECT
+                    COALESCE(NULLIF(TRIM(cod_formapago), ''), 'SIN_COD') AS cod_formapago,
+                    ROUND(SUM(valor), 2) AS total_ventas,
+                    COUNT(DISTINCT num_documento || '-' || cod_clase) AS num_facturas
+                FROM silver_fact_ventas_pagos
+                WHERE business_date = ?
+                  AND estado != 'A'
+                GROUP BY cod_formapago
+                ORDER BY total_ventas DESC
+                """,
+                [date],
+            )
+            if pagos_db:
+                formas_rows = pagos_db
+                formas_desglosadas = True
+        except Exception:
+            pass
+
+        if not formas_desglosadas:
+            try:
+                from motoshop_api.db.engine import get_engine
+                from sqlalchemy import text
+                sql_fp = text(
+                    """
+                    SELECT
+                        COALESCE(NULLIF(TRIM(d.codpag), ''), 'SIN_COD') AS cod_formapago,
+                        COALESCE(NULLIF(TRIM(fp.forpag), ''), d.codpag) AS nombre,
+                        ROUND(SUM(d.valpag), 2) AS total_ventas,
+                        COUNT(DISTINCT CONCAT(d.numnum, '-', d.codclas)) AS num_facturas
+                    FROM detapago d
+                    LEFT JOIN formapago fp ON d.codpag = fp.codpag
+                    WHERE DATE(d.fecdoc) = :fecha
+                      AND d.estado != 'A'
+                    GROUP BY d.codpag
+                    ORDER BY total_ventas DESC
+                    """
+                )
+                with get_engine().connect() as conn:
+                    filas = conn.execute(sql_fp, {"fecha": date}).mappings().all()
+                    if filas:
+                        formas_rows = [
+                            {
+                                "cod_formapago": str(r["cod_formapago"]),
+                                "nombre": str(r["nombre"]) or _formapago_label(str(r["cod_formapago"])),
+                                "total_ventas": float(r["total_ventas"] or 0),
+                                "num_facturas": int(r["num_facturas"] or 0),
+                            }
+                            for r in filas
+                        ]
+                        formas_desglosadas = True
+            except Exception:
+                pass
+
+        if not formas_desglosadas:
+            formas_rows = self._query(
+                """
+                SELECT
+                    COALESCE(NULLIF(TRIM(cod_formapago), ''), 'SIN_COD') AS cod_formapago,
+                    ROUND(SUM(total_factura), 2) AS total_ventas,
+                    COUNT(*) AS num_facturas
+                FROM silver_fact_ventas
+                WHERE business_date = ?
+                  AND estado_documento != 'A'
+                GROUP BY cod_formapago
+                ORDER BY total_ventas DESC
+                """,
+                [date],
+            )
+
         formas_pago = []
         for f in formas_rows:
             tv = float(f["total_ventas"] or 0)
             pct = round((tv / total_ventas) * 100, 2) if total_ventas > 0 else 0.0
+            nombre_label = f.get("nombre") or _formapago_label(f["cod_formapago"])
             formas_pago.append({
                 "cod_formapago": f["cod_formapago"],
-                "nombre": _formapago_label(f["cod_formapago"]),
+                "nombre": nombre_label,
                 "total_ventas": tv,
                 "num_facturas": int(f["num_facturas"] or 0),
                 "porcentaje": pct,
@@ -3932,6 +3996,78 @@ class DuckDBMetricsRepo:
 
         invoices = list(invoices_map.values())
 
+        # V1.35: Desglose real de métodos de pago por factura (detapago de sgHermes / silver_fact_ventas_pagos).
+        # Permite diferenciar con precisión cuánto se pagó en efectivo y cuánto por transferencia (pago mixto).
+        pagos_por_factura: dict[tuple[str, str], list[dict[str, Any]]] = {}
+
+        try:
+            pagos_duckdb = self._query(
+                """
+                SELECT
+                    TRIM(num_documento) AS num_documento,
+                    TRIM(cod_clase) AS cod_clase,
+                    TRIM(cod_formapago) AS cod_formapago,
+                    ROUND(CAST(valor AS DOUBLE), 2) AS valor,
+                    TRIM(COALESCE(referencia, '')) AS referencia
+                FROM silver_fact_ventas_pagos
+                WHERE business_date = ?
+                  AND estado != 'A'
+                ORDER BY num_documento, num_item
+                """,
+                [date],
+            )
+            for p in pagos_duckdb:
+                k = (str(p["num_documento"]), str(p["cod_clase"]))
+                cod = str(p["cod_formapago"])
+                lbl = _formapago_label(cod)
+                es_tf = _es_forma_transferencia(cod, lbl)
+                pagos_por_factura.setdefault(k, []).append({
+                    "cod_formapago": cod,
+                    "nombre_formapago": lbl,
+                    "valor": float(p["valor"] or 0),
+                    "referencia": p["referencia"] or None,
+                    "es_transferencia": es_tf,
+                })
+        except Exception:
+            pass
+
+        if not pagos_por_factura:
+            try:
+                from motoshop_api.db.engine import get_engine
+                from sqlalchemy import text
+                sql_detapago = text(
+                    """
+                    SELECT
+                        TRIM(d.numnum) AS num_documento,
+                        TRIM(d.codclas) AS cod_clase,
+                        TRIM(d.codpag) AS cod_formapago,
+                        COALESCE(NULLIF(TRIM(fp.forpag), ''), d.codpag) AS nombre_formapago,
+                        d.valpag AS valor,
+                        TRIM(COALESCE(d.numpag, '')) AS referencia
+                    FROM detapago d
+                    LEFT JOIN formapago fp ON d.codpag = fp.codpag
+                    WHERE DATE(d.fecdoc) = :fecha
+                      AND d.estado != 'A'
+                    ORDER BY d.numnum, d.numite
+                    """
+                )
+                with get_engine().connect() as conn:
+                    filas_mysql = conn.execute(sql_detapago, {"fecha": date}).mappings().all()
+                    for p in filas_mysql:
+                        k = (str(p["num_documento"]), str(p["cod_clase"]))
+                        cod = str(p["cod_formapago"])
+                        lbl = str(p["nombre_formapago"]) or _formapago_label(cod)
+                        es_tf = _es_forma_transferencia(cod, lbl)
+                        pagos_por_factura.setdefault(k, []).append({
+                            "cod_formapago": cod,
+                            "nombre_formapago": lbl,
+                            "valor": round(float(p["valor"] or 0), 2),
+                            "referencia": p["referencia"] or None,
+                            "es_transferencia": es_tf,
+                        })
+            except Exception:
+                pass
+
         # Totales de factura: costo, ganancia y total
         for inv in invoices:
             # Si la cabecera no traia total (o venia 0), usar la suma del
@@ -3944,6 +4080,23 @@ class DuckDBMetricsRepo:
             inv["costo_total"] = round(inv_costo, 2)
             inv["ganancia"] = round(inv["total"] - inv_costo, 2) if inv_costo > 0 else None
             inv["margen_pct"] = round((inv["total"] - inv_costo) / inv["total"] * 100, 1) if inv_costo > 0 and inv["total"] > 0 else None
+
+            k = (inv["num_documento"], inv["cod_clase"])
+            det_pagos = pagos_por_factura.get(k, [])
+            if not det_pagos:
+                cod = inv["cod_formapago"]
+                lbl = inv["nombre_formapago"]
+                es_tf = _es_forma_transferencia(cod, lbl)
+                det_pagos = [{
+                    "cod_formapago": cod,
+                    "nombre_formapago": lbl,
+                    "valor": inv["total"],
+                    "referencia": None,
+                    "es_transferencia": es_tf,
+                }]
+            inv["pagos"] = det_pagos
+            tf_pago = next((p for p in det_pagos if p["es_transferencia"]), None)
+            inv["valor_transferencia"] = tf_pago["valor"] if tf_pago else None
 
         # Resumen para mostrar arriba
         total_dia = sum(inv["total"] for inv in invoices)
@@ -3972,21 +4125,85 @@ class DuckDBMetricsRepo:
         tener un delta vs caja fisica.
         """
         # 1. Resumen por forma de pago
-        formas_rows = self._query(
-            """
-            SELECT
-                COALESCE(NULLIF(TRIM(cod_formapago), ''), 'SIN_COD') AS cod_formapago,
-                ROUND(SUM(total_factura), 2) AS total_ventas,
-                COUNT(*) AS num_facturas,
-                ROUND(AVG(total_factura), 2) AS ticket_promedio
-            FROM silver_fact_ventas
-            WHERE business_date = ?
-              AND estado_documento != 'A'
-            GROUP BY cod_formapago
-            ORDER BY total_ventas DESC
-            """,
-            [date],
-        )
+        # V1.35: Usar desglose real de detapago / silver_fact_ventas_pagos cuando esté disponible
+        formas_desglosadas = False
+        formas_rows: list[dict[str, Any]] = []
+
+        try:
+            pagos_db = self._query(
+                """
+                SELECT
+                    COALESCE(NULLIF(TRIM(cod_formapago), ''), 'SIN_COD') AS cod_formapago,
+                    ROUND(SUM(valor), 2) AS total_ventas,
+                    COUNT(DISTINCT num_documento || '-' || cod_clase) AS num_facturas,
+                    ROUND(AVG(valor), 2) AS ticket_promedio
+                FROM silver_fact_ventas_pagos
+                WHERE business_date = ?
+                  AND estado != 'A'
+                GROUP BY cod_formapago
+                ORDER BY total_ventas DESC
+                """,
+                [date],
+            )
+            if pagos_db:
+                formas_rows = pagos_db
+                formas_desglosadas = True
+        except Exception:
+            pass
+
+        if not formas_desglosadas:
+            try:
+                from motoshop_api.db.engine import get_engine
+                from sqlalchemy import text
+                sql_fp = text(
+                    """
+                    SELECT
+                        COALESCE(NULLIF(TRIM(d.codpag), ''), 'SIN_COD') AS cod_formapago,
+                        COALESCE(NULLIF(TRIM(fp.forpag), ''), d.codpag) AS nombre,
+                        ROUND(SUM(d.valpag), 2) AS total_ventas,
+                        COUNT(DISTINCT CONCAT(d.numnum, '-', d.codclas)) AS num_facturas,
+                        ROUND(AVG(d.valpag), 2) AS ticket_promedio
+                    FROM detapago d
+                    LEFT JOIN formapago fp ON d.codpag = fp.codpag
+                    WHERE DATE(d.fecdoc) = :fecha
+                      AND d.estado != 'A'
+                    GROUP BY d.codpag
+                    ORDER BY total_ventas DESC
+                    """
+                )
+                with get_engine().connect() as conn:
+                    filas = conn.execute(sql_fp, {"fecha": date}).mappings().all()
+                    if filas:
+                        formas_rows = [
+                            {
+                                "cod_formapago": str(r["cod_formapago"]),
+                                "nombre": str(r["nombre"]) or _formapago_label(str(r["cod_formapago"])),
+                                "total_ventas": float(r["total_ventas"] or 0),
+                                "num_facturas": int(r["num_facturas"] or 0),
+                                "ticket_promedio": float(r["ticket_promedio"] or 0),
+                            }
+                            for r in filas
+                        ]
+                        formas_desglosadas = True
+            except Exception:
+                pass
+
+        if not formas_desglosadas:
+            formas_rows = self._query(
+                """
+                SELECT
+                    COALESCE(NULLIF(TRIM(cod_formapago), ''), 'SIN_COD') AS cod_formapago,
+                    ROUND(SUM(total_factura), 2) AS total_ventas,
+                    COUNT(*) AS num_facturas,
+                    ROUND(AVG(total_factura), 2) AS ticket_promedio
+                FROM silver_fact_ventas
+                WHERE business_date = ?
+                  AND estado_documento != 'A'
+                GROUP BY cod_formapago
+                ORDER BY total_ventas DESC
+                """,
+                [date],
+            )
         total_dia = sum(float(r["total_ventas"] or 0) for r in formas_rows)
         total_facturas_dia = sum(int(r["num_facturas"] or 0) for r in formas_rows)
 
@@ -7044,18 +7261,41 @@ class DuckDBMetricsRepo:
 
 
 _FORMAPAGO_LABELS = {
-    "F01": "Contado/Efectivo",
-    "F02": "Tarjeta crédito",
+    "F01": "Efectivo",
+    "F02": "Cheque",
     "F03": "Tarjeta débito",
-    "F04": "Transferencia",
-    "F05": "Crédito a 30 días",
+    "F04": "Tarjeta crédito",
+    "F05": "Consignación",
     "F06": "Crédito a 60 días",
-    "F07": "Crédito a 90 días",
+    "F07": "Transferencia Banco",
     "F08": "Cheque",
     "F09": "Nequi/Daviplata",
-    "F10": "Bono/Voucher",
+    "F10": "Cuentas por cobrar",
+    "F11": "Cuentas por pagar",
+    "F12": "Anticipos / Saldo a favor",
     "SIN_COD": "Sin clasificar",
 }
+
+
+def _es_forma_transferencia(cod: str, label: str = "") -> bool:
+    """Detecta si un código o etiqueta de forma de pago corresponde a banco/transferencia/QR."""
+    c = (cod or "").strip().upper()
+    l = (label or "").lower()
+    if c in ("F07", "F04", "F05", "F09"):
+        return True
+    return any(
+        w in l
+        for w in (
+            "transferencia",
+            "banco",
+            "consignacion",
+            "consignación",
+            "nequi",
+            "daviplata",
+            "bancolombia",
+            "qr",
+        )
+    )
 
 
 def _formapago_label(cod: str) -> str:

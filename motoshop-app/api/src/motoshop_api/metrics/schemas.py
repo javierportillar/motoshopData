@@ -293,6 +293,14 @@ class InvoiceItem(BaseModel):
     cod_bodega: str | None = None
 
 
+class DayInvoicePayment(BaseModel):
+    cod_formapago: str
+    nombre_formapago: str
+    valor: float
+    referencia: str | None = None
+    es_transferencia: bool = False
+
+
 class DayInvoice(BaseModel):
     num_documento: str
     cod_clase: str
@@ -310,6 +318,8 @@ class DayInvoice(BaseModel):
     ganancia: float | None = None
     margen_pct: float | None = None
     items: list[InvoiceItem]
+    pagos: list[DayInvoicePayment] = []
+    valor_transferencia: float | None = None
 
 
 class SalesDayInvoicesResponse(BaseModel):

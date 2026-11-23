@@ -304,3 +304,65 @@ class TestMetricsAuthenticated:
             body = resp.json()
             for field in expected_fields:
                 assert field in body, f"{ep} no tiene campo '{field}'"
+
+    def test_formapago_labels_y_transferencia_hermes(self) -> None:
+        """Verifica que los códigos reales de Hermes (F01, F07) se etiqueten y reconozcan."""
+        from motoshop_api.metrics.repo_duckdb import (
+            _FORMAPAGO_LABELS,
+            _es_forma_transferencia,
+            _formapago_label,
+        )
+
+        # F01 es Efectivo, F07 es Transferencia Banco
+        assert _formapago_label("F01") == "Efectivo"
+        assert _formapago_label("F07") == "Transferencia Banco"
+        assert _formapago_label("F03") == "Tarjeta débito"
+        assert _formapago_label("F10") == "Cuentas por cobrar"
+
+        # Detección de transferencias para conciliación bancaria
+        assert _es_forma_transferencia("F07") is True
+        assert _es_forma_transferencia("F04") is True
+        assert _es_forma_transferencia("F05") is True
+        assert _es_forma_transferencia("F09") is True
+        assert _es_forma_transferencia("F01") is False
+        assert _es_forma_transferencia("XYZ", "Transferencia Bancolombia") is True
+        assert _es_forma_transferencia("XYZ", "Pago en Efectivo") is False
+
+    def test_schema_day_invoice_con_pagos_mixtos(self) -> None:
+        """Una factura puede tener múltiples pagos en detapago (ej. 39.300 efectivo + 118.000 transferencia)."""
+        from motoshop_api.metrics.schemas import DayInvoice, DayInvoicePayment
+
+        inv = DayInvoice(
+            num_documento="3559",
+            cod_clase="S15",
+            prefijo="FVP",
+            hora="14:30",
+            cliente="Consumidor Final",
+            vendedor="Vendedor 1",
+            cod_formapago="F01",
+            nombre_formapago="Efectivo",
+            subtotal=157300.0,
+            total_descuentos=0.0,
+            total_iva=0.0,
+            total=157300.0,
+            items=[],
+            pagos=[
+                DayInvoicePayment(
+                    cod_formapago="F01",
+                    nombre_formapago="Efectivo",
+                    valor=39300.0,
+                    es_transferencia=False,
+                ),
+                DayInvoicePayment(
+                    cod_formapago="F07",
+                    nombre_formapago="Transferencia Banco",
+                    valor=118000.0,
+                    es_transferencia=True,
+                ),
+            ],
+            valor_transferencia=118000.0,
+        )
+        assert inv.total == 157300.0
+        assert len(inv.pagos) == 2
+        assert inv.valor_transferencia == 118000.0
+        assert inv.pagos[1].es_transferencia is True
