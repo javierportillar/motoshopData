@@ -32,12 +32,14 @@ from motoshop_api.erp.bankreconciliation.scraper import (
     BankScrapeError,
     ScrapedMovement,
     ScrapeResult,
+    SessionSlotError,
     acquire_session_slot,
 )
 from motoshop_api.erp.bankreconciliation.store import FakeBankStore
 from motoshop_api.erp.bankreconciliation.vault import Entry, VaultNotFound
 from motoshop_api.erp.bankreconciliation.worker import (
     ESPERA_REINTENTO_SEG,
+    ESPERA_TURNO_SESION_SEG,
     BankVerificationWorker,
     olvidar_cache_scrape,
 )
@@ -166,7 +168,7 @@ def _worker(
         vault=_VaultFalso(),
         pedir_codigo=pedir_codigo,
         reloj=reloj,
-        esperar=esperar,
+        esperar=esperar or (lambda _s: None),
         facturas=facturas or (lambda _fid: None),
         nodo="pc-masvital",
     )
@@ -604,6 +606,86 @@ def test_worker_no_reintenta_si_el_job_ya_vencio(tmp_path: Path) -> None:
     assert scraper.llamadas == 1
     assert esperas == []
     assert guardado.estado == EstadoJob.FALLIDO
+
+
+class _ScraperConFalloDeSlot:
+    """Scraper falso que simula colisiones de turno de sesión."""
+
+    def __init__(
+        self,
+        resultado: ScrapeResult,
+        fallos: int,
+        motivo: str = "ejecucion_concurrente",
+    ) -> None:
+        self._resultado = resultado
+        self._fallos = fallos
+        self._motivo = motivo
+        self.llamadas = 0
+
+    def scrape(self, config: NodeConfig, on_progress=None) -> ScrapeResult:
+        self.llamadas += 1
+        if self.llamadas <= self._fallos:
+            raise SessionSlotError(self._motivo, "sesión en uso")
+        return self._resultado
+
+
+def test_worker_espera_turno_si_hay_ejecucion_concurrente_y_luego_resuelve(
+    tmp_path: Path,
+) -> None:
+    """Una colisión de sesión (ej. consulta simultánea) espera turno y se resuelve sola."""
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    config = _config(tmp_path)
+    job = jobs.create_job(config.tenant, FACTURA, VALOR)
+    scraper = _ScraperConFalloDeSlot(
+        _resultado(_movimiento(VALOR, id_externo="0092055984")),
+        fallos=2,
+        motivo="ejecucion_concurrente",
+    )
+    esperas: list[float] = []
+
+    worker = _worker(
+        tmp_path,
+        jobs=jobs,
+        store=store,
+        scraper_factory=lambda _pedir: scraper,
+        esperar=esperas.append,
+    )
+    worker.run_once(job)
+
+    guardado = jobs.get_job(config.tenant, job.job_id)
+    assert guardado is not None
+    assert scraper.llamadas == 3
+    assert esperas == [ESPERA_TURNO_SESION_SEG, ESPERA_TURNO_SESION_SEG]
+    assert guardado.estado == EstadoJob.RESUELTO
+
+
+def test_worker_falla_si_ejecucion_concurrente_agota_reintentos(
+    tmp_path: Path,
+) -> None:
+    """Si la colisión no se libera tras agotar reintentos, el job falla con el motivo exacto."""
+    jobs = FakeVerificationJobStore()
+    store = FakeBankStore()
+    config = _config(tmp_path)
+    job = jobs.create_job(config.tenant, FACTURA, VALOR)
+    scraper = _ScraperConFalloDeSlot(_resultado(), fallos=5, motivo="ejecucion_concurrente")
+    esperas: list[float] = []
+
+    worker = _worker(
+        tmp_path,
+        jobs=jobs,
+        store=store,
+        scraper_factory=lambda _pedir: scraper,
+        esperar=esperas.append,
+    )
+    worker.run_once(job)
+
+    guardado = jobs.get_job(config.tenant, job.job_id)
+    assert guardado is not None
+    assert scraper.llamadas == 5  # 1 inicial + 4 reintentos
+    assert len(esperas) == 4
+    assert guardado.estado == EstadoJob.FALLIDO
+    assert guardado.error_codigo == "ejecucion_concurrente"
 
 def test_worker_suma_nitter_y_cliente_nombre_de_la_factura(tmp_path: Path) -> None:
     """El candidato lleva el NIT y el cliente de la FACTURA, no del banco."""

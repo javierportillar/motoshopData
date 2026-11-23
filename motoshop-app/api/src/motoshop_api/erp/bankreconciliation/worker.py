@@ -73,6 +73,12 @@ LIMITE_CUENTA = 64
 REINTENTOS_PORTAL = 1
 ESPERA_REINTENTO_SEG = 35.0
 
+#: Intentos de turno de sesión cuando hay ejecución concurrente o intervalo mínimo:
+#: da tiempo a que la corrida previa termine o se cumpla el intervalo de seguridad
+#: sin abortar la verificación del operador en el POS / móvil.
+REINTENTOS_TURNO_SESION = 4
+ESPERA_TURNO_SESION_SEG = 8.0
+
 
 def _pedir_codigo_en_consola(prompt: str) -> str:
     """Pide el código de un solo uso **en la consola del nodo**.
@@ -399,12 +405,16 @@ class BankVerificationWorker:
     # --- implementación ---
 
     def _raspar(self, job: VerificationJob) -> ScrapeResult:
-        """Raspa con un solo reintento si el portal no responde.
+        """Raspa con reintentos para turno de sesión y fallos transitorios del portal.
 
         El portal detras de Imperva corta un click con timeout de 30 s cada
         tanto (medido: 3 de 11 corridas en el nodo). El segundo intento entra,
         asi que se reintenta una vez: el operador no tiene que volver a
-        apretar el boton. El reintento respeta el turno de sesion del nodo.
+        apretar el boton.
+
+        Si hay una consulta concurrente o estamos dentro del intervalo de
+        seguridad (30 s), espera su turno publicando 'esperando_turno' antes de
+        reintentar tomar el slot del navegador, evitando abortar por colisión.
         """
         config = self._config_de(job)
 
@@ -417,23 +427,43 @@ class BankVerificationWorker:
                 resultado={"progreso": {"paso": paso, "pct": pct}},
             )
 
-        intento = 0
+        intento_portal = 0
+        intento_slot = 0
         while True:
-            intento += 1
             try:
                 return self._scraper.scrape(config, on_progress=progreso)
+            except SessionSlotError as exc:
+                reintentable_slot = (
+                    exc.motivo in ("ejecucion_concurrente", "intervalo_minimo")
+                    and intento_slot < REINTENTOS_TURNO_SESION
+                    and self._hay_tiempo_para_reintentar(job, ESPERA_TURNO_SESION_SEG)
+                )
+                if not reintentable_slot:
+                    raise
+                intento_slot += 1
+                progreso("esperando_turno", 15)
+                self._log.info(
+                    "Esperando turno seguro de sesion en el banco (%s, job %s); reintento %d/%d en %.0f s",
+                    exc.motivo,
+                    job.job_id,
+                    intento_slot,
+                    REINTENTOS_TURNO_SESION,
+                    ESPERA_TURNO_SESION_SEG,
+                )
+                self._esperar(ESPERA_TURNO_SESION_SEG)
             except BankScrapeError as exc:
+                intento_portal += 1
                 reintentable = (
                     exc.codigo == CODIGO_PORTAL_NO_DISPONIBLE
-                    and intento <= REINTENTOS_PORTAL
-                    and self._hay_tiempo_para_reintentar(job)
+                    and intento_portal <= REINTENTOS_PORTAL
+                    and self._hay_tiempo_para_reintentar(job, ESPERA_REINTENTO_SEG)
                 )
                 if not reintentable:
                     raise
                 self._log.warning(
                     "El portal no respondio (job %s); reintento %d/%d en %.0f s",
                     job.job_id,
-                    intento,
+                    intento_portal,
                     REINTENTOS_PORTAL,
                     ESPERA_REINTENTO_SEG,
                 )
@@ -502,12 +532,14 @@ class BankVerificationWorker:
             window_end=datetime.datetime.combine(dia, FIN_DEL_DIA),
         )
 
-    def _hay_tiempo_para_reintentar(self, job: VerificationJob) -> bool:
-        """True si el job sigue vivo despues de esperar el turno de sesion."""
+    def _hay_tiempo_para_reintentar(
+        self, job: VerificationJob, segundos: float = ESPERA_REINTENTO_SEG
+    ) -> bool:
+        """True si el job sigue vivo despues de esperar el intervalo."""
         expira = getattr(job, "expira_en", None)
         if expira is None:
             return True
-        return self._reloj() + datetime.timedelta(seconds=ESPERA_REINTENTO_SEG) < expira
+        return self._reloj() + datetime.timedelta(seconds=segundos) < expira
     def _scraper_por_defecto(self, pedir_codigo: Callable[[str], str]) -> Any:
         """Scraper de producción (Playwright) con la pregunta del OTP marcada."""
         return BankScraper(
